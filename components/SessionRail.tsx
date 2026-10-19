@@ -1,7 +1,9 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useRef, useState } from "react";
+import { Plug, Plus, Settings, Sparkles } from "lucide-react";
 import type { SessionInfo } from "@/lib/types";
+import { useDismissOnOutsideClick } from "@/hooks/useDismissOnOutsideClick";
 
 function projectName(cwd: string): string {
   const parts = cwd.split(/[\\/]/).filter(Boolean);
@@ -32,10 +34,23 @@ interface Props {
   selectedId: string | null;
   onSelect: (session: SessionInfo) => void;
   onNewSession: () => void;
+  onOpenSkills: () => void;
+  onOpenMcp: () => void;
 }
 
-export function SessionRail({ sessions, loading, selectedId, onSelect, onNewSession }: Props) {
+export function SessionRail({
+  sessions,
+  loading,
+  selectedId,
+  onSelect,
+  onNewSession,
+  onOpenSkills,
+  onOpenMcp,
+}: Props) {
   const items = useMemo(() => sessions, [sessions]);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useDismissOnOutsideClick(menuRef, menuOpen, () => setMenuOpen(false));
 
   return (
     <aside className="flex w-[260px] shrink-0 flex-col border-r border-gray-200/60 bg-[#F5F5F7]">
@@ -45,12 +60,12 @@ export function SessionRail({ sessions, loading, selectedId, onSelect, onNewSess
           onClick={onNewSession}
           className="group flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-[#E4E4E0] bg-white text-[13px] font-medium text-ink-soft shadow-[0_1px_2px_rgba(17,17,17,0.03)] transition-colors duration-150 hover:border-[#CFDDFA] hover:bg-white"
         >
-          <span
+          <Plus
+            size={14}
+            strokeWidth={2}
             aria-hidden="true"
-            className="text-[15px] leading-none text-accent transition-colors duration-150 group-hover:text-accent-strong"
-          >
-            +
-          </span>
+            className="text-accent transition-colors duration-150 group-hover:text-accent-strong"
+          />
           新建会话
         </button>
       </div>
@@ -103,6 +118,45 @@ export function SessionRail({ sessions, loading, selectedId, onSelect, onNewSess
             );
           })}
         </div>
+      </div>
+
+      <div ref={menuRef} className="relative shrink-0 border-t border-gray-200/60 p-2">
+        {menuOpen && (
+          <div className="material-popover absolute bottom-full left-2 z-[60] mb-1 w-[212px] rounded-xl p-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                setMenuOpen(false);
+                onOpenSkills();
+              }}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-ink-muted transition-colors duration-150 hover:bg-[#ECECEF] hover:text-ink"
+            >
+              <Sparkles size={14} strokeWidth={1.75} className="text-accent" aria-hidden="true" />
+              技能 · Skills
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMenuOpen(false);
+                onOpenMcp();
+              }}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-ink-muted transition-colors duration-150 hover:bg-[#ECECEF] hover:text-ink"
+            >
+              <Plug size={14} strokeWidth={1.75} className="text-accent" aria-hidden="true" />
+              MCP 服务
+            </button>
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={() => setMenuOpen((value) => !value)}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[12px] text-ink-muted transition-colors duration-150 hover:bg-[#ECECEF] hover:text-ink"
+        >
+          <Settings size={14} strokeWidth={1.75} aria-hidden="true" />
+          设置
+        </button>
       </div>
     </aside>
   );

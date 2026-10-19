@@ -4,11 +4,14 @@
   --font-sans:
     "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
     "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   /* Frost Ledger — warm paper surfaces, cool blue accent. */
   --color-accent: #3b82f6;
   --color-accent-strong: #2563eb;
+  --color-accent-hover: #2563eb;
   --color-accent-soft: #dbeafe;
+  --color-accent-contrast: #ffffff;
 
   --color-ink: #1f2937;
   --color-ink-soft: #374151;
@@ -16,6 +19,68 @@
   --color-ink-faint: #9ca3af;
 
   --color-line: #e5e7eb;
+
+  /* Legacy token aliases consumed by the restored desktop components
+     (StatsBar / UsagePopover / SkillsConfig / McpConfig / ModelSelector). */
+  --color-bg: #fcfcfa;
+  --color-bg-panel: #f5f5f7;
+  --color-bg-elevated: #ffffff;
+  --color-bg-hover: #ececef;
+  --color-bg-selected: #e8effb;
+  --color-bg-subtle: #f2f3f6;
+  --color-border: #e5e7eb;
+  --color-border-subtle: #eef0f3;
+  --color-divider: #ebedf1;
+  --color-text: #1f2937;
+  --color-text-strong: #111827;
+  --color-text-muted: #6b7280;
+  --color-text-dim: #9ca3af;
+  --color-danger: #c2554e;
+  --color-danger-bg: #fdf0ef;
+  --color-danger-border: #f2d3d0;
+  --color-success: #3e8a63;
+  --color-success-bg: #eef7f1;
+  --color-success-border: #cfe8da;
+  --color-warning: #a9761f;
+  --color-warning-bg: #fdf6e7;
+  --color-warning-border: #eeddb8;
+  --color-info: #3b82f6;
+  --color-info-bg: #eef4fe;
+  --color-info-border: #d6e4fb;
+
+  --radius-control: 6px;
+  --radius-panel: 10px;
+  --radius-overlay: 14px;
+}
+
+:root {
+  --bg: #fcfcfa;
+  --bg-panel: #f5f5f7;
+  --bg-elevated: #ffffff;
+  --bg-hover: #ececef;
+  --bg-selected: #e8effb;
+  --border: #e5e7eb;
+  --divider: #ebedf1;
+  --text: #1f2937;
+  --text-strong: #111827;
+  --text-muted: #6b7280;
+  --text-dim: #9ca3af;
+  --accent: #3b82f6;
+  --accent-soft: #dbeafe;
+  --accent-contrast: #ffffff;
+  --danger: #c2554e;
+  --success: #3e8a63;
+  --success-bg: #eef7f1;
+  --warning: #a9761f;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --material-popover: #ffffff;
+  --scrim: rgb(24 24 20 / 0.32);
+  --shadow-popover: 0 18px 50px -20px rgb(17 17 17 / 0.28);
+  --control-height: 28px;
+  --radius-control: 6px;
+  --radius-panel: 10px;
+  --radius-overlay: 14px;
 }
 
 html {
@@ -32,4 +97,51 @@ body {
 
 ::selection {
   background-color: rgb(59 130 246 / 0.16);
+}
+
+@layer components {
+  .material-popover {
+    background: var(--material-popover);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-popover);
+  }
+
+  .ui-dialog-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--scrim);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+
+  .ui-dialog-surface {
+    background: var(--material-popover);
+    border: 1px solid var(--border);
+    box-shadow: 0 24px 80px -24px rgb(17 17 17 / 0.28);
+  }
+
+  .t-modal {
+    transform-origin: center;
+    animation: pop-in 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  .t-dropdown {
+    transform-origin: bottom left;
+    animation: pop-in 140ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }

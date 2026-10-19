@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
+import { AtSign, ChevronRight, Loader2 } from "lucide-react";
 import { getFileIcon, FolderIcon } from "./FileIcons";
 import { encodeFilePathForApi, getRelativeFilePath, joinFilePath } from "@/lib/file-paths";
 import { useI18n } from "./I18nProvider";
@@ -128,13 +129,16 @@ function TreeNode({
         }}
       >
         {node.isDir && (
-          <svg
-            width="10" height="10" viewBox="0 0 10 10" fill="none"
-            stroke="var(--text-dim)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
-            style={{ flexShrink: 0, transform: open ? "rotate(90deg)" : "none", transition: "transform 0.1s" }}
-          >
-            <polyline points="3 2 7 5 3 8" />
-          </svg>
+          <ChevronRight
+            size={12}
+            strokeWidth={1.75}
+            style={{
+              flexShrink: 0,
+              color: "var(--text-dim)",
+              transform: open ? "rotate(90deg)" : "none",
+              transition: "transform 0.12s",
+            }}
+          />
         )}
         {!node.isDir && <span style={{ width: 10, flexShrink: 0 }} />}
         <span style={{ flexShrink: 0, display: "flex", alignItems: "center" }}>
@@ -153,11 +157,7 @@ function TreeNode({
         >
           {node.name}
         </span>
-        {loading && (
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="2" strokeLinecap="round">
-            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4" />
-          </svg>
-        )}
+        {loading && <Loader2 size={11} strokeWidth={1.75} className="animate-spin" style={{ color: "var(--text-dim)" }} />}
         {onAtMention && hovered && (
           <button
             onClick={(e) => {
@@ -187,10 +187,7 @@ function TreeNode({
               whiteSpace: "nowrap",
             }}
           >
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="4" />
-              <path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8" />
-            </svg>
+            <AtSign size={11} strokeWidth={2} />
             mention
           </button>
         )}

@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentMessage, SessionInfo } from "@/lib/types";
 import { useAgentSession } from "@/hooks/useAgentSession";
+import { useAudio } from "@/hooks/useAudio";
 import { Composer } from "./Composer";
+import { StatusBar, type ThinkingLevel } from "./StatusBar";
 import { Transcript } from "./Transcript";
 
 interface Props {
@@ -37,7 +39,18 @@ function ChatSession({
   onSessionCreated,
   onReload,
 }: Props & { onReload: () => void }) {
-  const chat = useAgentSession({ session, newSessionCwd, onSessionCreated });
+  const { soundEnabled, onSoundToggle, playDoneSound } = useAudio();
+  const chat = useAgentSession({
+    session,
+    newSessionCwd,
+    onSessionCreated,
+    onAgentEnd: playDoneSound,
+  });
+
+  const currentModel = chat.displayModel ?? null;
+  const availableThinkingLevels = currentModel
+    ? (chat.modelThinkingLevels[`${currentModel.provider}:${currentModel.modelId}`] ?? null)
+    : null;
 
   const streaming = chat.streamState.isStreaming ? chat.streamState.streamingMessage : null;
   const messages: AgentMessage[] = streaming
@@ -122,6 +135,24 @@ function ChatSession({
     />
   );
 
+  const statusBar = (
+    <StatusBar
+      isStreaming={chat.agentRunning}
+      model={currentModel}
+      modelNames={chat.modelNames}
+      modelList={chat.modelList}
+      onModelChange={chat.handleModelChange}
+      thinkingLevel={chat.thinkingLevel as ThinkingLevel}
+      availableThinkingLevels={availableThinkingLevels}
+      onThinkingLevelChange={chat.handleThinkingLevelChange}
+      soundEnabled={soundEnabled}
+      onSoundToggle={onSoundToggle}
+      sessionStats={chat.sessionStats}
+      contextUsage={chat.contextUsage}
+      currentProvider={currentModel?.provider ?? null}
+    />
+  );
+
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-[#FCFCFA]">
       {showTranscript ? (
@@ -148,6 +179,7 @@ function ChatSession({
             <div className="mx-auto w-full max-w-3xl">
               {trustCard}
               {composer}
+              {statusBar}
             </div>
           </div>
         </>
@@ -158,6 +190,7 @@ function ChatSession({
             <div className="mt-6 w-full">
               {trustCard}
               {composer}
+              {statusBar}
             </div>
           </div>
         </div>

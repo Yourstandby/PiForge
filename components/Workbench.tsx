@@ -4,7 +4,9 @@ import { useCallback, useEffect, useState } from "react";
 import type { SessionInfo } from "@/lib/types";
 import { ChatSurface } from "./ChatSurface";
 import { FilePanel } from "./FilePanel";
+import { McpSettingsModal } from "./McpSettingsModal";
 import { SessionRail } from "./SessionRail";
+import { SkillsConfig } from "./SkillsConfig";
 
 function byModifiedDesc(a: SessionInfo, b: SessionInfo): number {
   return new Date(b.modified).getTime() - new Date(a.modified).getTime();
@@ -20,6 +22,7 @@ export function Workbench() {
   // Mirrors AppShell's sessionKey: remount the chat surface so all
   // session-scoped hook state starts clean on every switch.
   const [chatKey, setChatKey] = useState(0);
+  const [settingsModal, setSettingsModal] = useState<"skills" | "mcp" | null>(null);
 
   const loadSessions = useCallback(async (): Promise<SessionInfo[]> => {
     try {
@@ -105,6 +108,8 @@ export function Workbench() {
         onNewSession={() => {
           void handleNewSession();
         }}
+        onOpenSkills={() => setSettingsModal("skills")}
+        onOpenMcp={() => setSettingsModal("mcp")}
       />
 
       <ChatSurface
@@ -117,6 +122,13 @@ export function Workbench() {
       />
 
       <FilePanel cwd={cwd} />
+
+      {settingsModal === "skills" && (
+        <SkillsConfig cwd={cwd ?? ""} onClose={() => setSettingsModal(null)} />
+      )}
+      {settingsModal === "mcp" && (
+        <McpSettingsModal cwd={cwd ?? ""} onClose={() => setSettingsModal(null)} />
+      )}
     </div>
   );
 }
