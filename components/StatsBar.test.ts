@@ -4,8 +4,6 @@ import { readFileSync } from "node:fs";
 
 const statsBarSource = readFileSync(new URL("./StatsBar.tsx", import.meta.url), "utf8");
 const usagePopoverSource = readFileSync(new URL("./UsagePopover.tsx", import.meta.url), "utf8");
-const appShellSource = readFileSync(new URL("./AppShell.tsx", import.meta.url), "utf8");
-const chatWindowSource = readFileSync(new URL("./ChatWindow.tsx", import.meta.url), "utf8");
 
 test("StatsBar contains accessible dialog trigger and no-drag region", () => {
   assert.match(statsBarSource, /\[-webkit-app-region:no-drag\]/);
@@ -89,12 +87,7 @@ test("UsagePopover renders session stats, context window, and upstream quota sec
 });
 
 test("SessionStats and ContextUsage types are centralized in StatsBar and reused", () => {
-  assert.match(appShellSource, /import \{[^}]*SessionStats[^}]*\} from "\.\/StatsBar"/);
-  assert.match(appShellSource, /useState<SessionStats \| null>\(null\)/);
-  assert.match(appShellSource, /useState<ContextUsage \| null>\(null\)/);
-  assert.match(chatWindowSource, /import type \{[^}]*SessionStats[^}]*\} from "\.\/StatsBar"/);
-  assert.match(chatWindowSource, /onSessionStatsChange\?: \(stats: SessionStats \| null\) => void/);
-  assert.match(chatWindowSource, /onContextUsageChange\?: \(usage: ContextUsage \| null\) => void/);
+  assert.match(statsBarSource, /export type \{ SessionStats, ContextUsage \}/);
   assert.match(usagePopoverSource, /import type \{[^}]*SessionStats[^}]*\} from "\.\/StatsBar"/);
 });
 

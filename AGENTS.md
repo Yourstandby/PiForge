@@ -2,31 +2,27 @@
 
 PiForge 是 Pi Coding Agent 的 Windows 桌面端，衍生自
 [Chasen-Liao/pi-agent-desktop](https://github.com/Chasen-Liao/pi-agent-desktop)（MIT）。
-上游功能与架构保持不变，PiForge 只做品牌化、构建目标收敛和一套蓝色主题。
 
-## PiForge 约定
+## 当前 UI 状态
 
-- **品牌**：`package.json` name = `piforge`，productName = `PiForge`，
-  appId = `com.piforge.desktop`。用户可见的窗口标题、托盘提示、启动页文案统一为 PiForge。
-  安装器仍会关闭 `Pi Agent Desktop.exe` 等旧进程名，方便覆盖安装。
-- **图标**：`node scripts/build-brand-icons.mjs` 从内嵌 SVG 重新生成
-  `build/icon.{ico,icns,png}`、`build/tray-icon.ico`、`public/logo.png`、`app/favicon.ico`。
-- **构建**：`npm run dev`（浏览器）/ `npm run dist`（NSIS 安装包）。开发时不要直接
-  `next build`，会污染 `.next/`。
-- **多项目窗口**：单进程只跑一个 Next 服务，所有窗口共享；主窗口关闭时隐藏到托盘，
-  项目窗口正常关闭。入口：工作台菜单「新建窗口」、`Ctrl+Shift+N`、侧边栏项目行的
-  窗口按钮。新窗口通过 `/?cwd=<path>` 直接进入该项目的空白会话。
-- **PNG 资产**：应用内 logo 用 `components/BrandLogo.tsx` 内联 SVG；`build/icon.png`
-  由 `npm run icons` 生成但不入库（部分 Windows DLP 会透明加密大 PNG）。
+界面正在从零重建（2026-02）。旧的布局体系、主题系统与视觉规则已全部作废：
 
-## 主题系统（light / dark / glacier）
+- `app/page.tsx` 是唯一入口：居中布局 + `components/Composer.tsx` 输入框。
+- `components/ChatWindow.tsx`、`components/ChatInput.tsx` 只是空壳占位，
+  不要为了“保持兼容”往里塞回旧结构。
+- 没有主题切换、没有侧边栏、没有悬浮球；需要新界面时直接新建组件。
+- 样式只用 Tailwind 类名和 `app/globals.css` 里极少的全局基础样式，
+  不要在 CSS 里重建旧 token 体系。
 
-- 状态：`hooks/useTheme.ts`，纯逻辑在 `lib/theme.ts`，localStorage key 为 `pi-theme`。
-- token：`app/globals.css`。`html.dark.theme-glacier` 在 dark 之上覆盖调色板，
-  冰川蓝主题保留 `dark` class，因此所有暗色分支（语法高亮、窗口控件）继续生效。
-- 入口：工作台菜单（`components/AppShell.tsx`）三选一；`Ctrl+Shift+T` 按
-  light → dark → glacier 循环。
-- Electron 标题栏：`electron/title-bar-overlay.ts` 按主题名取色，preload 发送主题名。
+## 构建与运行
+
+- `npm run dev`（浏览器，端口 30141）/ `npm run dist`（NSIS 安装包）。
+- 开发时不要直接 `next build`，会污染 `.next/`。
+- 品牌：`package.json` name = `piforge`，productName = `PiForge`，
+  appId = `com.piforge.desktop`。安装器仍会关闭 `Pi Agent Desktop.exe` 等旧进程名，
+  方便覆盖安装。
+- 图标：`node scripts/build-brand-icons.mjs` 生成 `build/icon.{ico,icns,png}`、
+  `build/tray-icon.ico`、`public/logo.png`、`app/favicon.ico`。
 
 ---
 
@@ -44,7 +40,6 @@ npm run dist:mac     # Universal macOS (Intel + Apple Silicon)
 Typecheck: `npx tsc --noEmit` | Lint: `npm run lint`
 Test: `npm test`（含 `middleware.test.ts`；不要去掉 `--test-force-exit`）
 Subsets: `npm run test:windows` / `npm run test:macos`
-**Never run `next build` during dev** — 污染 `.next/` 并破坏 `npm run dev`。
 
 Release: 按 [docs/RELEASING.md](docs/RELEASING.md)，推 `vX.Y.Z` tag → CI 打包；不用 `npm run release`。
 Branch: `dev/`（日常）/ `future/`（大功能），默认 merge commit，见 [CONTRIBUTING.md](CONTRIBUTING.md)。
@@ -72,7 +67,7 @@ Branch: `dev/`（日常）/ `future/`（大功能），默认 merge commit，见
 - **Web**：浏览器 ──HTTP/SSE──▶ Next.js(:30141) ──进程内──▶ AgentSession
 - **Desktop**：Electron 主进程托管 Next.js standalone `server.js`（macOS: `utilityProcess`；Win/Linux: `ELECTRON_RUN_AS_NODE=1`）
 
-**关键入口**
+**关键入口**（后端契约保持不变，与界面重建无关）
 
 | 功能 | 路径 |
 | --- | --- |
@@ -81,7 +76,6 @@ Branch: `dev/`（日常）/ `future/`（大功能），默认 merge commit，见
 | 历史浏览 | `GET /api/sessions/*` → `session-reader.ts`（只读，不建 Session） |
 | 会话克隆 | `POST /api/sessions/[id]/clone` → 普通目录或 Git Worktree |
 | SSE 流 | `GET /api/agent/[id]/events`（30s 心跳） |
-| UI 主入口 | `page.tsx` → `AppShell` → `ChatWindow` → `useAgentSession` |
 | LTM | `lib/ltm` · `/api/memory/*` · tools: `memory_save/recall/forget` |
 | 运行中消息 | Enter=立即 steer，Alt+Enter=Follow-up Queue（可重排） |
 
@@ -91,10 +85,13 @@ Branch: `dev/`（日常）/ `future/`（大功能），默认 merge commit，见
 | --- | --- |
 | `app/api/` | 39 条 API 路由 |
 | `lib/` | `rpc-manager` / `session-reader` / `session-branch-clone` / `git-worktree` / `ltm` / `i18n` 等服务端库 |
-| `components/` | 29 个顶层组件 + 3 个子目录（`chat-input` / `models-config` / `session-sidebar`） |
-| `hooks/` | 8 个顶层 hook + `agent-session/` 15 个模块 |
+| `components/` | 新界面组件 + 待接线的旧组件（`ChatWindow` / `ChatInput` 为空壳） |
+| `hooks/` | 8 个顶层 hook + `agent-session/` 15 个模块（`useAgentSession` 仍可用） |
 | `electron/` | `main.ts` + `preload.ts` + `tray.ts` + 13 个辅助模块 |
 | `bin/pi-web.js` | CLI 入口 |
+
+**多项目窗口**：单进程只跑一个 Next 服务，所有窗口共享；主窗口关闭时隐藏到托盘，
+项目窗口正常关闭。新窗口通过 `/?cwd=<path>` 直接进入该项目的空白会话（入口 UI 重建后需重新接线）。
 
 ---
 
@@ -149,9 +146,7 @@ SDK 存 `{id, name, arguments}`，前端用 `{toolCallId, toolName, input}`。`n
 
 **Session 文件**：`~/.pi/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`（详见 [ARCHITECTURE.md §9](docs/ARCHITECTURE.md#9-pi-会话文件格式)）。`SessionContext.entryIds[]` 与 `messages[]` 一一对应，用于 fork 和 navigate_tree。
 
-**CSS 变量**：完整变量表见 [`app/globals.css`](app/globals.css)，含 `material-*` / `shadow-*` / `duration-*` / `ease-*` / `toast-*` / `think-*` 等动画 token 体系。
-
-**UI 文案**：走 `lib/i18n`（`en` / `zh-CN`）。改文案须同步 `lib/i18n/dictionaries.ts` 双语，不硬编码。
+**UI 文案**：`lib/i18n`（`en` / `zh-CN`）仍可用，但新界面组件未强制接入。
 
 <!-- BEGIN:nextjs-agent-rules -->
 
