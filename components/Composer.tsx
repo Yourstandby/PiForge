@@ -1,16 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { ArrowUp } from "lucide-react";
 
 const MAX_HEIGHT = 200;
 
 export function Composer({
+  value = "",
+  onValueChange,
   onSubmit,
 }: {
+  value: string;
+  onValueChange: (value: string) => void;
   onSubmit?: (value: string) => void;
 }) {
-  const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const resize = useCallback(() => {
@@ -29,16 +32,16 @@ export function Composer({
   const submit = () => {
     if (!canSend) return;
     onSubmit?.(value.trim());
-    setValue("");
+    onValueChange("");
     textareaRef.current?.focus();
   };
 
   return (
-    <div className="w-full rounded-2xl border border-neutral-200 bg-white p-2.5 shadow-[0_1px_2px_rgba(17,17,17,0.04),0_12px_32px_-16px_rgba(17,17,17,0.14)] transition-shadow duration-200 focus-within:border-neutral-300 focus-within:shadow-[0_1px_2px_rgba(17,17,17,0.05),0_16px_40px_-18px_rgba(17,17,17,0.18)]">
+    <div className="w-full rounded-2xl border border-neutral-200 bg-white p-2.5 shadow-sm transition-shadow duration-200 focus-within:border-neutral-300 focus-within:shadow-md">
       <textarea
         ref={textareaRef}
         value={value}
-        onChange={(e) => setValue(e.target.value)}
+        onChange={(e) => onValueChange(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
             e.preventDefault();

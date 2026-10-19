@@ -10,7 +10,7 @@ import { FileExplorer } from "./FileExplorer";
  * same neutral light palette).
  */
 const explorerTokens = {
-  "--bg-hover": "#f5f5f5",
+  "--bg-hover": "#EAEAEE",
   "--bg-elevated": "#ffffff",
   "--border": "#e5e5e5",
   "--text": "#171717",
@@ -32,8 +32,8 @@ export function FilePanel({ cwd }: { cwd: string | null }) {
   }, []);
 
   return (
-    <aside className="flex w-[280px] shrink-0 flex-col border-l border-gray-200 bg-white">
-      <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-gray-100 px-3">
+    <aside className="flex w-[280px] shrink-0 flex-col border-l border-gray-200/60 bg-[#F5F5F7]">
+      <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-gray-200/60 px-3">
         <span className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
           项目文件
         </span>

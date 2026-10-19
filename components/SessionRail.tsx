@@ -38,7 +38,7 @@ export function SessionRail({ sessions, loading, selectedId, onSelect, onNewSess
   const items = useMemo(() => sessions, [sessions]);
 
   return (
-    <aside className="flex w-[260px] shrink-0 flex-col border-r border-gray-200 bg-neutral-50">
+    <aside className="flex w-[260px] shrink-0 flex-col border-r border-gray-200/60 bg-[#F5F5F7]">
       <div className="shrink-0 p-3">
         <button
           type="button"
