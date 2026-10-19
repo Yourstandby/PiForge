@@ -2,12 +2,11 @@
 
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import type { SessionInfo } from "@/lib/types";
-import { FileExplorer } from "./FileExplorer";
 import { SidebarHeader } from "./session-sidebar/SidebarHeader";
 import { SessionTreeItem } from "./session-sidebar/SessionTree";
 import { ProjectGroup } from "./session-sidebar/ProjectGroup";
 import { SidebarIcon } from "./session-sidebar/SidebarIcon";
-import { groupProjects, projectKey, projectName, searchProjects, sortProjects } from "./session-sidebar/projects";
+import { groupProjects, projectKey, searchProjects, sortProjects } from "./session-sidebar/projects";
 import { SortableProjects } from "./session-sidebar/SortableProjects";
 import { useSidebarPreferences } from "./session-sidebar/useSidebarPreferences";
 import { useI18n } from "./I18nProvider";
@@ -31,7 +30,7 @@ interface Props {
   onAtMention?: (relativePath: string) => void;
 }
 
-export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, onInitialRestoreDone, refreshKey, onSessionDeleted, onBranchSession, onCloneSession, onExportSession, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onAtMention }: Props) {
+export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, onInitialRestoreDone, refreshKey, onSessionDeleted, onBranchSession, onCloneSession, onExportSession, selectedCwd: selectedCwdProp, onCwdChange }: Props) {
   const { t, locale } = useI18n();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -40,12 +39,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const [animateProjectSorting, setAnimateProjectSorting] = useState(true);
   const [preferences, setPreferences] = useSidebarPreferences();
   const selectedCwd = selectedCwdProp ?? null;
-  const { explorerOpen } = preferences;
-  const [explorerKey, setExplorerKey] = useState(0);
   const [sessionRefreshDone, setSessionRefreshDone] = useState(false);
-  const [explorerRefreshDone, setExplorerRefreshDone] = useState(false);
   const sessionRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const explorerRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const projectListRef = useRef<HTMLElement>(null);
   const pendingProjectRef = useRef<string | null>(null);
   const scrolledSessionRef = useRef<string | null>(null);
@@ -74,10 +69,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     initialLoadDone.current = true;
     void loadSessions(isFirst);
   }, [loadSessions, refreshKey]);
-
-  useEffect(() => {
-    if (explorerRefreshKey !== undefined) setExplorerKey((key) => key + 1);
-  }, [explorerRefreshKey]);
 
   const projects = useMemo(() => groupProjects(allSessions, [...preferences.paths, ...(selectedCwd ? [selectedCwd] : [])]), [allSessions, preferences.paths, selectedCwd]);
   const sortedProjects = useMemo(() => sortProjects(projects, preferences.sortMode, preferences.projectOrder, locale), [projects, preferences.sortMode, preferences.projectOrder, locale]);
@@ -152,7 +143,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
 
   useEffect(() => () => {
     if (sessionRefreshTimerRef.current) clearTimeout(sessionRefreshTimerRef.current);
-    if (explorerRefreshTimerRef.current) clearTimeout(explorerRefreshTimerRef.current);
   }, []);
 
   return (
@@ -177,24 +167,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           </ProjectGroup>
         )} />
       </nav>
-      {selectedCwd && <section className="sidebar-explorer" data-open={explorerOpen}>
-        <div className="sidebar-explorer-heading">
-          <button className="sidebar-explorer-toggle" onClick={() => setPreferences((previous) => ({ ...previous, explorerOpen: !previous.explorerOpen }))} aria-expanded={explorerOpen} aria-controls="sidebar-explorer-content" title={selectedCwd}>
-            <SidebarIcon name="chevron" size={11} style={{ transform: explorerOpen ? "rotate(90deg)" : undefined }} />
-            <span>{t("sidebar.projectFiles")}</span>
-            <span className="sidebar-explorer-cwd">{projectName(selectedCwd)}</span>
-          </button>
-          <button className="sidebar-icon-button sidebar-refresh-button" data-done={explorerRefreshDone || undefined} onClick={() => {
-            setExplorerKey((key) => key + 1);
-            setExplorerRefreshDone(true);
-            if (explorerRefreshTimerRef.current) clearTimeout(explorerRefreshTimerRef.current);
-            explorerRefreshTimerRef.current = setTimeout(() => setExplorerRefreshDone(false), 2000);
-          }} title={t("sidebar.refreshExplorer")} aria-label={t("sidebar.refreshExplorer")}><SidebarIcon name={explorerRefreshDone ? "check" : "refresh"} size={14} /></button>
-        </div>
-        <div id="sidebar-explorer-content" className="sidebar-explorer-content" hidden={!explorerOpen}>
-          {explorerOpen && <FileExplorer key={selectedCwd} cwd={selectedCwd} onOpenFile={onOpenFile ?? (() => {})} refreshKey={explorerKey} onAtMention={onAtMention} />}
-        </div>
-      </section>}
     </div>
   );
 }

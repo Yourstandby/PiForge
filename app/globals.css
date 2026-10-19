@@ -235,3 +235,399 @@ html:not([data-electron-platform]) .app-titlebar-inner {
 .markdown-file-preview pre code { background: none; padding: 0; }
 
 span.linenumber { color: var(--text-dim) !important; font-style: normal !important; }
+
+/* ---------------------------------------------------------------------------
+   Session sidebar (components/session-sidebar/*)
+   The restored v0.11.0 tree ships class names, not styles: the legacy sheet was
+   deleted with the old UI. These rules re-skin it with the Frost Ledger palette
+   and, more importantly, keep every label on a single truncated line.
+--------------------------------------------------------------------------- */
+.sidebar-workspace {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  font-size: 13px;
+  color: #374151;
+}
+
+.sidebar-header {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 10px 8px;
+}
+
+.sidebar-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* Brand row is gone; the new-session button takes the whole width. */
+.sidebar-new-session-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid #e4e4e0;
+  background: #ffffff;
+  color: #374151;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgb(17 17 17 / 0.03);
+  transition: border-color 150ms, color 150ms;
+}
+.sidebar-new-session-button:hover:not(:disabled) {
+  border-color: #cfddfa;
+  color: #2563eb;
+}
+.sidebar-new-session-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sidebar-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 8px;
+  background: #f0f0f0;
+  color: #9ca3af;
+}
+.sidebar-search svg {
+  color: #9ca3af;
+  flex-shrink: 0;
+}
+.sidebar-search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 12.5px;
+  color: #374151;
+}
+.sidebar-search input::placeholder {
+  color: #9ca3af;
+}
+.sidebar-search input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+
+.sidebar-project-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 8px 10px;
+}
+
+.sidebar-empty {
+  padding: 10px 6px;
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.sidebar-project {
+  margin-bottom: 2px;
+}
+
+.sidebar-project-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 4px 0 2px;
+  border-radius: 7px;
+  color: #6b7280;
+}
+.sidebar-project-row:hover {
+  background: #ececef;
+}
+.sidebar-project-row[data-active] {
+  color: #2563eb;
+}
+
+.sidebar-project-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.sidebar-project-chevron {
+  flex-shrink: 0;
+  opacity: 0.65;
+  transition: transform 150ms;
+}
+.sidebar-project-folder {
+  flex-shrink: 0;
+  color: #2563eb;
+  opacity: 0.75;
+}
+.sidebar-project-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  font-weight: 700;
+  color: #6b7280;
+}
+.sidebar-project-row[data-active] .sidebar-project-name {
+  color: #2563eb;
+}
+.sidebar-project-path {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 10.5px;
+  color: #9ca3af;
+}
+.sidebar-project-count {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: #9ca3af;
+}
+
+.sidebar-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #9ca3af;
+  cursor: pointer;
+  opacity: 0;
+  transition: background 150ms, color 150ms, opacity 150ms;
+}
+.sidebar-project-row:hover .sidebar-icon-button,
+.sidebar-icon-button:focus-visible,
+.sidebar-explorer-toggle:hover + .sidebar-icon-button {
+  opacity: 1;
+}
+.sidebar-icon-button:hover {
+  background: #ffffff;
+  color: #2563eb;
+}
+
+.sidebar-project-content {
+  display: none;
+}
+.sidebar-project-content[data-expanded="true"] {
+  display: block;
+}
+.sidebar-project-content-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 2px 0 4px;
+}
+
+.sidebar-empty-project {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #9ca3af;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+.sidebar-empty-project:hover {
+  background: #ececef;
+  color: #2563eb;
+}
+
+/* Session rows: one line, never wrap. */
+.sidebar-session-node {
+  min-width: 0;
+}
+.session-tree-children {
+  padding-left: 14px;
+}
+.sidebar-session-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  height: 28px;
+  padding-right: 2px;
+  border-radius: 6px;
+}
+.sidebar-session-row:hover {
+  background: #ececef;
+}
+.sidebar-session-row[data-selected] {
+  background: #e8effb;
+}
+.sidebar-session-select {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 6px 0 30px;
+  border: none;
+  background: transparent;
+  color: #374151;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.sidebar-session-row[data-selected] .sidebar-session-select {
+  color: #2563eb;
+  font-weight: 500;
+}
+.sidebar-session-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  line-height: 1;
+}
+.sidebar-session-time {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: #9ca3af;
+}
+.sidebar-fork-spacer {
+  flex-shrink: 0;
+  width: 14px;
+}
+.sidebar-fork-toggle,
+.sidebar-fork-icon {
+  flex-shrink: 0;
+  color: #9ca3af;
+}
+.sidebar-session-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex-shrink: 0;
+}
+.sidebar-rename-input {
+  width: 100%;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid #cfddfa;
+  border-radius: 5px;
+  outline: none;
+  background: #ffffff;
+  color: #374151;
+  font-size: 13px;
+}
+.sidebar-action-error {
+  padding: 4px 8px;
+  font-size: 11px;
+  color: #c2554e;
+}
+.sidebar-notice {
+  padding: 6px 8px;
+  font-size: 11.5px;
+  color: #6b7280;
+}
+
+/* Popovers / menus (portaled) */
+.sidebar-session-menu,
+.sidebar-sort-menu,
+.sidebar-picker-menu {
+  min-width: 160px;
+  padding: 4px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 18px 50px -20px rgb(17 17 17 / 0.28);
+  font-size: 12.5px;
+  color: #374151;
+}
+.sidebar-session-menu button,
+.sidebar-sort-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.sidebar-session-menu button:hover,
+.sidebar-sort-option:hover {
+  background: #f0f4fd;
+}
+.sidebar-confirm-delete,
+.sidebar-delete-label {
+  color: #c2554e;
+}
+.sidebar-cancel-delete {
+  color: #6b7280;
+}
+
+
+
+/* Sort trigger in the sidebar header */
+.sidebar-sort-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #9ca3af;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.sidebar-sort-trigger:hover {
+  background: #ececef;
+  color: #374151;
+}
+.sidebar-sort-label {
+  white-space: nowrap;
+}

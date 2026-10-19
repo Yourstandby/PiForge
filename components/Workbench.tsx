@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { SessionInfo } from "@/lib/types";
+import { Settings } from "lucide-react";
 import { getElectronApi } from "@/lib/electron-api";
 import { resolveForkedSession } from "@/lib/fork-session-wait";
 import { buildProjectWindowPath, resolveInitialView } from "@/lib/project-window";
@@ -39,6 +40,7 @@ export function Workbench() {
   const [settingsModal, setSettingsModal] = useState<SettingsModal>(null);
   const [exportSessionId, setExportSessionId] = useState<string | null>(null);
   const [projectError, setProjectError] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const {
     fileTabs,
@@ -211,10 +213,11 @@ export function Workbench() {
 
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden bg-white">
-      <TitleBar cwd={cwd} />
+      <TitleBar />
 
       <div className="flex min-h-0 flex-1">
-        <div className="flex w-[260px] shrink-0 flex-col border-r border-gray-200/60 bg-[#F5F5F7]">
+        <div className="flex w-[260px] shrink-0 flex-col overflow-hidden border-r border-gray-200/60 bg-[#F5F5F7]">
+          <div className="flex min-h-0 flex-1 flex-col">
           <SessionSidebar
             selectedSessionId={selected?.id ?? null}
             onSelectSession={(session) => handleSelect(session)}
@@ -238,50 +241,48 @@ export function Workbench() {
               setDraft((value) => `${value}${value && !value.endsWith(" ") ? " " : ""}@${relativePath} `);
             }}
           />
-          <div className="shrink-0 border-t border-gray-200/60 p-2">
+          </div>
+          <div className="relative shrink-0 border-t border-gray-200/60 p-2">
             {projectError && (
-              <p role="status" className="px-1 pb-1.5 text-[11px] text-[#c2554e]">
+              <p role="status" className="px-1 pb-1 text-[11px] text-[#c2554e]">
                 {projectError}
               </p>
             )}
-            <div className="flex items-center gap-1.5">
+            <div className="flex justify-end">
               <button
                 type="button"
-                onClick={() => {
-                  void handleAddProject();
-                }}
-                title="打开项目文件夹（新窗口）"
-                aria-label="打开项目文件夹（新窗口）"
-                className="flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-[#E4E4E0] bg-white text-[12px] text-ink-muted transition-colors duration-150 hover:border-[#CFDDFA] hover:text-accent-strong"
+                onClick={() => setMenuOpen((open) => !open)}
+                title="设置"
+                aria-label="设置"
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-muted transition-colors duration-150 hover:bg-[#ECECEF] hover:text-ink"
               >
-                添加项目…
-              </button>
-              <button
-                type="button"
-                onClick={() => setSettingsModal("models")}
-                title="模型与登录"
-                aria-label="模型与登录"
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[#E4E4E0] bg-white text-ink-muted transition-colors duration-150 hover:border-[#CFDDFA] hover:text-accent-strong"
-              >
-                ⚙
+                <Settings size={16} strokeWidth={1.75} aria-hidden="true" />
               </button>
             </div>
-            <div className="mt-1.5 flex gap-1.5">
-              <button
-                type="button"
-                onClick={() => setSettingsModal("skills")}
-                className="flex-1 rounded-lg px-2 py-1 text-[11px] text-ink-muted transition-colors duration-150 hover:bg-[#ECECEF] hover:text-ink"
-              >
-                技能
-              </button>
-              <button
-                type="button"
-                onClick={() => setSettingsModal("mcp")}
-                className="flex-1 rounded-lg px-2 py-1 text-[11px] text-ink-muted transition-colors duration-150 hover:bg-[#ECECEF] hover:text-ink"
-              >
-                MCP
-              </button>
-            </div>
+            {menuOpen && (
+              <div className="material-popover absolute bottom-full left-2 right-2 z-[60] mb-1 rounded-xl p-1.5">
+                {[
+                  { label: "模型与登录", action: () => setSettingsModal("models") },
+                  { label: "技能", action: () => setSettingsModal("skills") },
+                  { label: "MCP 服务", action: () => setSettingsModal("mcp") },
+                  { label: "添加项目…", action: () => { void handleAddProject(); } },
+                ].map((item) => (
+                  <button
+                    key={item.label}
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      item.action();
+                    }}
+                    className="flex w-full items-center rounded-md px-2 py-1.5 text-left text-[12.5px] text-ink-muted transition-colors duration-150 hover:bg-[#ECECEF] hover:text-ink"
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 

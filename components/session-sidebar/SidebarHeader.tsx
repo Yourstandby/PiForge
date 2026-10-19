@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useCallback, useRef } from "react";
-import { PiAgentTitle } from "./PiAgentTitle";
 import { pickDirectoryFromHost } from "./helpers";
 import { SidebarIcon } from "./SidebarIcon";
 import { ProjectSortMenu } from "./ProjectSortMenu";
@@ -64,7 +63,6 @@ export function SidebarHeader({ selectedCwd, onNewSession, onAddProject, loadSes
   return (
     <header className="sidebar-header">
       <div className="sidebar-title-row">
-        <PiAgentTitle />
         <button
           className="sidebar-new-session-button"
           onClick={() => selectedCwd && onNewSession(selectedCwd)}

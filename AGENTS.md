@@ -156,3 +156,14 @@ This version has breaking changes — APIs, conventions, and file structure may 
 This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
 
 <!-- END:nextjs-agent-rules -->
+
+---
+
+## 【UI 铁律】（每次改 UI 前先读）
+
+- 左侧边栏宽度固定 `260px`，背景 `#F5F5F7`。
+- 左侧会话列表必须单行截断（`truncate`），字号 `13px`，文字颜色 `#374151`。
+- 选中项：浅蓝背景（`#E8EFFB`），蓝色文字（`#2563EB`）。
+- 项目分组标题（`Luo Wei` / `PiForge`）必须加粗，字号 `12px`，颜色 `#6B7280`，与下面的会话列表有明显缩进层级。
+- 禁止在左栏内嵌任何文件树或重复的按钮。
+- 所有修改必须基于现有浅色霜蓝主题，禁止引入旧版深色样式。

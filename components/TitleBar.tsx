@@ -11,29 +11,13 @@
  * on macOS, and the browser dev preview needs neither.
  */
 
-function folderName(cwd: string): string {
-  const parts = cwd.split(/[\\/]/).filter(Boolean);
-  return parts[parts.length - 1] ?? cwd;
-}
-
-export function TitleBar({ cwd }: { cwd: string | null }) {
+export function TitleBar() {
   return (
     <header className="app-titlebar relative z-40 flex h-9 shrink-0 items-center border-b border-[#E4E6EA] bg-[#F5F5F7]">
       <div className="app-titlebar-inner flex min-w-0 items-center gap-2">
         <span className="shrink-0 text-[12px] font-semibold tracking-[0.08em] text-ink-soft">
           PiForge
         </span>
-        {cwd && (
-          <>
-            <span aria-hidden="true" className="h-3 w-px shrink-0 bg-[#D9DCE2]" />
-            <span
-              className="truncate text-[11px] text-ink-faint"
-              title={cwd}
-            >
-              {folderName(cwd)}
-            </span>
-          </>
-        )}
       </div>
     </header>
   );
