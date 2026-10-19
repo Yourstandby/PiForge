@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, type CSSProperties } from "react";
+import { useCallback, useState, type CSSProperties } from "react";
 import { FileExplorer } from "./FileExplorer";
+import { ProcessPanel } from "./ProcessPanel";
 
 /**
  * FileExplorer renders its rows with inline styles that read the legacy theme
@@ -29,9 +30,11 @@ function folderName(cwd: string): string {
 export function FilePanel({
   cwd,
   onOpenFile,
+  onOpenDiff,
 }: {
   cwd: string | null;
   onOpenFile?: (filePath: string, fileName: string) => void;
+  onOpenDiff?: (filePath: string, fileName: string) => void;
 }) {
   const handleOpenFile = useCallback(
     (filePath: string, fileName: string) => {
@@ -40,12 +43,38 @@ export function FilePanel({
     [onOpenFile],
   );
 
+  const handleOpenDiff = useCallback(
+    (filePath: string, fileName: string) => {
+      onOpenDiff?.(filePath, fileName);
+    },
+    [onOpenDiff],
+  );
+  const [tab, setTab] = useState<"files" | "processes">("files");
+
   return (
     <aside className="flex w-[280px] shrink-0 flex-col border-l border-gray-200/60 bg-[#F5F5F7]">
       <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-gray-200/60 px-3">
-        <span className="text-[11px] font-medium uppercase tracking-wider text-ink-muted">
-          项目文件
-        </span>
+        <div className="flex items-center gap-0.5" role="tablist" aria-label="右侧面板">
+          {([
+            { id: "files" as const, label: "文件" },
+            { id: "processes" as const, label: "进程" },
+          ]).map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={tab === item.id}
+              onClick={() => setTab(item.id)}
+              className={`rounded-md px-1.5 py-1 text-[11px] font-medium uppercase tracking-wider transition-colors duration-150 ${
+                tab === item.id
+                  ? "bg-[#E8EFFB] text-accent-strong"
+                  : "text-ink-muted hover:bg-[#ECECEF] hover:text-ink"
+              }`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
         {cwd && (
           <span className="min-w-0 truncate text-[11px] text-ink-faint" title={cwd}>
             {folderName(cwd)}
@@ -54,8 +83,10 @@ export function FilePanel({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto py-1" style={explorerTokens}>
-        {cwd ? (
-          <FileExplorer key={cwd} cwd={cwd} onOpenFile={handleOpenFile} />
+        {tab === "processes" ? (
+          <ProcessPanel />
+        ) : cwd ? (
+          <FileExplorer key={cwd} cwd={cwd} onOpenFile={handleOpenFile} onOpenDiff={handleOpenDiff} />
         ) : (
           <p className="px-3 py-2 text-[11px] text-ink-faint">暂无项目</p>
         )}

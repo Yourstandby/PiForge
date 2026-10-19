@@ -29,7 +29,24 @@ export function useFileTabs(onTabOpened?: () => void, onAllTabsClosed?: () => vo
       const tabId = `file:${filePath}`;
       setFileTabs((prev) => {
         if (prev.find((t) => t.id === tabId)) return prev;
-        return [...prev, { id: tabId, label: fileName, filePath }];
+        return [...prev, { id: tabId, label: fileName, filePath, mode: "file" }];
+      });
+      setActiveFileTabId(tabId);
+      onTabOpened?.();
+    },
+    [onTabOpened]
+  );
+
+  /** Open (or focus) the Git-diff tab for a modified file. */
+  const handleOpenDiff = useCallback(
+    (filePath: string, fileName: string) => {
+      const tabId = `diff:${filePath}`;
+      setFileTabs((prev) => {
+        if (prev.find((t) => t.id === tabId)) return prev;
+        return [
+          ...prev,
+          { id: tabId, label: `${fileName} · Diff`, filePath, mode: "diff" as const },
+        ];
       });
       setActiveFileTabId(tabId);
       onTabOpened?.();
@@ -66,6 +83,7 @@ export function useFileTabs(onTabOpened?: () => void, onAllTabsClosed?: () => vo
     activeFileTabId,
     setActiveFileTabId,
     handleOpenFile,
+    handleOpenDiff,
     handleCloseFileTab,
   };
 }

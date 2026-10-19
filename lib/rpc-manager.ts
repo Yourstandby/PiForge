@@ -22,6 +22,7 @@ import {
 } from "./desktop-ltm-extension.ts";
 import { readDesktopSettings } from "./desktop-settings.ts";
 import { desktopRuntimeTools } from "./desktop-runtime-tools.ts";
+import { desktopProcessInlineExtension } from "./desktop-process-extension.ts";
 import { loadDesktopMcpConfig } from "./mcp-config.ts";
 import { findLastAgentMode } from "./agent-mode-persistence.ts";
 import {
@@ -964,6 +965,7 @@ export async function startRpcSession(
         createMcpExtension({ loadConfig: (ctx) => loadDesktopMcpConfig(agentDir, ctx.cwd, ctx.isProjectTrusted()) }),
         desktopApprovalInlineExtension(modeRef),
         desktopLtmInlineExtension({ getCwd: () => cwd }),
+        desktopProcessInlineExtension({ getCwd: () => cwd }),
       ],
     });
     await resourceLoader.reload();

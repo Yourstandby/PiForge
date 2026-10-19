@@ -28,7 +28,8 @@ export function createDesktopApprovalFactory(modeRef: AgentModeRef): ExtensionFa
       if (modeRef.current === "plan" && ![...PLAN_TOOLS, "memory_recall"].includes(event.toolName)) return askBlockResult();
       if (event.toolName === "codemode" && !modeRef.codemodeEnabled) return askBlockResult();
       const confirmMcp = modeRef.current === "ask" && isMcpTool(event.toolName);
-      if (!confirmMcp && !needsAskConfirm(modeRef.current, event.toolName)) return;
+      const confirmBg = modeRef.current === "ask" && event.toolName === "run_bg";
+      if (!confirmMcp && !confirmBg && !needsAskConfirm(modeRef.current, event.toolName)) return;
       const ok = await ctx.ui.confirm(
         `允许 ${event.toolName}?`,
         summarizeToolCall(event.toolName, event.input)

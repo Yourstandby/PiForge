@@ -25,8 +25,34 @@ interface FileNode {
 interface Props {
   cwd: string;
   onOpenFile: (filePath: string, fileName: string) => void;
+  onOpenDiff?: (filePath: string, fileName: string) => void;
   refreshKey?: number;
   onAtMention?: (relativePath: string) => void;
+}
+
+interface GitMark {
+  status: string;
+  index: string;
+  worktree: string;
+}
+
+type GitStatusMap = Record<string, GitMark>;
+
+function changedMark(status: string): { label: string; color: string; title: string } {
+  const code = status.replace(/\s+/g, "");
+  if (code === "??" || code.startsWith("A")) {
+    return { label: "A", color: "#3E8A63", title: "新增（未跟踪）" };
+  }
+  if (code.startsWith("D")) {
+    return { label: "D", color: "#C2554E", title: "已删除" };
+  }
+  if (code.startsWith("R")) {
+    return { label: "R", color: "#7C5BD6", title: "已重命名" };
+  }
+  if (code.startsWith("U") || code === "AA" || code === "DD") {
+    return { label: "!", color: "#C2554E", title: "冲突" };
+  }
+  return { label: "M", color: "#B7791F", title: "已修改" };
 }
 
 async function fetchEntries(dirPath: string): Promise<FileNode[]> {
@@ -49,19 +75,23 @@ function TreeNode({
   depth,
   cwd,
   onOpenFile,
+  onOpenDiff,
   onAtMention,
   expandedPaths,
   onToggleExpanded,
   refreshKey,
+  gitStatus,
 }: {
   node: FileNode;
   depth: number;
   cwd: string;
   onOpenFile: (filePath: string, fileName: string) => void;
+  onOpenDiff?: (filePath: string, fileName: string) => void;
   onAtMention?: (relativePath: string) => void;
   expandedPaths: Set<string>;
   onToggleExpanded: (fullPath: string, open: boolean) => void;
   refreshKey?: number;
+  gitStatus: GitStatusMap;
 }) {
   const { t } = useI18n();
   const open = expandedPaths.has(node.fullPath);
@@ -69,6 +99,12 @@ function TreeNode({
   const [loaded, setLoaded] = useState(node.loaded ?? false);
   const [loading, setLoading] = useState(false);
   const [hovered, setHovered] = useState(false);
+  const relativePath = getRelativeFilePath(node.fullPath, cwd);
+  const directMark = !node.isDir ? gitStatus[relativePath] : undefined;
+  const dirDirty = node.isDir
+    ? Object.keys(gitStatus).some((changed) => changed.startsWith(relativePath + "/"))
+    : false;
+  const mark = directMark ? changedMark(directMark.status) : null;
 
   const loadChildren = useCallback(async (force = false) => {
     if (loaded && !force) return;
@@ -152,11 +188,47 @@ function TreeNode({
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
             flex: 1,
+            fontWeight: mark ? 600 : 400,
           }}
           title={node.fullPath}
         >
           {node.name}
         </span>
+        {mark && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenDiff?.(node.fullPath, node.name);
+            }}
+            title={`${mark.title} · 点击查看 Git Diff`}
+            aria-label={`查看 ${node.name} 的 Git Diff`}
+            style={{
+              flexShrink: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 16,
+              height: 16,
+              padding: 0,
+              border: "none",
+              borderRadius: 4,
+              background: "transparent",
+              color: mark.color,
+              cursor: "pointer",
+              fontSize: 10,
+              fontWeight: 700,
+            }}
+          >
+            {mark.label}
+          </button>
+        )}
+        {!mark && dirDirty && (
+          <span
+            title="目录内有改动"
+            style={{ flexShrink: 0, width: 6, height: 6, borderRadius: 999, background: "#B7791F", marginRight: 2 }}
+          />
+        )}
         {loading && <Loader2 size={11} strokeWidth={1.75} className="animate-spin" style={{ color: "var(--text-dim)" }} />}
         {onAtMention && hovered && (
           <button
@@ -195,7 +267,7 @@ function TreeNode({
       {node.isDir && open && (
         <div>
           {children.map((child) => (
-            <TreeNode key={child.fullPath} node={child} depth={depth + 1} cwd={cwd} onOpenFile={onOpenFile} onAtMention={onAtMention} expandedPaths={expandedPaths} onToggleExpanded={onToggleExpanded} refreshKey={refreshKey} />
+            <TreeNode key={child.fullPath} node={child} depth={depth + 1} cwd={cwd} onOpenFile={onOpenFile} onOpenDiff={onOpenDiff} onAtMention={onAtMention} expandedPaths={expandedPaths} onToggleExpanded={onToggleExpanded} refreshKey={refreshKey} gitStatus={gitStatus} />
           ))}
           {children.length === 0 && loaded && (
             <div style={{ paddingLeft: 8 + (depth + 1) * 14, fontSize: 11, color: "var(--text-dim)", height: 22, display: "flex", alignItems: "center" }}>
@@ -208,12 +280,39 @@ function TreeNode({
   );
 }
 
-export function FileExplorer({ cwd, onOpenFile, refreshKey, onAtMention }: Props) {
+export function FileExplorer({ cwd, onOpenFile, onOpenDiff, refreshKey, onAtMention }: Props) {
   const [roots, setRoots] = useState<FileNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
+  const [gitStatus, setGitStatus] = useState<GitStatusMap>({});
   const prevCwdRef = useRef<string | null>(null);
+
+  // Git status poll: cheap (one `git status`), keeps markers live while the
+  // agent edits files in the background. Failures (non-repo, git missing)
+  // silently clear the markers.
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      fetch(`/api/git/status?cwd=${encodeURIComponent(cwd)}`)
+        .then((res) => res.json())
+        .then((data: { files?: Array<{ path: string; status: string; index: string; worktree: string }> }) => {
+          if (cancelled) return;
+          const next: GitStatusMap = {};
+          for (const file of data.files ?? []) next[file.path] = file;
+          setGitStatus(next);
+        })
+        .catch(() => {
+          if (!cancelled) setGitStatus({});
+        });
+    };
+    load();
+    const timer = setInterval(load, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [cwd, refreshKey]);
 
   const handleToggleExpanded = useCallback((fullPath: string, open: boolean) => {
     setExpandedPaths((prev) => {
@@ -263,10 +362,12 @@ export function FileExplorer({ cwd, onOpenFile, refreshKey, onAtMention }: Props
           depth={0}
           cwd={cwd}
           onOpenFile={onOpenFile}
+          onOpenDiff={onOpenDiff}
           onAtMention={onAtMention}
           expandedPaths={expandedPaths}
           onToggleExpanded={handleToggleExpanded}
           refreshKey={refreshKey}
+          gitStatus={gitStatus}
         />
       ))}
       {roots.length === 0 && (

@@ -78,6 +78,16 @@ export interface AssistantMessage {
   };
 }
 
+export interface NestedToolCallRecord {
+  id: string;
+  name: string;
+  arguments?: Record<string, unknown>;
+  argumentsBytes?: number;
+  status: "ok" | "error" | "unfinished";
+  durationMs?: number;
+  error?: string;
+}
+
 export interface ToolResultMessage {
   role: "toolResult";
   toolCallId: string;
@@ -85,6 +95,10 @@ export interface ToolResultMessage {
   content: (TextContent | ImageContent)[];
   isError?: boolean;
   timestamp?: number;
+  /** Milliseconds the tool ran (pi records this on newer sessions). */
+  durationMs?: number;
+  /** Child tool calls made through `ctx.executeTool()` (kept on the result). */
+  nestedCalls?: { complete: boolean; calls: NestedToolCallRecord[] };
 }
 
 export interface CustomMessage {

@@ -13,6 +13,8 @@ import { useI18n } from "./I18nProvider";
 interface Props {
   filePath: string;
   cwd?: string;
+  /** Render the Git working-tree diff instead of the file contents. */
+  gitDiff?: boolean;
 }
 
 interface FileData {
@@ -645,7 +647,85 @@ function PlainTextViewer({
   );
 }
 
-export function FileViewer({ filePath, cwd }: Props) {
+function GitDiffViewer({ filePath, cwd }: Props) {
+  const [diff, setDiff] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!cwd) {
+      setError("缺少项目路径，无法读取 Git Diff");
+      setLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    setLoading(true);
+    setError(null);
+    const relative = getRelativeFilePath(filePath, cwd);
+    fetch(
+      `/api/git/diff?cwd=${encodeURIComponent(cwd)}&path=${encodeURIComponent(relative)}`,
+      { signal: controller.signal },
+    )
+      .then((res) => res.json())
+      .then((data: { diff?: string; error?: string }) => {
+        if (data.error) setError(data.error);
+        else setDiff(data.diff ?? "");
+      })
+      .catch((e: unknown) => {
+        if ((e as { name?: string }).name !== "AbortError") setError(String(e));
+      })
+      .finally(() => setLoading(false));
+    return () => controller.abort();
+  }, [filePath, cwd]);
+
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-white">
+      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-divider px-3">
+        <span className="rounded bg-[#EDF3FD] px-1.5 py-0.5 text-[10px] font-medium text-accent-strong">
+          Git Diff
+        </span>
+        <span className="min-w-0 truncate font-mono text-[11px] text-ink-muted" title={filePath}>
+          {getRelativeFilePath(filePath, cwd)}
+        </span>
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto">
+        {loading ? (
+          <p className="px-4 py-3 text-[11px] text-ink-faint">读取 Git Diff…</p>
+        ) : error ? (
+          <p className="px-4 py-3 text-[11px] text-danger">{error}</p>
+        ) : !diff?.trim() ? (
+          <p className="px-4 py-3 text-[11px] text-ink-faint">
+            工作区没有可显示的差异（文件可能已暂存或已提交）。
+          </p>
+        ) : (
+          <pre className="m-0 py-1 font-mono text-[11.5px] leading-5">
+            {diff.split(/\r?\n/).map((line, index) => {
+              const cls = line.startsWith("+++") || line.startsWith("---")
+                ? "text-ink-faint"
+                : line.startsWith("+")
+                  ? "bg-[#EAF6EE] text-[#256B45]"
+                  : line.startsWith("-")
+                    ? "bg-[#FBEDEC] text-[#B0443C]"
+                    : line.startsWith("@@")
+                      ? "text-[#3B6DB5]"
+                      : "text-ink-soft";
+              return (
+                <div key={index} className={`px-3 whitespace-pre-wrap break-all ${cls}`}>
+                  {line || " "}
+                </div>
+              );
+            })}
+          </pre>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function FileViewer({ filePath, cwd, gitDiff }: Props) {
+  if (gitDiff) {
+    return <GitDiffViewer filePath={filePath} cwd={cwd} />;
+  }
   if (isImagePath(filePath)) {
     return <ImageViewer filePath={filePath} cwd={cwd} />;
   }

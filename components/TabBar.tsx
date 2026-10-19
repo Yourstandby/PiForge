@@ -8,6 +8,8 @@ export interface Tab {
   id: string;
   label: string;
   filePath: string;
+  /** "diff" tabs render the Git working-tree diff for the same file. */
+  mode?: "file" | "diff";
 }
 
 interface Props {

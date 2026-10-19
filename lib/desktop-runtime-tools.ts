@@ -17,6 +17,9 @@ export function desktopRuntimeTools(mode: AgentMode, preset: ToolPreset, codemod
       (active.includes(tool.name) && ["deferred", "codemode"].includes(tool.exposure ?? "")))) names.push(tool.name);
   }
   if (registered.some((tool) => tool.name === "tool_search")) names.push("tool_search");
+  // Background processes are a desktop capability registered by our inline
+  // extension; ask mode still gates them through the approval hook.
+  if (registered.some((tool) => tool.name === "run_bg")) names.push("run_bg");
   if (codemode && registered.some((tool) => tool.name === "codemode")) names.push("codemode");
   return [...new Set(names)];
 }

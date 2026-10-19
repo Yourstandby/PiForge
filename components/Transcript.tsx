@@ -130,6 +130,81 @@ function assistantBlocks(
   return blocks;
 }
 
+function formatDuration(ms: number | undefined): string | null {
+  if (ms === undefined || !Number.isFinite(ms) || ms < 0) return null;
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)} s`;
+}
+
+function resultText(result: ToolResultMessage): string {
+  return result.content
+    .filter((block): block is { type: "text"; text: string } => block.type === "text")
+    .map((block) => block.text)
+    .join("\n");
+}
+
+type NestedCall = NonNullable<ToolResultMessage["nestedCalls"]>["calls"][number];
+
+/** Group nested records by their `parent/n` id prefix so the tree mirrors execution. */
+function buildNestedTree(calls: NestedCall[]): Map<string | null, NestedCall[]> {
+  const ids = new Set(calls.map((call) => call.id));
+  const tree = new Map<string | null, NestedCall[]>();
+  for (const call of calls) {
+    const slash = call.id.lastIndexOf("/");
+    const parentId = slash > 0 ? call.id.slice(0, slash) : null;
+    const parent = parentId && ids.has(parentId) ? parentId : null;
+    const bucket = tree.get(parent);
+    if (bucket) bucket.push(call);
+    else tree.set(parent, [call]);
+  }
+  return tree;
+}
+
+function NestedToolRow({
+  call,
+  depth,
+  tree,
+}: {
+  call: NestedCall;
+  depth: number;
+  tree: Map<string | null, NestedCall[]>;
+}) {
+  const children = tree.get(call.id) ?? [];
+  const duration = formatDuration(call.durationMs);
+  const args = call.arguments ? toolSummary(call.arguments) : call.argumentsBytes ? `${call.argumentsBytes} bytes` : "";
+  return (
+    <div>
+      <div
+        className="flex items-center gap-1.5 py-0.5 text-[11px]"
+        style={{ paddingLeft: 8 + depth * 12 }}
+      >
+        <span className="shrink-0 font-mono text-ink-faint">{depth === 0 ? "└" : "·"}</span>
+        <span className="shrink-0 font-mono text-ink-muted">{call.name}</span>
+        {args && <span className="min-w-0 flex-1 truncate font-mono text-ink-faint">{args}</span>}
+        {call.status === "error" ? (
+          <X size={10} strokeWidth={2.5} className="shrink-0 text-[#C2554E]" aria-label="失败" />
+        ) : call.status === "unfinished" ? (
+          <span className="shrink-0 text-[10px] text-ink-faint">未完成</span>
+        ) : (
+          <Check size={10} strokeWidth={2.5} className="shrink-0 text-[#3E8A63]" aria-label="完成" />
+        )}
+        {duration && <span className="shrink-0 tabular-nums text-ink-faint">{duration}</span>}
+      </div>
+      {call.error && (
+        <p
+          className="whitespace-pre-wrap break-all py-0.5 text-[10.5px] text-[#B0443C]"
+          style={{ paddingLeft: 20 + depth * 12 }}
+        >
+          {call.error}
+        </p>
+      )}
+      {children.map((child) => (
+        <NestedToolRow key={child.id} call={child} depth={depth + 1} tree={tree} />
+      ))}
+    </div>
+  );
+}
+
 function ToolCallCard({
   name,
   input,
@@ -142,15 +217,20 @@ function ToolCallCard({
   const [open, setOpen] = useState(false);
   const summary = toolSummary(input);
   const hasArgs = Object.keys(input).length > 0;
+  const hasDetails = hasArgs || Boolean(result);
+  const duration = formatDuration(result?.durationMs);
+  const nested = result?.nestedCalls;
+  const tree = nested?.calls.length ? buildNestedTree(nested.calls) : null;
+  const output = result ? resultText(result).trim() : "";
 
   return (
     <div className="my-2.5 overflow-hidden rounded-lg border border-[#E3E8F2] bg-white">
       <button
         type="button"
-        onClick={() => hasArgs && setOpen((value) => !value)}
-        aria-expanded={hasArgs ? open : undefined}
+        onClick={() => hasDetails && setOpen((value) => !value)}
+        aria-expanded={hasDetails ? open : undefined}
         className={`flex w-full items-center gap-2 px-3 py-2 text-left ${
-          hasArgs ? "cursor-pointer transition-colors hover:bg-[#F7FAFF]" : "cursor-default"
+          hasDetails ? "cursor-pointer transition-colors hover:bg-[#F7FAFF]" : "cursor-default"
         }`}
       >
         <span className="shrink-0 rounded bg-[#EDF3FD] px-1.5 py-0.5 text-[10px] font-medium text-accent-strong">
@@ -160,6 +240,12 @@ function ToolCallCard({
         <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-ink-soft">
           {summary || "（无参数）"}
         </span>
+        {tree && (
+          <span className="shrink-0 text-[10px] text-ink-faint">{nested?.calls.length} 子调用</span>
+        )}
+        {duration && (
+          <span className="shrink-0 tabular-nums text-[10.5px] text-ink-faint">{duration}</span>
+        )}
         {result ? (
           result.isError ? (
             <X size={12} strokeWidth={2.5} className="shrink-0 text-[#C2554E]" aria-label="失败" />
@@ -167,7 +253,7 @@ function ToolCallCard({
             <Check size={12} strokeWidth={2.5} className="shrink-0 text-[#3E8A63]" aria-label="完成" />
           )
         ) : null}
-        {hasArgs && (
+        {hasDetails && (
           <ChevronDown
             size={12}
             strokeWidth={2}
@@ -178,10 +264,44 @@ function ToolCallCard({
           />
         )}
       </button>
-      {open && hasArgs && (
-        <pre className="max-h-64 overflow-auto border-t border-[#EDF1F7] bg-[#FBFCFE] px-3 py-2 font-mono text-[11.5px] leading-5 text-ink-soft">
-          {JSON.stringify(input, null, 2)}
-        </pre>
+      {open && hasDetails && (
+        <div className="border-t border-[#EDF1F7] bg-[#FBFCFE]">
+          {tree && (
+            <div className="border-b border-[#EDF1F7] px-1 py-1.5">
+              <p className="px-2 pb-1 text-[10px] font-medium uppercase tracking-wider text-ink-faint">
+                执行树
+              </p>
+              {(tree.get(null) ?? []).map((call) => (
+                <NestedToolRow key={call.id} call={call} depth={0} tree={tree} />
+              ))}
+              {nested && !nested.complete && (
+                <p className="px-2 pt-1 text-[10px] text-ink-faint">
+                  部分子调用未记录（超出数量或体积上限）
+                </p>
+              )}
+            </div>
+          )}
+          {hasArgs && (
+            <details className="border-b border-[#EDF1F7] last:border-b-0" open={!tree && !output}>
+              <summary className="cursor-pointer select-none px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-ink-faint">
+                原始输入
+              </summary>
+              <pre className="max-h-64 overflow-auto px-3 pb-2 font-mono text-[11.5px] leading-5 text-ink-soft">
+                {JSON.stringify(input, null, 2)}
+              </pre>
+            </details>
+          )}
+          {result && (
+            <details className="border-b border-[#EDF1F7] last:border-b-0" open={!tree && !hasArgs}>
+              <summary className="cursor-pointer select-none px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-ink-faint">
+                原始输出{result.isError ? "（失败）" : ""}
+              </summary>
+              <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all px-3 pb-2 font-mono text-[11.5px] leading-5 text-ink-soft">
+                {output || "（空）"}
+              </pre>
+            </details>
+          )}
+        </div>
       )}
     </div>
   );

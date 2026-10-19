@@ -47,6 +47,7 @@ export function Workbench() {
     activeFileTabId,
     setActiveFileTabId,
     handleOpenFile,
+    handleOpenDiff,
     handleCloseFileTab,
   } = useFileTabs();
 
@@ -319,13 +320,21 @@ export function Workbench() {
                 onCloseTab={handleCloseFileTab}
               />
               <div className="min-h-0 flex-1 overflow-hidden border-t border-[#EBEDF1]">
-                <FileViewer filePath={activeTab.filePath} cwd={cwd ?? undefined} />
+                <FileViewer
+                  filePath={activeTab.filePath}
+                  cwd={cwd ?? undefined}
+                  gitDiff={activeTab.mode === "diff"}
+                />
               </div>
             </div>
           )}
         </div>
 
-        <FilePanel cwd={cwd} onOpenFile={(path, name) => handleOpenFile(path, name)} />
+        <FilePanel
+          cwd={cwd}
+          onOpenFile={(path, name) => handleOpenFile(path, name)}
+          onOpenDiff={(path, name) => handleOpenDiff(path, name)}
+        />
       </div>
 
       {settingsModal === "skills" && (
