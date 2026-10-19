@@ -10,12 +10,12 @@ import { FileExplorer } from "./FileExplorer";
  * same neutral light palette).
  */
 const explorerTokens = {
-  "--bg-hover": "#EAEAEE",
+  "--bg-hover": "#E7E7EB",
   "--bg-elevated": "#ffffff",
   "--border": "#e5e5e5",
-  "--text": "#171717",
-  "--text-dim": "#a3a3a3",
-  "--accent": "#171717",
+  "--text": "#1f2937",
+  "--text-dim": "#9ca3af",
+  "--accent": "#2563eb",
   "--danger": "#dc2626",
   "--radius-control": "6px",
   "--font-mono": "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
@@ -34,11 +34,11 @@ export function FilePanel({ cwd }: { cwd: string | null }) {
   return (
     <aside className="flex w-[280px] shrink-0 flex-col border-l border-gray-200/60 bg-[#F5F5F7]">
       <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-gray-200/60 px-3">
-        <span className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
+        <span className="text-[11px] font-medium uppercase tracking-wider text-ink-muted">
           项目文件
         </span>
         {cwd && (
-          <span className="min-w-0 truncate text-[11px] text-neutral-400" title={cwd}>
+          <span className="min-w-0 truncate text-[11px] text-ink-faint" title={cwd}>
             {folderName(cwd)}
           </span>
         )}
@@ -48,7 +48,7 @@ export function FilePanel({ cwd }: { cwd: string | null }) {
         {cwd ? (
           <FileExplorer key={cwd} cwd={cwd} onOpenFile={handleOpenFile} />
         ) : (
-          <p className="px-3 py-2 text-[11px] text-neutral-400">暂无项目</p>
+          <p className="px-3 py-2 text-[11px] text-ink-faint">暂无项目</p>
         )}
       </div>
     </aside>

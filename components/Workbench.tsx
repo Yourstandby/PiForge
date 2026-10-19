@@ -1,157 +1,120 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import type { AgentMessage, SessionInfo } from "@/lib/types";
-import { Composer } from "./Composer";
+import { useCallback, useEffect, useState } from "react";
+import type { SessionInfo } from "@/lib/types";
+import { ChatSurface } from "./ChatSurface";
 import { FilePanel } from "./FilePanel";
 import { SessionRail } from "./SessionRail";
-import { Transcript } from "./Transcript";
+
+function byModifiedDesc(a: SessionInfo, b: SessionInfo): number {
+  return new Date(b.modified).getTime() - new Date(a.modified).getTime();
+}
 
 export function Workbench() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selected, setSelected] = useState<SessionInfo | null>(null);
+  const [newSessionCwd, setNewSessionCwd] = useState<string | null>(null);
   const [cwd, setCwd] = useState<string | null>(null);
-  const [messages, setMessages] = useState<AgentMessage[] | null>(null);
-  const [chatLoading, setChatLoading] = useState(false);
-  const [chatError, setChatError] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  // Mirrors AppShell's sessionKey: remount the chat surface so all
+  // session-scoped hook state starts clean on every switch.
+  const [chatKey, setChatKey] = useState(0);
+
+  const loadSessions = useCallback(async (): Promise<SessionInfo[]> => {
+    try {
+      const res = await fetch("/api/sessions");
+      if (!res.ok) return [];
+      const data = (await res.json()) as { sessions?: SessionInfo[] };
+      const sorted = [...(data.sessions ?? [])].sort(byModifiedDesc);
+      setSessions(sorted);
+      return sorted;
+    } catch {
+      return [];
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
+    void loadSessions().then((sorted) => {
+      if (cancelled) return;
 
-    fetch("/api/sessions")
-      .then((res) => (res.ok ? res.json() : { sessions: [] }))
-      .then((data: { sessions?: SessionInfo[] }) => {
-        if (cancelled) return;
-        const list = Array.isArray(data.sessions) ? data.sessions : [];
-        const sorted = [...list].sort(
-          (a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime(),
-        );
-        setSessions(sorted);
-
-        // Deep link (?session=<id>, used by desktop project windows).
-        const deepLinkId = new URLSearchParams(window.location.search).get("session");
-        const linked = deepLinkId ? sorted.find((session) => session.id === deepLinkId) : null;
-        if (linked) {
-          setSelectedId(linked.id);
-          setCwd(linked.cwd);
-          return;
-        }
-
-        // The file tree starts on the most recent project; it then stays put
-        // when the user starts a fresh session or switches conversations.
-        setCwd((current) => current ?? sorted[0]?.cwd ?? null);
-      })
-      .catch(() => {
-        // Browsing history is read-only; an unreachable API just shows an empty list.
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-
+      const deepLinkId = new URLSearchParams(window.location.search).get("session");
+      const linked = deepLinkId ? sorted.find((session) => session.id === deepLinkId) : null;
+      if (linked) {
+        setSelected(linked);
+        setCwd(linked.cwd);
+        return;
+      }
+      // Nothing selected: the hero composer is a brand-new session in the
+      // most recent project, so the first message can be sent immediately.
+      const projectCwd = sorted[0]?.cwd ?? null;
+      setCwd((current) => current ?? projectCwd);
+      setNewSessionCwd((current) => current ?? projectCwd);
+    });
     return () => {
       cancelled = true;
     };
-  }, []);
-
-  // Load the selected conversation from the session file via the read-only API.
-  useEffect(() => {
-    if (!selectedId) {
-      setMessages(null);
-      setChatError(null);
-      return;
-    }
-
-    const controller = new AbortController();
-    setChatLoading(true);
-    setChatError(null);
-
-    fetch(`/api/sessions/${encodeURIComponent(selectedId)}`, { signal: controller.signal })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json() as Promise<{ context?: { messages?: AgentMessage[] } }>;
-      })
-      .then((data) => {
-        setMessages(Array.isArray(data.context?.messages) ? data.context.messages : []);
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) return;
-        setMessages(null);
-        setChatError(error instanceof Error ? error.message : String(error));
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setChatLoading(false);
-      });
-
-    return () => controller.abort();
-  }, [selectedId]);
+  }, [loadSessions]);
 
   const handleSelect = (session: SessionInfo) => {
-    setSelectedId(session.id);
+    setSelected(session);
+    setNewSessionCwd(null);
     setCwd(session.cwd);
+    setChatKey((key) => key + 1);
   };
 
-  const handleNewSession = () => {
-    setSelectedId(null);
-    setMessages(null);
-    setChatError(null);
+  const handleNewSession = async () => {
+    let target = cwd;
+    if (!target) {
+      try {
+        const res = await fetch("/api/default-cwd", { method: "POST" });
+        if (res.ok) {
+          const data = (await res.json()) as { cwd?: string };
+          target = data.cwd ?? null;
+          if (target) setCwd(target);
+        }
+      } catch {
+        // Without a project folder there is nothing to create a session in.
+      }
+    }
+    if (!target) return;
+
+    setSelected(null);
+    setNewSessionCwd(target);
     setDraft("");
-    // cwd is intentionally left alone: the file tree keeps the current project.
+    setChatKey((key) => key + 1);
   };
 
-  const composer = (
-    <Composer
-      value={draft}
-      onValueChange={setDraft}
-      onSubmit={() => {
-        // Sending is not wired yet; history browsing is read-only for now.
-      }}
-    />
-  );
+  const handleSessionCreated = (created: SessionInfo) => {
+    setSelected(created);
+    setNewSessionCwd(null);
+    if (created.cwd) setCwd(created.cwd);
+    void loadSessions();
+  };
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-white">
       <SessionRail
         sessions={sessions}
         loading={loading}
-        selectedId={selectedId}
+        selectedId={selected?.id ?? null}
         onSelect={handleSelect}
-        onNewSession={handleNewSession}
+        onNewSession={() => {
+          void handleNewSession();
+        }}
       />
 
-      <main className="flex min-w-0 flex-1 flex-col bg-[#FCFCFA]">
-        {selectedId ? (
-          <>
-            <div key={selectedId} className="min-h-0 flex-1 overflow-y-auto">
-              <div className="mx-auto w-full max-w-3xl px-8 py-10">
-                {chatLoading ? (
-                  <p className="py-10 text-center text-[13px] text-neutral-400">加载会话…</p>
-                ) : chatError ? (
-                  <div className="py-10 text-center">
-                    <p className="text-[13px] text-neutral-500">无法加载这段会话</p>
-                    <p className="mt-1 text-[11px] text-neutral-400">{chatError}</p>
-                  </div>
-                ) : (
-                  <Transcript messages={messages ?? []} />
-                )}
-              </div>
-            </div>
-            <div className="shrink-0 px-8 pb-6">
-              <div className="mx-auto w-full max-w-3xl">{composer}</div>
-            </div>
-          </>
-        ) : (
-          <div className="flex flex-1 items-center justify-center px-8">
-            <div className="flex w-full max-w-3xl flex-col items-center">
-              <h1 className="text-2xl font-semibold tracking-tight text-neutral-900">
-                PiForge
-              </h1>
-              <div className="mt-6 w-full">{composer}</div>
-            </div>
-          </div>
-        )}
-      </main>
+      <ChatSurface
+        key={chatKey}
+        session={selected}
+        newSessionCwd={newSessionCwd}
+        draft={draft}
+        onDraftChange={setDraft}
+        onSessionCreated={handleSessionCreated}
+      />
 
       <FilePanel cwd={cwd} />
     </div>

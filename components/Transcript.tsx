@@ -13,7 +13,7 @@ const markdownComponents: Components = {
   ol: ({ children }) => <ol className="mb-3 list-decimal pl-5">{children}</ol>,
   li: ({ children }) => <li className="mb-1">{children}</li>,
   blockquote: ({ children }) => (
-    <blockquote className="mb-3 border-l-2 border-neutral-200 pl-3 text-neutral-500">
+    <blockquote className="mb-3 border-l-2 border-[#DCE6F8] pl-3 text-ink-muted">
       {children}
     </blockquote>
   ),
@@ -22,13 +22,13 @@ const markdownComponents: Components = {
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="text-neutral-900 underline underline-offset-2"
+      className="text-accent-strong underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
     >
       {children}
     </a>
   ),
   pre: ({ children }) => (
-    <pre className="mb-3 overflow-x-auto rounded-lg border border-neutral-200/70 bg-[#F4F2ED] p-3 text-[12.5px] leading-6">
+    <pre className="mb-3 overflow-x-auto rounded-lg border border-[#E3E8F2] bg-[#F5F8FD] p-3 text-[12.5px] leading-6">
       {children}
     </pre>
   ),
@@ -36,18 +36,18 @@ const markdownComponents: Components = {
     className ? (
       <code className="font-mono text-[12.5px]">{children}</code>
     ) : (
-      <code className="rounded bg-[#EFEDE7] px-1 py-0.5 font-mono text-[0.9em]">{children}</code>
+      <code className="rounded bg-[#EDF3FD] px-1 py-0.5 font-mono text-[0.9em] text-ink">{children}</code>
     ),
-  hr: () => <hr className="my-5 border-neutral-200" />,
+  hr: () => <hr className="my-5 border-[#E3E8F2]" />,
   table: ({ children }) => (
     <div className="mb-3 overflow-x-auto">
       <table className="w-full border-collapse text-[13px]">{children}</table>
     </div>
   ),
   th: ({ children }) => (
-    <th className="border border-neutral-200 px-2 py-1 text-left font-medium">{children}</th>
+    <th className="border border-[#E3E8F2] px-2 py-1 text-left font-medium">{children}</th>
   ),
-  td: ({ children }) => <td className="border border-neutral-200 px-2 py-1">{children}</td>,
+  td: ({ children }) => <td className="border border-[#E3E8F2] px-2 py-1">{children}</td>,
 };
 
 function userText(message: AgentMessage): string {
@@ -97,29 +97,29 @@ export function Transcript({ messages }: { messages: AgentMessage[] }) {
     .filter((turn): turn is { role: "user" | "assistant"; text: string; tools: string[] } => turn !== null);
 
   if (turns.length === 0) {
-    return <p className="py-10 text-center text-[13px] text-neutral-400">这段会话还没有可显示的对话</p>;
+    return <p className="py-10 text-center text-[13px] text-ink-faint">这段会话还没有可显示的对话</p>;
   }
 
   return (
     <div>
       {turns.map((turn, index) => (
         <article key={index} className="mb-8 last:mb-0">
-          <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.08em] text-neutral-400">
+          <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.08em] text-ink-faint">
             {turn.role === "user" ? "你" : "PiForge"}
           </div>
           {turn.role === "user" ? (
-            <div className="whitespace-pre-wrap break-words rounded-xl border border-neutral-200/70 bg-white px-4 py-3 text-[14px] leading-7 text-neutral-800 shadow-[0_1px_2px_rgba(17,17,17,0.03)]">
+            <div className="whitespace-pre-wrap break-words rounded-xl border border-[#E7E9EE] bg-white px-4 py-3 text-[14px] leading-7 text-ink shadow-[0_1px_2px_rgba(17,17,17,0.03)]">
               {turn.text}
             </div>
           ) : (
-            <div className="break-words text-[14px] leading-7 text-neutral-800">
+            <div className="break-words text-[14px] leading-7 text-ink-soft">
               <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                 {turn.text}
               </ReactMarkdown>
             </div>
           )}
           {turn.tools.length > 0 && (
-            <div className="mt-2 text-[11px] text-neutral-400">
+            <div className="mt-2 text-[11px] text-ink-faint">
               工具 · {turn.tools.join(" · ")}
             </div>
           )}

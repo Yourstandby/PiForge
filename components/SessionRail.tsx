@@ -43,9 +43,12 @@ export function SessionRail({ sessions, loading, selectedId, onSelect, onNewSess
         <button
           type="button"
           onClick={onNewSession}
-          className="flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white text-[13px] font-medium text-neutral-700 shadow-[0_1px_2px_rgba(17,17,17,0.03)] transition-colors duration-150 hover:bg-neutral-100"
+          className="group flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-[#E4E4E0] bg-white text-[13px] font-medium text-ink-soft shadow-[0_1px_2px_rgba(17,17,17,0.03)] transition-colors duration-150 hover:border-[#CFDDFA] hover:bg-white"
         >
-          <span aria-hidden="true" className="text-[15px] leading-none text-neutral-400">
+          <span
+            aria-hidden="true"
+            className="text-[15px] leading-none text-accent transition-colors duration-150 group-hover:text-accent-strong"
+          >
             +
           </span>
           新建会话
@@ -53,16 +56,14 @@ export function SessionRail({ sessions, loading, selectedId, onSelect, onNewSess
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-        <div className="px-1.5 pb-1.5 pt-1 text-[11px] font-medium uppercase tracking-wider text-neutral-400">
+        <div className="px-1.5 pb-1.5 pt-1 text-[11px] font-medium uppercase tracking-wider text-ink-faint">
           历史会话
         </div>
 
-        {loading && (
-          <p className="px-1.5 py-2 text-[12px] text-neutral-400">加载中…</p>
-        )}
+        {loading && <p className="px-1.5 py-2 text-[12px] text-ink-faint">加载中…</p>}
 
         {!loading && items.length === 0 && (
-          <p className="px-1.5 py-2 text-[12px] text-neutral-400">还没有会话</p>
+          <p className="px-1.5 py-2 text-[12px] text-ink-faint">还没有会话</p>
         )}
 
         <div className="flex flex-col gap-0.5">
@@ -77,19 +78,25 @@ export function SessionRail({ sessions, loading, selectedId, onSelect, onNewSess
                 aria-current={active ? "true" : undefined}
                 className={
                   active
-                    ? "flex w-full flex-col gap-0.5 rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-left shadow-[0_1px_2px_rgba(17,17,17,0.04)]"
-                    : "flex w-full flex-col gap-0.5 rounded-lg border border-transparent px-2.5 py-2 text-left transition-colors duration-150 hover:bg-neutral-200/50"
+                    ? "flex w-full flex-col gap-0.5 rounded-lg border border-[#D9E5FB] bg-white px-2.5 py-2 text-left shadow-[0_1px_2px_rgba(17,17,17,0.04)]"
+                    : "flex w-full flex-col gap-0.5 rounded-lg border border-transparent px-2.5 py-2 text-left transition-colors duration-150 hover:bg-[#ECECEF]"
                 }
               >
                 <span className="flex w-full items-baseline gap-2">
-                  <span className="min-w-0 flex-1 truncate text-[13px] text-neutral-800">
+                  <span
+                    className={
+                      active
+                        ? "min-w-0 flex-1 truncate text-[13px] font-medium text-accent-strong"
+                        : "min-w-0 flex-1 truncate text-[13px] text-ink"
+                    }
+                  >
                     {sessionTitle(session)}
                   </span>
-                  <span className="shrink-0 text-[10px] tabular-nums text-neutral-400">
+                  <span className="shrink-0 text-[10px] tabular-nums text-ink-faint">
                     {formatTime(session.modified)}
                   </span>
                 </span>
-                <span className="w-full truncate text-[11px] text-neutral-400">
+                <span className="w-full truncate text-[11px] text-ink-faint">
                   {projectName(session.cwd)}
                 </span>
               </button>
