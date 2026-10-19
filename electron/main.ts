@@ -21,7 +21,7 @@ import {
 } from "./update-install-gate";
 import { buildElectronCspHeader } from "./csp";
 import { getAppIconPath } from "./app-icon";
-import { applyTitleBarOverlayTheme } from "./title-bar-overlay";
+import { applyTitleBarOverlayTheme, titleBarOverlayOptions } from "./title-bar-overlay";
 import { normalizeWindowPath } from "./window-path";
 import {
   ServerProcess,
@@ -333,11 +333,7 @@ function createWindow(options: { initialPath?: string; showStartup?: boolean } =
     minWidth: 800,
     minHeight: 600,
     titleBarStyle: "hidden",
-    titleBarOverlay: {
-      color: "#0b1119",       // --bg (dark), mirrors title-bar-overlay.ts
-      symbolColor: "#ccd7e6", // --text (dark)
-      height: 36,
-    },
+    titleBarOverlay: titleBarOverlayOptions(),
     title: "PiForge",
     icon: nativeImage.createFromPath(getAppIconPath(app.getAppPath())),
     show: false,

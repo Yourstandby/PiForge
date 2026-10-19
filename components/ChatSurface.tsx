@@ -12,6 +12,7 @@ interface Props {
   session: SessionInfo | null;
   newSessionCwd: string | null;
   draft: string;
+  modelsRefreshKey?: number;
   onDraftChange: (value: string) => void;
   onSessionCreated: (session: SessionInfo) => void;
 }
@@ -35,6 +36,7 @@ function ChatSession({
   session,
   newSessionCwd,
   draft,
+  modelsRefreshKey,
   onDraftChange,
   onSessionCreated,
   onReload,
@@ -43,6 +45,7 @@ function ChatSession({
   const chat = useAgentSession({
     session,
     newSessionCwd,
+    modelsRefreshKey,
     onSessionCreated,
     onAgentEnd: playDoneSound,
   });

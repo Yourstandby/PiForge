@@ -101,6 +101,30 @@ body {
   background-color: rgb(59 130 246 / 0.16);
 }
 
+/* Electron window chrome.
+   36px drag strip built by `components/TitleBar.tsx`.
+   - Windows/Linux: the overlay buttons live at the right edge (~150px).
+   - macOS: the traffic lights live at the left edge (~88px).
+   - Browser dev preview (no data-electron-platform): neither exists. */
+.app-titlebar {
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.app-titlebar-inner {
+  padding-left: 1.25rem;
+  padding-right: 150px;
+}
+
+html[data-electron-platform="darwin"] .app-titlebar-inner {
+  padding-left: 88px;
+  padding-right: 1.25rem;
+}
+
+html:not([data-electron-platform]) .app-titlebar-inner {
+  padding-right: 1.25rem;
+}
+
 @layer components {
   .material-popover {
     background: var(--material-popover);

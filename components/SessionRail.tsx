@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { Plug, Plus, Settings, Sparkles } from "lucide-react";
+import { FolderPlus, KeyRound, Plug, Plus, Settings, Sparkles } from "lucide-react";
 import type { SessionInfo } from "@/lib/types";
 import { useDismissOnOutsideClick } from "@/hooks/useDismissOnOutsideClick";
 
@@ -32,20 +32,26 @@ interface Props {
   sessions: SessionInfo[];
   loading: boolean;
   selectedId: string | null;
+  error?: string | null;
   onSelect: (session: SessionInfo) => void;
   onNewSession: () => void;
+  onAddProject: () => void;
   onOpenSkills: () => void;
   onOpenMcp: () => void;
+  onOpenModels: () => void;
 }
 
 export function SessionRail({
   sessions,
   loading,
   selectedId,
+  error,
   onSelect,
   onNewSession,
+  onAddProject,
   onOpenSkills,
   onOpenMcp,
+  onOpenModels,
 }: Props) {
   const items = useMemo(() => sessions, [sessions]);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -55,19 +61,35 @@ export function SessionRail({
   return (
     <aside className="flex w-[260px] shrink-0 flex-col border-r border-gray-200/60 bg-[#F5F5F7]">
       <div className="shrink-0 p-3">
-        <button
-          type="button"
-          onClick={onNewSession}
-          className="group flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-[#E4E4E0] bg-white text-[13px] font-medium text-ink-soft shadow-[0_1px_2px_rgba(17,17,17,0.03)] transition-colors duration-150 hover:border-[#CFDDFA] hover:bg-white"
-        >
-          <Plus
-            size={14}
-            strokeWidth={2}
-            aria-hidden="true"
-            className="text-accent transition-colors duration-150 group-hover:text-accent-strong"
-          />
-          新建会话
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={onNewSession}
+            className="group flex h-9 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg border border-[#E4E4E0] bg-white text-[13px] font-medium text-ink-soft shadow-[0_1px_2px_rgba(17,17,17,0.03)] transition-colors duration-150 hover:border-[#CFDDFA] hover:bg-white"
+          >
+            <Plus
+              size={14}
+              strokeWidth={2}
+              aria-hidden="true"
+              className="text-accent transition-colors duration-150 group-hover:text-accent-strong"
+            />
+            新建会话
+          </button>
+          <button
+            type="button"
+            onClick={onAddProject}
+            title="打开项目文件夹（新窗口）"
+            aria-label="打开项目文件夹（新窗口）"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#E4E4E0] bg-white text-ink-muted shadow-[0_1px_2px_rgba(17,17,17,0.03)] transition-colors duration-150 hover:border-[#CFDDFA] hover:text-accent-strong"
+          >
+            <FolderPlus size={15} strokeWidth={1.75} aria-hidden="true" />
+          </button>
+        </div>
+        {error && (
+          <p role="status" className="px-1 pt-1.5 text-[11px] text-[#c2554e]">
+            {error}
+          </p>
+        )}
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
@@ -123,6 +145,17 @@ export function SessionRail({
       <div ref={menuRef} className="relative shrink-0 border-t border-gray-200/60 p-2">
         {menuOpen && (
           <div className="material-popover absolute bottom-full left-2 z-[60] mb-1 w-[212px] rounded-xl p-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                setMenuOpen(false);
+                onOpenModels();
+              }}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-ink-muted transition-colors duration-150 hover:bg-[#ECECEF] hover:text-ink"
+            >
+              <KeyRound size={14} strokeWidth={1.75} className="text-accent" aria-hidden="true" />
+              模型与登录
+            </button>
             <button
               type="button"
               onClick={() => {

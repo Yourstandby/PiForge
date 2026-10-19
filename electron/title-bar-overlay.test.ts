@@ -22,7 +22,7 @@ test("applyTitleBarOverlayTheme applies light, dark and glacier window colors", 
   assert.equal(applyTitleBarOverlayTheme(target, "dark"), true);
   assert.equal(applyTitleBarOverlayTheme(target, "glacier"), true);
   assert.deepEqual(calls, [
-    { color: "#f7fafe", symbolColor: "#24303f" },
+    { color: "#f5f5f7", symbolColor: "#374151" },
     { color: "#0b0d10", symbolColor: "#c7ccd3" },
     { color: "#13212b", symbolColor: "#d3e6f2" },
   ]);
