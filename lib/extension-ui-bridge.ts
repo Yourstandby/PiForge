@@ -50,6 +50,8 @@ export type ExtensionUiDialogOptions = {
  */
 export class ExtensionUiBridge {
   private pending = new Map<string, Deferred>();
+  /** Request payloads kept so a late SSE subscriber can still render the dialog. */
+  private pendingEvents = new Map<string, ExtensionUiRequestEvent>();
   private destroyed = false;
   private emit: ExtensionUiEmit;
 
@@ -61,13 +63,24 @@ export class ExtensionUiBridge {
     return this.pending.size;
   }
 
+  /**
+   * Requests still waiting for a response. The SSE route replays these to every
+   * new subscriber: an extension can open a dialog while the renderer has not
+   * attached yet (first message of a brand-new session), and without the replay
+   * the event is lost and the agent waits forever.
+   */
+  pendingRequests(): ExtensionUiRequestEvent[] {
+    return [...this.pendingEvents.values()];
+  }
+
   destroy(): void {
     this.destroyed = true;
-    for (const [id, d] of this.pending) {
+    for (const d of this.pending.values()) {
       if (d.timer) clearTimeout(d.timer);
       d.resolve(d.method === "confirm" ? false : undefined);
-      this.pending.delete(id);
     }
+    this.pending.clear();
+    this.pendingEvents.clear();
   }
 
   /**
@@ -79,6 +92,7 @@ export class ExtensionUiBridge {
     if (!d) return "Unknown or expired UI request";
     if (d.timer) clearTimeout(d.timer);
     this.pending.delete(response.id);
+    this.pendingEvents.delete(response.id);
 
     if (response.cancelled) {
       d.resolve(d.method === "confirm" ? false : undefined);
@@ -122,6 +136,7 @@ export class ExtensionUiBridge {
         deferred.timer = setTimeout(() => {
           if (!this.pending.has(id)) return;
           this.pending.delete(id);
+          this.pendingEvents.delete(id);
           resolve((method === "confirm" ? false : undefined) as T);
         }, opts.timeout);
       }
@@ -130,6 +145,7 @@ export class ExtensionUiBridge {
           if (!this.pending.has(id)) return;
           if (deferred.timer) clearTimeout(deferred.timer);
           this.pending.delete(id);
+          this.pendingEvents.delete(id);
           resolve((method === "confirm" ? false : undefined) as T);
         };
         if (opts.signal.aborted) {
@@ -139,11 +155,13 @@ export class ExtensionUiBridge {
         opts.signal.addEventListener("abort", onAbort, { once: true });
       }
       this.pending.set(id, deferred);
+      this.pendingEvents.set(id, event);
       try {
         this.emit(event);
       } catch (err) {
         if (deferred.timer) clearTimeout(deferred.timer);
         this.pending.delete(id);
+        this.pendingEvents.delete(id);
         resolve((method === "confirm" ? false : undefined) as T);
         console.error("extension_ui emit failed:", err);
       }

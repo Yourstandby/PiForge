@@ -70,6 +70,15 @@ export class AgentSessionWrapper {
   private _toolPresetBeforePlan: ToolPreset | null = null;
   private _modeRef: AgentModeRef = { current: DEFAULT_AGENT_MODE };
   private _uiBridge: ExtensionUiBridge | null = null;
+  /**
+   * Extension binding runs after the session is handed back to the caller.
+   * `bindExtensions` can block on an extension dialog (`session_start`)
+   * launched via ctx.ui.input/select/confirm, and awaiting it inside
+   * startRpcSession would deadlock the HTTP request that tells the renderer
+   * the session id it needs to render that dialog. Prompts wait on this
+   * promise instead.
+   */
+  private _binding: Promise<void> = Promise.resolve();
   private followUpQueue = new FollowUpQueue();
   private pendingAgentEnd: AgentEvent | null = null;
   private suppressQueuedDispatchOnSettled = false;
@@ -108,6 +117,15 @@ export class AgentSessionWrapper {
 
   attachUiBridge(bridge: ExtensionUiBridge): void {
     this._uiBridge = bridge;
+  }
+
+  /** Deferred extension binding; resolved before the first prompt is sent. */
+  setBinding(promise: Promise<void>): void {
+    this._binding = promise;
+    // Binding failures are surfaced through the prompt path; without this no-op
+    // handler a session that never receives a prompt would leave an unhandled
+    // rejection behind.
+    void promise.catch(() => {});
   }
 
   get modeRef(): AgentModeRef {
@@ -285,6 +303,16 @@ export class AgentSessionWrapper {
 
   onEvent(listener: EventListener): () => void {
     this.listeners.push(listener);
+    // A dialog may already be waiting: extensions can open one during
+    // session_start, i.e. before the renderer has attached its SSE stream
+    // (first message of a new session). Replay it instead of hanging.
+    for (const request of this._uiBridge?.pendingRequests() ?? []) {
+      try {
+        listener(request);
+      } catch (err) {
+        console.error("Error replaying pending extension UI request:", err);
+      }
+    }
     return () => {
       const i = this.listeners.indexOf(listener);
       if (i !== -1) this.listeners.splice(i, 1);
@@ -304,13 +332,15 @@ export class AgentSessionWrapper {
    * step (stripping paths / credentials) can be added later.
    */
   private emitAgentError(message: string): void {
-    for (const l of this.listeners) {
-      try {
-        l({ type: "agent_error", errorMessage: message });
-      } catch (err) {
-        console.error("Error in agent_error listener:", err);
-      }
-    }
+    this.emitEvent({ type: "agent_error", errorMessage: message });
+  }
+
+  /**
+   * Surface a background failure (e.g. a prompt dispatched after the HTTP
+   * response was already sent) to every SSE subscriber.
+   */
+  reportError(message: string): void {
+    this.emitAgentError(message);
   }
 
   onDestroy(cb: () => void): void {
@@ -400,6 +430,12 @@ export class AgentSessionWrapper {
         // instead of relying on pi's internal isStreaming handling.
         if (this.inner.isStreaming || this.reloadingResources) throw new Error("Session is streaming or reloading");
         if (this.resourcesChanged) await this.reloadResources();
+        try {
+          await this._binding;
+        } catch (error) {
+          this.emitAgentError(error instanceof Error ? error.message : String(error));
+          return null;
+        }
         this.suppressQueuedDispatchOnSettled = false;
         // Fire and forget — events come via subscribe
         const promptImages = command.images as Array<{ type: "image"; data: string; mimeType: string }> | undefined;
@@ -912,15 +948,23 @@ export async function startRpcSession(
     });
     wrapper.attachUiBridge(bridge);
 
-    if (typeof inner.bindExtensions === "function") {
-      await inner.bindExtensions({
-        uiContext: bridge as unknown as Parameters<NonNullable<AgentSessionLike["bindExtensions"]>>[0]["uiContext"],
-        mode: "rpc",
-      });
-    }
-    wrapper.applyAgentMode(agentMode);
-
     wrapper.start();
+
+    // Bind after handing the wrapper back: an extension can block in
+    // session_start (e.g. ctx.ui.input) and the caller must be able to return
+    // the session id first so the renderer can show the dialog. `send`
+    // (prompt path) awaits this promise.
+    wrapper.setBinding(
+      (async () => {
+        if (typeof inner.bindExtensions === "function") {
+          await inner.bindExtensions({
+            uiContext: bridge as unknown as Parameters<NonNullable<AgentSessionLike["bindExtensions"]>>[0]["uiContext"],
+            mode: "rpc",
+          });
+        }
+        wrapper.applyAgentMode(agentMode);
+      })(),
+    );
 
     const realSessionId = inner.sessionId as string;
     const realSessionFile = inner.sessionFile as string | undefined;

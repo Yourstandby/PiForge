@@ -18,6 +18,44 @@ import { rewriteChildHeader } from "@/lib/session-cascade";
 import { withFileLock } from "@/lib/session-lock";
 import { errorMessage, getRequestId, jsonError, logApiError } from "@/lib/api-error";
 
+/**
+ * Read a session's entries, tolerating a not-yet-flushed file for live sessions.
+ * `resolveSessionPath` is populated when the RPC session starts, but the file
+ * only appears once pi appends the first entry.
+ */
+async function readEntriesTolerant(
+  filePath: string,
+  sessionId: string,
+): Promise<Awaited<ReturnType<typeof getSessionEntriesAsync>>> {
+  try {
+    return await getSessionEntriesAsync(filePath);
+  } catch (error) {
+    const missing = (error as { code?: string }).code === "ENOENT";
+    if (!missing || !getRpcSession(sessionId)?.isAlive()) throw error;
+    return [];
+  }
+}
+
+/** Header for a session that is live in memory but not on disk yet. */
+function liveSessionHeader(
+  sessionId: string,
+): { id: string; cwd: string; timestamp: string } | null {
+  const rpc = getRpcSession(sessionId);
+  if (!rpc?.isAlive()) return null;
+  try {
+    const header = rpc.inner.sessionManager.getHeader() as
+      | { cwd?: string; timestamp?: string }
+      | undefined;
+    return {
+      id: sessionId,
+      cwd: header?.cwd ?? "",
+      timestamp: header?.timestamp ?? new Date().toISOString(),
+    };
+  } catch {
+    return { id: sessionId, cwd: "", timestamp: new Date().toISOString() };
+  }
+}
+
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -30,12 +68,19 @@ export async function GET(
       return jsonError(req, 404, "Session not found");
     }
 
-    const entries = await getSessionEntriesAsync(filePath);
+    const entries = await readEntriesTolerant(filePath, id);
     const tree = buildTree(entries);
     const leafId = getLeafId(entries);
     const context = buildSessionContext(entries, leafId);
 
-    const header = entries.length > 0 && (entries[0] as unknown as { type: string }).type === "session" ? entries[0] as unknown as { id: string; cwd?: string; timestamp: string } : null;
+    const diskHeader = entries.length > 0 && (entries[0] as unknown as { type: string }).type === "session" ? entries[0] as unknown as { id: string; cwd?: string; timestamp: string } : null;
+    // A brand-new session is registered in the RPC registry (and its path is
+    // cached) before pi flushes the first entry — that gap widens when an
+    // extension opens a dialog during session_start, because the run cannot
+    // proceed until the user answers. Report what the live session knows
+    // instead of 500-ing the renderer that is about to show that dialog.
+    const liveHeader = diskHeader ? null : liveSessionHeader(id);
+    const header = diskHeader ?? liveHeader;
     let modified = header?.timestamp ?? new Date().toISOString();
     try {
       const fileStat = await stat(filePath);

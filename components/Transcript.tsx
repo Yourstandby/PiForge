@@ -3,7 +3,7 @@
 import { useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Check, ChevronDown, X } from "lucide-react";
+import { Check, ChevronDown, GitFork, X } from "lucide-react";
 import type { AgentMessage, ToolResultMessage } from "@/lib/types";
 
 const markdownComponents: Components = {
@@ -221,27 +221,43 @@ function ThinkingBlock({ text }: { text: string }) {
   );
 }
 
-export function Transcript({ messages }: { messages: AgentMessage[] }) {
+export function Transcript({
+  messages,
+  entryIds,
+  onFork,
+  forkingEntryId,
+}: {
+  messages: AgentMessage[];
+  /** 1:1 with `messages`; the session entry id used by `fork`/`navigate_tree`. */
+  entryIds?: Array<string | undefined>;
+  onFork?: (entryId: string) => void;
+  forkingEntryId?: string | null;
+}) {
   const results = toolResultsById(messages);
 
   const turns = messages
-    .map((message) => {
+    .map((message, messageIndex) => {
       if (message.role === "user") {
         const text = userText(message).trim();
-        return text ? { role: "user" as const, text, blocks: [] as TurnBlock[] } : null;
+        return text ? { role: "user" as const, text, blocks: [] as TurnBlock[], messageIndex } : null;
       }
       if (message.role === "assistant") {
         const blocks = assistantBlocks(message, results);
-        return blocks.length > 0 ? { role: "assistant" as const, text: "", blocks } : null;
+        return blocks.length > 0 ? { role: "assistant" as const, text: "", blocks, messageIndex } : null;
       }
       if (message.role === "custom") {
         const text = userText(message).trim();
-        return text ? { role: "assistant" as const, text, blocks: [] as TurnBlock[] } : null;
+        return text ? { role: "assistant" as const, text, blocks: [] as TurnBlock[], messageIndex } : null;
       }
       return null;
     })
     .filter(
-      (turn): turn is { role: "user" | "assistant"; text: string; blocks: TurnBlock[] } => turn !== null,
+      (turn): turn is {
+        role: "user" | "assistant";
+        text: string;
+        blocks: TurnBlock[];
+        messageIndex: number;
+      } => turn !== null,
     );
 
   if (turns.length === 0) {
@@ -250,10 +266,35 @@ export function Transcript({ messages }: { messages: AgentMessage[] }) {
 
   return (
     <div>
-      {turns.map((turn, index) => (
-        <article key={index} className="mb-8 last:mb-0">
-          <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.08em] text-ink-faint">
-            {turn.role === "user" ? "你" : "PiForge"}
+      {turns.map((turn, index) => {
+        const entryId = entryIds?.[turn.messageIndex];
+        // The very first message cannot be forked (nothing before it), and a
+        // fork mid-stream would race the entry ids the SSE events don't carry.
+        const canFork = Boolean(onFork && entryId) && turn.messageIndex > 0;
+        const forking = Boolean(entryId) && forkingEntryId === entryId;
+        return (
+        <article key={index} className="group mb-8 last:mb-0">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-ink-faint">
+              {turn.role === "user" ? "你" : "PiForge"}
+            </span>
+            {canFork && (
+              <button
+                type="button"
+                onClick={() => onFork!(entryId!)}
+                disabled={forking}
+                title={forking ? "正在创建会话…" : "从此处派生新会话"}
+                aria-label={forking ? "正在创建会话" : "从此处派生新会话"}
+                className={`flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] transition-colors duration-150 disabled:cursor-not-allowed ${
+                  forking
+                    ? "text-accent opacity-100"
+                    : "text-ink-faint opacity-0 hover:bg-[#ECECEF] hover:text-accent-strong focus:opacity-100 group-hover:opacity-100"
+                }`}
+              >
+                <GitFork size={11} strokeWidth={1.9} aria-hidden="true" />
+                {forking ? "创建中…" : "派生"}
+              </button>
+            )}
           </div>
 
           {turn.role === "user" ? (
@@ -291,7 +332,8 @@ export function Transcript({ messages }: { messages: AgentMessage[] }) {
             </div>
           )}
         </article>
-      ))}
+        );
+      })}
     </div>
   );
 }

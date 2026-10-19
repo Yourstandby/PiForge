@@ -82,3 +82,41 @@ test("notify emits fire-and-forget event", () => {
   assert.equal(notes[0].message, "hello");
   assert.equal(notes[0].notifyType, "warning");
 });
+
+test("pendingRequests keeps unanswered dialogs for SSE replay", async () => {
+  const bridge = new ExtensionUiBridge(() => {});
+  const input = bridge.input("Project name", "my-repo");
+  const select = bridge.select("Pick one", ["a", "b"]);
+
+  const pending = bridge.pendingRequests();
+  assert.equal(pending.length, 2);
+  assert.deepEqual(
+    pending.map((request) => ({ method: request.method, title: request.title })),
+    [
+      { method: "input", title: "Project name" },
+      { method: "select", title: "Pick one" },
+    ],
+  );
+  // Payload survives so a late subscriber can rebuild the exact dialog.
+  assert.equal(pending[0].placeholder, "my-repo");
+  assert.deepEqual(pending[1].options, ["a", "b"]);
+
+  const [first, second] = pending;
+  bridge.respond({ id: first.id, value: "ok" });
+  bridge.respond({ id: second.id, cancelled: true });
+  assert.equal(await input, "ok");
+  assert.equal(await select, undefined);
+  assert.equal(bridge.pendingRequests().length, 0);
+});
+
+test("pendingRequests drops dialogs resolved by timeout or destroy", async () => {
+  const bridge = new ExtensionUiBridge(() => {});
+  const timedOut = bridge.confirm("t", "m", { timeout: 10 });
+  assert.equal(await timedOut, false);
+  assert.equal(bridge.pendingRequests().length, 0);
+
+  void bridge.input("name");
+  assert.equal(bridge.pendingRequests().length, 1);
+  bridge.destroy();
+  assert.equal(bridge.pendingRequests().length, 0);
+});

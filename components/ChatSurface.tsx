@@ -1,10 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AgentMessage, SessionInfo } from "@/lib/types";
+import type { AgentMessage, SessionInfo, SessionTreeNode } from "@/lib/types";
 import { useAgentSession } from "@/hooks/useAgentSession";
 import { useAudio } from "@/hooks/useAudio";
+import { BranchCloneModal, type BranchCloneMode } from "./BranchCloneModal";
+import { BranchNavigator } from "./BranchNavigator";
 import { Composer } from "./Composer";
+import { ExtensionUiDialog } from "./ExtensionUiDialog";
 import { StatusBar, type ThinkingLevel } from "./StatusBar";
 import { Transcript } from "./Transcript";
 
@@ -15,6 +18,7 @@ interface Props {
   modelsRefreshKey?: number;
   onDraftChange: (value: string) => void;
   onSessionCreated: (session: SessionInfo) => void;
+  onSessionForked?: (newSessionId: string) => void;
 }
 
 /**
@@ -39,14 +43,45 @@ function ChatSession({
   modelsRefreshKey,
   onDraftChange,
   onSessionCreated,
+  onSessionForked,
   onReload,
 }: Props & { onReload: () => void }) {
   const { soundEnabled, onSoundToggle, playDoneSound } = useAudio();
+
+  // Branch tree state — the hook owns the data, BranchNavigator renders it.
+  const [branchTree, setBranchTree] = useState<SessionTreeNode[]>([]);
+  const [branchLeafId, setBranchLeafId] = useState<string | null>(null);
+  const branchLeafChangeRef = useRef<((leafId: string | null) => void) | null>(null);
+  const [branchModal, setBranchModal] = useState<{
+    isOpen: boolean;
+    mode: BranchCloneMode;
+    targetEntryId?: string;
+  }>({ isOpen: false, mode: "branch" });
+
+  const handleBranchDataChange = useCallback(
+    (
+      tree: SessionTreeNode[],
+      activeLeafId: string | null,
+      onLeafChange: (leafId: string | null) => void,
+    ) => {
+      setBranchTree(tree);
+      setBranchLeafId(activeLeafId);
+      branchLeafChangeRef.current = onLeafChange;
+    },
+    [],
+  );
+
+  const handleBranchLeafChange = useCallback((leafId: string | null) => {
+    branchLeafChangeRef.current?.(leafId);
+  }, []);
+
   const chat = useAgentSession({
     session,
     newSessionCwd,
     modelsRefreshKey,
     onSessionCreated,
+    onSessionForked,
+    onBranchDataChange: handleBranchDataChange,
     onAgentEnd: playDoneSound,
   });
 
@@ -158,6 +193,34 @@ function ChatSession({
 
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-[#FCFCFA]">
+      {/* Extension UI: an extension awaiting input/select/confirm blocks the
+          agent until this dialog answers, so it must render for every view. */}
+      <ExtensionUiDialog
+        request={chat.extensionUiRequest}
+        onRespond={chat.handleExtensionUiRespond}
+      />
+      {chat.extensionUiNotify && (
+        <div
+          role="status"
+          className="material-popover fixed left-1/2 top-12 z-[900] -translate-x-1/2 rounded-lg px-3 py-2 text-[12px] text-ink shadow-[var(--shadow-popover)]"
+        >
+          {chat.extensionUiNotify.message}
+        </div>
+      )}
+
+      {showTranscript && session && (
+        <BranchNavigator
+          tree={branchTree}
+          activeLeafId={branchLeafId}
+          onLeafChange={handleBranchLeafChange}
+          onBranch={() =>
+            setBranchModal({ isOpen: true, mode: "branch", targetEntryId: branchLeafId ?? undefined })
+          }
+          onClone={() => setBranchModal({ isOpen: true, mode: "clone" })}
+          hasSession
+        />
+      )}
+
       {showTranscript ? (
         <>
           <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
@@ -170,7 +233,12 @@ function ChatSession({
                   <p className="mt-1 text-[11px] text-ink-faint">{chat.error}</p>
                 </div>
               ) : (
-                <Transcript messages={messages} />
+                <Transcript
+                  messages={messages}
+                  entryIds={chat.entryIds}
+                  onFork={chat.agentRunning ? undefined : chat.handleFork}
+                  forkingEntryId={chat.forkingEntryId}
+                />
               )}
 
               {chat.agentRunning && !streaming && (
@@ -198,6 +266,16 @@ function ChatSession({
           </div>
         </div>
       )}
+
+      <BranchCloneModal
+        isOpen={branchModal.isOpen}
+        onClose={() => setBranchModal((prev) => ({ ...prev, isOpen: false }))}
+        mode={branchModal.mode}
+        sessionId={session?.id ?? null}
+        targetEntryId={branchModal.targetEntryId}
+        cwd={session?.cwd ?? newSessionCwd ?? undefined}
+        onSuccess={(newSessionId) => onSessionForked?.(newSessionId)}
+      />
     </main>
   );
 }

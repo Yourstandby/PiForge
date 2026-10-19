@@ -81,9 +81,16 @@ export async function POST(req: Request) {
       await session.send({ type: "set_thinking_level", level: thinkingLevel });
     }
 
-    const result = await session.send(promptCommand);
+    // Dispatch the prompt in the background. Awaiting it here deadlocks any
+    // run that opens an extension dialog (ctx.ui.input/select/confirm): the
+    // renderer only learns the session id from this response, so it could
+    // never render the dialog the run is waiting for. Failures surface as an
+    // `agent_error` SSE event instead of an HTTP error.
+    void session.send(promptCommand).catch((error: unknown) => {
+      session.reportError(errorMessage(error));
+    });
 
-    return NextResponse.json({ success: true, sessionId: realSessionId, data: result });
+    return NextResponse.json({ success: true, sessionId: realSessionId });
   } catch (error) {
     logApiError({ route: "/api/agent/new", method: "POST", requestId, error });
     return jsonError(req, 500, errorMessage(error));
