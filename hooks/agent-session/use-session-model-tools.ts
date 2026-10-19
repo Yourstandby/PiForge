@@ -10,6 +10,32 @@ import {
   type ToolEntry,
 } from "@/lib/tool-presets";
 import type { ThinkingLevelOption } from "./session-lifecycle-reset";
+import {
+  classifyPromptComplexity,
+  resolveAutoModel,
+  type AutoRoutingTargets,
+} from "@/lib/model-routing";
+
+const AUTO_MODEL_STORAGE_KEY = "piforge.autoModel";
+
+function initialAutoRouting(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(AUTO_MODEL_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function persistAutoRouting(enabled: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (enabled) window.localStorage.setItem(AUTO_MODEL_STORAGE_KEY, "1");
+    else window.localStorage.removeItem(AUTO_MODEL_STORAGE_KEY);
+  } catch {
+    // Private mode / storage disabled: selection still works for this session.
+  }
+}
 
 type ModelListItem = { id: string; name: string; provider: string };
 
@@ -46,6 +72,11 @@ export function useSessionModelTools(opts: UseSessionModelToolsOptions) {
     provider: string;
     modelId: string;
   } | null>(null);
+  const [autoRouting, setAutoRouting] = useState<boolean>(initialAutoRouting);
+  const [autoTargets, setAutoTargets] = useState<AutoRoutingTargets>({
+    fast: null,
+    strong: null,
+  });
 
   const loadTools = useCallback(async (sid: string) => {
     try {
@@ -60,6 +91,15 @@ export function useSessionModelTools(opts: UseSessionModelToolsOptions) {
 
   const handleModelChange = useCallback(
     async (provider: string, modelId: string) => {
+      // "Auto" is a desktop-only pseudo model: routing happens per prompt, so
+      // there is no provider/model to send to pi here.
+      if (provider === "auto") {
+        setAutoRouting(true);
+        persistAutoRouting(true);
+        return;
+      }
+      setAutoRouting(false);
+      persistAutoRouting(false);
       const sid = sessionIdRef.current;
       if (!sid) {
         setNewSessionModelState({ provider, modelId });
@@ -73,6 +113,15 @@ export function useSessionModelTools(opts: UseSessionModelToolsOptions) {
       }
     },
     [sessionIdRef]
+  );
+
+  /** Pick fast/strong for one prompt (used by handleSend when Auto is active). */
+  const resolveAutoModelForPrompt = useCallback(
+    (message: string, hasImages: boolean) => {
+      const tier = classifyPromptComplexity(message, hasImages);
+      return resolveAutoModel(autoTargets, tier);
+    },
+    [autoTargets],
   );
 
   const handleThinkingLevelChange = useCallback(async (level: ThinkingLevelOption) => {
@@ -113,8 +162,10 @@ export function useSessionModelTools(opts: UseSessionModelToolsOptions) {
           defaultModel?: { provider: string; modelId: string } | null;
           thinkingLevels?: Record<string, string[]>;
           thinkingLevelMaps?: Record<string, Record<string, string | null>>;
+          autoRouting?: AutoRoutingTargets;
         }) => {
           setModelNames(d.models);
+          if (d.autoRouting) setAutoTargets(d.autoRouting);
           if (d.thinkingLevels) setModelThinkingLevels(d.thinkingLevels);
           if (d.thinkingLevelMaps) setModelThinkingLevelMaps(d.thinkingLevelMaps);
           if (d.modelList) {
@@ -148,6 +199,9 @@ export function useSessionModelTools(opts: UseSessionModelToolsOptions) {
     setThinkingLevel,
     currentModelOverride,
     setCurrentModelOverride,
+    autoRouting,
+    autoTargets,
+    resolveAutoModelForPrompt,
     pendingModel,
     setPendingModel,
     loadTools,

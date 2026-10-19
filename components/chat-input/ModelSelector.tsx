@@ -28,16 +28,22 @@ export function ModelSelector({
   const dropdownRef = useRef<HTMLDivElement>(null);
   const modelDropdownPanelRef = useRef<HTMLDivElement>(null);
 
-  // Build model options: prefer modelList (has provider info), fallback to modelNames
+  // Build model options: prefer modelList (has provider info), fallback to modelNames.
+  // "Auto" is a desktop pseudo-model: the send path routes each prompt to the
+  // fast or strong tier (lib/model-routing.ts).
   const modelOptions: ModelOption[] = (() => {
+    const auto: ModelOption = { provider: "auto", modelId: "auto", name: "Auto" };
     if (modelList && modelList.length > 0) {
-      return modelList.map((m) => ({ provider: m.provider, modelId: m.id, name: m.name }));
+      return [auto, ...modelList.map((m) => ({ provider: m.provider, modelId: m.id, name: m.name }))];
     }
-    return Object.entries(modelNames ?? {}).map(([modelId, name]) => ({
-      provider: model?.provider ?? "unknown",
-      modelId,
-      name,
-    }));
+    return [
+      auto,
+      ...Object.entries(modelNames ?? {}).map(([modelId, name]) => ({
+        provider: model?.provider ?? "unknown",
+        modelId,
+        name,
+      })),
+    ];
   })();
 
   // Group options by provider, preserving insertion order

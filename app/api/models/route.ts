@@ -1,6 +1,7 @@
 import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { createPiRuntime } from "@/lib/pi-runtime";
+import { pickAutoTargets } from "@/lib/model-routing";
 
 export const dynamic = "force-dynamic";
 
@@ -10,6 +11,7 @@ export async function GET() {
   let defaultModel: { provider: string; modelId: string } | null = null;
   const thinkingLevels: Record<string, string[]> = {};
   const thinkingLevelMaps: Record<string, Record<string, string | null>> = {};
+  let autoRouting: ReturnType<typeof pickAutoTargets> = { fast: null, strong: null };
 
   try {
     const agentDir = getAgentDir();
@@ -33,7 +35,22 @@ export async function GET() {
     if (provider) {
       defaultModel = { provider, modelId: modelId ?? available[0]?.id ?? "" };
     }
+    autoRouting = pickAutoTargets(
+      available.map((m: { id: string; name: string; provider: string }) => ({
+        id: m.id,
+        name: m.name,
+        provider: m.provider,
+      })),
+      defaultModel ?? undefined,
+    );
   } catch { /* return empty */ }
 
-  return Response.json({ models: Object.fromEntries(nameMap), modelList, defaultModel, thinkingLevels, thinkingLevelMaps });
+  return Response.json({
+    models: Object.fromEntries(nameMap),
+    modelList,
+    defaultModel,
+    thinkingLevels,
+    thinkingLevelMaps,
+    autoRouting,
+  });
 }

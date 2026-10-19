@@ -22,12 +22,34 @@ import {
 
 export type { AttachedImage };
 
+/** Result handed back to the UI so it can toast the reclaimed token count. */
+export type CompactOutcome =
+  | { ok: true; tokensBefore: number | null; tokensAfter: number | null }
+  | { ok: false; error: string };
+
+/**
+ * Extra guidance for pi's own compaction prompt (we do not summarise history
+ * ourselves — this only tells the summariser what must survive).
+ */
+const COMPACT_INSTRUCTIONS = [
+  "Summarise this session for an engineer taking over.",
+  "Keep: files created or modified (with paths), the user's core requirements,",
+  "key decisions, current progress, and the next concrete steps.",
+  "Drop greetings, repeated tool output, and abandoned attempts.",
+].join(" ");
+
 export type UseSessionCommandsOptions = {
   session: SessionInfo | null;
   newSessionCwd: string | null;
   isNew: boolean;
   agentRunning: boolean;
   isCompacting: boolean;
+  /** "Auto" model routing is enabled for this desktop session. */
+  autoRouting: boolean;
+  resolveAutoModelForPrompt: (
+    message: string,
+    hasImages: boolean,
+  ) => { provider: string; modelId: string } | null;
   toolPreset: "none" | "default" | "full";
   agentMode: AgentMode;
   setAgentMode: (mode: AgentMode) => void;
@@ -65,6 +87,8 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
     isNew,
     agentRunning,
     isCompacting,
+    autoRouting,
+    resolveAutoModelForPrompt,
     toolPreset,
     agentMode,
     setAgentMode,
@@ -100,16 +124,27 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
     if (!agentRunning) finishPromptDispatch(promptDispatchStateRef.current);
   }, [agentRunning]);
 
-  const handleCompact = useCallback(async () => {
+  const handleCompact = useCallback(async (): Promise<CompactOutcome> => {
     const sid = sessionIdRef.current;
-    if (!sid || isCompacting) return;
+    if (!sid) return { ok: false, error: "没有可压缩的会话" };
+    if (isCompacting) return { ok: false, error: "正在压缩中，请稍候" };
     setIsCompacting(true);
     setCompactError(null);
     try {
-      await sendAgentCommand(sid, { type: "compact" });
+      const result = await sendAgentCommand<
+        { tokensBefore?: number; estimatedTokensAfter?: number } | null
+      >(sid, { type: "compact", customInstructions: COMPACT_INSTRUCTIONS });
       await loadSession(sid, true);
+      return {
+        ok: true,
+        tokensBefore: typeof result?.tokensBefore === "number" ? result.tokensBefore : null,
+        tokensAfter:
+          typeof result?.estimatedTokensAfter === "number" ? result.estimatedTokensAfter : null,
+      };
     } catch (e) {
-      setCompactError(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      setCompactError(message);
+      return { ok: false, error: message };
     } finally {
       setIsCompacting(false);
     }
@@ -195,6 +230,11 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
       if (!commandTarget) return;
       if (!tryStartPromptDispatch(promptDispatchStateRef.current)) return;
 
+      // Auto routing: classify this prompt and pick fast/strong before dispatch.
+      const routedModel = autoRouting
+        ? resolveAutoModelForPrompt(message, Boolean(images?.length))
+        : null;
+
       const clientMessageId = globalThis.crypto.randomUUID();
       onPendingPromptQueued({ id: clientMessageId, message });
 
@@ -225,7 +265,7 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
 
       try {
         if (commandTarget.kind === "new") {
-          const selectedModel = newSessionModel;
+          const selectedModel = routedModel ?? newSessionModel;
           if (selectedModel) setPendingModel(selectedModel);
           const toolNames =
             toolPreset === "none"
@@ -277,6 +317,20 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
             firstMessage: message,
           });
         } else {
+          // Switch model first when Auto picked a different tier. A failed
+          // switch must not swallow the user's prompt — pi keeps the current
+          // model and the transcript shows the error only in the console.
+          if (routedModel) {
+            try {
+              await sendAgentCommand(commandTarget.sessionId, {
+                type: "set_model",
+                provider: routedModel.provider,
+                modelId: routedModel.modelId,
+              });
+            } catch (e) {
+              console.error("Auto model switch failed:", e);
+            }
+          }
           connectEvents(commandTarget.sessionId);
           await sendAgentCommand(commandTarget.sessionId, {
             type: "prompt",
@@ -302,6 +356,8 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
       thinkingLevel,
       session,
       agentRunning,
+      autoRouting,
+      resolveAutoModelForPrompt,
       connectEvents,
       onSessionCreated,
       pendingScrollToUserRef,

@@ -281,6 +281,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     setThinkingLevel,
     currentModelOverride,
     setCurrentModelOverride,
+    autoRouting,
+    resolveAutoModelForPrompt,
     pendingModel,
     setPendingModel,
     loadTools,
@@ -294,8 +296,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     [currentModelOverride, data?.context.model, pendingModel],
   );
   const displayModel = useMemo(
-    () => (isNew ? newSessionModel : currentModel),
-    [isNew, newSessionModel, currentModel],
+    () =>
+      autoRouting
+        ? { provider: "auto", modelId: "auto" }
+        : isNew
+          ? newSessionModel
+          : currentModel,
+    [autoRouting, isNew, newSessionModel, currentModel],
   );
   const calculatedSessionStats = useMemo(
     () => calculateSessionStats(messages),
@@ -540,6 +547,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     isNew,
     agentRunning,
     isCompacting,
+    autoRouting,
+    resolveAutoModelForPrompt,
     toolPreset,
     agentMode,
     setAgentMode,

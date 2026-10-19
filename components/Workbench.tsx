@@ -7,6 +7,7 @@ import { getElectronApi } from "@/lib/electron-api";
 import { resolveForkedSession } from "@/lib/fork-session-wait";
 import { buildProjectWindowPath, resolveInitialView } from "@/lib/project-window";
 import { useFileTabs } from "@/hooks/useFileTabs";
+import { useConfigHotReload } from "@/hooks/useConfigHotReload";
 import { ChatSurface } from "./ChatSurface";
 import { FilePanel } from "./FilePanel";
 import { FileViewer } from "./FileViewer";
@@ -38,6 +39,13 @@ export function Workbench() {
   // Sidebar refetch trigger (fork / delete / new session).
   const [sessionsVersion, setSessionsVersion] = useState(0);
   const [settingsModal, setSettingsModal] = useState<SettingsModal>(null);
+
+  // ~/.pi/agent edits (models.json, auth.json, extensions, skills) are picked
+  // up live: bump the model list key and refresh sessions without a restart.
+  useConfigHotReload(() => {
+    setModelsVersion((version) => version + 1);
+    setSessionsVersion((version) => version + 1);
+  });
   const [exportSessionId, setExportSessionId] = useState<string | null>(null);
   const [projectError, setProjectError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
