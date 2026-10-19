@@ -4,6 +4,7 @@ import React, { useState, useRef, useCallback } from "react";
 import { useI18n } from "./I18nProvider";
 import { useUpstreamUsage } from "@/hooks/useUpstreamUsage";
 import { useDismissOnOutsideClick } from "@/hooks/useDismissOnOutsideClick";
+import { useCurrency } from "@/hooks/useCurrency";
 import { UsagePopover } from "./UsagePopover";
 
 import type { SessionStats } from "@/hooks/agent-session/session-stats";
@@ -25,6 +26,7 @@ export const StatsBar = React.memo(function StatsBar({
   currentProvider = null,
 }: StatsBarProps) {
   const { t } = useI18n();
+  const { format: formatMoney } = useCurrency();
   const [popoverOpen, setPopoverOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
@@ -61,7 +63,7 @@ export const StatsBar = React.memo(function StatsBar({
       : n >= 1000
       ? `${(n / 1000).toFixed(0)}k`
       : String(n);
-  const costStr = c > 0 ? (c >= 0.01 ? `$${c.toFixed(2)}` : `<$0.01`) : null;
+  const costStr = c > 0 ? formatMoney(c) : null;
 
   // Calculate cache hit rate if available or derivable
   const cacheHitRate =

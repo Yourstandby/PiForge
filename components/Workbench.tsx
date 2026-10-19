@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { SessionInfo } from "@/lib/types";
 import { ChatSurface } from "./ChatSurface";
 import { FilePanel } from "./FilePanel";
+import { FileViewerPanel } from "./FileViewerPanel";
 import { McpSettingsModal } from "./McpSettingsModal";
 import { SessionRail } from "./SessionRail";
 import { SkillsConfig } from "./SkillsConfig";
@@ -23,6 +24,7 @@ export function Workbench() {
   // session-scoped hook state starts clean on every switch.
   const [chatKey, setChatKey] = useState(0);
   const [settingsModal, setSettingsModal] = useState<"skills" | "mcp" | null>(null);
+  const [openFile, setOpenFile] = useState<{ path: string; name: string } | null>(null);
 
   const loadSessions = useCallback(async (): Promise<SessionInfo[]> => {
     try {
@@ -112,16 +114,25 @@ export function Workbench() {
         onOpenMcp={() => setSettingsModal("mcp")}
       />
 
-      <ChatSurface
-        key={chatKey}
+      <div className="relative flex min-w-0 flex-1">
+        <ChatSurface
+          key={chatKey}
         session={selected}
         newSessionCwd={newSessionCwd}
         draft={draft}
-        onDraftChange={setDraft}
-        onSessionCreated={handleSessionCreated}
-      />
+          onDraftChange={setDraft}
+          onSessionCreated={handleSessionCreated}
+        />
+        {openFile && (
+          <FileViewerPanel
+            filePath={openFile.path}
+            cwd={cwd}
+            onClose={() => setOpenFile(null)}
+          />
+        )}
+      </div>
 
-      <FilePanel cwd={cwd} />
+      <FilePanel cwd={cwd} onOpenFile={(path, name) => setOpenFile({ path, name })} />
 
       {settingsModal === "skills" && (
         <SkillsConfig cwd={cwd ?? ""} onClose={() => setSettingsModal(null)} />

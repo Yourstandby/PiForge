@@ -26,10 +26,19 @@ function folderName(cwd: string): string {
   return parts[parts.length - 1] ?? cwd;
 }
 
-export function FilePanel({ cwd }: { cwd: string | null }) {
-  const handleOpenFile = useCallback(() => {
-    // No viewer wired yet — the tree is here for navigation only.
-  }, []);
+export function FilePanel({
+  cwd,
+  onOpenFile,
+}: {
+  cwd: string | null;
+  onOpenFile?: (filePath: string, fileName: string) => void;
+}) {
+  const handleOpenFile = useCallback(
+    (filePath: string, fileName: string) => {
+      onOpenFile?.(filePath, fileName);
+    },
+    [onOpenFile],
+  );
 
   return (
     <aside className="flex w-[280px] shrink-0 flex-col border-l border-gray-200/60 bg-[#F5F5F7]">

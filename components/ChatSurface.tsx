@@ -129,8 +129,8 @@ function ChatSession({
       onStop={() => {
         void chat.handleAbort();
       }}
-      onSubmit={(text) => {
-        void chat.handleSend(text);
+      onSubmit={(text, images) => {
+        void chat.handleSend(text, images);
       }}
     />
   );

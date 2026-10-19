@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import { useI18n } from "./I18nProvider";
+import { useCurrency } from "@/hooks/useCurrency";
 import type { UpstreamProviderUsage } from "@/lib/upstream-usage/types";
 import { formatDuration } from "@/lib/upstream-usage/format";
 
@@ -34,6 +35,7 @@ export function UsagePopover({
   onRefresh,
 }: UsagePopoverProps) {
   const { t, locale } = useI18n();
+  const { format4: formatMoney4 } = useCurrency();
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -52,7 +54,7 @@ export function UsagePopover({
 
   const tks = sessionStats?.tokens;
   const c = sessionStats?.cost ?? 0;
-  const costStr = c > 0 ? (c >= 0.01 ? `$${c.toFixed(4)}` : `<$0.01`) : "$0.00";
+  const costStr = c > 0 ? formatMoney4(c) : formatMoney4(0);
   const hitRate =
     sessionStats?.cacheHitRate != null && Number.isFinite(sessionStats.cacheHitRate)
       ? `${sessionStats.cacheHitRate.toFixed(1)}%`
@@ -347,7 +349,7 @@ export function UsagePopover({
                               ? t("usage.used", {
                                   percent: Math.round((usage.rawLimit.used / usage.rawLimit.limit) * 100),
                                 })
-                              : `${t("usage.cost")}: $${usage.rawLimit.used}`}
+                              : `${t("usage.cost")}: ${formatMoney4(usage.rawLimit.used)}`}
                           </span>
                         </div>
                       )}
