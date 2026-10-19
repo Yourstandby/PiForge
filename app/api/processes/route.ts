@@ -5,6 +5,7 @@ import {
   listManagedProcesses,
   removeManagedProcessEntry,
   restartManagedProcess,
+  sendManagedProcessInput,
   startManagedProcess,
   stopManagedProcess,
 } from "@/lib/managed-processes";
@@ -32,6 +33,7 @@ export async function POST(req: Request) {
       cwd?: string;
       command?: string;
       name?: string;
+      input?: string;
     };
 
     switch (body.action) {
@@ -52,6 +54,14 @@ export async function POST(req: Request) {
         if (!body.id) return jsonError(req, 400, "Missing id");
         const stopped = await stopManagedProcess(body.id);
         if (!stopped) return jsonError(req, 404, "Process not found");
+        return NextResponse.json({ success: true });
+      }
+      case "stdin": {
+        if (!body.id || typeof body.input !== "string") {
+          return jsonError(req, 400, "Missing id or input");
+        }
+        const sent = sendManagedProcessInput(body.id, body.input);
+        if (!sent) return jsonError(req, 409, "Process is not running or stdin is closed");
         return NextResponse.json({ success: true });
       }
       case "restart": {

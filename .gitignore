@@ -72,3 +72,6 @@ bun.lock
 # agents re-encrypt large PNG files on disk, so they are not committed.
 /build/icon.png
 /public/logo.png
+
+# local upstream reference clones
+tmp/

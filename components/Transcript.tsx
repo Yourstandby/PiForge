@@ -1,10 +1,86 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useId, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Check, ChevronDown, GitFork, X } from "lucide-react";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import { Check, ChevronDown, Copy, GitFork, X } from "lucide-react";
 import type { AgentMessage, ToolResultMessage } from "@/lib/types";
+
+const MARKDOWN_PLUGINS = { remarkPlugins: [remarkGfm, remarkMath], rehypePlugins: [rehypeKatex] };
+
+function CodeBlock({ code, lang }: { code: string; lang: string }) {
+  const [copied, setCopied] = useState(false);
+  if (lang === "mermaid") return <MermaidBlock code={code} />;
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      /* clipboard unavailable */
+    }
+  };
+  return (
+    <div className="mb-3 overflow-hidden rounded-lg border border-[#E3E8F2] bg-[#F5F8FD]">
+      <div className="flex items-center justify-between border-b border-[#E3E8F2] px-3 py-1">
+        <span className="font-mono text-[10px] uppercase tracking-wider text-ink-faint">
+          {lang || "text"}
+        </span>
+        <button
+          type="button"
+          onClick={() => void copy()}
+          aria-label={copied ? "已复制代码" : "复制代码"}
+          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-ink-faint transition-colors hover:bg-[#E8EFFB] hover:text-accent-strong"
+        >
+          {copied ? <Check size={11} strokeWidth={2.4} /> : <Copy size={11} strokeWidth={1.9} />}
+          {copied ? "已复制" : "复制"}
+        </button>
+      </div>
+      <pre className="overflow-x-auto p-3 text-[12.5px] leading-6">
+        <code className="font-mono">{code}</code>
+      </pre>
+    </div>
+  );
+}
+
+function MermaidBlock({ code }: { code: string }) {
+  const [svg, setSvg] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const rawId = useId();
+
+  useEffect(() => {
+    let cancelled = false;
+    setFailed(false);
+    import("mermaid")
+      .then(async ({ default: mermaid }) => {
+        mermaid.initialize({ startOnLoad: false, theme: "neutral", securityLevel: "strict" });
+        const id = `mermaid-${rawId.replace(/[^a-zA-Z0-9_-]/g, "")}-${Date.now()}`;
+        return mermaid.render(id, code);
+      })
+      .then(({ svg: rendered }) => {
+        if (!cancelled) setSvg(rendered);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [code, rawId]);
+
+  if (failed) return <CodeBlock code={code} lang="" />;
+  if (!svg) {
+    return <p className="mb-3 rounded-lg border border-[#E3E8F2] bg-[#F5F8FD] px-3 py-2 text-[11px] text-ink-faint">正在渲染图表…</p>;
+  }
+  return (
+    <div
+      className="mb-3 overflow-x-auto rounded-lg border border-[#E3E8F2] bg-white p-3 [&_svg]:mx-auto [&_svg]:max-w-full"
+      dangerouslySetInnerHTML={{ __html: svg }}
+    />
+  );
+}
 
 const markdownComponents: Components = {
   p: ({ children }) => <p className="mb-3 last:mb-0">{children}</p>,
@@ -29,17 +105,16 @@ const markdownComponents: Components = {
       {children}
     </a>
   ),
-  pre: ({ children }) => (
-    <pre className="mb-3 overflow-x-auto rounded-lg border border-[#E3E8F2] bg-[#F5F8FD] p-3 text-[12.5px] leading-6">
-      {children}
-    </pre>
-  ),
-  code: ({ className, children }) =>
-    className ? (
-      <code className="font-mono text-[12.5px]">{children}</code>
-    ) : (
+  pre: ({ children }) => <>{children}</>,
+  code: ({ className, children }) => {
+    const lang = /language-([\w-]+)/.exec(className ?? "")?.[1]?.toLowerCase() ?? "";
+    if (lang || String(children).includes("\n")) {
+      return <CodeBlock code={String(children).replace(/\n$/, "")} lang={lang} />;
+    }
+    return (
       <code className="rounded bg-[#EDF3FD] px-1 py-0.5 font-mono text-[0.9em] text-ink">{children}</code>
-    ),
+    );
+  },
   hr: () => <hr className="my-5 border-[#E3E8F2]" />,
   table: ({ children }) => (
     <div className="mb-3 overflow-x-auto">
@@ -354,6 +429,19 @@ export function Transcript({
   forkingEntryId?: string | null;
 }) {
   const results = toolResultsById(messages);
+  const [copiedTurn, setCopiedTurn] = useState<number | null>(null);
+
+  const copyTurn = (index: number, text: string) => {
+    void navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopiedTurn(index);
+        setTimeout(() => setCopiedTurn(null), 1600);
+      })
+      .catch(() => {
+        /* clipboard unavailable */
+      });
+  };
 
   const turns = messages
     .map((message, messageIndex) => {
@@ -398,6 +486,30 @@ export function Transcript({
             <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-ink-faint">
               {turn.role === "user" ? "你" : "PiForge"}
             </span>
+            <button
+              type="button"
+              onClick={() =>
+                copyTurn(
+                  index,
+                  turn.role === "user"
+                    ? turn.text
+                    : turn.blocks
+                        .filter((block): block is Extract<TurnBlock, { kind: "text" }> => block.kind === "text")
+                        .map((block) => block.text)
+                        .join("\n\n"),
+                )
+              }
+              title={copiedTurn === index ? "已复制" : "复制这段内容"}
+              aria-label={copiedTurn === index ? "已复制" : "复制这段内容"}
+              className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-ink-faint opacity-0 transition-colors duration-150 hover:bg-[#ECECEF] hover:text-ink focus:opacity-100 group-hover:opacity-100"
+            >
+              {copiedTurn === index ? (
+                <Check size={11} strokeWidth={2.2} className="text-[#3E8A63]" aria-hidden="true" />
+              ) : (
+                <Copy size={11} strokeWidth={1.9} aria-hidden="true" />
+              )}
+              {copiedTurn === index ? "已复制" : "复制"}
+            </button>
             {canFork && (
               <button
                 type="button"
@@ -424,7 +536,7 @@ export function Transcript({
           ) : (
             <div className="break-words text-[14px] leading-7 text-ink-soft">
               {turn.blocks.length === 0 ? (
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                <ReactMarkdown {...MARKDOWN_PLUGINS} components={markdownComponents}>
                   {turn.text}
                 </ReactMarkdown>
               ) : (
@@ -432,7 +544,7 @@ export function Transcript({
                   block.kind === "text" ? (
                     <ReactMarkdown
                       key={blockIndex}
-                      remarkPlugins={[remarkGfm]}
+                      {...MARKDOWN_PLUGINS}
                       components={markdownComponents}
                     >
                       {block.text}

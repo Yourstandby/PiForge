@@ -26,6 +26,8 @@ export interface ManagedProcessView {
   exitCode: number | null;
   /** First http(s) URL seen in the output — handy for dev servers. */
   url: string | null;
+  /** Heuristic readiness: a loopback URL or a "ready/listening" log line. */
+  ready: boolean;
   logs: string[];
 }
 
@@ -83,8 +85,17 @@ function toView(entry: ManagedProcessEntry): ManagedProcessView {
     endedAt: entry.endedAt,
     exitCode: entry.exitCode,
     url: entry.url,
+    ready: isReady(entry),
     logs: entry.logs.slice(-80),
   };
+}
+
+const READY_RE = /(ready in|listening on|started server|server running|local:\s*http|compiled successfully)/i;
+
+function isReady(entry: ManagedProcessEntry): boolean {
+  if (entry.status !== "running") return entry.status === "exited" && entry.exitCode === 0;
+  if (entry.url) return true;
+  return entry.logs.slice(-20).some((line) => READY_RE.test(line));
 }
 
 function defaultName(command: string): string {
@@ -130,7 +141,7 @@ export function startManagedProcess(
     cwd: options.cwd,
     shell: true,
     windowsHide: true,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" },
   });
   entry.child = child;
@@ -186,6 +197,19 @@ function killTree(entry: ManagedProcessEntry): Promise<void> {
       resolve();
     }
   });
+}
+
+/** Send one line to the process stdin (REPLs, interactive dev servers). */
+export function sendManagedProcessInput(id: string, input: string): boolean {
+  const entry = registry().get(id);
+  if (!entry || entry.status !== "running" || !entry.child?.stdin?.writable) return false;
+  try {
+    entry.child.stdin.write(input.endsWith("\n") ? input : input + "\n");
+    pushLog(entry, `> ${input}`);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function stopManagedProcess(id: string): Promise<boolean> {

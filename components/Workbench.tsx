@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { SessionInfo } from "@/lib/types";
 import { Settings } from "lucide-react";
 import { getElectronApi } from "@/lib/electron-api";
@@ -11,10 +11,10 @@ import { useConfigHotReload } from "@/hooks/useConfigHotReload";
 import { ChatSurface } from "./ChatSurface";
 import { FilePanel } from "./FilePanel";
 import { FileViewer } from "./FileViewer";
-import { McpSettingsModal } from "./McpSettingsModal";
 import { ModelsConfig } from "./ModelsConfig";
 import { SessionExportModal } from "./SessionExportModal";
 import { SessionSidebar } from "./SessionSidebar";
+import { ExtensionsConfigModal } from "./ExtensionsConfigModal";
 import { SkillsConfig } from "./SkillsConfig";
 import { TabBar } from "./TabBar";
 import { TitleBar } from "./TitleBar";
@@ -23,13 +23,14 @@ function byModifiedDesc(a: SessionInfo, b: SessionInfo): number {
   return new Date(b.modified).getTime() - new Date(a.modified).getTime();
 }
 
-type SettingsModal = "skills" | "mcp" | "models" | null;
+type SettingsModal = "skills" | "models" | "extensions" | null;
 
 export function Workbench() {
   const [selected, setSelected] = useState<SessionInfo | null>(null);
   const [newSessionCwd, setNewSessionCwd] = useState<string | null>(null);
   const [cwd, setCwd] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const draftKeyRef = useRef<string>("");
   // Mirrors AppShell's sessionKey: remount the chat surface so all
   // session-scoped hook state starts clean on every switch.
   const [chatKey, setChatKey] = useState(0);
@@ -49,6 +50,32 @@ export function Workbench() {
   const [exportSessionId, setExportSessionId] = useState<string | null>(null);
   const [projectError, setProjectError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+
+  // Drafts survive session switches and app restarts, one bucket per session
+  // (or per project for a not-yet-created session).
+  const draftKey = selected?.id
+    ? `session:${selected.id}`
+    : `new:${newSessionCwd ?? cwd ?? ""}`;
+  useEffect(() => {
+    draftKeyRef.current = draftKey;
+    let stored = "";
+    try {
+      stored = window.localStorage.getItem(`piforge.draft:${draftKey}`) ?? "";
+    } catch {
+      // storage disabled
+    }
+    setDraft(stored);
+  }, [draftKey]);
+
+  const handleDraftChange = useCallback((next: string) => {
+    setDraft(next);
+    try {
+      if (next) window.localStorage.setItem(`piforge.draft:${draftKeyRef.current}`, next);
+      else window.localStorage.removeItem(`piforge.draft:${draftKeyRef.current}`);
+    } catch {
+      // storage disabled: draft still works for this mount
+    }
+  }, []);
 
   const {
     fileTabs,
@@ -126,7 +153,6 @@ export function Workbench() {
 
     setSelected(null);
     setNewSessionCwd(target);
-    setDraft("");
     setChatKey((key) => key + 1);
   };
 
@@ -281,8 +307,8 @@ export function Workbench() {
               <div className="material-popover absolute bottom-full left-2 right-2 z-[60] mb-1 rounded-xl p-1.5">
                 {[
                   { label: "模型与登录", action: () => setSettingsModal("models") },
-                  { label: "技能", action: () => setSettingsModal("skills") },
-                  { label: "MCP 服务", action: () => setSettingsModal("mcp") },
+                  { label: "扩展与集成", action: () => setSettingsModal("extensions") },
+                  { label: "技能安装", action: () => setSettingsModal("skills") },
                   { label: "添加项目…", action: () => { void handleAddProject(); } },
                 ].map((item) => (
                   <button
@@ -309,7 +335,7 @@ export function Workbench() {
             newSessionCwd={newSessionCwd}
             draft={draft}
             modelsRefreshKey={modelsVersion}
-            onDraftChange={setDraft}
+            onDraftChange={handleDraftChange}
             onSessionCreated={handleSessionCreated}
             onSessionRenamed={() => setSessionsVersion((version) => version + 1)}
             onSessionForked={(newSessionId) => {
@@ -348,8 +374,13 @@ export function Workbench() {
       {settingsModal === "skills" && (
         <SkillsConfig cwd={cwd ?? ""} onClose={() => setSettingsModal(null)} />
       )}
-      {settingsModal === "mcp" && (
-        <McpSettingsModal cwd={cwd ?? ""} onClose={() => setSettingsModal(null)} />
+      {settingsModal === "extensions" && (
+        <ExtensionsConfigModal
+          isOpen
+          cwd={cwd ?? undefined}
+          initialTab="extensions"
+          onClose={() => setSettingsModal(null)}
+        />
       )}
       {settingsModal === "models" && (
         <ModelsConfig

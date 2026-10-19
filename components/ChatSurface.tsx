@@ -245,6 +245,9 @@ function ChatSession({
           });
         }}
         queuedFollowUps={chat.followUpQueue.items}
+        onReorderFollowUps={chat.handleReorderFollowUps}
+        queueBusy={chat.followUpQueueBusy}
+        cwd={session?.cwd ?? newSessionCwd ?? null}
       />
     </div>
   );
