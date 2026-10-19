@@ -479,7 +479,7 @@ span.linenumber { color: var(--text-dim) !important; font-style: normal !importa
   min-width: 0;
 }
 .session-tree-children {
-  padding-left: 14px;
+  padding-left: 12px;
 }
 .sidebar-session-row {
   display: flex;
@@ -503,7 +503,7 @@ span.linenumber { color: var(--text-dim) !important; font-style: normal !importa
   flex: 1;
   min-width: 0;
   height: 100%;
-  padding: 0 6px 0 30px;
+  padding: 0 8px 0 16px;
   border: none;
   background: transparent;
   color: #374151;
@@ -526,6 +526,7 @@ span.linenumber { color: var(--text-dim) !important; font-style: normal !importa
 }
 .sidebar-session-time {
   flex-shrink: 0;
+  margin-left: auto;
   font-size: 10.5px;
   font-variant-numeric: tabular-nums;
   color: #9ca3af;
@@ -630,4 +631,25 @@ span.linenumber { color: var(--text-dim) !important; font-style: normal !importa
 }
 .sidebar-sort-label {
   white-space: nowrap;
+}
+
+/* "项目" section heading + sort trigger */
+.sidebar-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 28px;
+  margin-top: 2px;
+  padding: 0 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #9ca3af;
+}
+.sidebar-section-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
