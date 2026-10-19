@@ -140,7 +140,31 @@ function userText(message: AgentMessage): string {
 type TurnBlock =
   | { kind: "thinking"; text: string }
   | { kind: "text"; text: string }
+  | { kind: "image"; src: string }
   | { kind: "tool"; name: string; input: Record<string, unknown>; result?: ToolResultMessage };
+
+/** Resolve pi/UI image blocks (`{source:{base64|url}}` or `{data,mimeType}`). */
+function imageSrc(block: Record<string, unknown>): string | null {
+  const source = block.source as Record<string, unknown> | undefined;
+  if (source && typeof source === "object") {
+    if (source.type === "url" && typeof source.url === "string") return source.url;
+    if (typeof source.data === "string") {
+      return `data:${typeof source.media_type === "string" ? source.media_type : "image/png"};base64,${source.data}`;
+    }
+  }
+  if (typeof block.data === "string") {
+    return `data:${typeof block.mimeType === "string" ? block.mimeType : "image/png"};base64,${block.data}`;
+  }
+  return null;
+}
+
+function contentImages(content: unknown): string[] {
+  if (!Array.isArray(content)) return [];
+  return content
+    .filter((block): block is Record<string, unknown> => Boolean(block) && typeof block === "object" && (block as { type?: unknown }).type === "image")
+    .map((block) => imageSrc(block))
+    .filter((src): src is string => Boolean(src));
+}
 
 const SUMMARY_KEYS = [
   "command",
@@ -189,6 +213,9 @@ function assistantBlocks(
       blocks.push({ kind: "text", text: block.text });
     } else if (block.type === "thinking" && typeof block.thinking === "string" && block.thinking.trim()) {
       blocks.push({ kind: "thinking", text: block.thinking });
+    } else if (block.type === "image") {
+      const src = imageSrc(block);
+      if (src) blocks.push({ kind: "image", src });
     } else if (block.type === "toolCall") {
       const name = (block.toolName ?? block.name) as string | undefined;
       if (!name) continue;
@@ -297,6 +324,7 @@ function ToolCallCard({
   const nested = result?.nestedCalls;
   const tree = nested?.calls.length ? buildNestedTree(nested.calls) : null;
   const output = result ? resultText(result).trim() : "";
+  const resultImages = result ? contentImages(result.content) : [];
 
   return (
     <div className="my-2.5 overflow-hidden rounded-lg border border-[#E3E8F2] bg-white">
@@ -365,6 +393,19 @@ function ToolCallCard({
                 {JSON.stringify(input, null, 2)}
               </pre>
             </details>
+          )}
+          {resultImages.length > 0 && (
+            <div className="flex flex-wrap gap-2 border-b border-[#EDF1F7] p-2">
+              {resultImages.map((src, index) => (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  key={index}
+                  src={src}
+                  alt={`工具输出图片 ${index + 1}`}
+                  className="max-h-72 rounded-md border border-[#E3E8F2] object-contain"
+                />
+              ))}
+            </div>
           )}
           {result && (
             <details className="border-b border-[#EDF1F7] last:border-b-0" open={!tree && !hasArgs}>
@@ -447,15 +488,18 @@ export function Transcript({
     .map((message, messageIndex) => {
       if (message.role === "user") {
         const text = userText(message).trim();
-        return text ? { role: "user" as const, text, blocks: [] as TurnBlock[], messageIndex } : null;
+        const images = contentImages((message as { content?: unknown }).content);
+        return text || images.length > 0
+          ? { role: "user" as const, text, images, blocks: [] as TurnBlock[], messageIndex }
+          : null;
       }
       if (message.role === "assistant") {
         const blocks = assistantBlocks(message, results);
-        return blocks.length > 0 ? { role: "assistant" as const, text: "", blocks, messageIndex } : null;
+        return blocks.length > 0 ? { role: "assistant" as const, text: "", images: [] as string[], blocks, messageIndex } : null;
       }
       if (message.role === "custom") {
         const text = userText(message).trim();
-        return text ? { role: "assistant" as const, text, blocks: [] as TurnBlock[], messageIndex } : null;
+        return text ? { role: "assistant" as const, text, images: [] as string[], blocks: [] as TurnBlock[], messageIndex } : null;
       }
       return null;
     })
@@ -463,6 +507,7 @@ export function Transcript({
       (turn): turn is {
         role: "user" | "assistant";
         text: string;
+        images: string[];
         blocks: TurnBlock[];
         messageIndex: number;
       } => turn !== null,
@@ -531,7 +576,20 @@ export function Transcript({
 
           {turn.role === "user" ? (
             <div className="whitespace-pre-wrap break-words rounded-xl border border-[#E7E9EE] bg-white px-4 py-3 text-[14px] leading-7 text-ink shadow-[0_1px_2px_rgba(17,17,17,0.03)]">
-              {turn.text}
+              {turn.text && <span>{turn.text}</span>}
+              {turn.images.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {turn.images.map((src, imageIndex) => (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      key={imageIndex}
+                      src={src}
+                      alt={`用户图片 ${imageIndex + 1}`}
+                      className="max-h-64 rounded-md border border-[#E7E9EE] object-contain"
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           ) : (
             <div className="break-words text-[14px] leading-7 text-ink-soft">
@@ -551,6 +609,14 @@ export function Transcript({
                     </ReactMarkdown>
                   ) : block.kind === "thinking" ? (
                     <ThinkingBlock key={blockIndex} text={block.text} />
+                  ) : block.kind === "image" ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      key={blockIndex}
+                      src={block.src}
+                      alt="模型输出图片"
+                      className="my-2 max-h-80 rounded-lg border border-[#E3E8F2] object-contain"
+                    />
                   ) : (
                     <ToolCallCard
                       key={blockIndex}
