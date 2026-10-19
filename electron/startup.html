@@ -8,19 +8,21 @@
     <style>
       :root {
         color-scheme: dark;
-        --bg: #0f1419; /* Ayu Dark 经典底色 */
-        --text-strong: #ffb454; /* Ayu 经典金色/橘黄用于强强调 */
-        --text-error: #ffb4b4; /* 错误状态下的柔和粉红标题 */
-        --muted: #abb2bf; /* Ayu 经典中性灰 */
-        
-        /* 启动状态：Ayu 经典的金橘色 */
-        --accent: #ffb454;
-        --accent-soft: rgba(255, 180, 84, 0.035);
-        --glow-color: rgba(255, 180, 84, 0.05);
-        
-        /* 错误/停止状态：Ayu 经典亮红 */
-        --danger: #ff3333;
-        --danger-soft: rgba(255, 51, 51, 0.08);
+        /* Graphite (html.dark) palette — startup happens before the theme is
+           known, so it always uses the neutral dark identity. */
+        --bg: #0e1013;
+        --text-strong: #f0f3f6;
+        --text-error: #ff9d9d; /* danger */
+        --muted: #8b929b; /* dark --text-muted */
+
+        /* PiForge blue accent (dark #8c9eff) */
+        --accent: #8c9eff;
+        --accent-soft: rgba(140, 158, 255, 0.045);
+        --glow-color: rgba(140, 158, 255, 0.06);
+
+        /* Error / stopped state */
+        --danger: #ff9d9d;
+        --danger-soft: rgba(255, 157, 157, 0.08);
       }
 
       * {
@@ -97,7 +99,7 @@
       #panel.stopped {
         --accent: var(--danger);
         --accent-soft: var(--danger-soft);
-        --glow-color: rgba(255, 51, 51, 0.03);
+        --glow-color: rgba(255, 157, 157, 0.03);
       }
 
       /* 中央指示器容器及弹性入场动画 */
@@ -231,8 +233,7 @@
         }
       }
 
-      /* 错误详情面板：正常启动时完全隐藏，发生错误或停止时平滑向下展开并淡入 */
-      .error-details {
+      /* 错误详情面板：正常启动时完全隐藏，发生错误或停止时平滑向下展开并淡入 */      .error-details {
         max-height: 0;
         opacity: 0;
         visibility: hidden;
@@ -256,12 +257,12 @@
       /* 磨砂质感卡片承载警告文本 */
       .error-box {
         padding: 28px 32px;
-        border-radius: 20px;
-        background: rgba(255, 51, 51, 0.03);
-        border: 1px solid rgba(255, 51, 51, 0.08);
+        border-radius: 10px;
+        background: rgba(255, 157, 157, 0.03);
+        border: 1px solid rgba(255, 157, 157, 0.08);
         box-shadow: 
           0 24px 48px rgba(0, 0, 0, 0.65),
-          0 1px 2px rgba(255, 51, 51, 0.04) inset;
+          0 1px 2px rgba(255, 157, 157, 0.04) inset;
       }
 
       h1 {
@@ -291,9 +292,9 @@
         align-items: center;
         justify-content: center;
         padding: 6px 18px;
-        border-radius: 20px;
-        background: rgba(255, 51, 51, 0.06);
-        border: 1px solid rgba(255, 51, 51, 0.15);
+        border-radius: 2px;
+        background: rgba(255, 157, 157, 0.06);
+        border: 1px solid rgba(255, 157, 157, 0.15);
         color: var(--danger);
         font-size: 12px;
         font-weight: 400;

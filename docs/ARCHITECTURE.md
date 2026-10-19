@@ -259,7 +259,7 @@ pi-agent-desktop/
 │   ├── api-error.ts              API 错误格式化
 │   ├── tool-presets.ts           工具预设常量与 getPresetFromTools
 │   ├── custom-path-selection.ts  自定义路径选择
-│   ├── ayu-syntax-theme.ts       ayu 语法高亮主题
+│   ├── syntax-theme.ts           语法高亮主题（Frost / Graphite / Haze 三套）
 │   └── panel-layout.js           侧边栏宽度计算（CJS，构建兼容）
 │
 ├── electron/                     Electron 主进程（见 §13）

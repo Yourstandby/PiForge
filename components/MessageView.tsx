@@ -4,7 +4,7 @@ import React, { useState, useRef, useEffect, useId, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { ayuDarkSyntaxTheme, ayuLightSyntaxTheme } from "@/lib/ayu-syntax-theme";
+import { syntaxThemeFor } from "@/lib/syntax-theme";
 import { useTheme } from "@/hooks/useTheme";
 import { useI18n } from "./I18nProvider";
 import type {
@@ -205,13 +205,18 @@ const UserMessageView = React.memo(function UserMessageView({
 
   return (
     <div
-      className="group/msg mb-[18px] flex flex-col items-end"
+      className="ledger-turn group/msg"
+      data-role="user"
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      <div className="flex items-end gap-1.5 max-w-[85%]">
+      <div className="ledger-meta">
+        <span className="ledger-role">{t("message.you")}</span>
+        {time && <span className="ledger-time">{time}</span>}
+      </div>
+      <div className="ledger-body">
         <div
-          className="user-message-bubble flex-1 min-w-0 bg-user-bg border border-user-border rounded-panel px-3 py-2 text-[14px] leading-[1.6] text-text whitespace-pre-wrap break-words"
+          className="user-message-bubble whitespace-pre-wrap break-words"
           data-delivery={message.deliveryState ?? "sent"}
         >
           {imageBlocks.length > 0 && (
@@ -241,9 +246,9 @@ const UserMessageView = React.memo(function UserMessageView({
         </div>
       </div>
 
-      {/* Bottom row: action buttons + timestamp — visible on hover OR focus-within (keyboard) */}
-      {(time || canFork || canNavigate || true) && (
-        <div className="flex items-center justify-end gap-1.5 mt-[3px]">
+      {/* Bottom row: action buttons — visible on hover OR focus-within (keyboard) */}
+      {(canFork || canNavigate || true) && (
+        <div className="ledger-actions justify-start">
           <div
             className={`flex gap-[3px] transition-opacity duration-120 opacity-0 pointer-events-none group-hover/msg:opacity-100 group-hover/msg:pointer-events-auto group-focus-within/msg:opacity-100 group-focus-within/msg:pointer-events-auto ${
               hovered ? "opacity-100 pointer-events-auto" : ""
@@ -462,12 +467,14 @@ const AssistantMessageView = React.memo(function AssistantMessageView({
 
   return (
     <div
-      className="group/msg mb-[18px]"
+      className="ledger-turn group/msg"
+      data-role="assistant"
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      {/* Model label */}
-      <div className="text-[11px] text-text-dim mb-1 flex items-center gap-1.5">
+      {/* Turn header: role, model, stream telemetry */}
+      <div className="ledger-meta">
+        <span className="ledger-role">{t("message.assistant")}</span>
         {message.provider && (
           <span>
             {modelNames?.[`${message.provider}:${message.model}`] ??
@@ -521,7 +528,7 @@ const AssistantMessageView = React.memo(function AssistantMessageView({
           })()}
       </div>
 
-      <div className="flex flex-col gap-2">
+      <div className="ledger-body flex flex-col gap-2">
         {blocks.map((block, i) => (
           <BlockView
             key={i}
@@ -536,7 +543,7 @@ const AssistantMessageView = React.memo(function AssistantMessageView({
         ))}
       </div>
 
-      <div className="flex items-center gap-2 mt-1">
+      <div className="ledger-actions">
         {message.usage && !isStreaming && (
           <div className="text-[11px] text-text-dim">{formatUsage(message.usage)}</div>
         )}
@@ -652,18 +659,16 @@ function ThinkingBlock({ block, duration }: { block: ThinkingContent; duration?:
   const [expanded, setExpanded] = useState(false);
   const panelId = useId();
   return (
-    <div className="t-acc overflow-hidden rounded-panel border border-border text-[13px]" data-open={expanded ? "true" : "false"}>
+    <div className="ledger-think" data-open={expanded ? "true" : "false"}>
       <button
         onClick={() => setExpanded((v) => !v)}
         aria-label={expanded ? t("message.collapseThinking") : t("message.expandThinking")}
         aria-expanded={expanded}
         aria-controls={panelId}
-        className="flex w-full cursor-pointer items-center gap-1.5 border-none bg-code-header-bg px-2.5 py-1.5 text-left text-[12px] text-text-muted"
+        className="ledger-think-head"
       >
-        <span>{t("message.thinking")}</span>
-        {duration !== undefined && (
-          <span className="ml-auto text-[11px] text-text-dim tabular-nums">{duration}s</span>
-        )}
+        <span className="ledger-tag">{t("message.thinking")}</span>
+        {duration !== undefined && <span className="ledger-num ml-auto">{duration}s</span>}
         <span className="t-acc-chevron text-text-dim" aria-hidden="true">
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
             <path d="M4 6.5L8 10.5L12 6.5" />
@@ -672,9 +677,7 @@ function ThinkingBlock({ block, duration }: { block: ThinkingContent; duration?:
       </button>
       <div id={panelId} className="t-acc-panel" aria-hidden={!expanded}>
         <div className="t-acc-panel-inner">
-          <div className="border-t border-border bg-bg-panel px-2.5 py-2 text-[12px] leading-[1.6] whitespace-pre-wrap text-text-muted">
-            {block.thinking}
-          </div>
+          <div className="ledger-think-body">{block.thinking}</div>
         </div>
       </div>
     </div>
@@ -699,54 +702,40 @@ function ToolCallBlock({
   const isError = result?.isError ?? false;
 
   return (
-    <div
-      className={`rounded-panel overflow-hidden text-[12px] border ${
-        isError ? "border-danger-border bg-danger-bg" : "border-success-border bg-success-bg"
-      }`}
-    >
-      {/* ── Tool call header ── */}
+    <div className="ledger-tool" data-error={isError ? "true" : "false"} data-open={expanded ? "true" : "false"}>
+      {/* Tool call: one ruled log line */}
       <button
         onClick={() => setExpanded((v) => !v)}
         aria-label={expanded ? t("message.collapseTool", { tool: block.toolName }) : t("message.expandTool", { tool: block.toolName })}
-        className="flex items-center gap-1.5 w-full px-2.5 py-1.5 bg-transparent border-none text-text-muted cursor-pointer text-[12px] text-left min-w-0"
+        className="ledger-tool-head"
       >
-        <span className={`font-mono font-semibold text-[11px] shrink-0 ${isError ? "text-danger" : "text-success"}`}>
+        <span className="ledger-tag" data-error={isError ? "true" : "false"}>
           {block.toolName}
         </span>
-        <span className="text-text-dim font-mono text-[11px] overflow-hidden text-ellipsis whitespace-nowrap flex-1 min-w-0">
-          {getToolPreview(block)}
-        </span>
-        {duration !== undefined && (
-          <span className="text-[11px] text-text-dim shrink-0 tabular-nums">{duration}s</span>
-        )}
+        <span className="ledger-tool-preview">{getToolPreview(block)}</span>
+        {duration !== undefined && <span className="ledger-num">{duration}s</span>}
         <svg
           width="10"
           height="10"
           viewBox="0 0 10 10"
           fill="none"
-          stroke="var(--text-dim)"
+          stroke="currentColor"
           strokeWidth="1.6"
           strokeLinecap="round"
           strokeLinejoin="round"
-          className="shrink-0 transition-transform duration-150"
+          className="ledger-chevron shrink-0"
           style={{ transform: expanded ? "rotate(180deg)" : "none" }}
         >
           <polyline points="2 3.5 5 6.5 8 3.5" />
         </svg>
       </button>
 
-      {/* ── Expanded: input args ── */}
+      {/* Expanded: input args */}
       {expanded && (
-        <pre
-          className={`m-0 px-2.5 py-2 text-text-muted text-[12px] leading-[1.5] overflow-auto bg-bg-subtle border-t whitespace-pre-wrap break-all ${
-            isError ? "border-danger-border" : "border-success-border"
-          }`}
-        >
-          {inputStr}
-        </pre>
+        <pre className="ledger-tool-args">{inputStr}</pre>
       )}
 
-      {/* ── Paired result — only shown when expanded ── */}
+      {/* Paired result — only shown when expanded */}
       {expanded && result && (
         <PairedResult text={resultText ?? ""} isEmpty={resultIsEmpty} isError={isError} />
       )}
@@ -764,16 +753,8 @@ function PairedResult({
   isError: boolean;
 }) {
   return (
-    <div
-      className={`border-t ${
-        isError ? "border-danger-border bg-danger-bg" : "border-success-border bg-bg-subtle"
-      }`}
-    >
-      <pre
-        className={`m-0 px-2.5 py-2 text-[12px] leading-[1.5] overflow-auto max-h-[400px] bg-bg whitespace-pre-wrap break-all ${
-          isError ? "text-danger" : isEmpty ? "text-text-dim italic opacity-60" : "text-text-muted normal-case opacity-100"
-        }`}
-      >
+    <div className="ledger-result" data-error={isError ? "true" : "false"}>
+      <pre className={`ledger-result-pre ${isError ? "is-error" : isEmpty ? "is-empty" : ""}`}>
         {isEmpty ? "(no output)" : text}
       </pre>
     </div>
@@ -813,7 +794,7 @@ function formatUsage(usage: {
 
 function CodeBlock({ code, lang }: { code: string; lang: string }) {
   const { t } = useI18n();
-  const { isDark } = useTheme();
+  const { theme } = useTheme();
   const [copied, setCopied] = useState(false);
 
   // Auto-clear "copied" feedback with a cleanup (see UserMessageView).
@@ -830,20 +811,20 @@ function CodeBlock({ code, lang }: { code: string; lang: string }) {
   };
 
   return (
-    <div className="relative my-1 rounded-panel overflow-hidden border border-border">
-      <div className="px-2.5 py-[3px] bg-bg-panel border-b border-border text-[11px] text-text-dim flex justify-between items-center">
+    <div className="ledger-code relative">
+      <div className="ledger-code-head">
         <span>{lang}</span>
         <button
           onClick={copy}
           aria-label={t("message.copyCode")}
-          className="bg-transparent border-none text-text-muted hover:text-text cursor-pointer text-[11px] rounded-control px-1.5 py-[2px] transition-colors duration-120"
+          className="ledger-code-copy"
         >
           {copied ? t("common.copied") : t("common.copy")}
         </button>
       </div>
       <SyntaxHighlighter
         language={lang || "text"}
-        style={isDark ? ayuDarkSyntaxTheme : ayuLightSyntaxTheme}
+        style={syntaxThemeFor(theme)}
         showLineNumbers
         lineNumberStyle={{ color: "var(--text-dim)", fontStyle: "normal" }}
         customStyle={{

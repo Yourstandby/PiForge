@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SessionInfo, SessionTreeNode, ToolResultMessage } from "@/lib/types";
 import { splitActiveThinking } from "@/lib/active-thinking";
 import { MessageList } from "./MessageList";
-import { BrandLogo } from "./BrandLogo";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { ExtensionUiDialog } from "./ExtensionUiDialog";
 import { ProjectTrustDialog } from "./ProjectTrustDialog";
@@ -183,6 +182,11 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
 
   const isEmptyNew = isNew && messages.length === 0 && !streamState.isStreaming && !agentRunning;
 
+  const emptyCwd = session?.cwd ?? newSessionCwd ?? null;
+  const sessionLabel = emptyCwd
+    ? emptyCwd.split(/[\\/]/).filter(Boolean).pop() ?? "PiForge"
+    : "PiForge";
+
   const availableThinkingLevels = displayModelValue
     ? (modelThinkingLevels[`${displayModelValue.provider}:${displayModelValue.modelId}`] ?? null)
     : null;
@@ -309,10 +313,12 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
       )}
 
       {isEmptyNew ? (
-        <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-10 md:py-16">
-          <div className="flex w-full max-w-[820px] flex-col justify-center">
-            <div className="mb-8 flex justify-center select-none">
-              <BrandLogo className="h-16 w-16 rounded-[18px] shadow-sm" />
+        <div className="ledger-empty">
+          <div className="ledger-empty-inner">
+            <div className="ledger-empty-head">
+              <span className="ledger-kicker">{t("chat.newSession")}</span>
+              <h1 className="ledger-empty-title">{sessionLabel}</h1>
+              {emptyCwd && <p className="ledger-empty-path">{emptyCwd}</p>}
             </div>
 
             {chatInputElement}
@@ -321,8 +327,8 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
       ) : (
       <>
       <div className="relative flex flex-1 overflow-hidden">
-        <div ref={setScrollContainer} className="flex-1 overflow-y-auto pt-4 pb-6 [scrollbar-width:none]">
-          <div className="mx-auto max-w-[820px] px-4">
+        <div ref={setScrollContainer} className="ledger-scroll flex-1 overflow-y-auto [scrollbar-width:none]">
+          <div className="ledger-transcript">
 
             <MessageList
               messages={messages}
@@ -357,7 +363,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
         />
       </div>
 
-      <div className="relative">
+      <div className="composer-band">
         {chatInputElement}
       </div>
       </>

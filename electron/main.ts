@@ -334,8 +334,8 @@ function createWindow(options: { initialPath?: string; showStartup?: boolean } =
     minHeight: 600,
     titleBarStyle: "hidden",
     titleBarOverlay: {
-      color: "#0c1118",       // --bg-elevated (dark)
-      symbolColor: "#d9deea", // --text (dark)
+      color: "#0b1119",       // --bg (dark), mirrors title-bar-overlay.ts
+      symbolColor: "#ccd7e6", // --text (dark)
       height: 36,
     },
     title: "PiForge",

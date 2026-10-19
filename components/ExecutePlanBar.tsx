@@ -21,7 +21,7 @@ export function ExecutePlanBar({ visible, disabled, onExecute }: Props) {
         gap: 12,
         padding: "8px 12px",
         margin: "0 12px 8px",
-        borderRadius: 10,
+        borderRadius: "var(--radius-panel)",
         border: "1px solid var(--border)",
         background: "var(--bg-panel)",
       }}
@@ -35,10 +35,10 @@ export function ExecutePlanBar({ visible, disabled, onExecute }: Props) {
         onClick={onExecute}
         style={{
           padding: "6px 14px",
-          borderRadius: 8,
+          borderRadius: "var(--radius-control)",
           border: "none",
           background: disabled ? "var(--border)" : "var(--accent)",
-          color: "var(--accent-contrast, #fff)",
+          color: "var(--accent-contrast)",
           cursor: disabled ? "not-allowed" : "pointer",
           fontSize: 12,
           fontWeight: 600,

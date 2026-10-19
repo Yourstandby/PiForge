@@ -409,7 +409,7 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, onBranch, on
           right: 0,
           background: "var(--material-popover)",
           borderBottom: "1px solid var(--border)",
-          boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+          boxShadow: "var(--shadow-popover)",
           zIndex: 100,
         }}>
           {(onBranch || onClone) && (

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { ayuDarkSyntaxTheme, ayuLightSyntaxTheme } from "@/lib/ayu-syntax-theme";
+import { syntaxThemeFor } from "@/lib/syntax-theme";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useTheme } from "@/hooks/useTheme";
@@ -658,7 +658,7 @@ export function FileViewer({ filePath, cwd }: Props) {
 
 function TextFileViewer({ filePath, cwd }: Props) {
   const { t } = useI18n();
-  const { isDark } = useTheme();
+  const { theme } = useTheme();
   const [data, setData] = useState<FileData | null>(null);
   const [prevContent, setPrevContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1013,7 +1013,7 @@ function TextFileViewer({ filePath, cwd }: Props) {
               disabled={saving}
               style={{
                 padding: "3px 12px", fontSize: 11, cursor: "pointer",
-                background: "var(--accent)", color: "#fff",
+                background: "var(--accent)", color: "var(--accent-contrast)",
                 border: "none", borderRadius: "var(--radius-control)",
                 fontWeight: 600, opacity: saving ? 0.6 : 1,
               }}
@@ -1075,7 +1075,7 @@ function TextFileViewer({ filePath, cwd }: Props) {
         ) : (
           <SyntaxHighlighter
             language={data.language === "text" ? "plaintext" : data.language}
-            style={isDark ? ayuDarkSyntaxTheme : ayuLightSyntaxTheme}
+            style={syntaxThemeFor(theme)}
             showLineNumbers
             lineNumberStyle={{
               color: "var(--text-dim)",

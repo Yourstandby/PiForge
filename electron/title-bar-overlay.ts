@@ -13,9 +13,9 @@ interface OverlayColors {
 }
 
 const OVERLAY_COLORS: Record<TitleBarTheme, OverlayColors> = {
-  light: { color: "#ffffff", symbolColor: "#364152" },
-  dark: { color: "#0c1118", symbolColor: "#d9deea" },
-  glacier: { color: "#070d18", symbolColor: "#c9d9ee" },
+  light: { color: "#f7fafe", symbolColor: "#24303f" },
+  dark: { color: "#0b0d10", symbolColor: "#c7ccd3" },
+  glacier: { color: "#13212b", symbolColor: "#d3e6f2" },
 };
 
 export function normalizeTitleBarTheme(value: unknown): TitleBarTheme {

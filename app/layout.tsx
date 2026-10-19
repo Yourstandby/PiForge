@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Noto_Sans_Mono, Inter } from "next/font/google";
+import { Noto_Sans_Mono, Instrument_Sans, Instrument_Serif } from "next/font/google";
 import "./globals.css";
 import { I18nProvider } from "@/components/I18nProvider";
 import GlobalRuntimeErrorReporter from "@/components/GlobalRuntimeErrorReporter";
@@ -10,9 +10,19 @@ const notoSansMono = Noto_Sans_Mono({
   display: "swap",
 });
 
-const inter = Inter({
+// Ledger type system: a technical grotesque for chrome, a high-contrast
+// serif reserved for assistant prose, mono for metadata and code.
+const instrumentSans = Instrument_Sans({
   subsets: ["latin"],
-  variable: "--font-inter",
+  variable: "--font-instrument-sans",
+  display: "swap",
+});
+
+const instrumentSerif = Instrument_Serif({
+  subsets: ["latin"],
+  weight: "400",
+  style: ["normal", "italic"],
+  variable: "--font-instrument-serif",
   display: "swap",
 });
 
@@ -27,7 +37,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${notoSansMono.variable} ${inter.variable}`} suppressHydrationWarning>
+    <html
+      lang="en"
+      className={`${notoSansMono.variable} ${instrumentSans.variable} ${instrumentSerif.variable}`}
+      suppressHydrationWarning
+    >
       <head>
         <script
           dangerouslySetInnerHTML={{

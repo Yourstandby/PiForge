@@ -556,12 +556,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             alignItems: "center",
             background: "var(--material-input)",
             border: `1px solid ${inputFocused
-              ? "var(--focus-ring)"
+              ? "var(--accent)"
               : isStreaming && (onSteer || onFollowUp)
                 ? "var(--warning-border)"
-                : "color-mix(in srgb, var(--border) 70%, transparent)"}`,
-            borderRadius: 18,
-            padding: "7px 7px 7px 15px",
+                : "var(--border)"}`,
+            borderRadius: 3,
+            padding: "9px 8px 9px 14px",
           } as React.CSSProperties}
         >
           <textarea
@@ -610,10 +610,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   aria-label={onSteer ? t("chat.sendRunningAgent") : t("chat.queueFollowUp")}
                   style={{
                     display: "flex", alignItems: "center", justifyContent: "center",
-                    width: 38, height: 38, padding: 0,
+                    width: 30, height: 30, padding: 0,
                     background: (value.trim() || attachedImages.length) ? "var(--warning-bg)" : "none",
                     border: "none",
-                    borderRadius: 12,
+                    borderRadius: 3,
                     color: (value.trim() || attachedImages.length) ? "var(--warning)" : "var(--text-dim)",
                     cursor: (value.trim() || attachedImages.length) ? "pointer" : "not-allowed",
                   }}
@@ -636,13 +636,13 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 flexShrink: 0,
                 alignSelf: "flex-end",
                 display: "flex", alignItems: "center", justifyContent: "center",
-                width: 38, height: 38, padding: 0,
+                width: 30, height: 30, padding: 0,
                 background: (value.trim() || attachedImages.length) ? "var(--accent)" : "var(--bg-panel)",
                 border: "none",
-                borderRadius: 12,
+                borderRadius: 3,
                 color: (value.trim() || attachedImages.length) ? "var(--accent-contrast)" : "var(--text-dim)",
                 cursor: (value.trim() || attachedImages.length) ? "pointer" : "not-allowed",
-                boxShadow: (value.trim() || attachedImages.length) ? "0 1px 8px var(--focus-ring)" : "none",
+                boxShadow: "none",
               }}
               className="composer-icon-button"
             >

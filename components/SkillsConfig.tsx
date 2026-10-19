@@ -70,7 +70,7 @@ function Toggle({
           height: 16,
           borderRadius: "50%",
           background: "var(--bg)",
-          boxShadow: "0 1px 4px rgba(0,0,0,0.22)",
+          boxShadow: "var(--shadow-popover)",
           transition: "left 0.18s cubic-bezier(.4,0,.2,1)",
         }}
       />
@@ -115,10 +115,10 @@ function SkillDetail({
             flexShrink: 0,
             background:
               label === "project"
-                ? "rgba(99,102,241,0.12)"
-                : "rgba(120,120,120,0.12)",
+                ? "var(--accent-soft)"
+                : "var(--bg-selected)",
             color:
-              label === "project" ? "rgba(99,102,241,0.8)" : "var(--text-dim)",
+              label === "project" ? "var(--accent)" : "var(--text-dim)",
           }}
         >
           {label}
@@ -467,9 +467,9 @@ function AddSkillPanel({
                       isInstalled || isInstalling || installing !== null
                         ? "not-allowed"
                         : "pointer",
-                    background: isInstalled ? "rgba(34,197,94,0.1)" : "none",
+                    background: isInstalled ? "var(--success-bg)" : "none",
                     color: isInstalled
-                      ? "#16a34a"
+                      ? "var(--success)"
                       : isInstalling
                         ? "var(--accent)"
                         : "var(--text-muted)",
@@ -595,7 +595,7 @@ export function SkillsConfig({
         position: "fixed",
         inset: 0,
         zIndex: 1000,
-        background: "rgba(0,0,0,0.42)",
+        background: "var(--scrim)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -612,10 +612,10 @@ export function SkillsConfig({
           height: "78vh",
           background: "var(--material-popover)",
           border: "1px solid var(--border)",
-          borderRadius: 14,
+          borderRadius: "var(--radius-overlay)",
           display: "flex",
           flexDirection: "column",
-          boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
+          boxShadow: "var(--shadow-popover)",
           overflow: "hidden",
         }}
       >
