@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { I18nProvider } from "@/components/I18nProvider";
 
 export const metadata: Metadata = {
   title: "PiForge",
@@ -17,7 +18,9 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="zh-CN">
-      <body className="min-h-dvh">{children}</body>
+      <body className="min-h-dvh">
+        <I18nProvider>{children}</I18nProvider>
+      </body>
     </html>
   );
 }
