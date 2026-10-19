@@ -25,7 +25,7 @@ body:
     id: asset
     attributes:
       label: 安装包或 latest*.yml 文件名
-      placeholder: Pi-Agent-Desktop-0.8.6-mac-universal.dmg
+      placeholder: PiForge-0.1.0-mac-universal.dmg
   - type: textarea
     id: what
     attributes:

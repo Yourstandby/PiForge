@@ -26,12 +26,13 @@ interface Props {
   onExportSession?: (session: SessionInfo) => void;
   selectedCwd?: string | null;
   onCwdChange?: (cwd: string | null) => void;
+  onOpenInNewWindow?: (cwd: string) => void;
   onOpenFile?: (filePath: string, fileName: string) => void;
   explorerRefreshKey?: number;
   onAtMention?: (relativePath: string) => void;
 }
 
-export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, onInitialRestoreDone, refreshKey, onSessionDeleted, onBranchSession, onCloneSession, onExportSession, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onAtMention }: Props) {
+export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, onInitialRestoreDone, refreshKey, onSessionDeleted, onBranchSession, onCloneSession, onExportSession, selectedCwd: selectedCwdProp, onCwdChange, onOpenInNewWindow, onOpenFile, explorerRefreshKey, onAtMention }: Props) {
   const { t, locale } = useI18n();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -171,7 +172,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           <ProjectGroup project={project} dragHandle={dragHandle} dragging={dragging} expanded={searching || (preferences.expanded[project.key] ?? project.key === activeProjectKey)} active={project.key === activeProjectKey} duplicateName={projects.some((other) => other.key !== project.key && other.name === project.name)} onToggle={(expanded) => {
             if (searching) setSearchQuery("");
             setExpanded(project.key, expanded);
-          }} onNewSession={() => newSession(project.cwd)}>
+          }} onNewSession={() => newSession(project.cwd)} onOpenInNewWindow={onOpenInNewWindow && project.cwd ? () => onOpenInNewWindow(project.cwd) : undefined}>
             {project.sessions.length === 0 && <button className="sidebar-empty-project" onClick={() => newSession(project.cwd)}>{t("sidebar.startFirstSession")}<SidebarIcon name="plus" size={13} /></button>}
             {project.tree.map((node) => <SessionTreeItem key={node.session.id} node={node} selectedSessionId={selectedSessionId} onSelectSession={onSelectSession} onRenamed={loadSessions} onSessionDeleted={(id) => { onSessionDeleted?.(id); void loadSessions(); }} onBranchSession={onBranchSession} onCloneSession={onCloneSession} onExportSession={onExportSession} depth={0} searching={searching} />)}
           </ProjectGroup>

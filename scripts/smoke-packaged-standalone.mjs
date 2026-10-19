@@ -17,7 +17,7 @@ function findPackagedOutput() {
   if (process.platform === "win32") {
     const outputDir = join(releaseDir, "win-unpacked");
     const standaloneDir = join(outputDir, "resources", "standalone");
-    const runtimeExecutable = join(outputDir, "Pi Agent Desktop.exe");
+    const runtimeExecutable = join(outputDir, "PiForge.exe");
     return hasStandaloneServer(standaloneDir) && existsSync(runtimeExecutable)
       ? { standaloneDir, runtimeExecutable }
       : null;
@@ -26,7 +26,7 @@ function findPackagedOutput() {
   if (process.platform === "linux") {
     const outputDir = join(releaseDir, "linux-unpacked");
     const standaloneDir = join(outputDir, "resources", "standalone");
-    const runtimeExecutable = ["pi-agent-desktop", "Pi Agent Desktop"]
+    const runtimeExecutable = ["piforge", "PiForge", "pi-agent-desktop", "Pi Agent Desktop"]
       .map((name) => join(outputDir, name))
       .find((path) => existsSync(path));
     return hasStandaloneServer(standaloneDir) && runtimeExecutable

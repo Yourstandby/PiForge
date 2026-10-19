@@ -18,7 +18,7 @@
   !define MUI_DIRECTORYPAGE_TEXT_TOP '提示：切换到其它盘符后，安装程序会自动在所选路径下创建 ${APP_FILENAME} 子文件夹，无需手动输入。 Tip: the ${APP_FILENAME} subfolder is created automatically under the chosen path — no need to type it.'
 !endif
 
-!define PI_AGENT_INSTALLER_LOG_DIR "$TEMP\Pi-Agent-Desktop"
+!define PI_AGENT_INSTALLER_LOG_DIR "$TEMP\PiForge"
 !define PI_AGENT_INSTALLER_LOG_FILE "${PI_AGENT_INSTALLER_LOG_DIR}\installer.log"
 
 !macro appendInstallerLog MESSAGE
@@ -85,6 +85,8 @@
 
 !macro closeAppProcesses
   !insertmacro appendInstallerLog "closeAppProcesses start"
+  !insertmacro closeAppProcess "PiForge.exe" "PiForge"
+  ; Legacy process names: PiForge installs over earlier Pi Agent Desktop builds.
   !insertmacro closeAppProcess "Pi Agent Desktop.exe" "Pi Agent Desktop"
   !insertmacro closeAppProcess "Pi Agent.exe" "Pi Agent"
   !insertmacro closeAppProcess "PipeAgent.exe" "PipeAgent"
@@ -98,7 +100,7 @@
     ; Force kill nodes spawned from install dir — and the main apps by name in the install dir.
     ; Uses `Get-Process` (fast in-process) instead of `Get-CimInstance` (slow WMI round-trip).
     ; Merges logging + killing into one PS invocation to avoid paying the PS startup cost twice.
-    nsExec::Exec '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -Command "$$logFile = \"${PI_AGENT_INSTALLER_LOG_FILE}\"; $$dir = \"$INSTDIR\"; $$targets = Get-Process | Where-Object { ($$_.Path -and $$_.Path.StartsWith($$dir, [System.StringComparison]::OrdinalIgnoreCase)) -or ($$_.Name -in @(\"Pi Agent Desktop\", \"Pi Agent\", \"PipeAgent\") -and $$_.CommandLine -and $$_.CommandLine.IndexOf($$dir, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) }; Add-Content -LiteralPath $$logFile -Value \"Killing $$($$targets.Count) install-dir process(es)\"; $$targets | Select-Object Id,Name,Path | Out-File -LiteralPath $$logFile -Append -Width 4096; $$targets | ForEach-Object { Stop-Process -Id $$_.Id -Force -ErrorAction SilentlyContinue }; Start-Sleep -Seconds 1; $$remain = Get-Process | Where-Object { ($$_.Path -and $$_.Path.StartsWith($$dir, [System.StringComparison]::OrdinalIgnoreCase)) -or ($$_.Name -in @(\"Pi Agent Desktop\", \"Pi Agent\", \"PipeAgent\") -and $$_.CommandLine -and $$_.CommandLine.IndexOf($$dir, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) }; Add-Content -LiteralPath $$logFile -Value \"After kill: $$($$remain.Count) process(es) still alive\""'
+    nsExec::Exec '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -Command "$$logFile = \"${PI_AGENT_INSTALLER_LOG_FILE}\"; $$dir = \"$INSTDIR\"; $$targets = Get-Process | Where-Object { ($$_.Path -and $$_.Path.StartsWith($$dir, [System.StringComparison]::OrdinalIgnoreCase)) -or ($$_.Name -in @(\"PiForge\", \"Pi Agent Desktop\", \"Pi Agent\", \"PipeAgent\") -and $$_.CommandLine -and $$_.CommandLine.IndexOf($$dir, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) }; Add-Content -LiteralPath $$logFile -Value \"Killing $$($$targets.Count) install-dir process(es)\"; $$targets | Select-Object Id,Name,Path | Out-File -LiteralPath $$logFile -Append -Width 4096; $$targets | ForEach-Object { Stop-Process -Id $$_.Id -Force -ErrorAction SilentlyContinue }; Start-Sleep -Seconds 1; $$remain = Get-Process | Where-Object { ($$_.Path -and $$_.Path.StartsWith($$dir, [System.StringComparison]::OrdinalIgnoreCase)) -or ($$_.Name -in @(\"PiForge\", \"Pi Agent Desktop\", \"Pi Agent\", \"PipeAgent\") -and $$_.CommandLine -and $$_.CommandLine.IndexOf($$dir, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) }; Add-Content -LiteralPath $$logFile -Value \"After kill: $$($$remain.Count) process(es) still alive\""'
     Pop $R0
     !insertmacro appendInstallerLog "closeInstallDirProcesses returned $R0"
   ${EndIf}

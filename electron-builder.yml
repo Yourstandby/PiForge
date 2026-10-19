@@ -1,6 +1,6 @@
-appId: com.agegr.pi-agent-desktop
-productName: Pi Agent Desktop
-copyright: Copyright © 2026 Chasen
+appId: com.piforge.desktop
+productName: PiForge
+copyright: Copyright © 2026 PiForge
 
 directories:
   output: release
@@ -86,22 +86,22 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: Pi Agent Desktop
-  uninstallDisplayName: Pi Agent Desktop
-  artifactName: "Pi-Agent-Desktop-Setup-${version}.${ext}"
+  shortcutName: PiForge
+  uninstallDisplayName: PiForge
+  artifactName: "PiForge-Setup-${version}.${ext}"
   include: build/installer.nsh
 
 linux:
-  executableName: pi-agent-desktop
+  executableName: piforge
   syncDesktopName: true
-  maintainer: "Chasen <Chasen-Liao@users.noreply.github.com>"
+  maintainer: "PiForge"
   target:
     - target: deb
       arch:
         - x64
   icon: build/icon.png
   category: Development
-  artifactName: "Pi-Agent-Desktop-${version}-linux-${arch}.${ext}"
+  artifactName: "PiForge-${version}-linux-${arch}.${ext}"
 
 mac:
   target:
@@ -121,12 +121,11 @@ mac:
   # NFT copies native addons under hashed pi-coding-agent there; both arch
   # builds contain the same .node/.dylib and must not be lipo'd.
   x64ArchFiles: "Contents/Resources/standalone{,/.next}/**/{@earendil-works/pi-tui/native/darwin/prebuilds/**,@mariozechner/clipboard-darwin-{arm64,x64}/**,@img/sharp-darwin-{arm64,x64}/**,@img/sharp-libvips-darwin-{arm64,x64}/**,@esbuild/darwin-{arm64,x64}/**}"
-  artifactName: "Pi-Agent-Desktop-${version}-mac-${arch}.${ext}"
+  artifactName: "PiForge-${version}-mac-${arch}.${ext}"
 
 dmg:
-  title: "Pi Agent Desktop ${version}"
+  title: "PiForge ${version}"
 
-publish:
-  provider: github
-  owner: Chasen-Liao
-  repo: pi-agent-desktop
+# PiForge does not publish an update feed yet. electron-builder therefore does
+# not emit app-update.yml, and electron/main.ts skips the update check when
+# that file is absent.

@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback, useSyncExternalStore, useEffect } from "react";
+import { nextTheme, normalizeTheme, themeClasses, type Theme } from "@/lib/theme";
 
-type Theme = "light" | "dark";
+const THEME_STORAGE_KEY = "pi-theme";
+const GLACIER_CLASS = "theme-glacier";
 
 const listeners = new Set<() => void>();
 
@@ -13,13 +15,33 @@ function subscribe(cb: () => void): () => void {
   };
 }
 
-function getSnapshot(): Theme {
+function readTheme(): Theme {
   if (typeof document === "undefined") return "light";
-  return document.documentElement.classList.contains("dark") ? "dark" : "light";
+  const root = document.documentElement;
+  if (root.classList.contains(GLACIER_CLASS)) return "glacier";
+  return root.classList.contains("dark") ? "dark" : "light";
+}
+
+function getSnapshot(): Theme {
+  return readTheme();
 }
 
 function getServerSnapshot(): Theme {
   return "light";
+}
+
+function applyTheme(theme: Theme): void {
+  const root = document.documentElement;
+  const classes = themeClasses(theme);
+  root.classList.toggle("dark", classes.dark);
+  root.classList.toggle(GLACIER_CLASS, classes.glacier);
+
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  } catch {
+    // ignore storage errors (private mode, quota, etc.)
+  }
+  listeners.forEach((cb) => cb());
 }
 
 type ToggleOrigin = { x: number; y: number };
@@ -27,28 +49,14 @@ type ToggleOrigin = { x: number; y: number };
 export function useTheme() {
   const theme = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
-  const toggleTheme = useCallback((origin?: ToggleOrigin) => {
-    const next: Theme = getSnapshot() === "dark" ? "light" : "dark";
-
-    const apply = () => {
-      if (next === "dark") {
-        document.documentElement.classList.add("dark");
-      } else {
-        document.documentElement.classList.remove("dark");
-      }
-      try {
-        localStorage.setItem("pi-theme", next);
-      } catch {
-        // ignore storage errors (private mode, quota, etc.)
-      }
-      listeners.forEach((cb) => cb());
-    };
+  const setTheme = useCallback((next: Theme, origin?: ToggleOrigin) => {
+    if (next === readTheme()) return;
 
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     const supportsVT = typeof document.startViewTransition === "function";
 
     if (!supportsVT || reduceMotion) {
-      apply();
+      applyTheme(next);
       return;
     }
 
@@ -59,7 +67,7 @@ export function useTheme() {
       Math.max(y, window.innerHeight - y),
     );
 
-    const transition = document.startViewTransition(apply);
+    const transition = document.startViewTransition(() => applyTheme(next));
     transition.ready
       .then(() => {
         document.documentElement.animate(
@@ -81,14 +89,18 @@ export function useTheme() {
       });
   }, []);
 
+  const toggleTheme = useCallback((origin?: ToggleOrigin) => {
+    setTheme(nextTheme(readTheme()), origin);
+  }, [setTheme]);
+
   useEffect(() => {
     const customWindow = window as Window & {
       electronAPI?: {
-        setTheme?: (isDark: boolean) => void;
+        setTheme?: (theme: Theme) => void;
       };
     };
-    customWindow.electronAPI?.setTheme?.(theme === "dark");
+    customWindow.electronAPI?.setTheme?.(normalizeTheme(theme));
   }, [theme]);
 
-  return { theme, toggleTheme, isDark: theme === "dark" };
+  return { theme, setTheme, toggleTheme, isDark: theme !== "light" };
 }

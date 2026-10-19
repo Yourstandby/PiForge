@@ -25,7 +25,7 @@ const THEME_STORAGE_KEY = "pi-theme";
 // Same contract as the inline script in app/layout.tsx (only "dark" maps to
 // the dark class). toggle() also clears a stale class if the old document
 // element survived the crash.
-const themeInitScript = `(function(){try{var t=localStorage.getItem("${THEME_STORAGE_KEY}");document.documentElement.classList.toggle("dark",t==="dark")}catch(e){}})();`;
+const themeInitScript = `(function(){try{var t=localStorage.getItem("${THEME_STORAGE_KEY}");var d=document.documentElement;d.classList.toggle("dark",t==="dark"||t==="glacier");d.classList.toggle("theme-glacier",t==="glacier")}catch(e){}})();`;
 
 // Minimal mirror of the app/globals.css palette tokens (light + html.dark),
 // self-contained so the error document renders correctly on its own.
@@ -60,6 +60,22 @@ const globalStyles = `
     --pge-danger-bg: rgba(255, 143, 143, 0.08);
     --pge-danger-border: rgba(255, 143, 143, 0.28);
     --pge-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+    color-scheme: dark;
+  }
+  html.dark.theme-glacier {
+    --pge-bg: #060b14;
+    --pge-panel: #0a1524;
+    --pge-border: rgba(150, 190, 240, 0.12);
+    --pge-text: #c6d7ec;
+    --pge-text-strong: #eef6ff;
+    --pge-text-muted: #8ba3c1;
+    --pge-accent: #6cc4ff;
+    --pge-accent-hover: #a3dcff;
+    --pge-accent-contrast: #04121f;
+    --pge-danger: #ff9d9d;
+    --pge-danger-bg: rgba(255, 157, 157, 0.08);
+    --pge-danger-border: rgba(255, 157, 157, 0.28);
+    --pge-shadow: 0 12px 40px rgba(2, 8, 18, 0.7);
     color-scheme: dark;
   }
   * { box-sizing: border-box; }

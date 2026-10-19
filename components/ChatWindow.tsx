@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Image from "next/image";
 import type { SessionInfo, SessionTreeNode, ToolResultMessage } from "@/lib/types";
 import { splitActiveThinking } from "@/lib/active-thinking";
 import { MessageList } from "./MessageList";
+import { BrandLogo } from "./BrandLogo";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { ExtensionUiDialog } from "./ExtensionUiDialog";
 import { ProjectTrustDialog } from "./ProjectTrustDialog";
@@ -312,16 +312,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
         <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-10 md:py-16">
           <div className="flex w-full max-w-[820px] flex-col justify-center">
             <div className="mb-8 flex justify-center select-none">
-              <Image
-                src="/logo.png"
-                alt=""
-                aria-hidden="true"
-                width={64}
-                height={64}
-                priority
-                draggable={false}
-                className="h-16 w-16 rounded-[18px] shadow-sm"
-              />
+              <BrandLogo className="h-16 w-16 rounded-[18px] shadow-sm" />
             </div>
 
             {chatInputElement}

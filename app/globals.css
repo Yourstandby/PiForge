@@ -216,6 +216,66 @@ html.dark {
   --material-input: rgba(17, 21, 28, 0.84);
 }
 
+/* Glacier — PiForge's blue theme.
+   Layered on top of html.dark so every component that keys dark behaviour off
+   the `dark` class (syntax highlighting, native window controls) keeps working.
+   Only palette tokens and one atmospheric background wash are overridden here;
+   component structure is untouched. */
+html.dark.theme-glacier {
+  --bg: #060b14;
+  --bg-panel: rgba(13, 22, 37, 0.65);
+  --bg-elevated: rgba(10, 17, 30, 0.65);
+  --bg-hover: #121f33;
+  --bg-selected: #1a2c46;
+  --border: rgba(150, 190, 240, 0.12);
+  --border-subtle: rgba(150, 190, 240, 0.055);
+  --text: #c6d7ec;
+  --text-strong: #eef6ff;
+  --text-muted: #8ba3c1;
+  --text-dim: #5b7392;
+  --accent: #6cc4ff;
+  --accent-hover: #a3dcff;
+  --accent-contrast: #04121f;
+  --user-bg: linear-gradient(135deg, rgba(108, 196, 255, 0.16) 0%, rgba(88, 132, 255, 0.06) 100%);
+  --user-border: rgba(108, 196, 255, 0.22);
+  --assistant-bg: rgba(8, 14, 25, 0.8);
+  --tool-bg: rgba(11, 19, 32, 0.8);
+  --bg-subtle: rgba(130, 175, 235, 0.055);
+  --code-bg: #070e19;
+  --code-header-bg: #0b1626;
+  --success: #7ee0b0;
+  --success-bg: rgba(126, 224, 176, 0.08);
+  --success-border: rgba(126, 224, 176, 0.26);
+  --danger: #ff9d9d;
+  --danger-bg: rgba(255, 157, 157, 0.08);
+  --danger-border: rgba(255, 157, 157, 0.28);
+  --warning: #ffcf7a;
+  --warning-bg: rgba(255, 207, 122, 0.1);
+  --warning-border: rgba(255, 207, 122, 0.3);
+  --info: #79d2ff;
+  --info-bg: rgba(121, 210, 255, 0.08);
+  --info-border: rgba(121, 210, 255, 0.28);
+  --focus-ring: rgba(108, 196, 255, 0.42);
+  --shadow-popover: 0 4px 24px -4px rgba(2, 8, 18, 0.55), 0 8px 40px rgba(2, 8, 18, 0.35);
+  --shadow-input: 0 1px 2px rgba(2, 8, 18, 0.28), 0 12px 32px -18px rgba(2, 8, 18, 0.8);
+  --chrome-button-bg: color-mix(in srgb, var(--bg-hover) 58%, transparent);
+  --chrome-button-hover: var(--bg-selected);
+  --divider: var(--border-subtle);
+  --material-sidebar: rgba(11, 19, 32, 0.9);
+  --material-toolbar: rgba(8, 14, 25, 0.8);
+  --material-popover: rgba(14, 24, 40, 0.9);
+  --material-input: rgba(10, 18, 32, 0.84);
+}
+
+/* A single low-contrast polar wash, fixed behind the workbench. Kept faint so
+   panels and message surfaces stay legible. */
+html.dark.theme-glacier body {
+  background-image:
+    radial-gradient(1100px 680px at 8% -12%, rgba(44, 108, 194, 0.22), transparent 62%),
+    radial-gradient(900px 620px at 96% 2%, rgba(70, 196, 255, 0.1), transparent 58%);
+  background-attachment: fixed;
+}
+
 /* Theme toggle: circular wipe via View Transitions API.
    Disable the UA cross-fade; the actual clip-path animation is driven by
    Element.animate() in hooks/useTheme.ts after transition.ready resolves. */
@@ -1082,7 +1142,9 @@ span.linenumber {
 .sidebar-project-path { flex: 1; min-width: 22px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; font-size: 11px; color: var(--text-muted); }
 .sidebar-project-count { width: 28px; flex-shrink: 0; text-align: center; color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; transition: opacity var(--duration-quick); }
 .sidebar-project-add { position: absolute; right: 1px; opacity: 0; }
+.sidebar-project-window { position: absolute; right: 27px; opacity: 0; }
 .sidebar-project-row:hover .sidebar-project-add, .sidebar-project-row:focus-within .sidebar-project-add { opacity: 1; }
+.sidebar-project-row:hover .sidebar-project-window, .sidebar-project-row:focus-within .sidebar-project-window { opacity: 1; }
 .sidebar-project-row:hover .sidebar-project-count, .sidebar-project-row:focus-within .sidebar-project-count { opacity: 0; }
 .sidebar-project-content { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows var(--duration-fast) var(--ease-smooth-out), opacity var(--duration-quick) var(--ease-smooth-out); }
 .sidebar-project-content[data-expanded="true"] { grid-template-rows: 1fr; opacity: 1; padding-bottom: 5px; }
@@ -1170,7 +1232,7 @@ span.linenumber {
 .sidebar-explorer-cwd { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 400; color: var(--text-muted); opacity: 0.8; }
 .sidebar-explorer-content { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding-bottom: 4px; }
 @media (hover: none) {
-  .sidebar-project-add, .sidebar-session-actions { opacity: 1; }
+  .sidebar-project-add, .sidebar-project-window, .sidebar-session-actions { opacity: 1; }
   .sidebar-project-count, .sidebar-session-time { opacity: 0; }
   .sidebar-project-drag-handle { opacity: 1; }
   .sidebar-project-chevron { opacity: 0; }

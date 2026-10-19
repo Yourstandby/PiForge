@@ -1,230 +1,88 @@
-<p align="center">
-  <strong>English</strong> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a>
-</p>
+# PiForge
 
----
+PiForge 是 [Pi 编程智能体](https://github.com/badlogic/pi-mono) 的 Windows 桌面工作台。
+它把 Pi 的会话、文件与工具能力收进一个原生 Electron 窗口，并加了一套名为
+**Glacier（冰川蓝）** 的深蓝主题。
 
-<div align="center">
+> PiForge 衍生自 [Chasen-Liao/pi-agent-desktop](https://github.com/Chasen-Liao/pi-agent-desktop)（MIT），
+> 该上游项目又衍生自 [pi-web](https://github.com/agegr/pi-web)。功能与架构沿用上游，
+> PiForge 负责品牌化、Windows 打包与主题扩展。
 
-<a href="https://github.com/Chasen-Liao/pi-agent-desktop">
-  <img src="public/logo.png" alt="Pi Agent Desktop logo" width="160" height="160" style="border-radius:20%" />
-</a>
-
-# Pi Agent Desktop
-
-**Your personal, minimalist Codex** — a native desktop client for the [Pi coding agent](https://github.com/badlogic/pi-mono), built with Electron for an experience that feels more native than the browser.
-
-[![Release](https://img.shields.io/github/v/release/Chasen-Liao/pi-agent-desktop?color=orange&logo=github)](https://github.com/Chasen-Liao/pi-agent-desktop/releases)
-[![License](https://img.shields.io/github/license/Chasen-Liao/pi-agent-desktop?color=blue)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/Chasen-Liao/pi-agent-desktop?style=flat&logo=github&color=yellow)](https://github.com/Chasen-Liao/pi-agent-desktop/stargazers)
-[![Downloads](https://img.shields.io/github/downloads/Chasen-Liao/pi-agent-desktop/total?color=green)](https://github.com/Chasen-Liao/pi-agent-desktop/releases)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)](https://github.com/Chasen-Liao/pi-agent-desktop/releases)
-[![Landing](https://img.shields.io/badge/Landing-GitHub%20Pages-111111?logo=githubpages)](https://chasen-liao.github.io/pi-agent-desktop/)
-
-![Pi Agent Desktop demo](public/pi.gif)
-
-</div>
-
-> **Upstream**: this project is derived from [pi-web](https://github.com/agegr/pi-web), with a focus on desktop experience polish and feature enhancements.
-
-<!-- BEGIN AICODEMIRROR PROMOTION: copy and invitation URL are maintained in this block. -->
-<table align="center" width="100%">
-  <tr>
-    <td align="center">
-      <p><strong>Sponsored partnership</strong></p>
-      <img src="docs/assets/aicodemirror-logo.png" alt="AICodeMirror" width="260" />
-      <p>Explore AICodeMirror and view its available models and services.</p>
-      <p><a href="https://www.aicodemirror.ai/register?invitecode=4YJ7K1" rel="noopener noreferrer"><strong>Learn more through my invitation link ↗</strong></a></p>
-      <p><sub>This link includes the author's invitation code. Service and promotion details are subject to the platform's pages.</sub></p>
-    </td>
-  </tr>
-</table>
-<!-- END AICODEMIRROR PROMOTION -->
-
-## Table of Contents
-
-- [Features](#features)
-- [Download & Install](#download--install)
-- [Development](#development)
-- [Project Structure](#project-structure)
-- [Tech Stack](#tech-stack)
-- [Credits](#credits)
-- [Contributing](#contributing)
-- [License](#license)
-
-## Features
-
-### 🖥️ Desktop Experience
-
-| Feature | Description |
-| --- | --- |
-| **Native desktop app** | Standalone Electron window with system tray and minimize-to-tray |
-| **Native workspace UI** | Apple-style layout, a liquid thinking orb, and a more compact message input |
-| **Auto-updates** | Checks and installs new versions from GitHub Releases |
-| **Shortcuts** | <kbd>Ctrl</kbd>+<kbd>B</kbd> toggles the left sidebar, <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>B</kbd> toggles the right panel |
-
-### 💬 Sessions & Conversation
-
-| Feature | Description |
-| --- | --- |
-| **Session browser** | All Pi sessions grouped by working directory |
-| **Real-time conversation** | Stream responses live with the agent over SSE |
-| **Running message queue** | <kbd>Enter</kbd> to steer immediately, <kbd>Alt</kbd>+<kbd>Enter</kbd> to queue; drag or keyboard to reorder follow-ups |
-| **In-session branching** | Roll back to any node and continue from there, branches kept in the same file |
-| **Branch navigator** | Visually switch between branches within a session |
-| **Fork & clone sessions** | Branch from any node via API/UI, or clone to a plain directory or a Git worktree on a new branch |
-| **Session export** | Export a session to HTML or Markdown in one click |
-| **Model switching** | Switch models mid-conversation; picker loads providers dynamically registered by local Pi extensions |
-| **Usage & quotas** | Open the status-bar panel to inspect session tokens, cache usage, context capacity, and supported provider quotas with reset times |
-
-### 🤖 Agent Capabilities
-
-| Feature | Description |
-| --- | --- |
-| **Agent modes** | Plan / Ask / Full safety modes, with Ask-tool interception confirmation |
-| **Extension UI Bridge** | Native dialogs for extension `confirm` / `select` / `input` / `editor` / `notify` |
-| **Project trust** | Project Trust 409 handshake with an authorization dialog |
-| **Tool panel** | Control which tools the agent may use |
-| **Long-term memory (LTM)** | Project-level SQLite memory (`memory_save` / `memory_recall` / `memory_forget`) with cross-session retrieval; CJK via FTS5 trigram; auto-observed before `agent_end` and compaction |
-
-### ⚙️ Configuration & Management
-
-| Feature | Description |
-| --- | --- |
-| **MCP server management** | Global (`~/.pi/agent/mcp.json`) and project (`<cwd>/.pi/mcp.json`) MCP configs, manageable from the UI |
-| **Extensions & Skills management** | Unified UI to enable, diagnose, and manage global and project extensions and Skills |
-| **AgentMode persistence** | Writes a custom `desktop_agent_mode` node to `.jsonl` and restores the historical mode on reload |
-| **Interface language** | English / 简体中文, follows the system |
-| **File browsing** | Built-in file browser and viewer in the sidebar |
-
-## Download & Install
-
-Grab the latest installer from the [Releases](https://github.com/Chasen-Liao/pi-agent-desktop/releases) page.
-
-| Platform | Package |
-| --- | --- |
-| 🪟 Windows | `Pi-Agent-Desktop-Setup-x.x.x.exe` |
-| 🍎 macOS (Universal, Intel + Apple Silicon) | `Pi-Agent-Desktop-x.x.x-mac-universal.dmg` (ZIP for auto-update) |
-| 🐧 Linux x64 | `Pi-Agent-Desktop-x.x.x-linux-amd64.deb` |
-
-## Development
-
-<details>
-<summary><strong>Show development commands</strong></summary>
+## 快速开始
 
 ```bash
-# Install dependencies
-npm install
-
-# Dev mode (browser)
-npm run dev          # http://localhost:30141
-
-# Dev mode (Electron desktop window)
-npm run dev:electron
-
-# Type check
-npx tsc --noEmit
-
-# Lint
-npm run lint
-
-# Unit tests (includes middleware.test.ts; keep --test-force-exit)
-npm test
-
-# Windows CI subset (paths / Electron)
-npm run test:windows
-
-# macOS CI subset (paths / Electron / packaging config)
-npm run test:macos
-
-# Build the installer for the current system (Windows NSIS / Linux DEB; for macOS use the next line)
-npm run dist
-
-# Build Intel + Apple Silicon Universal macOS installer
-npm run dist:mac
-
-# GitHub Release: push a vX.Y.Z tag and Actions builds all three platforms (see docs/RELEASING.md)
+npm install          # 依赖安装（Electron 二进制走镜像时设置 ELECTRON_MIRROR）
+npm run dev          # 浏览器开发模式 http://localhost:30141
+npm run dev:electron # Electron 桌面开发模式
+npm run dist         # 打包 Windows NSIS 安装包到 release/
 ```
 
-</details>
+开发期间不要直接运行 `next build`，它会污染 `.next/` 并打断 `npm run dev`。
+需要验证生产产物时使用 `npm run build` 或完整的 `npm run dist`。
 
-## Project Structure
+## Windows 安装包
 
-<details>
-<summary><strong>Show project structure</strong></summary>
+`npm run dist` 会依次执行 Next.js standalone 构建、Electron 主进程编译、
+electron-builder 打包与产物冒烟测试，输出：
 
 ```
-app/
-  api/
-    sessions/      # Read session files
-    agent/         # Send commands, SSE event stream
-    memory/        # LTM recall / remember / forget / stats / health
-    files/         # Read file contents
-    models/        # Available models & default model
-    models-config/ # Read/write models.json
-    skills/        # Skill search & install
-    auth/          # Login & API Key management
-    mcp/           # MCP server config read/write
-    extensions/    # Extension management
-    trust/         # Project trust handshake
-    desktop-settings/ # Desktop-level settings
-    default-cwd/   # Default working directory
-    select-directory/ # Directory picker
-    statusline/    # Status line data
-    home/          # Home / landing data
-    health/        # Health checks
-components/        # UI components
-electron/          # Electron main process
-hooks/             # React hooks (session management, panel layout, etc.)
-lib/
-  ltm/               # Long-term memory (SQLite + MemoryService + hooks)
-  i18n/              # UI copy (en / zh-CN / system)
-  session-reader.ts  # Parse .jsonl session files
-  session-branch-clone.ts # Session fork & clone params and headers
-  git-worktree.ts    # Git worktree creation, identity check & cleanup
-  rpc-manager.ts     # Manage AgentSession lifecycle
-  normalize.ts       # Normalize toolCall field names
-  types.ts
-scripts/
-  ensure-standalone-next-runtimes.mjs             # Patch in Turbopack runtime
-  ensure-standalone-pi-runtime.mjs                # Patch in Pi runtime dependency closure
-  ensure-standalone-macos-universal-runtimes.mjs  # Patch in both macOS Sharp runtimes
-  dereference-standalone-symlinks.mjs             # Resolve standalone symlinks before packaging
-  smoke-standalone-server.mjs                      # Smoke-test the standalone server
-  smoke-packaged-standalone.mjs                    # Smoke-test the packaged app
+release/PiForge-Setup-0.1.0.exe
 ```
 
-</details>
+安装器沿用上游的进程清理逻辑：升级安装时会关闭 `PiForge.exe`，也会清理
+`Pi Agent Desktop.exe` / `Pi Agent.exe` / `PipeAgent.exe` 等旧进程。
 
-## Tech Stack
+## 多项目并行
 
-[![Next.js](https://img.shields.io/badge/Next.js-000000?style=for-the-badge&logo=next.js&logoColor=white)](https://nextjs.org/)
-[![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)](https://react.dev/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Electron](https://img.shields.io/badge/Electron-47848F?style=for-the-badge&logo=electron&logoColor=white)](https://www.electronjs.org/)
-[![Tailwind CSS](https://img.shields.io/badge/Tailwind%20CSS-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
+PiForge 支持同时打开多个项目窗口，所有窗口共享同一个本地 Pi 服务：
 
-Packaging: electron-builder (Windows NSIS · macOS Universal DMG + ZIP · Linux DEB) · Realtime: SSE streaming
+- 工作台菜单 `⋯` → **新建窗口**
+- `Ctrl+Shift+N`
+- 侧边栏项目行悬停 → 窗口图标（直接以该项目打开）
+- 新窗口地址形如 `/?cwd=D%3A%5CProjects%5Cdemo`，进入该目录的空白会话
 
-## Credits
+主窗口关闭时隐藏到托盘；项目窗口关闭即销毁，不会堆积隐藏窗口。
 
-- [pi-mono](https://github.com/badlogic/pi-mono) — the Pi coding agent core
-- [pi-web](https://github.com/agegr/pi-web) — the upstream web UI project
+## 外观：三套主题
 
-## Contributing
+| 主题 | 说明 |
+| --- | --- |
+| Light | 浅色，低对比冷灰底 |
+| Dark | 深色，暖琥珀强调色（上游默认） |
+| Glacier | PiForge 蓝色主题：极夜蓝底、冰蓝强调色、顶部极光渐变 |
 
-Report issues, open PRs, and merge guidelines live in [CONTRIBUTING.md](CONTRIBUTING.md). New features go on `dev/` or `future/` branches. Releasing follows [docs/RELEASING.md](docs/RELEASING.md).
+切换入口在工作台菜单（右上角 `⋯` → 外观），或按 `Ctrl+Shift+T` 在
+Light → Dark → Glacier 之间循环。主题保存在 `localStorage["pi-theme"]`。
 
-## License
+实现上，Glacier 复用 `dark` 类并追加 `theme-glacier`，只在 `app/globals.css`
+覆盖调色板 token；组件结构、交互逻辑与语法高亮逻辑不变。切换主题时 Electron
+标题栏颜色由 `electron/title-bar-overlay.ts` 同步。
 
-MIT License
+## 品牌与图标
 
-## Star History
+- `package.json` → `name: piforge`，`desktopName: piforge`
+- `electron-builder.yml` → `productName: PiForge`，`appId: com.piforge.desktop`
+- 图标由 `npm run icons`（`scripts/build-brand-icons.mjs`）从一个内嵌 SVG 生成
+  ICO / ICNS / PNG，覆盖安装器、托盘、窗口与网页 logo
 
-<a href="https://www.star-history.com/?repos=Chasen-Liao%2Fpi-agent-desktop&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Chasen-Liao/pi-agent-desktop&type=date&theme=dark&legend=top-left&sealed_token=aFn-TCmARmvfk1wIdKSpOk7h46vafl3D-moDORISvD96gQ2y3nR3DvatGktptaV93Dz0ULxRvLxCT5yJ3_FzrPGXVjg7f-tJTmKpafiODarLHzonGBnXQw" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Chasen-Liao/pi-agent-desktop&type=date&legend=top-left&sealed_token=aFn-TCmARmvfk1wIdKSpOk7h46vafl3D-moDORISvD96gQ2y3nR3DvatGktptaV93Dz0ULxRvLxCT5yJ3_FzrPGXVjg7f-tJTmKpafiODarLHzonGBnXQw" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Chasen-Liao/pi-agent-desktop&type=date&legend=top-left&sealed_token=aFn-TCmARmvfk1wIdKSpOk7h46vafl3D-moDORISvD96gQ2y3nR3DvatGktptaV93Dz0ULxRvLxCT5yJ3_FzrPGXVjg7f-tJTmKpafiODarLHzonGBnXQw" />
- </picture>
-</a>
+## 项目结构
+
+| 目录 | 内容 |
+| --- | --- |
+| `app/` | Next.js 页面、39 条 API 路由、全局样式与主题 token |
+| `components/` | 会话界面、侧边栏、输入框、配置面板等 React 组件 |
+| `hooks/` | 主题、面板布局、Agent 会话等客户端 hook |
+| `lib/` | RPC 管理、会话读写、i18n、LTM、Git worktree 等服务端库 |
+| `electron/` | 主进程、preload、托盘、标题栏与更新逻辑 |
+| `build/` | 安装器脚本与品牌图标 |
+| `scripts/` | 构建、冒烟测试与图标生成脚本 |
+
+上游的架构细节见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 与 [AGENTS.md](AGENTS.md)。
+
+## 致谢与许可
+
+- 上游桌面端：[Chasen-Liao/pi-agent-desktop](https://github.com/Chasen-Liao/pi-agent-desktop)
+- 上游 Web 端：[agegr/pi-web](https://github.com/agegr/pi-web)
+- Pi 运行时：[badlogic/pi-mono](https://github.com/badlogic/pi-mono)
+
+以 MIT 协议发布，见 [LICENSE](LICENSE)。

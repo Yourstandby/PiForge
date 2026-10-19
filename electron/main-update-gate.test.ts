@@ -71,14 +71,22 @@ test("main waits for app navigation before marking the server ready", () => {
   assert.ok(showAppStart >= 0 && showAppEnd > showAppStart, "showApp implementation must exist");
 
   const showAppSource = source.slice(showAppStart, showAppEnd);
-  const navigationIndex = showAppSource.indexOf("await loadPageWithRetry");
+  // showApp fans the navigation out to every app window; loadAppUrl owns the
+  // bounded retry loop, and `ready` must only be set after all windows loaded.
+  const navigationIndex = showAppSource.indexOf("await loadAppUrl(");
   const readyIndex = showAppSource.indexOf('serverState = "ready"');
   assert.ok(navigationIndex >= 0, "showApp must await bounded app navigation");
   assert.ok(readyIndex > navigationIndex, "ready must only be set after navigation completes");
-  assert.match(showAppSource, /nextProcess !== proc/);
-  assert.match(showAppSource, /proc\.exitCode !== null/);
-  assert.match(showAppSource, /signal: navigationAbort\.signal/);
-  assert.match(showAppSource, /window\.webContents\.stop\(\)/);
+
+  const loadAppStart = source.indexOf("async function loadAppUrl(");
+  const loadAppEnd = source.indexOf("\nasync function showApp", loadAppStart);
+  assert.ok(loadAppStart >= 0 && loadAppEnd > loadAppStart, "loadAppUrl implementation must exist");
+  const loadAppSource = source.slice(loadAppStart, loadAppEnd);
+  assert.match(loadAppSource, /await loadPageWithRetry/);
+  assert.match(loadAppSource, /nextProcess !== proc/);
+  assert.match(loadAppSource, /proc\.exitCode !== null/);
+  assert.match(loadAppSource, /signal: navigationAbort\.signal/);
+  assert.match(loadAppSource, /window\.webContents\.stop\(\)/);
 });
 
 test("main process CSP uses shared electron CSP builder", () => {

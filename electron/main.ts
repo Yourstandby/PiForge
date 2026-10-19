@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell, utilityProcess } from "electron";
 import type { UpdateInfo } from "electron-updater";
 import path from "path";
-import { appendFileSync, mkdirSync } from "fs";
+import { appendFileSync, existsSync, mkdirSync } from "fs";
 import { spawn } from "child_process";
 import net from "net";
 import { createTray } from "./tray";
@@ -22,6 +22,7 @@ import {
 import { buildElectronCspHeader } from "./csp";
 import { getAppIconPath } from "./app-icon";
 import { applyTitleBarOverlayTheme } from "./title-bar-overlay";
+import { normalizeWindowPath } from "./window-path";
 import {
   ServerProcess,
   wrapChildServerProcess,
@@ -38,10 +39,18 @@ if (!gotLock) {
 }
 
 app.on("second-instance", () => {
-  if (mainWindow) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
+  const target =
+    lastFocusedWindow && !lastFocusedWindow.isDestroyed()
+      ? lastFocusedWindow
+      : mainWindow && !mainWindow.isDestroyed()
+        ? mainWindow
+        : null;
+  if (target) {
+    if (target.isMinimized()) target.restore();
+    target.show();
+    target.focus();
+  } else if (startupUiReady) {
+    openNewWindow();
   }
 });
 
@@ -49,6 +58,10 @@ app.on("second-instance", () => {
 // State
 // ---------------------------------------------------------------------------
 let mainWindow: BrowserWindow | null = null;
+let lastFocusedWindow: BrowserWindow | null = null;
+const appWindows = new Set<BrowserWindow>();
+const windowPaths = new WeakMap<BrowserWindow, string>();
+let sessionCspInstalled = false;
 let nextProcess: ServerProcess | null = null;
 let isQuitting = false;
 let logFilePath: string | null = null;
@@ -110,11 +123,24 @@ function startupPageUrl(state: "starting" | "error" | "stopped", message?: strin
   return url.toString();
 }
 
-function showStartupState(state: "starting" | "error" | "stopped", message?: string) {
-  if (!mainWindow || mainWindow.isDestroyed()) {
+function showStartupStateFor(window: BrowserWindow, state: "starting" | "error" | "stopped", message?: string) {
+  if (window.isDestroyed()) {
     return;
   }
-  mainWindow.loadURL(startupPageUrl(state, message));
+  void window.loadURL(startupPageUrl(state, message)).catch((err: unknown) => {
+    // A newer navigation (e.g. the app URL right after opening a window) can
+    // abort the startup page load; that is expected and not an error.
+    if (err instanceof Error && err.message.includes("ERR_ABORTED")) {
+      return;
+    }
+    logError("Failed to load startup page", err);
+  });
+}
+
+function showStartupState(state: "starting" | "error" | "stopped", message?: string) {
+  for (const window of appWindows) {
+    showStartupStateFor(window, state, message);
+  }
 }
 
 let startupStartedAt = Date.now();
@@ -298,8 +324,10 @@ function cleanup() {
 // ---------------------------------------------------------------------------
 // Window
 // ---------------------------------------------------------------------------
-function createWindow() {
-  mainWindow = new BrowserWindow({
+function createWindow(options: { initialPath?: string; showStartup?: boolean } = {}): BrowserWindow {
+  const initialPath = normalizeWindowPath(options.initialPath);
+  const showStartup = options.showStartup ?? true;
+  const window = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 800,
@@ -310,7 +338,7 @@ function createWindow() {
       symbolColor: "#d9deea", // --text (dark)
       height: 36,
     },
-    title: "Pi Agent Desktop",
+    title: "PiForge",
     icon: nativeImage.createFromPath(getAppIconPath(app.getAppPath())),
     show: false,
     webPreferences: {
@@ -324,57 +352,81 @@ function createWindow() {
     },
   });
 
-  installNavigationGuards(mainWindow);
-  installCrashRecovery(mainWindow);
+  appWindows.add(window);
+  windowPaths.set(window, initialPath);
+  if (!mainWindow) {
+    mainWindow = window;
+  }
+  lastFocusedWindow = window;
+
+  installNavigationGuards(window);
+  installCrashRecovery(window);
 
   // Inject a Content-Security-Policy header into every response loaded in the
-  // main window's session. Next.js does not emit CSP on its own, so without
-  // this a single XSS (e.g. from a compromised npm package or local route)
-  // could drive the preload-exposed electronAPI (quitAndInstall, select
-  // directory, ...). The port is re-read on every callback so restarts / port
-  // switches pick up the new value automatically. Policy builder mirrors
-  // lib/csp.ts (see electron/csp.ts). startup.html ships its own stricter
-  // CSP via a meta tag and is unaffected.
-  mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
-    const port = activePort ?? 0;
-    const csp = buildElectronCspHeader(port);
-    callback({
-      responseHeaders: {
-        ...details.responseHeaders,
-        "Content-Security-Policy": [csp],
-      },
+  // app. Next.js does not emit CSP on its own, so without this a single XSS
+  // (e.g. from a compromised npm package or local route) could drive the
+  // preload-exposed electronAPI (quitAndInstall, select directory, ...). The
+  // port is re-read on every callback so restarts / port switches pick up the
+  // new value automatically. Policy builder mirrors lib/csp.ts (see
+  // electron/csp.ts). startup.html ships its own stricter CSP via a meta tag
+  // and is unaffected. All windows share the default session, so install the
+  // hook once.
+  if (!sessionCspInstalled) {
+    sessionCspInstalled = true;
+    window.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+      const port = activePort ?? 0;
+      const csp = buildElectronCspHeader(port);
+      callback({
+        responseHeaders: {
+          ...details.responseHeaders,
+          "Content-Security-Policy": [csp],
+        },
+      });
     });
+  }
+
+  if (showStartup) {
+    showStartupStateFor(window, "starting");
+  }
+
+  window.once("ready-to-show", () => {
+    window.show();
   });
 
-  showStartupState("starting");
-
-  mainWindow.once("ready-to-show", () => {
-    mainWindow?.show();
+  window.on("focus", () => {
+    lastFocusedWindow = window;
   });
 
-  mainWindow.on("close", (e) => {
-    if (!isQuitting) {
+  // The primary window hides to the tray (tray app behaviour). Extra project
+  // windows close normally so they do not accumulate as invisible windows.
+  window.on("close", (e) => {
+    if (!isQuitting && window === mainWindow) {
       e.preventDefault();
-      mainWindow?.hide();
+      window.hide();
     }
   });
 
-  mainWindow.on("closed", () => {
-    startupUiReady = false;
-    mainWindow = null;
+  window.on("closed", () => {
+    appWindows.delete(window);
+    if (lastFocusedWindow === window) {
+      lastFocusedWindow = null;
+    }
+    if (mainWindow === window) {
+      startupUiReady = false;
+      mainWindow = [...appWindows].find((candidate) => !candidate.isDestroyed()) ?? null;
+    }
   });
+
+  return window;
 }
 
-async function showApp(port: number): Promise<void> {
-  activePort = port;
-  logStartupTiming("loading app url", { port });
-  const window = mainWindow;
+async function loadAppUrl(window: BrowserWindow, port: number, appPath: string): Promise<void> {
   const proc = nextProcess;
-  if (!window || window.isDestroyed()) {
-    throw new Error("Main window unavailable while loading app URL");
-  }
   if (!proc) {
     throw new Error("Next.js server process unavailable while loading app URL");
+  }
+  if (window.isDestroyed()) {
+    throw new Error("App window unavailable while loading app URL");
   }
 
   const navigationAbort = new AbortController();
@@ -382,7 +434,7 @@ async function showApp(port: number): Promise<void> {
     navigationAbort.abort(new Error("App navigation cancelled: Next.js server process exited"));
   };
   const abortForWindowClose = () => {
-    navigationAbort.abort(new Error("App navigation cancelled: main window was destroyed"));
+    navigationAbort.abort(new Error("App navigation cancelled: app window was destroyed"));
   };
   const abortForQuit = () => {
     navigationAbort.abort(new Error("App navigation cancelled: application is quitting"));
@@ -396,11 +448,8 @@ async function showApp(port: number): Promise<void> {
     if (isQuitting) {
       throw new Error("App navigation cancelled: application is quitting");
     }
-    if (mainWindow !== window) {
-      throw new Error("App navigation cancelled: main window changed");
-    }
     if (window.isDestroyed()) {
-      throw new Error("App navigation cancelled: main window was destroyed");
+      throw new Error("App navigation cancelled: app window was destroyed");
     }
     if (nextProcess !== proc) {
       throw new Error("App navigation cancelled: Next.js server process changed");
@@ -408,14 +457,14 @@ async function showApp(port: number): Promise<void> {
     if (proc.exitCode !== null) {
       throw new Error("App navigation cancelled: Next.js server process exited");
     }
-    if (serverState !== "starting") {
+    if (serverState !== "starting" && serverState !== "ready") {
       throw new Error(`App navigation cancelled from server state: ${serverState}`);
     }
   };
 
   try {
     await loadPageWithRetry(
-      `http://127.0.0.1:${port}`,
+      `http://127.0.0.1:${port}${appPath}`,
       async (url) => {
         assertCurrentNavigation();
         await window.loadURL(url);
@@ -444,7 +493,41 @@ async function showApp(port: number): Promise<void> {
     app.off("before-quit", abortForQuit);
   }
   assertCurrentNavigation();
+}
+
+async function showApp(port: number): Promise<void> {
+  activePort = port;
+  logStartupTiming("loading app url", { port });
+  const windows = [...appWindows].filter((window) => !window.isDestroyed());
+  if (windows.length === 0) {
+    throw new Error("No app window available while loading app URL");
+  }
+  if (!nextProcess) {
+    throw new Error("Next.js server process unavailable while loading app URL");
+  }
+
+  for (const window of windows) {
+    await loadAppUrl(window, port, windowPaths.get(window) ?? "/");
+  }
   serverState = "ready";
+}
+
+/**
+ * Opens an additional project window against the shared local server.
+ * The new window starts on `path` (usually `/?cwd=...`) and keeps the primary
+ * window untouched, so two projects can be visible side by side.
+ */
+function openNewWindow(path?: string): BrowserWindow {
+  const serverReady =
+    serverState === "ready" && Boolean(activePort) && Boolean(nextProcess) && nextProcess?.exitCode === null;
+  const window = createWindow({ initialPath: path, showStartup: !serverReady });
+  if (serverReady && activePort) {
+    void loadAppUrl(window, activePort, windowPaths.get(window) ?? "/").catch((err: unknown) => {
+      logError("Failed to load app URL in new window", err);
+      showStartupStateFor(window, "error", err instanceof Error ? err.message : String(err));
+    });
+  }
+  return window;
 }
 
 function isAllowedAppUrl(rawUrl: string): boolean {
@@ -529,6 +612,11 @@ function registerIpcHandlers() {
     return result.canceled ? null : (result.filePaths[0] ?? null);
   });
 
+  ipcMain.handle("new-window", async (_event, requestedPath: unknown) => {
+    openNewWindow(normalizeWindowPath(requestedPath));
+    return { ok: true };
+  });
+
   ipcMain.handle("quit-and-install", async () => {
     logInfo("quitAndInstall requested from renderer");
     const decision = decideQuitAndInstall(updateInstallState);
@@ -542,8 +630,9 @@ function registerIpcHandlers() {
     return { ok: true, version: decision.version };
   });
 
-  ipcMain.on("set-theme", (_event, isDark: boolean) => {
-    applyTitleBarOverlayTheme(mainWindow, isDark);
+  ipcMain.on("set-theme", (event, theme: unknown) => {
+    const target = BrowserWindow.fromWebContents(event.sender);
+    applyTitleBarOverlayTheme(target, theme);
   });
 }
 
@@ -573,9 +662,13 @@ app.on("window-all-closed", () => {
 });
 
 app.on("activate", () => {
-  if (mainWindow) {
-    mainWindow.show();
-    mainWindow.focus();
+  const target =
+    lastFocusedWindow && !lastFocusedWindow.isDestroyed()
+      ? lastFocusedWindow
+      : mainWindow;
+  if (target) {
+    target.show();
+    target.focus();
   }
 });
 
@@ -593,7 +686,7 @@ app.whenReady().then(async () => {
 
     createWindow();
     logStartupTiming("window created");
-    createTray(mainWindow!);
+    createTray(mainWindow!, { onNewWindow: () => { openNewWindow(); } });
     startupUiReady = true;
 
     nextProcess = startNextServer(port);
@@ -605,8 +698,10 @@ app.whenReady().then(async () => {
     logInfo("Next.js server is ready");
     await showApp(port);
 
-    // Auto-update check (production only, delayed 30s)
-    if (app.isPackaged) {
+    // Auto-update check (production only, delayed 30s). Without an update feed
+    // electron-builder emits no app-update.yml; skip the check instead of
+    // letting electron-updater reject on a missing config file.
+    if (app.isPackaged && existsSync(path.join(process.resourcesPath, "app-update.yml"))) {
       setTimeout(async () => {
         try {
           const { autoUpdater } = await import("electron-updater");

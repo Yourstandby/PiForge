@@ -119,7 +119,7 @@ test("packaged smoke test targets Windows and architecture-suffixed macOS output
   );
   assert.match(
     script,
-    /join\(outputDir, "Pi Agent Desktop\.exe"\)/
+    /join\(outputDir, "PiForge\.exe"\)/
   );
   assert.match(script, /\^mac\(\?:-\(\?:arm64\|x64\|universal\)\)\?\$/);
   assert.match(script, /join\(appDir, "Resources", "standalone"\)/);

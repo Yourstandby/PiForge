@@ -18,7 +18,7 @@
   } else if (state === "stopped") {
     document.title = "后端服务已停止";
     title.textContent = "后端服务已停止";
-    description.textContent = "Pi Agent Desktop 的本地服务异常退出。请重启应用以恢复使用。";
+    description.textContent = "PiForge 的本地服务异常退出。请重启应用以恢复使用。";
     stateText.textContent = message || "服务进程已退出";
     panel.classList.add("stopped");
   }

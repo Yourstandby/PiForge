@@ -5,13 +5,14 @@ import { useI18n } from "../I18nProvider";
 import type { SidebarProject } from "./projects";
 import { SidebarIcon } from "./SidebarIcon";
 
-export function ProjectGroup({ project, expanded, active, duplicateName, onToggle, onNewSession, children, dragHandle, dragging = false }: {
+export function ProjectGroup({ project, expanded, active, duplicateName, onToggle, onNewSession, onOpenInNewWindow, children, dragHandle, dragging = false }: {
   project: SidebarProject;
   expanded: boolean;
   active: boolean;
   duplicateName: boolean;
   onToggle: (expanded: boolean) => void;
   onNewSession: () => void;
+  onOpenInNewWindow?: () => void;
   children: ReactNode;
   dragHandle?: ReactNode;
   dragging?: boolean;
@@ -41,6 +42,11 @@ export function ProjectGroup({ project, expanded, active, duplicateName, onToggl
           {duplicateName && <span className="sidebar-project-path">{project.parentPath}</span>}
         </button>
         <span className="sidebar-project-count" aria-hidden="true">{project.sessions.length || ""}</span>
+        {onOpenInNewWindow && (
+          <button className="sidebar-icon-button sidebar-project-window" title={t("sidebar.openInNewWindow")} aria-label={t("sidebar.openInNewWindow")} disabled={!project.cwd} onClick={onOpenInNewWindow}>
+            <SidebarIcon name="window" size={14} />
+          </button>
+        )}
         <button className="sidebar-icon-button sidebar-project-add" title={t("sidebar.newSessionIn", { path: project.cwd })} aria-label={t("sidebar.newSessionIn", { path: project.cwd })} disabled={!project.cwd} onClick={onNewSession}>
           <SidebarIcon name="plus" size={15} />
         </button>

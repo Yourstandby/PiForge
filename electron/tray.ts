@@ -8,7 +8,7 @@ const FALLBACK_ICON_PNG = Buffer.from(
   "base64"
 );
 
-export function createTray(mainWindow: BrowserWindow): Tray {
+export function createTray(mainWindow: BrowserWindow, options: { onNewWindow?: () => void } = {}): Tray {
   const iconPath = getAppIconPath(app.getAppPath());
 
   let icon: Electron.NativeImage;
@@ -23,7 +23,7 @@ export function createTray(mainWindow: BrowserWindow): Tray {
   }
 
   const tray = new Tray(icon);
-  tray.setToolTip("Pi Agent Desktop");
+  tray.setToolTip("PiForge");
 
   const contextMenu = Menu.buildFromTemplate([
     {
@@ -31,6 +31,12 @@ export function createTray(mainWindow: BrowserWindow): Tray {
       click: () => {
         mainWindow.show();
         mainWindow.focus();
+      },
+    },
+    {
+      label: "新建窗口",
+      click: () => {
+        options.onNewWindow?.();
       },
     },
     { type: "separator" },

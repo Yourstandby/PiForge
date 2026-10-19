@@ -1,4 +1,36 @@
-# Pi Agent Desktop - Development Notes
+# PiForge - Development Notes
+
+PiForge 是 Pi Coding Agent 的 Windows 桌面端，衍生自
+[Chasen-Liao/pi-agent-desktop](https://github.com/Chasen-Liao/pi-agent-desktop)（MIT）。
+上游功能与架构保持不变，PiForge 只做品牌化、构建目标收敛和一套蓝色主题。
+
+## PiForge 约定
+
+- **品牌**：`package.json` name = `piforge`，productName = `PiForge`，
+  appId = `com.piforge.desktop`。用户可见的窗口标题、托盘提示、启动页文案统一为 PiForge。
+  安装器仍会关闭 `Pi Agent Desktop.exe` 等旧进程名，方便覆盖安装。
+- **图标**：`node scripts/build-brand-icons.mjs` 从内嵌 SVG 重新生成
+  `build/icon.{ico,icns,png}`、`build/tray-icon.ico`、`public/logo.png`、`app/favicon.ico`。
+- **构建**：`npm run dev`（浏览器）/ `npm run dist`（NSIS 安装包）。开发时不要直接
+  `next build`，会污染 `.next/`。
+- **多项目窗口**：单进程只跑一个 Next 服务，所有窗口共享；主窗口关闭时隐藏到托盘，
+  项目窗口正常关闭。入口：工作台菜单「新建窗口」、`Ctrl+Shift+N`、侧边栏项目行的
+  窗口按钮。新窗口通过 `/?cwd=<path>` 直接进入该项目的空白会话。
+- **PNG 资产**：应用内 logo 用 `components/BrandLogo.tsx` 内联 SVG；`build/icon.png`
+  由 `npm run icons` 生成但不入库（部分 Windows DLP 会透明加密大 PNG）。
+
+## 主题系统（light / dark / glacier）
+
+- 状态：`hooks/useTheme.ts`，纯逻辑在 `lib/theme.ts`，localStorage key 为 `pi-theme`。
+- token：`app/globals.css`。`html.dark.theme-glacier` 在 dark 之上覆盖调色板，
+  冰川蓝主题保留 `dark` class，因此所有暗色分支（语法高亮、窗口控件）继续生效。
+- 入口：工作台菜单（`components/AppShell.tsx`）三选一；`Ctrl+Shift+T` 按
+  light → dark → glacier 循环。
+- Electron 标题栏：`electron/title-bar-overlay.ts` 按主题名取色，preload 发送主题名。
+
+---
+
+# Upstream notes (pi-agent-desktop)
 
 ## Quick Start
 

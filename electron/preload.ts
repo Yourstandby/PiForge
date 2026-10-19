@@ -32,5 +32,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return () => ipcRenderer.off("update-downloaded", listener);
   },
   quitAndInstall: () => ipcRenderer.invoke("quit-and-install"),
-  setTheme: (isDark: boolean) => ipcRenderer.send("set-theme", isDark),
+  openWindow: (path: string) => ipcRenderer.invoke("new-window", path),
+  setTheme: (theme: "light" | "dark" | "glacier") => ipcRenderer.send("set-theme", theme),
 });

@@ -75,7 +75,7 @@ jobs:
         run: |
           hdiutil verify release/*.dmg
           unzip -t release/*-mac-universal.zip
-          archs="$(lipo -archs "release/mac-universal/Pi Agent Desktop.app/Contents/MacOS/Pi Agent Desktop")"
+          archs="$(lipo -archs "release/mac-universal/PiForge.app/Contents/MacOS/PiForge")"
           echo "lipo archs: ${archs}"
           echo "${archs}" | grep -q "x86_64"
           echo "${archs}" | grep -q "arm64"
@@ -87,8 +87,8 @@ jobs:
           name: desktop-windows
           if-no-files-found: error
           path: |
-            release/Pi-Agent-Desktop-Setup-*.exe
-            release/Pi-Agent-Desktop-Setup-*.exe.blockmap
+            release/PiForge-Setup-*.exe
+            release/PiForge-Setup-*.exe.blockmap
             release/latest.yml
 
       - name: Upload Linux artifacts
@@ -98,7 +98,7 @@ jobs:
           name: desktop-linux
           if-no-files-found: error
           path: |
-            release/Pi-Agent-Desktop-*-linux-*.deb
+            release/PiForge-*-linux-*.deb
             release/latest-linux.yml
 
       - name: Upload macOS artifacts
@@ -108,10 +108,10 @@ jobs:
           name: desktop-macos
           if-no-files-found: error
           path: |
-            release/Pi-Agent-Desktop-*-mac-universal.dmg
-            release/Pi-Agent-Desktop-*-mac-universal.dmg.blockmap
-            release/Pi-Agent-Desktop-*-mac-universal.zip
-            release/Pi-Agent-Desktop-*-mac-universal.zip.blockmap
+            release/PiForge-*-mac-universal.dmg
+            release/PiForge-*-mac-universal.dmg.blockmap
+            release/PiForge-*-mac-universal.zip
+            release/PiForge-*-mac-universal.zip.blockmap
             release/latest-mac.yml
 
   publish:
@@ -141,15 +141,15 @@ jobs:
           notes="docs/releases/${tag}.md"
           shopt -s nullglob
           assets=(
-            dist-artifacts/Pi-Agent-Desktop-Setup-*.exe
-            dist-artifacts/Pi-Agent-Desktop-Setup-*.exe.blockmap
+            dist-artifacts/PiForge-Setup-*.exe
+            dist-artifacts/PiForge-Setup-*.exe.blockmap
             dist-artifacts/latest.yml
-            dist-artifacts/Pi-Agent-Desktop-*-linux-*.deb
+            dist-artifacts/PiForge-*-linux-*.deb
             dist-artifacts/latest-linux.yml
-            dist-artifacts/Pi-Agent-Desktop-*-mac-universal.dmg
-            dist-artifacts/Pi-Agent-Desktop-*-mac-universal.dmg.blockmap
-            dist-artifacts/Pi-Agent-Desktop-*-mac-universal.zip
-            dist-artifacts/Pi-Agent-Desktop-*-mac-universal.zip.blockmap
+            dist-artifacts/PiForge-*-mac-universal.dmg
+            dist-artifacts/PiForge-*-mac-universal.dmg.blockmap
+            dist-artifacts/PiForge-*-mac-universal.zip
+            dist-artifacts/PiForge-*-mac-universal.zip.blockmap
             dist-artifacts/latest-mac.yml
           )
           if [ "${#assets[@]}" -ne 10 ]; then
@@ -161,9 +161,9 @@ jobs:
           if gh release view "$tag" >/dev/null 2>&1; then
             echo "Release ${tag} already exists"
           elif [ -f "$notes" ]; then
-            gh release create "$tag" --title "Pi Agent Desktop ${tag}" --notes-file "$notes" --verify-tag
+            gh release create "$tag" --title "PiForge ${tag}" --notes-file "$notes" --verify-tag
           else
-            gh release create "$tag" --title "Pi Agent Desktop ${tag}" --generate-notes --verify-tag
+            gh release create "$tag" --title "PiForge ${tag}" --generate-notes --verify-tag
           fi
           gh release upload "$tag" "${assets[@]}" --clobber
           gh release edit "$tag" --draft=false

@@ -5,6 +5,7 @@ const paths = {
   "folder-open": <><path d="M3 10V7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v1" /><path d="M3 20h15a2 2 0 0 0 2-1.6L22 12H7l-3 8H3V10" /></>,
   "folder-plus": <><path d="M12 20H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v3M18 15v6m-3-3h6" /></>,
   plus: <path d="M12 5v14M5 12h14" />,
+  window: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 9h18M12 12v4m-2-2h4" /></>,
   chevron: <path d="m9 6 6 6-6 6" />,
   search: <><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4 4" /></>,
   close: <path d="m6 6 12 12M18 6 6 18" />,

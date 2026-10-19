@@ -37,10 +37,23 @@ const SHELL_MENU_GAP = 6;
 const SHELL_MENU_EDGE_PADDING = 8;
 const SHELL_MENU_RIGHT_OFFSET = 4;
 
+const THEME_OPTIONS = [
+  { id: "light", labelKey: "shell.lightAppearance", glyph: "☀" },
+  { id: "dark", labelKey: "shell.darkAppearance", glyph: "◐" },
+  { id: "glacier", labelKey: "shell.glacierAppearance", glyph: "❄" },
+] as const;
+
+type DesktopBridge = { openWindow?: (path: string) => unknown };
+
+function getDesktopBridge(): DesktopBridge | undefined {
+  if (typeof window === "undefined") return undefined;
+  return (window as Window & { electronAPI?: DesktopBridge }).electronAPI;
+}
+
 export function AppShell() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { isDark, toggleTheme } = useTheme();
+  const { theme, setTheme, toggleTheme } = useTheme();
   const { preference: localePreference, setPreference: setLocalePreference, t } = useI18n();
   const [selectedSession, setSelectedSession] = useState<SessionInfo | null>(null);
   // When user clicks +, we only store the cwd — no fake session id
@@ -176,15 +189,43 @@ export function AppShell() {
   const [initialSessionId, setInitialSessionId] = useState<string | null>(null);
   const [initialSessionRestored, setInitialSessionRestored] = useState(false);
   const [activeCwd, setActiveCwd] = useState<string | null>(null);
+  const [canOpenNewWindow, setCanOpenNewWindow] = useState(false);
+
+  useEffect(() => {
+    setCanOpenNewWindow(typeof getDesktopBridge()?.openWindow === "function");
+  }, []);
+
+  const openNewWindow = useCallback((cwd?: string | null) => {
+    const bridge = getDesktopBridge();
+    if (typeof bridge?.openWindow !== "function") return;
+    const path = cwd ? `/?cwd=${encodeURIComponent(cwd)}` : "/";
+    try {
+      void Promise.resolve(bridge.openWindow(path)).catch(() => {});
+    } catch {
+      // Opening a window is best-effort; the current window stays usable.
+    }
+  }, []);
 
   useEffect(() => {
     const s = searchParams.get("session");
     if (s) {
       setInitialSessionId(s);
-    } else {
-      setInitialSessionRestored(true);
+      return;
     }
+    // `?cwd=...` opens a window bound to a project: start in a fresh session
+    // for that working directory instead of restoring the last session.
+    const cwd = searchParams.get("cwd");
+    if (cwd) {
+      setActiveCwd(cwd);
+      setNewSessionCwd(cwd);
+    }
+    setInitialSessionRestored(true);
   }, [searchParams]);
+
+  useEffect(() => {
+    const projectName = activeCwd ? getPathName(activeCwd) : null;
+    document.title = projectName && projectName !== "PiForge" ? `${projectName} — PiForge` : "PiForge";
+  }, [activeCwd]);
 
   const handleCwdChange = useCallback((cwd: string | null) => {
     setActiveCwd(cwd);
@@ -342,6 +383,11 @@ export function AppShell() {
         toggleTheme();
         return;
       }
+      if (e.shiftKey && key === "n") {
+        e.preventDefault();
+        openNewWindow(activeCwd ?? selectedSession?.cwd ?? newSessionCwd);
+        return;
+      }
       if (e.shiftKey && key === "f") {
         e.preventDefault();
         setRightPanelOpen(true);
@@ -359,7 +405,7 @@ export function AppShell() {
     return () => {
       window.removeEventListener("keydown", handler);
     };
-  }, [activeCwd, handleNewSession, newSessionCwd, selectedSession?.cwd, toggleTheme, setRightPanelOpen, setSidebarOpen]);
+  }, [activeCwd, handleNewSession, newSessionCwd, openNewWindow, selectedSession?.cwd, toggleTheme, setRightPanelOpen, setSidebarOpen]);
 
   const effectiveNewSessionCwd = newSessionCwd ?? (selectedSession === null && activeCwd ? activeCwd : null);
   const showChat = selectedSession !== null || effectiveNewSessionCwd !== null;
@@ -402,6 +448,7 @@ export function AppShell() {
         onCloneSession={(s) => setBranchCloneModal({ isOpen: true, mode: "clone", sessionId: s.id })}
         onExportSession={(s) => { setExportSessionId(s.id); setExportModalOpen(true); }}
         selectedCwd={activeCwd ?? selectedSession?.cwd ?? newSessionCwd ?? null}
+        onOpenInNewWindow={canOpenNewWindow ? openNewWindow : undefined}
         onCwdChange={handleCwdChange}
         onOpenFile={handleOpenFile}
         explorerRefreshKey={explorerRefreshKey}
@@ -598,19 +645,40 @@ export function AppShell() {
                   style={shellMenuPosition}
                   data-origin="top-right"
                 >
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={(event) => {
-                      const rect = event.currentTarget.getBoundingClientRect();
-                      setShellMenuOpen(false);
-                      toggleTheme({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
-                    }}
-                    className="flex w-full items-center gap-2 rounded-control border-none bg-transparent px-2.5 py-2 text-left text-[12px] text-text hover:bg-bg-hover"
-                  >
-                    <span className="w-4 text-center">{isDark ? "☀" : "◐"}</span>
-                    {isDark ? t("shell.lightAppearance") : t("shell.darkAppearance")}
-                  </button>
+                  <div className="px-2.5 pb-1 pt-1.5 text-[11px] text-text-dim">
+                    {t("shell.appearance")}
+                  </div>
+                  {THEME_OPTIONS.map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={theme === option.id}
+                      onClick={(event) => {
+                        const rect = event.currentTarget.getBoundingClientRect();
+                        setShellMenuOpen(false);
+                        setTheme(option.id, { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+                      }}
+                      className="flex w-full items-center gap-2 rounded-control border-none bg-transparent px-2.5 py-2 text-left text-[12px] text-text hover:bg-bg-hover"
+                    >
+                      <span className="w-4 text-center">{option.glyph}</span>
+                      <span className="flex-1">{t(option.labelKey)}</span>
+                      {theme === option.id && <span className="text-accent">✓</span>}
+                    </button>
+                  ))}
+                  {canOpenNewWindow && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setShellMenuOpen(false);
+                        openNewWindow(activeCwd ?? selectedSession?.cwd ?? newSessionCwd);
+                      }}
+                      className="flex w-full items-center gap-2 rounded-control border-none bg-transparent px-2.5 py-2 text-left text-[12px] text-text hover:bg-bg-hover"
+                    >
+                      <span className="w-4 text-center">⧉</span> {t("shell.newWindow")}
+                    </button>
+                  )}
                   {showChat && (
                     <button
                       type="button"
