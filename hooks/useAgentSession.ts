@@ -85,6 +85,8 @@ export interface UseAgentSessionOptions {
     activeLeafId: string | null,
     onLeafChange: (leafId: string | null) => void,
   ) => void;
+  /** Fired when pi renames the session (auto title or manual rename). */
+  onSessionRenamed?: (name: string | undefined) => void;
   onSystemPromptChange?: (prompt: string | null) => void;
 }
 
@@ -99,6 +101,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     modelsRefreshKey,
     onBranchDataChange,
     onSystemPromptChange,
+    onSessionRenamed,
   } = opts;
 
   const isNew = session === null && newSessionCwd !== null;
@@ -356,6 +359,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         acceptFollowUpQueue({ revision: event.revision, items: event.items });
       } else if (event.type === "queue_update") {
         reconcileSteeringQueue(event.steering);
+      } else if (event.type === "session_info_changed") {
+        onSessionRenamed?.(event.name);
       }
 
       let reconciledSteerId: string | null = null;
@@ -520,6 +525,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       loadSession,
       onAgentEnd,
       onAgentEndEvent,
+      onSessionRenamed,
       reconcileSteeringQueue,
       setMessages,
       setEntryIds,

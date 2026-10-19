@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AlertCircle, CheckCircle2 } from "lucide-react";
 import type { AgentMessage, SessionInfo, SessionTreeNode } from "@/lib/types";
 import { useAgentSession } from "@/hooks/useAgentSession";
 import { useAudio } from "@/hooks/useAudio";
@@ -8,6 +9,7 @@ import { BranchCloneModal, type BranchCloneMode } from "./BranchCloneModal";
 import { BranchNavigator } from "./BranchNavigator";
 import { Composer } from "./Composer";
 import { ExtensionUiDialog } from "./ExtensionUiDialog";
+import { ModalSurface } from "./ModalSurface";
 import { StatusBar, type ThinkingLevel } from "./StatusBar";
 import { Transcript } from "./Transcript";
 
@@ -19,6 +21,8 @@ interface Props {
   onDraftChange: (value: string) => void;
   onSessionCreated: (session: SessionInfo) => void;
   onSessionForked?: (newSessionId: string) => void;
+  /** Auto title / rename landed; ask the sidebar to refetch. */
+  onSessionRenamed?: () => void;
 }
 
 /**
@@ -44,6 +48,7 @@ function ChatSession({
   onDraftChange,
   onSessionCreated,
   onSessionForked,
+  onSessionRenamed,
   onReload,
 }: Props & { onReload: () => void }) {
   const { soundEnabled, onSoundToggle, playDoneSound } = useAudio();
@@ -83,9 +88,44 @@ function ChatSession({
     onSessionForked,
     onBranchDataChange: handleBranchDataChange,
     onAgentEnd: playDoneSound,
+    onSessionRenamed: () => onSessionRenamed?.(),
   });
 
   const currentModel = chat.displayModel ?? null;
+
+  // --- Manual context compaction -------------------------------------------
+  // The summarising itself is pi's own `compact` command (POST → rpc-manager):
+  // we only ask for confirmation and report how many tokens came back.
+  const [compactConfirmOpen, setCompactConfirmOpen] = useState(false);
+  const [compactToast, setCompactToast] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    if (!compactToast) return;
+    const timer = setTimeout(() => setCompactToast(null), 4200);
+    return () => clearTimeout(timer);
+  }, [compactToast]);
+
+  const canCompact = Boolean(session?.id) && !chat.agentRunning && !chat.isCompacting;
+
+  const runCompact = useCallback(async () => {
+    setCompactConfirmOpen(false);
+    const outcome = await chat.handleCompact();
+    if (outcome.ok) {
+      const saved =
+        outcome.tokensBefore != null && outcome.tokensAfter != null
+          ? Math.max(0, outcome.tokensBefore - outcome.tokensAfter)
+          : null;
+      setCompactToast({
+        ok: true,
+        text:
+          saved && saved > 0
+            ? `上下文已压缩，释放了 ${saved.toLocaleString("en-US")} Tokens`
+            : "上下文已压缩",
+      });
+    } else {
+      setCompactToast({ ok: false, text: `压缩失败：${outcome.error}` });
+    }
+  }, [chat]);
   const availableThinkingLevels = currentModel
     ? (chat.modelThinkingLevels[`${currentModel.provider}:${currentModel.modelId}`] ?? null)
     : null;
@@ -160,17 +200,53 @@ function ChatSession({
   ) : null;
 
   const composer = (
-    <Composer
-      value={draft}
-      onValueChange={onDraftChange}
-      busy={chat.agentRunning}
-      onStop={() => {
-        void chat.handleAbort();
-      }}
-      onSubmit={(text, images) => {
-        void chat.handleSend(text, images);
-      }}
-    />
+    <div className="flex flex-col gap-2">
+      {compactToast && (
+        <div
+          role="status"
+          className={`flex items-center gap-1.5 self-start rounded-lg border bg-white px-2.5 py-1.5 text-[12px] shadow-[0_1px_3px_rgba(15,23,42,0.06)] ${
+            compactToast.ok
+              ? "border-[#D9E5FB] text-ink-soft"
+              : "border-[#F5D3D3] text-danger"
+          }`}
+        >
+          {compactToast.ok ? (
+            <CheckCircle2 size={13} strokeWidth={2} className="shrink-0 text-accent" aria-hidden="true" />
+          ) : (
+            <AlertCircle size={13} strokeWidth={2} className="shrink-0" aria-hidden="true" />
+          )}
+          {compactToast.text}
+        </div>
+      )}
+      <Composer
+        value={draft}
+        onValueChange={onDraftChange}
+        busy={chat.agentRunning}
+        onStop={() => {
+          void chat.handleAbort();
+        }}
+        onSubmit={(text, images) => {
+          void chat.handleSend(text, images);
+        }}
+        onSteer={(text, images) => {
+          void chat.handleSteer(text, images).catch((error) => {
+            setCompactToast({
+              ok: false,
+              text: `打断失败：${error instanceof Error ? error.message : String(error)}`,
+            });
+          });
+        }}
+        onFollowUp={(text, images) => {
+          void chat.handleFollowUp(text, images).catch((error) => {
+            setCompactToast({
+              ok: false,
+              text: `加入队列失败：${error instanceof Error ? error.message : String(error)}`,
+            });
+          });
+        }}
+        queuedFollowUps={chat.followUpQueue.items}
+      />
+    </div>
   );
 
   const statusBar = (
@@ -185,6 +261,9 @@ function ChatSession({
       onThinkingLevelChange={chat.handleThinkingLevelChange}
       soundEnabled={soundEnabled}
       onSoundToggle={onSoundToggle}
+      onCompactRequest={() => setCompactConfirmOpen(true)}
+      canCompact={canCompact}
+      compacting={chat.isCompacting}
       sessionStats={chat.sessionStats}
       contextUsage={chat.contextUsage}
       currentProvider={currentModel?.provider ?? null}
@@ -192,7 +271,7 @@ function ChatSession({
   );
 
   return (
-    <main className="flex min-w-0 flex-1 flex-col bg-[#FCFCFA]">
+    <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-[#FCFCFA]">
       {/* Extension UI: an extension awaiting input/select/confirm blocks the
           agent until this dialog answers, so it must render for every view. */}
       <ExtensionUiDialog
@@ -246,22 +325,31 @@ function ChatSession({
               )}
             </div>
           </div>
-          <div className="shrink-0 px-8 pb-6">
-            <div className="mx-auto w-full max-w-3xl">
+          <div className="shrink-0 px-8 pb-5">
+            <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
               {trustCard}
               {composer}
-              {statusBar}
+              <div className="shrink-0">{statusBar}</div>
             </div>
           </div>
         </>
       ) : (
-        <div className="flex flex-1 items-center justify-center px-8">
-          <div className="flex w-full max-w-3xl flex-col items-center">
-            <h1 className="text-2xl font-semibold tracking-tight text-ink">PiForge</h1>
-            <div className="mt-6 w-full">
+        <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto bg-[radial-gradient(ellipse_at_center,_#ffffff_0%,_#f8fafd_55%,_#eef3fb_100%)] px-8 py-6">
+          <div className="my-auto flex w-full max-w-3xl flex-col items-center">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/logo.svg"
+              alt="PiForge"
+              width={64}
+              height={64}
+              draggable={false}
+              className="h-16 w-16 select-none"
+            />
+            <p className="mt-2 text-[13px] text-ink-faint">今天想构建点什么？</p>
+            <div className="mt-6 flex w-full flex-col gap-2">
               {trustCard}
               {composer}
-              {statusBar}
+              <div className="shrink-0">{statusBar}</div>
             </div>
           </div>
         </div>
@@ -276,6 +364,41 @@ function ChatSession({
         cwd={session?.cwd ?? newSessionCwd ?? undefined}
         onSuccess={(newSessionId) => onSessionForked?.(newSessionId)}
       />
+
+      {compactConfirmOpen && (
+        <ModalSurface
+          panelClassName="t-modal is-open ui-dialog-surface flex w-full max-w-sm flex-col overflow-hidden rounded-[14px]"
+          ariaLabelledBy="compact-confirm-title"
+        >
+          <div className="flex flex-col gap-2 px-4 pb-4 pt-3.5">
+            <h3 id="compact-confirm-title" className="text-[14px] font-semibold text-ink">
+              压缩上下文？
+            </h3>
+            <p className="text-[12px] leading-relaxed text-ink-muted">
+              将调用 Pi 的压缩能力，把较早的对话总结成一段摘要（保留改动过的文件、核心需求、当前进度与下一步），最近的内容完整保留。
+            </p>
+            <p className="text-[11px] text-ink-faint">
+              压缩后原始历史会被摘要替换，无法撤销。
+            </p>
+          </div>
+          <div className="mt-1 flex items-center justify-end gap-2 border-t border-divider px-4 py-3">
+            <button
+              type="button"
+              onClick={() => setCompactConfirmOpen(false)}
+              className="rounded-control border border-border px-3 py-1.5 text-[12px] text-text-muted transition-colors hover:bg-bg-hover hover:text-text"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={() => void runCompact()}
+              className="rounded-control bg-accent px-4 py-1.5 text-[12px] font-medium text-accent-contrast transition-opacity hover:opacity-90"
+            >
+              开始压缩
+            </button>
+          </div>
+        </ModalSurface>
+      )}
     </main>
   );
 }

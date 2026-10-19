@@ -45,6 +45,7 @@ export type AgentEvent =
   | { type: "auto_compaction_end"; errorMessage?: string; aborted?: boolean }
   | { type: "compaction_end"; errorMessage?: string; aborted?: boolean }
   | { type: "queue_update"; steering: readonly string[]; followUp: readonly string[] }
+  | { type: "session_info_changed"; name?: string }
   | {
       type: "follow_up_queue_update";
       revision: number;

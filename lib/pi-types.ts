@@ -36,8 +36,13 @@ export interface AgentSessionLike {
   readonly autoCompactionEnabled: boolean;
   readonly autoRetryEnabled: boolean;
   readonly model: ModelLike | undefined;
+  /** Display name persisted via the `session_info` entry (auto titles / rename). */
+  readonly sessionName?: string;
   /** Pi 0.82+: model lookup lives on modelRuntime (modelRegistry facade removed from AgentSession). */
-  readonly modelRuntime: { getModel: (provider: string, modelId: string) => ModelLike | undefined };
+  readonly modelRuntime: {
+    getModel: (provider: string, modelId: string) => ModelLike | undefined;
+    complete?: (...args: unknown[]) => Promise<unknown>;
+  };
   readonly sessionManager: SessionManager;
   readonly settingsManager: SettingsManager;
   readonly agent: { state?: { systemPrompt?: string; thinkingLevel?: string } };
@@ -60,6 +65,7 @@ export interface AgentSessionLike {
   getActiveToolNames(): string[];
   setActiveToolsByName(names: string[]): void;
   abortCompaction(): void;
+  setSessionName?(name: string): void;
   getContextUsage(): ContextUsage | undefined;
   getSessionStats?(): SessionStats;
   /** Pi extension bindings (desktop UI bridge). Optional on stubs. */

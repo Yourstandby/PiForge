@@ -32,6 +32,11 @@ import {
   safeLtmPreCompactObserve,
 } from "./ltm/observe-hooks.ts";
 import { FollowUpQueue, type FollowUpQueueSnapshot, type QueuedFollowUp } from "./follow-up-queue.ts";
+import {
+  countUserMessages,
+  firstUserTextFromBranch,
+  generateSessionTitle,
+} from "./session-title.ts";
 
 // ============================================================================
 // Constants
@@ -80,6 +85,7 @@ export class AgentSessionWrapper {
    */
   private _binding: Promise<void> = Promise.resolve();
   private followUpQueue = new FollowUpQueue();
+  private titleGenerationStarted = false;
   private pendingAgentEnd: AgentEvent | null = null;
   private suppressQueuedDispatchOnSettled = false;
   private resourcesChanged = false;
@@ -285,6 +291,10 @@ export class AgentSessionWrapper {
     const completedEvent = this.pendingAgentEnd;
     this.pendingAgentEnd = null;
 
+    // First settled turn = the natural moment to name an untitled session.
+    // Fire-and-forget: a title must never delay transcript delivery.
+    void this.maybeGenerateSessionTitle();
+
     if (this.suppressQueuedDispatchOnSettled) {
       this.suppressQueuedDispatchOnSettled = false;
       if (completedEvent) this.emitEvent(completedEvent);
@@ -292,6 +302,40 @@ export class AgentSessionWrapper {
     }
 
     this.dispatchNextFollowUp(completedEvent);
+  }
+
+  /**
+   * Auto-title: after the first turn of an unnamed session, ask the active
+   * model for a ≤15 character title and persist it with pi's own
+   * `setSessionName` (a normal `session_info` entry). Failures are silent —
+   * a missing title must never surface as an agent error.
+   */
+  private async maybeGenerateSessionTitle(firstUserTextOverride?: string): Promise<void> {
+    if (this.titleGenerationStarted) return;
+    this.titleGenerationStarted = true;
+    try {
+      if (this.inner.sessionName) return;
+      let firstUserText = firstUserTextOverride?.trim() ?? "";
+      if (!firstUserText) {
+        const branch = this.inner.sessionManager.getBranch() as unknown[];
+        // Only the first user turn names a session; later turns must not
+        // rewrite a title the user may have edited by hand.
+        if (countUserMessages(branch) !== 1) return;
+        firstUserText = firstUserTextFromBranch(branch);
+      }
+      if (!firstUserText) return;
+      const title = await generateSessionTitle(
+        {
+          model: this.inner.model as never,
+          modelRuntime: this.inner.modelRuntime as never,
+        },
+        firstUserText,
+      );
+      if (!title || this.inner.sessionName) return;
+      this.inner.setSessionName?.(title);
+    } catch (error) {
+      console.error("Auto session title failed:", error);
+    }
   }
 
   private resetIdleTimer(): void {
@@ -437,6 +481,9 @@ export class AgentSessionWrapper {
           return null;
         }
         this.suppressQueuedDispatchOnSettled = false;
+        // Name the session from its first message while the turn runs, so the
+        // `session_info_changed` event lands on an open SSE stream.
+        void this.maybeGenerateSessionTitle(command.message as string);
         // Fire and forget — events come via subscribe
         const promptImages = command.images as Array<{ type: "image"; data: string; mimeType: string }> | undefined;
         this.inner.prompt(command.message as string, promptImages?.length ? { images: promptImages } : undefined)

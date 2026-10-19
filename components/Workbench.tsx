@@ -168,6 +168,13 @@ export function Workbench() {
     if (created.cwd) setCwd(created.cwd);
     void loadSessions();
     setSessionsVersion((version) => version + 1);
+    // The background auto-title finishes a few seconds into the first turn.
+    // If its SSE event raced the sidebar's first refresh (or the stream was
+    // reconnected), this one-shot refetch still picks the name up.
+    window.setTimeout(() => {
+      void loadSessions();
+      setSessionsVersion((version) => version + 1);
+    }, 6000);
   };
 
   /**
@@ -216,7 +223,7 @@ export function Workbench() {
       <TitleBar />
 
       <div className="flex min-h-0 flex-1">
-        <div className="flex w-[260px] shrink-0 flex-col overflow-hidden border-r border-gray-200/60 bg-[#F5F5F7]">
+        <div className="flex w-[260px] shrink-0 flex-col overflow-hidden border-r border-black/[0.06] bg-white/70 backdrop-blur-md">
           <div className="flex min-h-0 flex-1 flex-col">
           <SessionSidebar
             selectedSessionId={selected?.id ?? null}
@@ -295,6 +302,7 @@ export function Workbench() {
             modelsRefreshKey={modelsVersion}
             onDraftChange={setDraft}
             onSessionCreated={handleSessionCreated}
+            onSessionRenamed={() => setSessionsVersion((version) => version + 1)}
             onSessionForked={(newSessionId) => {
               void handleSessionForked(newSessionId);
             }}
