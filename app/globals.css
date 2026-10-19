@@ -1,4 +1,8 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
 
 @theme {
   --color-bg: var(--bg);
@@ -52,36 +56,39 @@
 @layer utilities {
   /* Flat materials. Elevation is expressed by a hairline, never by blur. */
   .material-sidebar { background: var(--material-sidebar); }
-  .material-toolbar { background: var(--material-toolbar); }
+  .material-toolbar {
+  background: color-mix(in srgb, var(--material-toolbar) 72%, transparent);
+  backdrop-filter: blur(14px) saturate(1.1);
+  -webkit-backdrop-filter: blur(14px) saturate(1.1);
+}
   .material-popover { background: var(--material-popover); }
   .material-input { background: var(--material-input); }
 }
 
-
 :root {
-  /* Frost — cool paper. L* 95.3, hue 213. */
-  --bg: #edf2f8;
-  --bg-panel: #e4ebf3;
+  /* Frost — warm off-white paper with a clear, vivid blue accent. */
+  --bg: #fdfbf7;
+  --bg-panel: #f7f4ee;
   --bg-elevated: #ffffff;
-  --bg-hover: #e0e8f1;
-  --bg-selected: #d5e0ee;
-  --border: #cbd7e4;
-  --border-subtle: #dde5ee;
-  --text: #24303f;
-  --text-strong: #0f1a26;
-  --text-muted: #566576;
-  --text-dim: #7a8a9c;
-  --accent: #2b5fd9;
-  --accent-hover: #1e4dba;
+  --bg-hover: #f1ede6;
+  --bg-selected: #e9e4da;
+  --border: #e2dcd2;
+  --border-subtle: #ece7df;
+  --text: #333333;
+  --text-strong: #1a1a1a;
+  --text-muted: #5c5c5c;
+  --text-dim: #828282;
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
   --accent-contrast: #ffffff;
-  --accent-soft: rgba(43, 95, 217, 0.12);
-  --user-bg: #e3ecf9;
-  --user-border: #c4d6ee;
+  --accent-soft: rgba(59, 130, 246, 0.12);
+  --user-bg: #eef4ff;
+  --user-border: #d3e2fd;
   --assistant-bg: transparent;
   --tool-bg: transparent;
-  --bg-subtle: #e4ebf3;
-  --code-bg: #f5f8fc;
-  --code-header-bg: #e9eff6;
+  --bg-subtle: #f7f4ee;
+  --code-bg: #f8f5ef;
+  --code-header-bg: #f1ece3;
   --success: #1d7a50;
   --success-bg: #e7f2ec;
   --success-border: #c2dccf;
@@ -94,10 +101,11 @@
   --info: #1f63c7;
   --info-bg: #e8effa;
   --info-border: #c5d6ee;
-  --focus-ring: rgba(43, 95, 217, 0.35);
-  --scrim: rgba(6, 14, 22, 0.55);
-  --shadow-popover: 0 0 0 1px var(--border), 0 18px 40px -20px rgba(21, 43, 74, 0.16);
+  --focus-ring: rgba(59, 130, 246, 0.4);
+  --scrim: rgba(26, 26, 26, 0.42);
+  --shadow-popover: 0 0 0 1px var(--border), 0 18px 40px -20px rgba(60, 48, 30, 0.18);
   --shadow-input: none;
+  --shadow-composer: 0 1px 2px rgba(60, 48, 30, 0.05), 0 14px 34px -20px rgba(60, 48, 30, 0.28);
   --toolbar-height: 36px;
   --control-height: 30px;
   --radius-tag: 2px;
@@ -107,8 +115,8 @@
   --chrome-button-bg: transparent;
   --chrome-button-hover: var(--bg-hover);
   --divider: var(--border);
-  --material-sidebar: #e4ebf3;
-  --material-toolbar: #edf2f8;
+  --material-sidebar: #f0f0f0;
+  --material-toolbar: #fdfbf7;
   --material-popover: #ffffff;
   --material-input: #ffffff;
 
@@ -161,6 +169,33 @@
   --toast-blur: var(--blur-small);
   --toast-scale: 0.97;
   --toast-ease: var(--ease-smooth-out);
+  /* shadcn/ui variables are derived from the PiForge palette so the three
+     themes (Frost / Graphite / Haze) keep driving every primitive. */
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card: var(--bg-elevated);
+  --card-foreground: var(--text);
+  --popover: var(--bg-elevated);
+  --popover-foreground: var(--text);
+  --primary: var(--accent);
+  --primary-foreground: var(--accent-contrast);
+  --secondary: var(--bg-subtle);
+  --secondary-foreground: var(--text);
+  --muted: var(--bg-hover);
+  --muted-foreground: var(--text-muted);
+  --accent-foreground: var(--accent-contrast);
+  --destructive: var(--danger);
+  --input: var(--border);
+  --ring: var(--accent);
+  --radius: 0.625rem;
+  --sidebar: var(--material-sidebar);
+  --sidebar-foreground: var(--text);
+  --sidebar-primary: var(--accent);
+  --sidebar-primary-foreground: var(--accent-contrast);
+  --sidebar-accent: var(--bg-hover);
+  --sidebar-accent-foreground: var(--text);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--accent);
 }
 
 html.dark {
@@ -176,10 +211,10 @@ html.dark {
   --text-strong: #f0f3f6;
   --text-muted: #8b929b;
   --text-dim: #626a75;
-  --accent: #8c9eff;
-  --accent-hover: #b0beff;
+  --accent: #60a5fa;
+  --accent-hover: #93c5fd;
   --accent-contrast: #0a0c10;
-  --accent-soft: rgba(140, 158, 255, 0.14);
+  --accent-soft: rgba(96, 165, 250, 0.16);
   --user-bg: #1b2130;
   --user-border: #2e3852;
   --assistant-bg: transparent;
@@ -199,14 +234,15 @@ html.dark {
   --info: #7fb4ff;
   --info-bg: rgba(127, 180, 255, 0.07);
   --info-border: rgba(127, 180, 255, 0.26);
-  --focus-ring: rgba(140, 158, 255, 0.4);
+  --focus-ring: rgba(96, 165, 250, 0.45);
   --scrim: rgba(6, 14, 22, 0.55);
   --shadow-popover: 0 0 0 1px var(--border), 0 16px 36px -22px rgba(0, 0, 0, 0.75);
   --shadow-input: none;
+  --shadow-composer: 0 1px 2px rgba(0, 0, 0, 0.45), 0 18px 40px -24px rgba(0, 0, 0, 0.8);
   --chrome-button-bg: transparent;
   --chrome-button-hover: var(--bg-hover);
   --divider: var(--border);
-  --material-sidebar: #15181c;
+  --material-sidebar: #0a0c0f;
   --material-toolbar: #0e1013;
   --material-popover: #1a1e23;
   --material-input: #15181c;
@@ -230,10 +266,10 @@ html.dark.theme-glacier {
   --text-strong: #eef8ff;
   --text-muted: #9cb8c9;
   --text-dim: #7391a3;
-  --accent: #6fd7ff;
-  --accent-hover: #a5e9ff;
+  --accent: #38bdf8;
+  --accent-hover: #7dd3fc;
   --accent-contrast: #06222c;
-  --accent-soft: rgba(111, 215, 255, 0.14);
+  --accent-soft: rgba(56, 189, 248, 0.16);
   --user-bg: #1b3243;
   --user-border: #2f5568;
   --assistant-bg: transparent;
@@ -253,7 +289,7 @@ html.dark.theme-glacier {
   --info: #8ecbff;
   --info-bg: rgba(142, 203, 255, 0.08);
   --info-border: rgba(142, 203, 255, 0.28);
-  --focus-ring: rgba(111, 215, 255, 0.45);
+  --focus-ring: rgba(56, 189, 248, 0.45);
   --scrim: rgba(6, 18, 26, 0.58);
   /* Frost edge: a 1px inner highlight that reads as ice, glacier only. */
   --shadow-popover:
@@ -261,10 +297,11 @@ html.dark.theme-glacier {
     0 0 0 1px var(--border),
     0 16px 36px -22px rgba(0, 0, 0, 0.75);
   --shadow-input: none;
+  --shadow-composer: 0 1px 2px rgba(0, 0, 0, 0.45), 0 18px 40px -24px rgba(0, 0, 0, 0.8);
   --chrome-button-bg: transparent;
   --chrome-button-hover: var(--bg-hover);
   --divider: var(--border);
-  --material-sidebar: #1d2f3b;
+  --material-sidebar: #121f29;
   --material-toolbar: #172631;
   --material-popover: #233845;
   --material-input: #1d2f3b;
@@ -306,7 +343,8 @@ html, body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-sans);
-  font-size: 13.5px;
+  font-size: 14px;
+  line-height: 1.6;
   overscroll-behavior: none;
 }
 
@@ -351,9 +389,10 @@ body {
 }
 
 :root {
-  --font-mono: var(--font-noto-mono), 'JetBrains Mono', 'Fira Code', 'Consolas', ui-monospace, 'PingFang SC', 'Microsoft YaHei', monospace;
-  --font-sans: var(--font-instrument-sans), 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  --font-serif: var(--font-instrument-serif), 'Songti SC', Georgia, serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Cascadia Mono', 'Microsoft YaHei', 'PingFang SC', monospace;
+  --font-sans: var(--font-inter), Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Microsoft YaHei', 'PingFang SC', sans-serif;
+  /* The ledger serif is retired: one clean sans stack for body, UI and titles. */
+  --font-serif: var(--font-sans);
 }
 
 pre, code {
@@ -986,7 +1025,6 @@ span.linenumber {
   }
 }
 
-
 /* Right panel: animate width */
 @media (min-width: 641px) {
   .right-panel-container {
@@ -1084,28 +1122,29 @@ span.linenumber {
   font-optical-sizing: auto;
 }
 .sidebar-header { flex-shrink: 0; padding: 14px 12px 0; position: relative; z-index: 3; }
-.sidebar-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 28px; }
+.sidebar-title-row { position: relative; display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-height: 28px; }
+/* Brand mark sits dead centre; the new-session button keeps the right edge. */
+.sidebar-brand {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--accent);
+}
 .sidebar-title-row .pi-agent-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: inherit; font-size: 13px; font-weight: 600; text-align: left; }
 .sidebar-new-session-button {
-  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
-  min-height: 28px; padding: 0 8px; margin-left: auto; flex-shrink: 0;
-  border: 1px solid var(--border); border-radius: var(--radius-control);
-  background: var(--chrome-button-bg); color: var(--text); font-size: 11px; font-weight: 500; cursor: pointer;
-  transition: background-color var(--duration-quick), transform var(--duration-micro);
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  min-height: 28px; padding: 0 11px; margin-left: auto; flex-shrink: 0;
+  border: none; border-radius: 8px;
+  background: var(--accent); color: var(--accent-contrast);
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+  transition: background-color var(--duration-quick), transform var(--duration-micro), box-shadow var(--duration-quick);
 }
-.sidebar-new-session-button:hover { background: var(--chrome-button-hover); }
+.sidebar-new-session-button:hover:not(:disabled) { background: var(--accent-hover); }
+.sidebar-new-session-button:disabled { background: var(--bg-hover); color: var(--text-dim); box-shadow: none; cursor: not-allowed; }
 .sidebar-new-session-button:active { transform: scale(0.97); }
-.sidebar-new-session-button:disabled { opacity: 0.45; cursor: not-allowed; }
-.sidebar-search {
-  display: flex; align-items: center; gap: 7px; height: 32px; margin-top: 14px; padding: 0 9px;
-  border: 1px solid transparent; border-radius: var(--radius-control);
-  background: var(--bg-subtle); color: var(--text-muted);
-  transition: background-color var(--duration-quick), border-color var(--duration-quick), box-shadow var(--duration-quick);
-}
-.sidebar-search:focus-within { background: var(--material-input); border-color: var(--focus-ring); box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus-ring) 40%, transparent); }
-.sidebar-search > svg { flex-shrink: 0; }
-.sidebar-search input { width: 100%; min-width: 0; padding: 0; border: none; outline: none; background: transparent; color: var(--text); font-size: 12px; line-height: 1.5; }
-.sidebar-search input::placeholder { color: var(--text-muted); }
+.sidebar-new-session-button:disabled { opacity: 1; }
+/* The shadcn Input is the surface now; the wrapper only positions the icon. */
+.sidebar-search { margin-top: 14px; }
 .sidebar-search input::-webkit-search-cancel-button { display: none; }
 .sidebar-section-heading { display: flex; align-items: center; justify-content: space-between; padding: 14px 2px 5px 3px; color: var(--text-muted); font-size: 11px; font-weight: 500; letter-spacing: 0.02em; }
 .sidebar-section-actions { display: flex; align-items: center; gap: 3px; }
@@ -1331,9 +1370,11 @@ html[data-electron-platform="darwin"] .macos-titlebar-leading-safe-area.is-activ
 .ledger-scroll { padding: 0; }
 
 .ledger-transcript {
-  max-width: 860px;
+  /* Fluid, immersive canvas: width comes from the JSX wrapper
+     (w-full max-w-[1360px] mx-auto px-8). */
+  max-width: none;
   margin: 0 auto;
-  padding: 10px 26px 64px;
+  padding: 12px 32px 72px;
 }
 
 .ledger-turn {
@@ -1369,7 +1410,8 @@ html[data-electron-platform="darwin"] .macos-titlebar-leading-safe-area.is-activ
 .ledger-turn[data-role="user"] .ledger-role::before { background: var(--text-strong); }
 .ledger-time { margin-left: auto; color: var(--text-dim); }
 
-.ledger-body { max-width: 74ch; }
+/* No prose cap: the transcript column itself is the measure. */
+.ledger-body { max-width: none; }
 
 .ledger-actions {
   display: flex;
@@ -1386,17 +1428,17 @@ html[data-electron-platform="darwin"] .macos-titlebar-leading-safe-area.is-activ
   border-radius: 0;
   background: transparent;
   box-shadow: none;
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1.6;
   color: var(--text-strong);
 }
 
-/* Assistant prose is set in the serif; structure and metadata stay sans/mono. */
+/* Assistant prose: same clean sans stack as the UI, 15/1.6 for legibility. */
 .ledger-turn[data-role="assistant"] .markdown-body {
-  font-family: var(--font-serif);
-  font-size: 16.5px;
+  font-family: var(--font-sans);
+  font-size: 14px;
   line-height: 1.6;
-  letter-spacing: 0.002em;
+  letter-spacing: 0;
   color: var(--text);
 }
 .ledger-turn[data-role="assistant"] .markdown-body h1,
@@ -1410,7 +1452,7 @@ html[data-electron-platform="darwin"] .macos-titlebar-leading-safe-area.is-activ
 .ledger-turn[data-role="assistant"] .markdown-body pre,
 .ledger-turn[data-role="assistant"] .markdown-body table {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: 14px;
 }
 
 /* ── Tool log lines ─────────────────────────────────────────────────────── */
@@ -1453,7 +1495,7 @@ html[data-electron-platform="darwin"] .macos-titlebar-leading-safe-area.is-activ
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12.5px;
   color: var(--text-muted);
 }
 .ledger-num {
@@ -1471,7 +1513,7 @@ html[data-electron-platform="darwin"] .macos-titlebar-leading-safe-area.is-activ
   border-top: 1px solid var(--border);
   background: var(--code-bg);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12.5px;
   line-height: 1.55;
   color: var(--text-muted);
   white-space: pre-wrap;
@@ -1487,7 +1529,7 @@ html[data-electron-platform="darwin"] .macos-titlebar-leading-safe-area.is-activ
   background: var(--bg);
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12.5px;
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-all;
@@ -1516,7 +1558,7 @@ html[data-electron-platform="darwin"] .macos-titlebar-leading-safe-area.is-activ
   padding: 8px 10px;
   border-top: 1px solid var(--border-subtle);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12.5px;
   line-height: 1.6;
   color: var(--text-muted);
   white-space: pre-wrap;
@@ -1558,12 +1600,13 @@ html[data-electron-platform="darwin"] .macos-titlebar-leading-safe-area.is-activ
 
 .ledger-empty {
   display: flex;
+  flex-direction: column;
+  align-items: stretch;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  justify-content: center;
-  align-items: flex-start;
-  padding: clamp(36px, 11vh, 104px) 26px 32px;
+  justify-content: flex-start;
+  padding: clamp(36px, 11vh, 104px) 0 0;
 }
 .ledger-empty { position: relative; isolation: isolate; }
 /* The app's single glow body: a themed halo behind the new-session head.
@@ -1573,10 +1616,11 @@ html[data-electron-platform="darwin"] .macos-titlebar-leading-safe-area.is-activ
   position: absolute;
   top: -160px;
   left: 50%;
-  width: min(760px, 92%);
-  height: 420px;
+  width: min(680px, 84%);
+  height: 340px;
   transform: translateX(-50%);
-  background: radial-gradient(closest-side, var(--accent-soft), transparent 72%);
+  background: radial-gradient(closest-side, var(--accent-soft), transparent 70%);
+  opacity: 0.7;
   pointer-events: none;
   z-index: -1;
   animation: ledger-halo-in 600ms var(--ease-smooth-out) both;
@@ -1587,7 +1631,7 @@ html[data-electron-platform="darwin"] .macos-titlebar-leading-safe-area.is-activ
 }
 .ledger-empty-inner {
   width: 100%;
-  max-width: 720px;
+  max-width: none;
   animation: ledger-empty-in 600ms var(--ease-smooth-out) both;
 }
 @keyframes ledger-empty-in {
@@ -1609,8 +1653,8 @@ html[data-electron-platform="darwin"] .macos-titlebar-leading-safe-area.is-activ
 }
 .ledger-empty-title {
   margin: 0;
-  font-family: var(--font-serif);
-  font-weight: 400;
+  font-family: var(--font-sans);
+  font-weight: 600;
   font-size: clamp(36px, 4.6vw, 54px);
   line-height: 1.02;
   letter-spacing: -0.02em;
@@ -1627,11 +1671,39 @@ html[data-electron-platform="darwin"] .macos-titlebar-leading-safe-area.is-activ
 /* ── Composer ───────────────────────────────────────────────────────────── */
 
 .composer-band {
-  border-top: 1px solid var(--border);
-  background: var(--bg);
+  /* The composer floats above the canvas instead of sitting in a boxed band. */
+  border-top: none;
+  background: transparent;
+  padding-top: 6px;
 }
-.composer-shell { box-shadow: none; }
-.composer-shell::after { display: none; }
+/* One unified composer panel: textarea on top, controls underneath, both inside
+   a single elevated card. */
+.composer-panel {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow-composer);
+  padding: 8px 10px 8px;
+  transition:
+    border-color var(--duration-quick) var(--ease-smooth-out),
+    box-shadow var(--duration-quick) var(--ease-smooth-out);
+}
+.composer-panel:has(.composer-shell[data-focused="true"]) {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-composer), 0 0 0 3px var(--accent-soft);
+}
+.composer-shell { box-shadow: none; border: none; background: transparent; }
+.composer-panel::after {
+  content: "";
+  position: absolute;
+  left: 1px; right: 1px; bottom: 1px;
+  height: 46px;
+  border-radius: 0 0 15px 15px;
+  background: linear-gradient(to bottom, transparent, var(--bg-subtle));
+  pointer-events: none;
+  z-index: 0;
+}
+.composer-panel > * { position: relative; z-index: 1; }
 
 /* ── Chrome ─────────────────────────────────────────────────────────────── */
 
@@ -1648,4 +1720,61 @@ html[data-electron-platform="darwin"] .macos-titlebar-leading-safe-area.is-activ
 .t-modal {
   border-radius: var(--radius-overlay);
   box-shadow: var(--shadow-popover);
+}
+
+@theme inline {
+  --font-heading: var(--font-sans);
+  --font-sans: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* Dark values live in html.dark and html.dark.theme-glacier above. */
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
 }

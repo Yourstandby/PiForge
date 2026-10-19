@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useCallback } from "react";
+import React, { useState, useRef, useCallback, useEffect } from "react";
 import { useI18n } from "./I18nProvider";
 import { useUpstreamUsage } from "@/hooks/useUpstreamUsage";
 import { useDismissOnOutsideClick } from "@/hooks/useDismissOnOutsideClick";
@@ -11,8 +11,42 @@ import type { ContextUsage } from "@/lib/pi-types";
 
 export type { SessionStats, ContextUsage };
 
+/** USD→CNY reference rate, fetched once per session from the local API. */
+const FALLBACK_USD_CNY = 7.1;
+let fxRatePromise: Promise<number> | null = null;
+
+function loadUsdCny(): Promise<number> {
+  if (!fxRatePromise) {
+    fxRatePromise = fetch("/api/fx")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { rate?: number } | null) => {
+        const rate = data?.rate;
+        return typeof rate === "number" && Number.isFinite(rate) && rate > 0 ? rate : FALLBACK_USD_CNY;
+      })
+      .catch(() => FALLBACK_USD_CNY);
+  }
+  return fxRatePromise;
+}
+
+function useUsdCny(enabled: boolean): number {
+  const [rate, setRate] = useState(FALLBACK_USD_CNY);
+  useEffect(() => {
+    if (!enabled) return;
+    let alive = true;
+    void loadUsdCny().then((value) => {
+      if (alive) setRate(value);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [enabled]);
+  return rate;
+}
+
 export interface StatsBarProps {
   showChat: boolean;
+  /** Compact form for the composer toolbar (no tab borders, pill hover). */
+  compact?: boolean;
   sessionStats?: SessionStats | null;
   contextUsage?: ContextUsage | null;
   currentProvider?: string | null;
@@ -20,11 +54,14 @@ export interface StatsBarProps {
 
 export const StatsBar = React.memo(function StatsBar({
   showChat,
+  compact = false,
   sessionStats = null,
   contextUsage = null,
   currentProvider = null,
 }: StatsBarProps) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+  const showCny = locale === "zh-CN";
+  const usdCny = useUsdCny(showCny);
   const [popoverOpen, setPopoverOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
@@ -61,7 +98,14 @@ export const StatsBar = React.memo(function StatsBar({
       : n >= 1000
       ? `${(n / 1000).toFixed(0)}k`
       : String(n);
-  const costStr = c > 0 ? (c >= 0.01 ? `$${c.toFixed(2)}` : `<$0.01`) : null;
+  const formatCost = (usd: number): string => {
+    if (showCny) {
+      const cny = usd * usdCny;
+      return cny >= 0.01 ? `¥${cny.toFixed(2)}` : "<¥0.01";
+    }
+    return usd >= 0.01 ? `$${usd.toFixed(2)}` : "<$0.01";
+  };
+  const costStr = c > 0 ? formatCost(c) : null;
 
   // Calculate cache hit rate if available or derivable
   const cacheHitRate =
@@ -91,7 +135,11 @@ export const StatsBar = React.memo(function StatsBar({
       tooltipParts.push(t("usage.tooltip.cacheHit", { rate: cacheHitRate.toFixed(1) }));
     }
     if (c > 0) {
-      tooltipParts.push(t("usage.tooltip.cost", { cost: c.toFixed(4) }));
+      tooltipParts.push(
+        t("usage.tooltip.cost", {
+          cost: showCny ? `${formatCost(c)} ($${c.toFixed(4)})` : c.toFixed(4),
+        })
+      );
     }
   }
   if (contextUsage?.contextWindow) {
@@ -117,7 +165,10 @@ export const StatsBar = React.memo(function StatsBar({
   );
 
   return (
-    <div ref={containerRef} className="relative h-full flex items-stretch [-webkit-app-region:no-drag]">
+    <div
+      ref={containerRef}
+      className={`relative flex [-webkit-app-region:no-drag] ${compact ? "h-full items-center" : "h-full items-stretch"}`}
+    >
       <button
         type="button"
         onClick={togglePopover}
@@ -125,11 +176,19 @@ export const StatsBar = React.memo(function StatsBar({
         aria-label={t("usage.title")}
         aria-haspopup="dialog"
         aria-expanded={popoverOpen}
-        className={`flex items-center gap-2 h-full px-2.5 text-[11px] font-mono tabular-nums select-none cursor-pointer border-none border-l border-divider transition-colors duration-150 ${
-          popoverOpen
-            ? "bg-bg-selected text-text border-t-2 border-t-accent"
-            : "bg-transparent text-text-muted hover:text-text hover:bg-bg-hover/60 border-t-2 border-t-transparent"
-        }`}
+        className={
+          compact
+            ? `flex h-7 items-center gap-2 rounded-control px-2 text-[11px] font-mono tabular-nums select-none cursor-pointer border-none transition-colors duration-150 ${
+                popoverOpen
+                  ? "bg-bg-selected text-text"
+                  : "bg-transparent text-text-muted hover:bg-bg-hover hover:text-text"
+              }`
+            : `flex items-center gap-2 h-full px-2.5 text-[11px] font-mono tabular-nums select-none cursor-pointer border-none border-l border-divider transition-colors duration-150 ${
+                popoverOpen
+                  ? "bg-bg-selected text-text border-t-2 border-t-accent"
+                  : "bg-transparent text-text-muted hover:text-text hover:bg-bg-hover/60 border-t-2 border-t-transparent"
+              }`
+        }
       >
         {tks && tks.input > 0 && (
           <span className="flex items-center gap-0.5">

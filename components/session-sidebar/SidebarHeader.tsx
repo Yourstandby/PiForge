@@ -1,10 +1,12 @@
 "use client";
 
 import { useState, useCallback, useRef } from "react";
-import { PiAgentTitle } from "./PiAgentTitle";
+import { BrandLogo } from "../BrandLogo";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Plus, Search, FolderPlus, X } from "lucide-react";
 import { pickDirectoryFromHost } from "./helpers";
 import { SidebarIcon } from "./SidebarIcon";
-import { ProjectSortMenu } from "./ProjectSortMenu";
 import type { ProjectSortMode } from "./projects";
 import { useI18n } from "../I18nProvider";
 import { useDismissOnOutsideClick } from "@/hooks/useDismissOnOutsideClick";
@@ -21,7 +23,7 @@ interface SidebarHeaderProps {
   onSortModeChange: (mode: ProjectSortMode, animate: boolean) => void;
 }
 
-export function SidebarHeader({ selectedCwd, onNewSession, onAddProject, loadSessions, sessionRefreshDone, searchQuery, onSearchQueryChange, sortMode, onSortModeChange }: SidebarHeaderProps) {
+export function SidebarHeader({ selectedCwd, onNewSession, onAddProject, searchQuery, onSearchQueryChange }: SidebarHeaderProps) {
   const { t } = useI18n();
   const [menuOpen, setMenuOpen] = useState(false);
   const [picking, setPicking] = useState(false);
@@ -64,38 +66,65 @@ export function SidebarHeader({ selectedCwd, onNewSession, onAddProject, loadSes
   return (
     <header className="sidebar-header">
       <div className="sidebar-title-row">
-        <PiAgentTitle />
-        <button
-          className="sidebar-new-session-button"
+        <span className="sidebar-brand" title="PiForge">
+          <BrandLogo size={20} />
+        </span>
+        <Button
+          size="sm"
+          className="ml-auto h-7 rounded-lg px-2.5 text-[12px] font-medium"
           onClick={() => selectedCwd && onNewSession(selectedCwd)}
           disabled={!selectedCwd}
           title={selectedCwd ? t("sidebar.newSessionIn", { path: selectedCwd }) : t("sidebar.selectProjectFirst")}
         >
-          <SidebarIcon name="plus" size={14} />
+          <Plus />
           {t("sidebar.newSession")}
-        </button>
+        </Button>
       </div>
-      <div className="sidebar-search">
-        <SidebarIcon name="search" size={14} />
-        <input ref={searchRef} type="search" value={searchQuery} onChange={(event) => onSearchQueryChange(event.target.value)} onKeyDown={(event) => {
-          if (event.key === "Escape" && searchQuery) {
-            event.stopPropagation();
-            onSearchQueryChange("");
-          }
-        }} placeholder={t("sidebar.searchPlaceholder")} aria-label={t("sidebar.searchPlaceholder")} />
-        {searchQuery && <button className="sidebar-icon-button" aria-label={t("sidebar.clearSearch")} onClick={() => { onSearchQueryChange(""); searchRef.current?.focus(); }}><SidebarIcon name="close" size={12} /></button>}
+      <div className="sidebar-search relative">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 z-10 size-3.5 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          ref={searchRef}
+          type="search"
+          value={searchQuery}
+          onChange={(event) => onSearchQueryChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && searchQuery) {
+              event.stopPropagation();
+              onSearchQueryChange("");
+            }
+          }}
+          placeholder={t("sidebar.searchPlaceholder")}
+          aria-label={t("sidebar.searchPlaceholder")}
+          className="h-8 rounded-lg border-border/70 bg-card/60 pl-8 pr-7 text-[13px] backdrop-blur"
+        />
+        {searchQuery && (
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={t("sidebar.clearSearch")}
+            onClick={() => { onSearchQueryChange(""); searchRef.current?.focus(); }}
+            className="absolute right-1 top-1/2 -translate-y-1/2"
+          >
+            <X />
+          </Button>
+        )}
       </div>
       <div className="sidebar-section-heading">
         <span>{t("sidebar.projects")}</span>
         <div className="sidebar-section-actions">
-          <ProjectSortMenu value={sortMode} onChange={onSortModeChange} />
-          <button className="sidebar-icon-button sidebar-refresh-button" data-done={sessionRefreshDone || undefined} onClick={() => void loadSessions()} title={t("sidebar.refreshSessions")} aria-label={t("sidebar.refreshSessions")}>
-            <SidebarIcon name={sessionRefreshDone ? "check" : "refresh"} size={14} />
-          </button>
           <div ref={pickerRef} className="sidebar-project-picker">
-            <button ref={pickerButtonRef} className="sidebar-icon-button" onClick={() => setMenuOpen((open) => !open)} disabled={picking} title={t("sidebar.addProject")} aria-label={t("sidebar.addProject")} aria-expanded={menuOpen}>
-              <SidebarIcon name="folder-plus" size={16} />
-            </button>
+            <Button
+              ref={pickerButtonRef}
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => setMenuOpen((open) => !open)}
+              disabled={picking}
+              title={t("sidebar.addProject")}
+              aria-label={t("sidebar.addProject")}
+              aria-expanded={menuOpen}
+            >
+              <FolderPlus />
+            </Button>
             {menuOpen && <div className="sidebar-picker-menu material-popover shadow-popover t-dropdown is-open" data-origin="top-right">
               <button onClick={() => void addDirectory(false)}><SidebarIcon name="folder" size={15} />{t("sidebar.chooseDirectory")}</button>
               <button onClick={() => void addDirectory(true)}><SidebarIcon name="plus" size={15} />{t("sidebar.defaultDirectory")}</button>

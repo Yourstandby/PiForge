@@ -14,6 +14,8 @@ try {
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // The dev-only floating "N" ball never ships in a build; hide it in dev too.
+  devIndicators: false,
   turbopack: {},
   serverExternalPackages: ["@earendil-works/pi-coding-agent", "@earendil-works/pi-ai", "@earendil-works/pi-mcp"],
   allowedDevOrigins: ["127.0.0.1", "localhost", "192.168.*.*"],

@@ -6,6 +6,8 @@ import { SessionSidebar } from "./SessionSidebar";
 import { ChatWindow } from "./ChatWindow";
 import { FileViewer } from "./FileViewer";
 import { TabBar } from "./TabBar";
+import { Button } from "@/components/ui/button";
+import { Settings } from "lucide-react";
 import { ModelsConfig } from "./ModelsConfig";
 import { SkillsConfig } from "./SkillsConfig";
 import { BranchNavigator } from "./BranchNavigator";
@@ -18,7 +20,6 @@ import type { ChatInputHandle } from "./ChatInput";
 import { usePanelLayout } from "@/hooks/usePanelLayout";
 import { useDismissOnOutsideClick } from "@/hooks/useDismissOnOutsideClick";
 import { useFileTabs } from "@/hooks/useFileTabs";
-import { StatsBar, type SessionStats, type ContextUsage } from "./StatsBar";
 import { useI18n } from "./I18nProvider";
 
 function isEditableTarget(target: EventTarget | null) {
@@ -54,7 +55,7 @@ export function AppShell() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { theme, setTheme, toggleTheme } = useTheme();
-  const { preference: localePreference, setPreference: setLocalePreference, t } = useI18n();
+  const { locale, preference: localePreference, setPreference: setLocalePreference, t } = useI18n();
   const [selectedSession, setSelectedSession] = useState<SessionInfo | null>(null);
   // When user clicks +, we only store the cwd — no fake session id
   const [newSessionCwd, setNewSessionCwd] = useState<string | null>(null);
@@ -64,6 +65,8 @@ export function AppShell() {
   const [modelsConfigOpen, setModelsConfigOpen] = useState(false);
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [skillsConfigOpen, setSkillsConfigOpen] = useState(false);
+  const [sidebarMenuOpen, setSidebarMenuOpen] = useState(false);
+  const sidebarMenuRef = useRef<HTMLDivElement>(null);
   const [extensionsModalOpen, setExtensionsModalOpen] = useState(false);
   const [shellMenuOpen, setShellMenuOpen] = useState(false);
   const shellMenuRef = useRef<HTMLDivElement>(null);
@@ -122,22 +125,6 @@ export function AppShell() {
 
   const handleSystemPromptChange = useCallback((prompt: string | null) => {
     setSystemPrompt(prompt);
-  }, []);
-
-  const [sessionStats, setSessionStats] = useState<SessionStats | null>(null);
-  const [currentModel, setCurrentModel] = useState<{ provider: string; modelId: string } | null>(null);
-  const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
-
-  const handleSessionStatsChange = useCallback((stats: SessionStats | null) => {
-    setSessionStats(stats);
-  }, []);
-
-  const handleModelChange = useCallback((model: { provider: string; modelId: string } | null) => {
-    setCurrentModel(model);
-  }, []);
-
-  const handleContextUsageChange = useCallback((usage: ContextUsage | null) => {
-    setContextUsage(usage);
   }, []);
 
   // Single active panel — only one dropdown open at a time
@@ -454,58 +441,46 @@ export function AppShell() {
         explorerRefreshKey={explorerRefreshKey}
         onAtMention={handleAtMention}
       />
-      <div className="p-2 shrink-0 flex justify-between gap-1">
-        {(
-          [
-            {
-              label: t("shell.models"),
-              onClick: () => setModelsConfigOpen(true),
-              disabled: false,
-              icon: (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="4" y="4" width="16" height="16" rx="2" />
-                  <rect x="9" y="9" width="6" height="6" />
-                  <line x1="9" y1="1" x2="9" y2="4" />
-                  <line x1="15" y1="1" x2="15" y2="4" />
-                  <line x1="9" y1="20" x2="9" y2="23" />
-                  <line x1="15" y1="20" x2="15" y2="23" />
-                  <line x1="20" y1="9" x2="23" y2="9" />
-                  <line x1="20" y1="14" x2="23" y2="14" />
-                  <line x1="1" y1="9" x2="4" y2="9" />
-                  <line x1="1" y1="14" x2="4" y2="14" />
-                </svg>
-              ),
-            },
-            {
-              label: t("shell.skills"),
-              onClick: () => setSkillsConfigOpen(true),
-              disabled: !activeCwd && !selectedSession?.cwd && !newSessionCwd,
-              icon: (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 2L2 7l10 5 10-5-10-5z" />
-                  <path d="M2 17l10 5 10-5" />
-                  <path d="M2 12l10 5 10-5" />
-                </svg>
-              ),
-            },
-          ] as { label: string; onClick: () => void; disabled: boolean; icon: React.ReactNode }[]
-        ).map(({ label, onClick, disabled, icon }) => (
-          <button
-            key={label}
-            onClick={onClick}
-            disabled={disabled}
-            title={label}
-            aria-label={label}
-            className={`flex-1 flex items-center justify-center gap-1.5 h-control-height p-0 bg-transparent border-none rounded-control text-[12px] transition-[background-color,color,opacity,transform] duration-150 ${
-              disabled
-                ? "cursor-default opacity-35 text-text-muted"
-                : "cursor-pointer text-text-muted hover:bg-bg-hover hover:text-text active:scale-95"
-            }`}
+      {/* One settings entry point. The old models/skills dock is gone; both live
+          behind this gear so the sidebar keeps a single action. */}
+      <div className="shrink-0 p-2" ref={sidebarMenuRef}>
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={() => setSidebarMenuOpen((open) => !open)}
+          aria-haspopup="menu"
+          aria-expanded={sidebarMenuOpen}
+          title={t("shell.settings")}
+          aria-label={t("shell.settings")}
+          className="h-9 w-full justify-center gap-2 rounded-xl border border-border/70 bg-card/50 text-[13px] font-normal text-muted-foreground backdrop-blur hover:text-foreground"
+        >
+          <Settings className="size-4" />
+          {t("shell.settings")}
+        </Button>
+        {sidebarMenuOpen && (
+          <div
+            role="menu"
+            className="t-dropdown is-open material-popover absolute bottom-[calc(100%-4px)] left-2 z-[650] w-48 rounded-panel border border-border p-1.5 shadow-popover"
           >
-            {icon}
-            {label}
-          </button>
-        ))}
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => { setSidebarMenuOpen(false); setModelsConfigOpen(true); }}
+              className="flex w-full items-center gap-2 rounded-control border-none bg-transparent px-2.5 py-2 text-left text-[12px] text-text hover:bg-bg-hover"
+            >
+              <span className="w-4 text-center" aria-hidden="true">◇</span> {t("shell.models")}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={!activeCwd && !selectedSession?.cwd && !newSessionCwd}
+              onClick={() => { setSidebarMenuOpen(false); setSkillsConfigOpen(true); }}
+              className="flex w-full items-center gap-2 rounded-control border-none bg-transparent px-2.5 py-2 text-left text-[12px] text-text hover:bg-bg-hover disabled:cursor-not-allowed disabled:opacity-35"
+            >
+              <span className="w-4 text-center" aria-hidden="true">▤</span> {t("shell.skills")}
+            </button>
+          </div>
+        )}
       </div>
     </>
   );
@@ -555,7 +530,7 @@ export function AppShell() {
               onClick={() => setSidebarOpen((v) => !v)}
               title={sidebarOpen ? t("shell.hideSidebar") : t("shell.showSidebar")}
               aria-label={sidebarOpen ? t("shell.hideSidebar") : t("shell.showSidebar")}
-              className="flex items-center justify-center w-9 h-full p-0 bg-transparent border-none border-r border-divider text-text-muted hover:text-text cursor-pointer shrink-0 transition-colors duration-150 [-webkit-app-region:no-drag]"
+              className="group ml-2 flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border-none bg-transparent p-0 text-text-dim cursor-pointer transition-[background-color,color,transform] duration-150 hover:bg-bg-hover hover:text-text active:scale-95 [-webkit-app-region:no-drag]"
             >
               {sidebarOpen ? (
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -616,12 +591,17 @@ export function AppShell() {
               </div>
             )}
             <div className="flex-1" />
-            <StatsBar
-              showChat={showChat}
-              sessionStats={sessionStats}
-              contextUsage={contextUsage}
-              currentProvider={currentModel?.provider}
-            />
+            {/* One-click language switch: 中文 ⇄ English (system default stays
+                available in the workbench menu). */}
+            <button
+              type="button"
+              onClick={() => setLocalePreference(locale === "zh-CN" ? "en" : "zh-CN")}
+              title={t("language.label")}
+              aria-label={t("language.label")}
+              className="flex h-full w-10 shrink-0 items-center justify-center border-none border-l border-divider bg-transparent text-[11px] font-medium text-text-muted transition-colors duration-150 hover:text-text [-webkit-app-region:no-drag]"
+            >
+              {locale === "zh-CN" ? "中" : "EN"}
+            </button>
             <div ref={shellMenuRef} className="relative h-full [-webkit-app-region:no-drag]">
               <button
                 ref={shellMenuButtonRef}
@@ -789,9 +769,6 @@ export function AppShell() {
                 chatInputRef={chatInputRef}
                 onBranchDataChange={handleBranchDataChange}
                 onSystemPromptChange={handleSystemPromptChange}
-                onSessionStatsChange={handleSessionStatsChange}
-                onContextUsageChange={handleContextUsageChange}
-                onModelChange={handleModelChange}
               />
             ) : showPlaceholder ? (
               activeCwd ? (

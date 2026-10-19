@@ -17,6 +17,7 @@ import { useDragDrop } from "@/hooks/useDragDrop";
 import { formatDroppedPathMentions, getDroppedFilePath } from "@/lib/file-paths";
 import { useI18n } from "./I18nProvider";
 import type { SessionStats, ContextUsage } from "./StatsBar";
+import { Badge } from "@/components/ui/badge";
 interface Props {
   session: SessionInfo | null;
   newSessionCwd: string | null;
@@ -232,6 +233,8 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
         retryInfo={retryInfo}
         soundEnabled={soundEnabled}
         onSoundToggle={onSoundToggle}
+        sessionStats={sessionStats}
+        contextUsage={contextUsage}
       />
     </>
   );
@@ -313,14 +316,17 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
       )}
 
       {isEmptyNew ? (
-        <div className="ledger-empty">
-          <div className="ledger-empty-inner">
+        <div className="ledger-empty w-full">
+          <div className="ledger-empty-inner w-full max-w-[1360px] mx-auto px-8">
             <div className="ledger-empty-head">
-              <span className="ledger-kicker">{t("chat.newSession")}</span>
+              <Badge variant="secondary" className="mb-3 rounded-md px-2 py-0.5 text-[11px] font-normal tracking-wide">
+                {t("chat.newSession")}
+              </Badge>
               <h1 className="ledger-empty-title">{sessionLabel}</h1>
               {emptyCwd && <p className="ledger-empty-path">{emptyCwd}</p>}
             </div>
-
+          </div>
+          <div className="w-full shrink-0">
             {chatInputElement}
           </div>
         </div>
@@ -328,7 +334,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
       <>
       <div className="relative flex flex-1 overflow-hidden">
         <div ref={setScrollContainer} className="ledger-scroll flex-1 overflow-y-auto [scrollbar-width:none]">
-          <div className="ledger-transcript">
+          <div className="ledger-transcript w-full max-w-[1360px] mx-auto px-8">
 
             <MessageList
               messages={messages}

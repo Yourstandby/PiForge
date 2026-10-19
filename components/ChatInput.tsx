@@ -17,6 +17,11 @@ import type { AgentMode } from "@/lib/approval-policy";
 import type { FollowUpQueueSnapshot } from "@/lib/follow-up-queue";
 import { useI18n } from "./I18nProvider";
 import { useDismissOnOutsideClick } from "@/hooks/useDismissOnOutsideClick";
+import { StatsBar, type SessionStats, type ContextUsage } from "./StatsBar";
+import { Card } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
+import { ArrowUp } from "lucide-react";
 
 interface Props {
   onSend: (message: string, images?: AttachedImage[]) => void;
@@ -47,6 +52,9 @@ interface Props {
   followUpQueue?: FollowUpQueueSnapshot;
   followUpQueueBusy?: boolean;
   onReorderFollowUps?: (orderedIds: string[]) => void;
+  /* Usage / quota / cost moved out of the top bar into this toolbar. */
+  sessionStats?: SessionStats | null;
+  contextUsage?: ContextUsage | null;
 }
 
 export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
@@ -58,6 +66,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   retryInfo,
   soundEnabled, onSoundToggle,
   followUpQueue, followUpQueueBusy, onReorderFollowUps,
+  sessionStats, contextUsage,
 }: Props, ref) {
   const { t } = useI18n();
   const [value, setValue] = useState("");
@@ -359,12 +368,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
   return (
     <div
-      style={{
-        flexShrink: 0,
-        background: "transparent",
-        padding: "0 16px 10px",
-        paddingRight: 52, // 16px base + 36px for ChatMinimap alignment
-      }}
+      className="w-full max-w-[1360px] mx-auto px-8 pb-4"
+      style={{ flexShrink: 0, background: "transparent" }}
     >
       {/* Hidden file input */}
       <input
@@ -379,7 +384,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           e.target.value = "";
         }}
       />
-      <div style={{ maxWidth: 820, margin: "0 auto" }}>
+      <Card className="composer-panel relative w-full gap-0 rounded-2xl border-border/70 bg-card/70 py-0 shadow-[var(--shadow-composer)] ring-0 backdrop-blur-xl">
         {/* Retry banner */}
         {retryInfo && (
           <div style={{
@@ -548,23 +553,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           </div>
         )}
         <div
-          className="material-input composer-shell"
+          className="composer-shell flex items-end gap-2 px-2.5 pt-2.5"
           data-focused={inputFocused ? "true" : "false"}
-          style={{
-            display: "flex",
-            gap: 8,
-            alignItems: "center",
-            background: "var(--material-input)",
-            border: `1px solid ${inputFocused
-              ? "var(--accent)"
-              : isStreaming && (onSteer || onFollowUp)
-                ? "var(--warning-border)"
-                : "var(--border)"}`,
-            borderRadius: 3,
-            padding: "9px 8px 9px 14px",
-          } as React.CSSProperties}
         >
-          <textarea
+          <Textarea
             ref={textareaRef}
             value={value}
             onChange={(e) => {
@@ -583,16 +575,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             aria-label={t("chat.message")}
             aria-keyshortcuts={isStreaming && onFollowUp ? "Alt+Enter" : undefined}
             rows={1}
-            className="t-resize"
+            className="t-resize min-h-0 flex-1 resize-none border-0 bg-transparent p-0 text-[14px] leading-6 text-foreground shadow-none placeholder:text-muted-foreground focus-visible:border-0 focus-visible:ring-0"
             style={{
-              flex: 1,
-              background: "none",
-              border: "none",
-              outline: "none",
-              resize: "none",
               color: "var(--text)",
-              fontSize: 14,
-              lineHeight: 1.6,
               fontFamily: "inherit",
               minHeight: 24,
               maxHeight: 200,
@@ -627,36 +612,23 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               )}
             </div>
           ) : (
-            <button
+            <Button
+              type="button"
+              size="icon"
               onClick={handleSend}
               disabled={!value.trim() && !attachedImages.length}
               aria-label={t("chat.sendMessage")}
               title={t("chat.sendMessage")}
-              style={{
-                flexShrink: 0,
-                alignSelf: "flex-end",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                width: 30, height: 30, padding: 0,
-                background: (value.trim() || attachedImages.length) ? "var(--accent)" : "var(--bg-panel)",
-                border: "none",
-                borderRadius: 3,
-                color: (value.trim() || attachedImages.length) ? "var(--accent-contrast)" : "var(--text-dim)",
-                cursor: (value.trim() || attachedImages.length) ? "pointer" : "not-allowed",
-                boxShadow: "none",
-              }}
-              className="composer-icon-button"
+              className="mb-0.5 size-8 shrink-0 self-end rounded-lg"
             >
-              <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <line x1="2" y1="7" x2="11" y2="7" />
-                <polyline points="7.5 3 12 7 7.5 11" />
-              </svg>
-            </button>
+              <ArrowUp className="size-4" />
+            </Button>
           )}
         </div>
         </div>
 
         {/* Bottom bar: left | center (context) | right */}
-        <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6, minHeight: 32 }}>
+        <div style={{ marginTop: 2, display: "flex", alignItems: "center", gap: 6, minHeight: 32 }}>
 
           {/* LEFT: attach + model selector (idle) or steer/followup toggle (streaming) */}
           <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center", gap: 2 }}>
@@ -690,6 +662,15 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               modelNames={modelNames}
               modelList={modelList}
               onModelChange={onModelChange}
+            />
+
+            {/* Token / cache / cost / context readout */}
+            <StatsBar
+              showChat
+              compact
+              sessionStats={sessionStats}
+              contextUsage={contextUsage}
+              currentProvider={model?.provider}
             />
           </div>
 
@@ -937,7 +918,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           </div>
 
         </div>
-      </div>
+      </Card>
     </div>
   );
 });

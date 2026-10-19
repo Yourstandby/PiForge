@@ -1,30 +1,14 @@
 import type { Metadata } from "next";
-import { Noto_Sans_Mono, Instrument_Sans, Instrument_Serif } from "next/font/google";
+import { Inter } from "next/font/google";
+
+const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
 import "./globals.css";
 import { I18nProvider } from "@/components/I18nProvider";
 import GlobalRuntimeErrorReporter from "@/components/GlobalRuntimeErrorReporter";
+import { Geist } from "next/font/google";
+import { cn } from "@/lib/utils";
 
-const notoSansMono = Noto_Sans_Mono({
-  subsets: ["latin", "cyrillic"],
-  variable: "--font-noto-mono",
-  display: "swap",
-});
-
-// Ledger type system: a technical grotesque for chrome, a high-contrast
-// serif reserved for assistant prose, mono for metadata and code.
-const instrumentSans = Instrument_Sans({
-  subsets: ["latin"],
-  variable: "--font-instrument-sans",
-  display: "swap",
-});
-
-const instrumentSerif = Instrument_Serif({
-  subsets: ["latin"],
-  weight: "400",
-  style: ["normal", "italic"],
-  variable: "--font-instrument-serif",
-  display: "swap",
-});
+const geist = Geist({subsets:['latin'],variable:'--font-sans'});
 
 export const metadata: Metadata = {
   title: "PiForge",
@@ -39,8 +23,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${notoSansMono.variable} ${instrumentSans.variable} ${instrumentSerif.variable}`}
-      suppressHydrationWarning
+      suppressHydrationWarning className={cn("font-sans", geist.variable)}
     >
       <head>
         <script
