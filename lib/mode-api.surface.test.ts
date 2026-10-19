@@ -82,12 +82,10 @@ test("wrapper set_agent_mode + extension_ui_response path", async () => {
 
 test("UI entry points exist in source", () => {
   const files = [
-    "components/AgentModeSelector.tsx",
-    "components/ExtensionUiDialog.tsx",
-    "components/ProjectTrustDialog.tsx",
-    "components/ExecutePlanBar.tsx",
-    "components/ChatWindow.tsx",
-    "components/ChatInput.tsx",
+    "components/Workbench.tsx",
+    "components/ChatSurface.tsx",
+    "components/Transcript.tsx",
+    "components/Composer.tsx",
     "app/api/trust/route.ts",
     "app/api/desktop-settings/route.ts",
   ];
@@ -95,6 +93,4 @@ test("UI entry points exist in source", () => {
     const src = readFileSync(join(root, f), "utf8");
     assert.ok(src.length > 50, f);
   }
-  // ChatWindow.tsx is currently an empty shell while the UI is rebuilt from scratch,
-  // so its former composition is no longer asserted here.
 });

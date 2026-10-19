@@ -7,11 +7,10 @@ PiForge 是 Pi Coding Agent 的 Windows 桌面端，衍生自
 
 界面正在从零重建（2026-02）。旧的布局体系、主题系统与视觉规则已全部作废：
 
-- `app/page.tsx` 是唯一入口：居中布局 + `components/Composer.tsx` 输入框。
-- `components/ChatWindow.tsx`、`components/ChatInput.tsx` 只是空壳占位，
-  不要为了“保持兼容”往里塞回旧结构。
-- 没有主题切换、没有侧边栏、没有悬浮球；需要新界面时直接新建组件。
-- 样式只用 Tailwind 类名和 `app/globals.css` 里极少的全局基础样式，
+- `app/page.tsx` → `components/Workbench.tsx`（三栏：`SessionRail` / `ChatSurface` / `FilePanel`）。
+- 消息渲染在 `components/Transcript.tsx`：markdown、可折叠的思考块、带边框的工具调用卡片。
+- 旧的 `AppShell` / `SessionSidebar` / `MessageView` 及其源码扫描测试已删除；不要再引入。
+- 样式只用 Tailwind 类名 + `app/globals.css` 的少量 token（`accent` / `ink` 系列），
   不要在 CSS 里重建旧 token 体系。
 
 ## 构建与运行
@@ -85,8 +84,8 @@ Branch: `dev/`（日常）/ `future/`（大功能），默认 merge commit，见
 | --- | --- |
 | `app/api/` | 39 条 API 路由 |
 | `lib/` | `rpc-manager` / `session-reader` / `session-branch-clone` / `git-worktree` / `ltm` / `i18n` 等服务端库 |
-| `components/` | 新界面组件 + 待接线的旧组件（`ChatWindow` / `ChatInput` 为空壳） |
-| `hooks/` | 8 个顶层 hook + `agent-session/` 15 个模块（`useAgentSession` 仍可用） |
+| `components/` | `Workbench` / `ChatSurface` / `Transcript` / `Composer` / `SessionRail` / `FilePanel` / `FileExplorer` / `I18nProvider` |
+| `hooks/` | `useAgentSession` + `agent-session/`（事件归一化、SSE、发送命令、会话加载） |
 | `electron/` | `main.ts` + `preload.ts` + `tray.ts` + 13 个辅助模块 |
 | `bin/pi-web.js` | CLI 入口 |
 
