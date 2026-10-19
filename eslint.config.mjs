@@ -10,6 +10,7 @@ const eslintConfig = [
       "release/**",
       "out/**",
       "coverage/**",
+      "tmp/**",
     ],
   },
   ...coreWebVitals,

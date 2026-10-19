@@ -214,7 +214,6 @@ export function ChatMinimap({ messages, streamingMessage, scrollContainer, messa
 
     return () => observer.disconnect();
     // mount-only: containerRef is a stable object
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Compute collision-free tooltip positions for all nodes

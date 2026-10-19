@@ -1,7 +1,5 @@
 import type {
   SessionEntry,
-  UserMessage,
-  AssistantMessage,
   ToolResultMessage,
   AssistantContentBlock,
   TextContent,

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "fs";
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
@@ -9,6 +9,18 @@ import {
   evaluateProjectTrust,
 } from "./project-trust-desktop.ts";
 import { isTrustOptionId } from "./trust-types.ts";
+
+/**
+ * Canonicalize the temp dir: on Windows `os.tmpdir()` returns an 8.3 short
+ * path, and pi's trust walk compares ancestor
+ * `.agents/skills` dirs by string, so a short path no longer matches the
+ * user's real home and the user's own skills dir is misread as a project
+ * trust resource.
+ */
+function makeTempProjectDir(prefix: string): string {
+  // `realpathSync.native` is the one that expands Windows 8.3 short names.
+  return realpathSync.native(mkdtempSync(join(tmpdir(), prefix)));
+}
 
 test("buildTrustOptions includes trust/deny and session variants", () => {
   const opts = buildTrustOptions("D:\\proj");
@@ -20,7 +32,7 @@ test("buildTrustOptions includes trust/deny and session variants", () => {
 });
 
 test("no trust-requiring resources → proceed trusted", () => {
-  const dir = mkdtempSync(join(tmpdir(), "pi-trust-empty-"));
+  const dir = makeTempProjectDir("pi-trust-empty-");
   try {
     const r = evaluateProjectTrust(dir, { agentDir: join(dir, "agent") });
     assert.equal(r.action, "proceed");
@@ -31,7 +43,7 @@ test("no trust-requiring resources → proceed trusted", () => {
 });
 
 test("project with .pi/skills and no decision → prompt", () => {
-  const dir = mkdtempSync(join(tmpdir(), "pi-trust-skills-"));
+  const dir = makeTempProjectDir("pi-trust-skills-");
   const agentDir = join(dir, "agent");
   mkdirSync(agentDir, { recursive: true });
   const project = join(dir, "proj");
@@ -51,7 +63,7 @@ test("project with .pi/skills and no decision → prompt", () => {
 });
 
 test("persisted trust decision skips prompt", () => {
-  const dir = mkdtempSync(join(tmpdir(), "pi-trust-saved-"));
+  const dir = makeTempProjectDir("pi-trust-saved-");
   const agentDir = join(dir, "agent");
   mkdirSync(agentDir, { recursive: true });
   const project = join(dir, "proj");
@@ -68,7 +80,7 @@ test("persisted trust decision skips prompt", () => {
 });
 
 test("session-only trust uses map without disk", () => {
-  const dir = mkdtempSync(join(tmpdir(), "pi-trust-session-"));
+  const dir = makeTempProjectDir("pi-trust-session-");
   const agentDir = join(dir, "agent");
   mkdirSync(agentDir, { recursive: true });
   const project = join(dir, "proj");
