@@ -3,167 +3,67 @@
 PiForge 是 Pi Coding Agent 的 Windows 桌面端，衍生自
 [Chasen-Liao/pi-agent-desktop](https://github.com/Chasen-Liao/pi-agent-desktop)（MIT）。
 
-## 当前 UI 状态
+## 🚨 最高优先级：架构与 UI 铁律
 
-界面正在从零重建（2026-02）。旧的布局体系、主题系统与视觉规则已全部作废：
+每次修改代码前，必须熟读并严格遵守以下规则：
 
-- `app/page.tsx` → `components/Workbench.tsx`（三栏：`SessionRail` / `ChatSurface` / `FilePanel`）。
-- 消息渲染在 `components/Transcript.tsx`：markdown、可折叠的思考块、带边框的工具调用卡片。
-- 旧的 `AppShell` / `SessionSidebar` / `MessageView` 及其源码扫描测试已删除；不要再引入。
-- 样式只用 Tailwind 类名 + `app/globals.css` 的少量 token（`accent` / `ink` 系列），
-  不要在 CSS 里重建旧 token 体系。
+### 1. 架构铁律
+- **拒绝过度封装**：直接复用官方 `@earendil-works/pi-coding-agent`，不要在 Electron 中间加额外的网络层或代理。
+- **性能优化**：流式渲染、增量加载历史会话（首屏 20 轮）、工具输出大段文本需懒加载（Lazy Render）。
+- **批处理**：引导模型合并工具调用，减少往返。
+
+### 2. UI 铁律（改前端前必看）
+- **左栏（SessionSidebar）**：宽度固定 `260px`，背景 `#F5F5F7`。禁止内嵌文件树或重复按钮。
+- **会话列表**：单行截断（`truncate`），字号 `13px`，颜色 `#374151`。选中项为浅蓝底（`#E8EFFB`）+ 蓝字（`#2563EB`）。
+- **项目标题**：加粗，`12px`，`#6B7280`，与子项有明显缩进。
+- **全局主题**：浅色霜蓝主题，主区背景 `#FCFCFA`，卡片/输入框纯白带柔和阴影。禁止引入深色样式。
+
+### 3. AI 行为准则（防暴走）
+- **拒绝过度思考**：不要长篇大论写规划报告，直接看代码、写代码。
+- **禁止乱删文件**：清理死代码前必须确认无引用，禁止破坏核心业务逻辑。
+- **验证闭环**：改完必须运行 `npx tsc --noEmit` 和 `npm run lint`。
+
+---
+
+## 当前 UI 状态与目录结构
+
+界面已稳定在三栏架构（`components/Workbench.tsx`）：
+
+- **左栏**：`components/SessionSidebar.tsx`（包含搜索、项目分组、历史列表、设置齿轮）。
+- **中栏**：`components/ChatSurface.tsx`（包含 `Transcript` 消息渲染、`Composer` 输入框、`StatusBar` 底部状态）。
+- **右栏**：`components/FilePanel.tsx`（包含 `FileExplorer` 文件树、`FileViewer` 多标签页）。
+- **顶栏**：`components/TitleBar.tsx`（支持 Electron 窗口拖拽）。
+
+> 注：旧的 `MessageView` 等组件已被替代，新代码请统一使用 `Transcript.tsx` 和 `Composer.tsx`。
 
 ## 构建与运行
 
-- `npm run dev`（浏览器，端口 30141）/ `npm run dist`（NSIS 安装包）。
-- 开发时不要直接 `next build`，会污染 `.next/`。
-- 品牌：`package.json` name = `piforge`，productName = `PiForge`，
-  appId = `com.piforge.desktop`。安装器仍会关闭 `Pi Agent Desktop.exe` 等旧进程名，
-  方便覆盖安装。
-- 图标：`node scripts/build-brand-icons.mjs` 生成 `build/icon.{ico,icns,png}`、
-  `build/tray-icon.ico`、`public/logo.png`、`app/favicon.ico`。
+- **开发（浏览器）**：`npm run dev`（端口 30141）
+- **开发（桌面端）**：`npm run dev:electron`（已绕过 path.txt 加密报错）
+- **打包**：`npm run dist`（生成 NSIS 安装包）
+- **类型检查**：`npx tsc --noEmit`
+- **Lint**：`npm run lint`
 
----
+## Key Traps (踩坑记录)
 
-# Upstream notes (pi-agent-desktop)
-
-## Quick Start
-
-```bash
-npm run dev          # Web dev server (port 30141)
-npm run dev:electron # Electron desktop (dev mode)
-npm run dist         # Package: NSIS (Win) / DMG+ZIP (macOS) / DEB (Linux)
-npm run dist:mac     # Universal macOS (Intel + Apple Silicon)
-```
-
-Typecheck: `npx tsc --noEmit` | Lint: `npm run lint`
-Test: `npm test`（含 `middleware.test.ts`；不要去掉 `--test-force-exit`）
-Subsets: `npm run test:windows` / `npm run test:macos`
-
-Release: 按 [docs/RELEASING.md](docs/RELEASING.md)，推 `vX.Y.Z` tag → CI 打包；不用 `npm run release`。
-Branch: `dev/`（日常）/ `future/`（大功能），默认 merge commit，见 [CONTRIBUTING.md](CONTRIBUTING.md)。
-
----
-
-## CodeGraph MCP
-
-`.codegraph/` 存在时，优先用这些工具代替 grep/find：
-
-- **`codegraph_explore`** — 自然语言查询，返回源码 + 调用链（**首选**）
-- **`codegraph_node`** — 文件读取（替代 view_file）或单符号深度查询
-- **`codegraph_search`** — 快速符号名 → 位置查找
-
-初始化：`codegraph init`（用户决策，勿自动执行）。
-
----
-
-## Architecture
-
-> 📖 详细架构文档：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-
-**双模式**
-
-- **Web**：浏览器 ──HTTP/SSE──▶ Next.js(:30141) ──进程内──▶ AgentSession
-- **Desktop**：Electron 主进程托管 Next.js standalone `server.js`（macOS: `utilityProcess`；Win/Linux: `ELECTRON_RUN_AS_NODE=1`）
-
-**关键入口**（后端契约保持不变，与界面重建无关）
-
-| 功能 | 路径 |
-| --- | --- |
-| 发送消息 | `POST /api/agent/[id]` → `startRpcSession()` → `AgentSessionWrapper` |
-| 模型 / 认证 | `createPiRuntime()` → `createAgentSessionServices`（含扩展注册的 provider） |
-| 历史浏览 | `GET /api/sessions/*` → `session-reader.ts`（只读，不建 Session） |
-| 会话克隆 | `POST /api/sessions/[id]/clone` → 普通目录或 Git Worktree |
-| SSE 流 | `GET /api/agent/[id]/events`（30s 心跳） |
-| LTM | `lib/ltm` · `/api/memory/*` · tools: `memory_save/recall/forget` |
-| 运行中消息 | Enter=立即 steer，Alt+Enter=Follow-up Queue（可重排） |
-
-**顶层目录**
-
-| 目录 | 内容 |
-| --- | --- |
-| `app/api/` | 39 条 API 路由 |
-| `lib/` | `rpc-manager` / `session-reader` / `session-branch-clone` / `git-worktree` / `ltm` / `i18n` 等服务端库 |
-| `components/` | `Workbench` / `ChatSurface` / `Transcript` / `Composer` / `SessionRail` / `FilePanel` / `FileExplorer` / `I18nProvider` |
-| `hooks/` | `useAgentSession` + `agent-session/`（事件归一化、SSE、发送命令、会话加载） |
-| `electron/` | `main.ts` + `preload.ts` + `tray.ts` + 13 个辅助模块 |
-| `bin/pi-web.js` | CLI 入口 |
-
-**多项目窗口**：单进程只跑一个 Next 服务，所有窗口共享；主窗口关闭时隐藏到托盘，
-项目窗口正常关闭。新窗口通过 `/?cwd=<path>` 直接进入该项目的空白会话（入口 UI 重建后需重新接线）。
-
----
+1. **Fork 预注册顺序**：`send("fork")` 创建新文件，`startRpcSession` 预注册，再 `destroy` 旧 wrapper。
+2. **ToolCall 字段归一化**：SDK 存 `{id, name, arguments}`，前端用 `{toolCallId, toolName, input}`。使用 `normalizeToolCalls()` 进行转换。
+3. **模型列表**：`createPiRuntime` 必须走 `createAgentSessionServices`，否则扩展模型会消失。
+4. **打包配置**：`node_modules` 必须放在 extraResources；前端依赖放 devDependencies。
 
 ## globalThis 状态（HMR 安全，必须挂全局）
-
-| 变量 | 用途 | 来源文件 |
-| --- | --- | --- |
-| `__piSessions` | `Map<sessionId, AgentSessionWrapper>` 活跃会话表 | `rpc-manager.ts` |
-| `__piSessionPathCacheState` | sessionId → .jsonl 路径缓存状态 | `session-reader.ts` |
-| `__piStartLocks` | 并发启动共享 Promise 锁 | `rpc-manager.ts` |
-| `__piWriteLocks` | per-file 写入锁 | `session-lock.ts` |
-| `__piAllowedRootsCache` | 文件访问白名单（5s TTL） | `allowed-roots.ts` |
-| `__piLtmService` | LTM `MemoryService` 单例 | `ltm/service.ts` |
-| `__piSessionOnlyTrust` | per-session 信任状态 | `rpc-manager.ts` |
-| `__piGitWorktreeLocks` | Worktree 创建/清理并发锁 | `git-worktree.ts` |
-| `__piLoginCallbacks` | OAuth 手动输入回调注册表 | `auth/login/[provider]/route.ts` |
-| `__piUpstreamUsageCache` | 上游配额查询缓存（120s TTL） | `lib/upstream-usage/service.ts` |
+*(保持原样，防止热更新丢失状态)*
+- `__piSessions`：活跃会话表
+- `__piSessionPathCacheState`：路径缓存
+- `__piStartLocks` / `__piWriteLocks`：并发锁
+- `__piAllowedRootsCache`：文件白名单
+- `__piLtmService`：LTM 单例
 
 ---
 
-## Key Traps
+## 外部参考与指令
 
-> 完整列表见 [ARCHITECTURE.md §14](docs/ARCHITECTURE.md#14-关键设计决策与陷阱)
+- **MCP 工具**：如果 `.codegraph/` 存在，优先用 `codegraph_explore` 查代码，少用 `grep`。
+- **Next.js 提示**：不要凭记忆写 Next.js 代码，版本有 breaking changes，必要时查 `node_modules/next/dist/docs/`。
 
-### 1. Fork 预注册顺序
-
-`send("fork")` → 创建新 `.jsonl` → `startRpcSession(newId)` 预注册 → `destroy()` 旧 wrapper。中途出错旧 wrapper **保持可用**；孤儿 `.jsonl` 删除与路径缓存失效是 **best-effort**（失败不阻断，随后 rethrow）。
-
-### 2. 分支与工作区别混淆
-
-- **Fork**（消息 Fork 按钮）→ 新 `.jsonl` + 侧边栏子节点
-- **会话内分支**（Continue / BranchNavigator）→ 同文件 `navigate_tree`，切换用 `?leafId=`
-- **Git Worktree Clone** → 在源 Git 仓库外创建新 worktree 和分支后再 Clone 会话；目标、分支与 worktree 身份无法证明时 fail closed
-
-### 3. ToolCall 字段归一化
-
-SDK 存 `{id, name, arguments}`，前端用 `{toolCallId, toolName, input}`。`normalizeToolCalls()` 在文件加载和 SSE 流两处都转换。
-
-### 3b. 模型列表不要退回 ModelRuntime.create-only
-
-`createPiRuntime` 必须再走 `createAgentSessionServices`，否则扩展注册的模型从选择器消失。详见 [ARCHITECTURE.md §14.17](docs/ARCHITECTURE.md#1417-模型列表必须走-createagentsessionservices2026-09-08-34)。
-
-### 4–6. 打包陷阱（摘要）
-
-- `node_modules` 须独立 extraResources 条目（`filter:["**/*"]` 静默排除它）
-- Frontend 依赖放 `devDependencies`；`outputFileTracingExcludes` 排除 `release/`/`.git/`/`dist/`/`*.test.*`
-- `build:standalone` 须补齐 Next turbo runtime；macOS Universal 须双架构 Sharp
-
----
-
-## Misc
-
-**Session 文件**：`~/.pi/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`（详见 [ARCHITECTURE.md §9](docs/ARCHITECTURE.md#9-pi-会话文件格式)）。`SessionContext.entryIds[]` 与 `messages[]` 一一对应，用于 fork 和 navigate_tree。
-
-**UI 文案**：`lib/i18n`（`en` / `zh-CN`）仍可用，但新界面组件未强制接入。
-
-<!-- BEGIN:nextjs-agent-rules -->
-
-# This is NOT the Next.js you know
-
-This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
-
-This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
-
-<!-- END:nextjs-agent-rules -->
-
----
-
-## 【UI 铁律】（每次改 UI 前先读）
-
-- 左侧边栏宽度固定 `260px`，背景 `#F5F5F7`。
-- 左侧会话列表必须单行截断（`truncate`），字号 `13px`，文字颜色 `#374151`。
-- 选中项：浅蓝背景（`#E8EFFB`），蓝色文字（`#2563EB`）。
-- 项目分组标题（`Luo Wei` / `PiForge`）必须加粗，字号 `12px`，颜色 `#6B7280`，与下面的会话列表有明显缩进层级。
-- 禁止在左栏内嵌任何文件树或重复的按钮。
-- 所有修改必须基于现有浅色霜蓝主题，禁止引入旧版深色样式。
+<!-- 本文件由人类维护，AI 修改代码前必须重新阅读本文件。 -->
