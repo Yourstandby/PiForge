@@ -122,8 +122,8 @@ function ChatSession({
         ok: true,
         text:
           saved && saved > 0
-            ? `上下文已压缩，释放了 ${saved.toLocaleString("en-US")} Tokens`
-            : "上下文已压缩",
+            ? `已压缩历史，释放了 ${saved.toLocaleString("en-US")} Tokens`
+            : "已压缩历史",
       });
     } else {
       setCompactToast({ ok: false, text: `压缩失败：${outcome.error}` });
@@ -325,6 +325,7 @@ function ChatSession({
                   forkingEntryId={chat.forkingEntryId}
                   cwd={session?.cwd ?? newSessionCwd}
                   onOpenFile={onOpenFile}
+                  nestedExecutions={chat.nestedToolExecutions}
                 />
               )}
 

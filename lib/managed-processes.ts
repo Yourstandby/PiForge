@@ -47,11 +47,51 @@ interface ManagedProcessEntry {
 
 declare global {
   var __piManagedProcesses: Map<string, ManagedProcessEntry> | undefined;
+  var __piManagedProcessListeners: Set<() => void> | undefined;
 }
 
 const MAX_LOG_LINES = 400;
 const MAX_COMMAND_LENGTH = 2000;
 const URL_RE = /https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?[^\s"'<>]*/i;
+
+const SECRET_PATTERNS: Array<[RegExp, string]> = [
+  [/\b(sk-[A-Za-z0-9_-]{6,})/g, "sk-[redacted]"],
+  [/\b(gh[pousr]_[A-Za-z0-9]{10,})/g, "[redacted-token]"],
+  [/\b(AKIA[0-9A-Z]{12,})/g, "[redacted-aws-key]"],
+  [/(authorization\s*:\s*bearer\s+)[^\s]+/gi, "$1[redacted]"],
+  [/(bearer\s+)[A-Za-z0-9._~+/=-]{12,}/gi, "$1[redacted]"],
+  [/((?:token|api[_-]?key|access[_-]?token|auth[_-]?token|secret|password|passwd)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, "$1[redacted]"],
+];
+
+/** Remove common credential shapes before logs reach the renderer. */
+export function sanitizeLogLine(line: string): string {
+  let output = line;
+  for (const [pattern, replacement] of SECRET_PATTERNS) {
+    output = output.replace(pattern, replacement);
+  }
+  return output.slice(0, 4000);
+}
+
+function listeners(): Set<() => void> {
+  if (!globalThis.__piManagedProcessListeners) globalThis.__piManagedProcessListeners = new Set();
+  return globalThis.__piManagedProcessListeners;
+}
+
+/** Subscribe to list/log changes (used by the SSE process stream). */
+export function onManagedProcessesChange(listener: () => void): () => void {
+  listeners().add(listener);
+  return () => listeners().delete(listener);
+}
+
+function notifyChange(): void {
+  for (const listener of listeners()) {
+    try {
+      listener();
+    } catch (error) {
+      console.error("managed-process listener failed:", error);
+    }
+  }
+}
 
 function registry(): Map<string, ManagedProcessEntry> {
   if (!globalThis.__piManagedProcesses) globalThis.__piManagedProcesses = new Map();
@@ -62,15 +102,17 @@ function pushLog(entry: ManagedProcessEntry, chunk: string): void {
   const lines = chunk.split(/\r?\n/);
   for (const line of lines) {
     if (!line) continue;
-    entry.logs.push(line);
+    const safeLine = sanitizeLogLine(line);
+    entry.logs.push(safeLine);
     if (!entry.url) {
-      const match = line.match(URL_RE);
+      const match = safeLine.match(URL_RE);
       if (match) entry.url = match[0];
     }
   }
   if (entry.logs.length > MAX_LOG_LINES) {
     entry.logs.splice(0, entry.logs.length - MAX_LOG_LINES);
   }
+  notifyChange();
 }
 
 function toView(entry: ManagedProcessEntry): ManagedProcessView {
@@ -86,7 +128,7 @@ function toView(entry: ManagedProcessEntry): ManagedProcessView {
     exitCode: entry.exitCode,
     url: entry.url,
     ready: isReady(entry),
-    logs: entry.logs.slice(-80),
+    logs: entry.logs.slice(-80).map(sanitizeLogLine),
   };
 }
 
@@ -156,6 +198,7 @@ export function startManagedProcess(
     entry.status = "failed";
     entry.endedAt = Date.now();
     pushLog(entry, `[error] ${error.message}`);
+    notifyChange();
   });
   child.on("exit", (code, signal) => {
     entry.status = entry.status === "failed" ? "failed" : "exited";
@@ -163,9 +206,11 @@ export function startManagedProcess(
     entry.exitCode = code;
     entry.child = null;
     pushLog(entry, `[exit] code=${code ?? "null"} signal=${signal ?? "none"}`);
+    notifyChange();
   });
 
   registry().set(entry.id, entry);
+  notifyChange();
   return toView(entry);
 }
 
@@ -220,6 +265,7 @@ export async function stopManagedProcess(id: string): Promise<boolean> {
   entry.status = "exited";
   entry.endedAt = entry.endedAt ?? Date.now();
   entry.child = null;
+  notifyChange();
   return true;
 }
 
@@ -238,6 +284,7 @@ export async function restartManagedProcess(id: string): Promise<ManagedProcessV
   const entry = registry().get(next.id);
   if (entry) {
     entry.logs = [...previous.logs.slice(-40), "--- restarted ---", ...entry.logs];
+    notifyChange();
   }
   return entry ? toView(entry) : next;
 }
@@ -246,5 +293,7 @@ export async function removeManagedProcessEntry(id: string): Promise<boolean> {
   const entry = registry().get(id);
   if (!entry) return false;
   if (entry.status === "running") await stopManagedProcess(id);
-  return registry().delete(id);
+  const removed = registry().delete(id);
+  if (removed) notifyChange();
+  return removed;
 }

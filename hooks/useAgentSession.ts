@@ -48,6 +48,34 @@ import { reconcileOrAppendPendingUserMessage } from "./agent-session/user-messag
 
 export type { ThinkingLevelOption, AttachedImage, ChatInputHandle };
 
+export interface NestedToolExecution {
+  status: "running" | "ok" | "error";
+  durationMs?: number;
+  output?: string;
+}
+
+function nestedOutputText(result: unknown): string {
+  if (typeof result === "string") return result.slice(0, 8000);
+  if (!result || typeof result !== "object") return "";
+  const content = (result as { content?: unknown }).content;
+  if (typeof content === "string") return content.slice(0, 8000);
+  if (!Array.isArray(content)) {
+    try {
+      return JSON.stringify(result).slice(0, 8000);
+    } catch {
+      return "";
+    }
+  }
+  const parts: string[] = [];
+  for (const block of content) {
+    if (!block || typeof block !== "object") continue;
+    const record = block as Record<string, unknown>;
+    if (record.type === "text" && typeof record.text === "string") parts.push(record.text);
+    else if (record.type === "image") parts.push("[图片结果]");
+  }
+  return parts.join("\n").slice(0, 8000);
+}
+
 const EMPTY_FOLLOW_UP_QUEUE: FollowUpQueueSnapshot = { revision: 0, items: [] };
 
 function userMessageText(message: UserMessage): string {
@@ -150,6 +178,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     EMPTY_FOLLOW_UP_QUEUE,
   );
   const [followUpQueueBusy, setFollowUpQueueBusy] = useState(false);
+  const [nestedToolExecutions, setNestedToolExecutions] = useState<
+    Record<string, NestedToolExecution>
+  >({});
   const followUpQueueRef = useRef(followUpQueue);
   followUpQueueRef.current = followUpQueue;
   const pendingSteersRef = useRef<
@@ -384,6 +415,25 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         reconcileSteeringQueue(event.steering);
       } else if (event.type === "session_info_changed") {
         onSessionRenamed?.(event.name);
+      }
+
+      // Nested tool results are not persisted by pi (only name/args/status).
+      // Capture them from the live SSE stream so the execution tree can show
+      // each child call's stdout/result while the session is open.
+      if (event.type === "tool_execution_start" && event.parentToolCallId) {
+        setNestedToolExecutions((prev) => ({
+          ...prev,
+          [event.toolCallId]: { status: "running" },
+        }));
+      } else if (event.type === "tool_execution_end" && event.parentToolCallId) {
+        setNestedToolExecutions((prev) => ({
+          ...prev,
+          [event.toolCallId]: {
+            status: event.isError ? "error" : "ok",
+            durationMs: event.durationMs,
+            output: nestedOutputText(event.result),
+          },
+        }));
       }
 
       let reconciledSteerId: string | null = null;
@@ -687,6 +737,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     setExtensionUiRequest(null);
     followUpQueueRef.current = EMPTY_FOLLOW_UP_QUEUE;
     setFollowUpQueue(EMPTY_FOLLOW_UP_QUEUE);
+    setNestedToolExecutions({});
     setFollowUpQueueBusy(false);
     pendingSteersRef.current = [];
     pendingPromptsRef.current = [];
@@ -807,6 +858,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     agentPhase,
     followUpQueue,
     followUpQueueBusy,
+    nestedToolExecutions,
     isNew,
     // Refs
     messagesEndRef,

@@ -36,8 +36,22 @@ export type AgentEvent =
   | { type: "message_start"; message: Partial<AgentMessage> }
   | { type: "message_update"; message: Partial<AgentMessage> }
   | { type: "message_end"; message: AgentMessage }
-  | { type: "tool_execution_start"; toolCallId: string; toolName: string }
-  | { type: "tool_execution_end"; toolCallId: string }
+  | {
+      type: "tool_execution_start";
+      toolCallId: string;
+      toolName: string;
+      parentToolCallId?: string;
+      args?: unknown;
+    }
+  | {
+      type: "tool_execution_end";
+      toolCallId: string;
+      toolName?: string;
+      parentToolCallId?: string;
+      isError?: boolean;
+      durationMs?: number;
+      result?: unknown;
+    }
   | { type: "auto_retry_start"; attempt: number; maxAttempts: number; errorMessage?: string }
   | { type: "auto_retry_end" }
   | { type: "auto_compaction_start" }

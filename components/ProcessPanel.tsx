@@ -241,8 +241,25 @@ export function ProcessPanel() {
 
   useEffect(() => {
     void load();
-    const timer = setInterval(() => void load(), 2000);
-    return () => clearInterval(timer);
+    // Live list + stdout via SSE; a slow poll remains as a safety net if the
+    // proxy/browser drops the event stream.
+    const source = new EventSource("/api/processes/events");
+    source.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data) as { type?: string; processes?: ManagedProcessView[] };
+        if (data.type === "processes" && data.processes) {
+          setProcesses(data.processes);
+          setError(null);
+        }
+      } catch {
+        /* ignore malformed frame */
+      }
+    };
+    const fallback = setInterval(() => void load(), 10_000);
+    return () => {
+      source.close();
+      clearInterval(fallback);
+    };
   }, [load]);
 
   const handleStdin = useCallback(async (id: string, input: string) => {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState, type CSSProperties } from "react";
+import { Terminal } from "lucide-react";
 import { FileExplorer } from "./FileExplorer";
 import { ProcessPanel } from "./ProcessPanel";
 
@@ -71,7 +72,12 @@ export function FilePanel({
                   : "text-ink-muted hover:bg-[#ECECEF] hover:text-ink"
               }`}
             >
-              {item.label}
+              <span className="flex items-center gap-1">
+                {item.id === "processes" && (
+                  <Terminal size={11} strokeWidth={1.9} aria-hidden="true" />
+                )}
+                {item.label}
+              </span>
             </button>
           ))}
         </div>

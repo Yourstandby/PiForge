@@ -368,6 +368,12 @@ function resultText(result: ToolResultMessage): string {
 
 type NestedCall = NonNullable<ToolResultMessage["nestedCalls"]>["calls"][number];
 
+export interface NestedExecutionView {
+  status: "running" | "ok" | "error";
+  durationMs?: number;
+  output?: string;
+}
+
 /** Group nested records by their `parent/n` id prefix so the tree mirrors execution. */
 function buildNestedTree(calls: NestedCall[]): Map<string | null, NestedCall[]> {
   const ids = new Set(calls.map((call) => call.id));
@@ -387,13 +393,18 @@ function NestedToolRow({
   call,
   depth,
   tree,
+  executions,
 }: {
   call: NestedCall;
   depth: number;
   tree: Map<string | null, NestedCall[]>;
+  executions?: Record<string, NestedExecutionView>;
 }) {
   const children = tree.get(call.id) ?? [];
-  const duration = formatDuration(call.durationMs);
+  const live = executions?.[call.id];
+  const status = live?.status ?? call.status;
+  const duration = formatDuration(live?.durationMs ?? call.durationMs);
+  const output = live?.output?.trim() ?? "";
   const args = call.arguments ? toolSummary(call.arguments) : call.argumentsBytes ? `${call.argumentsBytes} bytes` : "";
   return (
     <div>
@@ -404,10 +415,12 @@ function NestedToolRow({
         <span className="shrink-0 font-mono text-ink-faint">{depth === 0 ? "└" : "·"}</span>
         <span className="shrink-0 font-mono text-ink-muted">{call.name}</span>
         {args && <span className="min-w-0 flex-1 truncate font-mono text-ink-faint">{args}</span>}
-        {call.status === "error" ? (
+        {status === "error" ? (
           <X size={10} strokeWidth={2.5} className="shrink-0 text-[#C2554E]" aria-label="失败" />
-        ) : call.status === "unfinished" ? (
-          <span className="shrink-0 text-[10px] text-ink-faint">未完成</span>
+        ) : status === "unfinished" || status === "running" ? (
+          <span className="shrink-0 text-[10px] text-ink-faint">
+            {status === "running" ? "运行中" : "未完成"}
+          </span>
         ) : (
           <Check size={10} strokeWidth={2.5} className="shrink-0 text-[#3E8A63]" aria-label="完成" />
         )}
@@ -421,8 +434,27 @@ function NestedToolRow({
           {call.error}
         </p>
       )}
+      {output && (
+        <details
+          className="py-0.5 text-[10.5px] text-ink-faint"
+          style={{ paddingLeft: 20 + depth * 12 }}
+        >
+          <summary className="cursor-pointer select-none hover:text-ink-muted">
+            结果（{output.split("\n").length} 行）
+          </summary>
+          <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-[#F5F8FD] px-2 py-1 font-mono text-[10px] leading-4 text-ink-soft">
+            {output}
+          </pre>
+        </details>
+      )}
       {children.map((child) => (
-        <NestedToolRow key={child.id} call={child} depth={depth + 1} tree={tree} />
+        <NestedToolRow
+          key={child.id}
+          call={child}
+          depth={depth + 1}
+          tree={tree}
+          executions={executions}
+        />
       ))}
     </div>
   );
@@ -432,10 +464,12 @@ function ToolCallCard({
   name,
   input,
   result,
+  nestedExecutions,
 }: {
   name: string;
   input: Record<string, unknown>;
   result?: ToolResultMessage;
+  nestedExecutions?: Record<string, NestedExecutionView>;
 }) {
   const [open, setOpen] = useState(false);
   const summary = toolSummary(input);
@@ -496,7 +530,13 @@ function ToolCallCard({
                 执行树
               </p>
               {(tree.get(null) ?? []).map((call) => (
-                <NestedToolRow key={call.id} call={call} depth={0} tree={tree} />
+                <NestedToolRow
+                  key={call.id}
+                  call={call}
+                  depth={0}
+                  tree={tree}
+                  executions={nestedExecutions}
+                />
               ))}
               {nested && !nested.complete && (
                 <p className="px-2 pt-1 text-[10px] text-ink-faint">
@@ -585,6 +625,7 @@ export function Transcript({
   forkingEntryId,
   cwd,
   onOpenFile,
+  nestedExecutions,
 }: {
   messages: AgentMessage[];
   /** 1:1 with `messages`; the session entry id used by `fork`/`navigate_tree`. */
@@ -594,6 +635,8 @@ export function Transcript({
   /** Project root for resolving relative file references. */
   cwd?: string | null;
   onOpenFile?: OpenFileHandler;
+  /** Live nested tool results captured from SSE (not persisted by pi). */
+  nestedExecutions?: Record<string, NestedExecutionView>;
 }) {
   const results = toolResultsById(messages);
   const markdownComponents = useMemo(
@@ -753,6 +796,7 @@ export function Transcript({
                       name={block.name}
                       input={block.input}
                       result={block.result}
+                      nestedExecutions={nestedExecutions}
                     />
                   ),
                 )
