@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import {
   FileCode,
+  GitBranch,
   Globe,
   PanelRightClose,
   SquareTerminal,
@@ -11,7 +12,7 @@ import {
 import { FileExplorer } from "./FileExplorer";
 import { BrowserPanel } from "./BrowserPanel";
 import { FloatingFileViewer, type FloatingFileTarget } from "./FloatingFileViewer";
-import { FloatingGitDiffViewer } from "./FloatingGitDiffViewer";
+import { GitPanel } from "./GitPanel";
 import { ProcessPanel } from "./ProcessPanel";
 import { TerminalPanel } from "./TerminalPanel";
 
@@ -33,10 +34,11 @@ const explorerTokens = {
   "--font-mono": "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
 } as CSSProperties;
 
-type PanelTab = "files" | "browser" | "processes" | "terminal";
+type PanelTab = "files" | "git" | "browser" | "processes" | "terminal";
 
 const PANEL_TABS = [
   { id: "files" as const, label: "文件", Icon: FileCode },
+  { id: "git" as const, label: "Git", Icon: GitBranch },
   { id: "browser" as const, label: "浏览器", Icon: Globe },
   { id: "processes" as const, label: "进程", Icon: Terminal },
   { id: "terminal" as const, label: "终端", Icon: SquareTerminal },
@@ -45,20 +47,19 @@ const PANEL_TABS = [
 export function FilePanel({
   cwd,
   openFile,
-  gitDiffOpen = false,
+  gitOpenSignal = 0,
   onOpenFile,
   onOpenDiff,
   onCloseFile,
-  onCloseGitDiff,
   onCollapse,
 }: {
   cwd: string | null;
   openFile: FloatingFileTarget | null;
-  gitDiffOpen?: boolean;
+  /** Incremented by the chat status bar to reveal the Git tab. */
+  gitOpenSignal?: number;
   onOpenFile?: (filePath: string, fileName: string, line?: number) => void;
   onOpenDiff?: (filePath: string, fileName: string) => void;
   onCloseFile?: () => void;
-  onCloseGitDiff?: () => void;
   onCollapse?: () => void;
 }) {
   const [tab, setTab] = useState<PanelTab>("files");
@@ -66,8 +67,13 @@ export function FilePanel({
   // Chat file links and tree clicks must always surface in the Files tab,
   // without touching the chat surface.
   useEffect(() => {
-    if (openFile || gitDiffOpen) setTab("files");
-  }, [openFile, gitDiffOpen]);
+    if (openFile) setTab("files");
+  }, [openFile]);
+
+  // The chat status bar's "Git Diff" button focuses the dedicated Git tab.
+  useEffect(() => {
+    if (gitOpenSignal > 0) setTab("git");
+  }, [gitOpenSignal]);
 
   // The agent navigating the built-in browser should be visible, not hidden
   // behind whichever tab the user is currently on.
@@ -157,12 +163,7 @@ export function FilePanel({
                 <p className="px-3 py-2 text-[11px] text-ink-faint">暂无项目</p>
               )}
             </div>
-            {gitDiffOpen ? (
-              <FloatingGitDiffViewer
-                cwd={cwd}
-                onClose={() => onCloseGitDiff?.()}
-              />
-            ) : openFile ? (
+            {openFile ? (
               <FloatingFileViewer
                 target={openFile}
                 cwd={cwd}
@@ -171,6 +172,11 @@ export function FilePanel({
             ) : null}
           </>
         )}
+
+        {/* Git stays mounted so its list/diff state survives tab switches. */}
+        <div className={tab === "git" ? "h-full" : "hidden"}>
+          <GitPanel cwd={cwd} active={tab === "git"} />
+        </div>
 
         {/*
           The browser panel stays mounted while other tabs are active: the

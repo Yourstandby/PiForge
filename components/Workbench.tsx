@@ -95,7 +95,7 @@ export function Workbench() {
   const activeKeyRef = useRef<string | null>(null);
   const [cwd, setCwd] = useState<string | null>(null);
   const [openFile, setOpenFile] = useState<FloatingFileTarget | null>(null);
-  const [gitDiffOpen, setGitDiffOpen] = useState(false);
+  const [gitTabSignal, setGitTabSignal] = useState(0);
   // Bumped when the models modal closes so a freshly added provider shows up
   // in the model picker without remounting the session.
   const [modelsVersion, setModelsVersion] = useState(0);
@@ -244,21 +244,19 @@ export function Workbench() {
   // ------------------------------------------------------------------ files
   const handleOpenFile = useCallback(
     (filePath: string, fileName: string, line?: number) => {
-      setGitDiffOpen(false);
       setOpenFile({ filePath, fileName, line });
     },
     [],
   );
 
   const handleOpenDiff = useCallback((filePath: string, fileName: string) => {
-    setGitDiffOpen(false);
     setOpenFile({ filePath, fileName, diff: true });
   }, []);
 
+  // The status bar's Git button focuses the right panel's Git tab.
   const handleOpenGitDiff = useCallback(() => {
     setRightPanelOpen(true);
-    setOpenFile(null);
-    setGitDiffOpen(true);
+    setGitTabSignal((value) => value + 1);
   }, []);
 
   const handleCloseFile = useCallback(() => setOpenFile(null), []);
@@ -759,11 +757,10 @@ ${fenced}`
           <FilePanel
             cwd={activeCwd}
             openFile={openFile}
-            gitDiffOpen={gitDiffOpen}
+            gitOpenSignal={gitTabSignal}
             onOpenFile={handleOpenFile}
             onOpenDiff={handleOpenDiff}
             onCloseFile={handleCloseFile}
-            onCloseGitDiff={() => setGitDiffOpen(false)}
             onCollapse={() => setRightPanelOpen(false)}
           />
         </div>
