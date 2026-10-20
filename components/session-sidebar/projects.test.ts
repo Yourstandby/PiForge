@@ -44,6 +44,14 @@ test("search keeps a matching fork's ancestors and excludes unrelated siblings w
   assert.equal(searchProjects(projects, "not-found").length, 0);
 });
 
+test("search covers auto titles, first messages and session ids", () => {
+  const named = session("id-hidden", "D:/Pi", "Release notes");
+  named.firstMessage = "investigate websocket reconnect";
+  const projects = groupProjects([named]);
+  assert.equal(searchProjects(projects, "websocket")[0].tree[0].session.id, "id-hidden");
+  assert.equal(searchProjects(projects, "id-hidden")[0].tree[0].session.id, "id-hidden");
+});
+
 test("project name search includes the entire tree and empty folders", () => {
   const projects = groupProjects([session("root", "D:/Pi", "Release"), session("child", "D:/Pi", "Installer", "root")], ["D:/Empty"]);
   assert.equal(searchProjects(projects, "PI")[0].tree[0].children.length, 1);

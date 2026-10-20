@@ -71,7 +71,7 @@ export function searchProjects(projects: SidebarProject[], query: string): Sideb
     const projectText = `${project.name} ${project.cwd}`.toLocaleLowerCase();
     if (terms.every((term) => projectText.includes(term))) return [project];
     const tree = filterTree(project.tree, (session) => {
-      const text = `${projectText} ${sessionTitle(session)}`.toLocaleLowerCase();
+      const text = `${projectText} ${sessionTitle(session)} ${session.firstMessage} ${session.id}`.toLocaleLowerCase();
       return terms.every((term) => text.includes(term));
     });
     return tree.length ? [{ ...project, tree }] : [];

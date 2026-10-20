@@ -46,6 +46,7 @@ import {
   countUserMessages,
   firstUserTextFromBranch,
   generateSessionTitle,
+  shouldAutoNameSession,
 } from "./session-title.ts";
 
 // ============================================================================
@@ -330,7 +331,7 @@ export class AgentSessionWrapper {
         const branch = this.inner.sessionManager.getBranch() as unknown[];
         // Only the first user turn names a session; later turns must not
         // rewrite a title the user may have edited by hand.
-        if (countUserMessages(branch) !== 1) return;
+        if (!shouldAutoNameSession(this.inner.sessionName, countUserMessages(branch))) return;
         firstUserText = firstUserTextFromBranch(branch);
       }
       if (!firstUserText) return;

@@ -87,7 +87,7 @@ test("process_wait(ready) then process_read with a cursor", { timeout: 40000 }, 
   try {
     const started = startManagedProcess({
       cwd: env.dir,
-      command: `node -e "console.log('ready in 10ms'); console.log('Local: http://localhost:45678/'); let i=0; setInterval(()=>console.log('tick '+(++i)),50)"`,
+      command: `node -e "console.log('Local: http://localhost:45678/'); console.log('ready in 10ms'); let i=0; setInterval(()=>console.log('tick '+(++i)),50)"`,
       owner: "agent",
     });
 

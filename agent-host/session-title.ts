@@ -53,6 +53,17 @@ export function countUserMessages(entries: unknown[]): number {
   return count;
 }
 
+/**
+ * Manual names always win; only the first user turn may be auto-named.
+ * Extracted so the priority rule is testable outside the RPC manager.
+ */
+export function shouldAutoNameSession(
+  sessionName: string | null | undefined,
+  userMessageCount: number,
+): boolean {
+  return !sessionName?.trim() && userMessageCount === 1;
+}
+
 /** Normalise a raw model response into a display title, or null if unusable. */
 export function sanitizeTitle(raw: string | undefined | null): string | null {
   if (!raw) return null;
