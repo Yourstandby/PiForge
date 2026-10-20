@@ -14,7 +14,16 @@ import os from "os";
  *
  * Returns an error message string if rejected, or null if allowed.
  */
-export function validateAgentCwd(cwd: string): string | null {
+export interface ValidateCwdOptions {
+  /**
+   * Permit the user's home directory itself. The agent must never run *with*
+   * cwd = home, but a session the user already created there still has to be
+   * browsable in the file tree — `getAllowedRoots` passes this flag.
+   */
+  allowHome?: boolean;
+}
+
+export function validateAgentCwd(cwd: string, options: ValidateCwdOptions = {}): string | null {
   const normalized = path.resolve(cwd);
   const isWin = process.platform === "win32";
   const lower = isWin ? normalized.toLowerCase() : normalized;
@@ -34,7 +43,7 @@ export function validateAgentCwd(cwd: string): string | null {
   }
 
   // Reject user home itself (subdirs are fine)
-  if (lower === lowerHome) {
+  if (lower === lowerHome && !options.allowHome) {
     return "User home directory is not allowed as cwd (use a subdirectory)";
   }
 

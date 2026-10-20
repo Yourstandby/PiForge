@@ -186,6 +186,13 @@ export function Workbench() {
   );
   const activeCwd = activeTab?.session?.cwd ?? activeTab?.newSessionCwd ?? cwd;
 
+  // Switching tabs must re-read the tree even when two tabs share a cwd (an
+  // agent may have changed files in between).
+  const [explorerRefreshKey, setExplorerRefreshKey] = useState(0);
+  useEffect(() => {
+    setExplorerRefreshKey((value) => value + 1);
+  }, [activeKey]);
+
   const commitTabs = useCallback((next: ChatTab[]) => {
     tabsRef.current = next;
     setTabs(next);
@@ -667,7 +674,12 @@ ${fenced}`
 
         <div className="relative flex min-w-0 flex-1 flex-col">
           <SessionTabBar
-            tabs={tabs.map((tab) => ({ key: tab.key, title: tab.title, sessionId: tab.session?.id ?? null }))}
+            tabs={tabs.map((tab) => ({
+              key: tab.key,
+              title: tab.title,
+              sessionId: tab.session?.id ?? null,
+              cwd: tab.session?.cwd ?? tab.newSessionCwd,
+            }))}
             activeKey={activeKey}
             onSelect={activateTab}
             onClose={closeTab}
@@ -756,6 +768,7 @@ ${fenced}`
           )}
           <FilePanel
             cwd={activeCwd}
+            explorerRefreshKey={explorerRefreshKey}
             openFile={openFile}
             gitOpenSignal={gitTabSignal}
             onOpenFile={handleOpenFile}

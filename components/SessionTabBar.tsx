@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, X } from "lucide-react";
+import { ChevronRight, Plus, X } from "lucide-react";
+import { projectNameFromCwd } from "@/lib/project-name";
 
 /**
  * Browser-style tab strip for the middle chat column.
@@ -15,6 +16,8 @@ export interface SessionTabItem {
   title: string;
   /** Null for a not-yet-created session tab ("新会话"). */
   sessionId: string | null;
+  /** Project directory of the session; rendered as a breadcrumb before the title. */
+  cwd: string | null;
 }
 
 interface Props {
@@ -33,6 +36,7 @@ export function SessionTabBar({ tabs, activeKey, onSelect, onClose, onNew }: Pro
       <div role="tablist" aria-label="会话标签" className="flex min-w-0 flex-1 items-stretch gap-0.5 overflow-x-auto">
         {tabs.map((tab) => {
           const active = tab.key === activeKey;
+          const project = projectNameFromCwd(tab.cwd);
           return (
             <div
               key={tab.key}
@@ -51,13 +55,25 @@ export function SessionTabBar({ tabs, activeKey, onSelect, onClose, onNew }: Pro
               onAuxClick={(event) => {
                 if (event.button === 1) onClose(tab.key);
               }}
-              title={tab.title}
-              className={`group flex h-8 max-w-[200px] min-w-[104px] shrink-0 cursor-pointer items-center gap-1.5 rounded-t-md pl-2.5 pr-1 text-[12.5px] transition-colors duration-150 ${
+              title={tab.cwd ? `${tab.cwd}\n${tab.title}` : tab.title}
+              className={`group flex h-8 max-w-[224px] min-w-[120px] shrink-0 cursor-pointer items-center gap-1 rounded-t-md pl-2.5 pr-1 text-[12.5px] transition-colors duration-150 ${
                 active
                   ? "border border-b-0 border-[#E1E6F0] bg-white font-medium text-[#1F2937] shadow-[inset_0_2px_0_#2563EB]"
                   : "text-[#6B7280] hover:bg-[#EFEFF2] hover:text-[#374151]"
               }`}
             >
+              {/* Breadcrumb: project folder first, then the conversation title. */}
+              {project && (
+                <span className="flex shrink-0 items-center gap-0.5">
+                  <span
+                    className="max-w-[64px] truncate text-[10px] font-normal text-gray-400"
+                    aria-label={`项目 ${project}`}
+                  >
+                    {project}
+                  </span>
+                  <ChevronRight size={9} strokeWidth={2} className="shrink-0 text-gray-300" aria-hidden="true" />
+                </span>
+              )}
               <span className="min-w-0 flex-1 truncate">{tab.title}</span>
               <button
                 type="button"

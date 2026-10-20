@@ -32,7 +32,9 @@ export async function getAllowedRoots(): Promise<Set<string>> {
     // Apply the same safety policy as /api/agent/new so that tampered or
     // legacy session headers with cwd="/" or "C:\" cannot re-grant broad
     // disk access through the allowedRoots cache.
-    if (s.cwd && !validateAgentCwd(s.cwd)) roots.add(s.cwd);
+    // Home is the single exception: starting an agent *in* home is refused,
+    // but a session that already lives there still needs a browsable tree.
+    if (s.cwd && !validateAgentCwd(s.cwd, { allowHome: true })) roots.add(s.cwd);
   }
   // Also allow ~/pi-cwd-* directories created by the default-cwd endpoint
   const home = (await import("os")).homedir();

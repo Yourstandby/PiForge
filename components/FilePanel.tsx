@@ -48,6 +48,7 @@ export function FilePanel({
   cwd,
   openFile,
   gitOpenSignal = 0,
+  explorerRefreshKey = 0,
   onOpenFile,
   onOpenDiff,
   onCloseFile,
@@ -57,6 +58,8 @@ export function FilePanel({
   openFile: FloatingFileTarget | null;
   /** Incremented by the chat status bar to reveal the Git tab. */
   gitOpenSignal?: number;
+  /** Bumped on every active-tab change so the file tree re-reads its cwd. */
+  explorerRefreshKey?: number;
   onOpenFile?: (filePath: string, fileName: string, line?: number) => void;
   onOpenDiff?: (filePath: string, fileName: string) => void;
   onCloseFile?: () => void;
@@ -156,6 +159,7 @@ export function FilePanel({
                 <FileExplorer
                   key={cwd}
                   cwd={cwd}
+                  refreshKey={explorerRefreshKey}
                   onOpenFile={handleOpenFile}
                   onOpenDiff={handleOpenDiff}
                 />
