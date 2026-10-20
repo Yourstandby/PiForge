@@ -121,6 +121,7 @@ import {
   stopSubagent,
 } from "./subagents.ts";
 import type { SubagentLifecycleEvent } from "../contract/domains/subagents.ts";
+import { listHerdrAgents, stopAllHerdrAgents, stopHerdrAgent } from "./herdr-manager.ts";
 import { applyCodeToFile, FileApplyError } from "./file-apply.ts";
 import {
   getSessionBranches,
@@ -1186,6 +1187,21 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
         result(state, frame.id, { ok: stopSubagent(id) });
         return;
       }
+      case "herdr.list": {
+        result(state, frame.id, { agents: listHerdrAgents() });
+        return;
+      }
+      case "herdr.stop": {
+        const id = readString(params, "id");
+        if (!id) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "id is required");
+          return;
+        }
+        void stopHerdrAgent(id)
+          .then((ok) => result(state, frame.id, { ok }))
+          .catch((error: unknown) => fail(state, frame.id, "INTERNAL", errorText(error)));
+        return;
+      }
       case "env.probe": {
         if (params.refresh !== undefined && typeof params.refresh !== "boolean") {
           fail(state, frame.id, "E_INVALID_PARAMS", "refresh must be a boolean");
@@ -1723,6 +1739,11 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
         await stopAllSubagents();
       } catch (error) {
         log(`failed to stop sub-agents: ${errorText(error)}`);
+      }
+      try {
+        await stopAllHerdrAgents();
+      } catch (error) {
+        log(`failed to stop fleet agents: ${errorText(error)}`);
       }
 
       try {

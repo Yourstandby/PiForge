@@ -47,6 +47,10 @@ export function desktopRuntimeTools(mode: AgentMode, preset: ToolPreset, codemod
   if (registered.some((tool) => tool.name === BROWSER_PREVIEW_TOOL_NAME)) names.push(BROWSER_PREVIEW_TOOL_NAME);
   if (registered.some((tool) => tool.name === "browser_read")) names.push("browser_read");
   if (registered.some((tool) => tool.name === "browser_interact")) names.push("browser_interact");
+  // Herdr fleet lifecycle is Host-owned; tools are declared when registered.
+  for (const name of ["herdr_spawn", "herdr_status", "herdr_message"]) {
+    if (registered.some((tool) => tool.name === name)) names.push(name);
+  }
   // Auxiliary model lanes: declared only when a model is configured, so a
   // session without them pays no prompt tokens for their schemas.
   if (aux?.image && registered.some((tool) => tool.name === GENERATE_IMAGE_TOOL_NAME)) names.push(GENERATE_IMAGE_TOOL_NAME);

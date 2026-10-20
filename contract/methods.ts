@@ -44,6 +44,7 @@ import type {
   RecallHit,
 } from "./domains/memory.ts";
 import type { ManagedProcessView } from "./domains/processes.ts";
+import type { HerdrAgentView } from "./domains/herdr.ts";
 import type { TerminalBlock, TerminalBlockStatus } from "./domains/terminal.ts";
 import type {
   NeedsTrustPayload,
@@ -305,6 +306,16 @@ export interface AgentHostMethods {
   };
 
   // ---- session branches (tree already exists in the JSONL) ----
+  // ---- Herdr agent fleet ----
+  "herdr.list": {
+    params: Record<string, never>;
+    result: { agents: HerdrAgentView[] };
+  };
+  "herdr.stop": {
+    params: { id: string };
+    result: { ok: boolean };
+  };
+
   // ---- Host-owned workspace / Git worktree clone ----
   "workspace.cloneSession": {
     params: {
@@ -495,6 +506,8 @@ export const IMPLEMENTED_HOST_METHODS = [
   "sessions.getBranches",
   "sessions.switchBranch",
   "workspace.cloneSession",
+  "herdr.list",
+  "herdr.stop",
   "sessions.locate",
   "sessions.state",
   "sessions.rename",
