@@ -373,6 +373,17 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     assert.equal(decisionReport.ok, false);
     assert.equal(decisionReport.error.code, "AUX_MODEL_NOT_CONFIGURED");
 
+    // ---- development environment probes (Host spawns, Next only proxies) ----
+    client.send({ kind: "req", id: 24, method: "env.probe", params: { refresh: true } });
+    const envReport = await client.waitFor((frame) => frame.kind === "res" && frame.id === 24);
+    assert.equal(envReport.ok, true, JSON.stringify(envReport.error));
+    assert.equal(envReport.result.platform, process.platform);
+    assert.equal(envReport.result.hostNode, process.version);
+    const nodeProbe = envReport.result.tools.find((tool) => tool.id === "node");
+    assert.ok(nodeProbe, "expected a Node.js probe");
+    assert.equal(nodeProbe.found, true);
+    assert.match(nodeProbe.version ?? "", /\d+\.\d+/);
+
     // ---- cascade cleanup on host shutdown ----
     client.send({
       kind: "req",

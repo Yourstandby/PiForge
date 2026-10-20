@@ -594,6 +594,14 @@ components/models-config/     模型配置弹窗的子组件
 
 > `agent-host/aux-models.ts` 持有专用 `ModelRuntime`，负责模型目录、凭据解析与 `generateImages` / `classify` 调用；`desktop-image-extension.ts` 与 `desktop-decision-extension.ts` 注册 `generate_image` / `classify_decision`（`defaultActive: false`，仅在设置中选定模型后由 `desktopRuntimeTools` 激活）。RPC：`models.auxCatalogue`、`models.auxConfig`、`models.setAuxConfig`、`image.generate`、`decision.classify`。
 
+### 开发环境与浏览器权限（1 条）
+
+| 路由 | 方法 | 用途 |
+| --- | --- | --- |
+| `app/api/environment/route.ts` | GET | 经 Host `env.probe` 扫描 PATH（Node / Python / Git / Bash / Bun / jq），返回版本与路径 |
+
+> 探测在 `agent-host/dev-tools.ts` 内执行（Node 子进程 + `where`/`which`，带超时与短缓存）。浏览器权限由 `agent-host/browser-permissions.ts` 管理：全局开关存于 `desktop-settings.json`（`browserReadEnabled` / `browserInteractEnabled`，默认关闭），临时授权按会话 id 存在 Host 内存；`desktop-browser-extension.ts` 在 `tool_call` 钩子里校验 `read`（文本 / 截图）与 `interact`（打开 / 导航），未授权时通过 Extension UI 确认框询问用户，拒绝则以 block reason 返回模型。
+
 ### 扩展与 Skill 管理（4 条）
 
 | 路由 | 方法 | 用途 |

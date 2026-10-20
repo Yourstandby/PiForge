@@ -16,6 +16,7 @@ import type {
   BrowserCommandResult,
   BrowserPageSnapshot,
 } from "./domains/browser.ts";
+import type { DevEnvironmentReport } from "./domains/dev-environment.ts";
 import type {
   AuxModelCatalogue,
   AuxModelConfig,
@@ -268,6 +269,12 @@ export interface AgentHostMethods {
     result: DecisionReport;
   };
 
+  // ---- development environment probes ----
+  "env.probe": {
+    params: { refresh?: boolean };
+    result: DevEnvironmentReport;
+  };
+
   // ---- session metadata / mutation ----
   "sessions.locate": {
     params: { sessionId: string };
@@ -411,6 +418,7 @@ export const IMPLEMENTED_HOST_METHODS = [
   "models.setAuxConfig",
   "image.generate",
   "decision.classify",
+  "env.probe",
   "sessions.locate",
   "sessions.state",
   "sessions.rename",

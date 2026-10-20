@@ -79,6 +79,10 @@ import {
   stopManagedProcess,
 } from "./managed-processes.ts";
 import {
+  clearAllBrowserSessionGrants,
+  forgetSessionBrowserPermissions,
+} from "./browser-permissions.ts";
+import {
   clearTerminalLog,
   finishShellBlock,
   listTerminalBlocks,
@@ -100,6 +104,7 @@ import {
   readMcpResource,
   refreshMcpAuth,
 } from "./mcp-service.ts";
+import { probeDevEnvironment } from "./dev-tools.ts";
 import {
   AuxModelError,
   classifyDecision,
@@ -817,7 +822,10 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
           return;
         }
         void (getRpcSession(sessionId)?.destroy() ?? Promise.resolve())
-          .then(() => result(state, frame.id, { ok: true }))
+          .then(() => {
+            forgetSessionBrowserPermissions(sessionId);
+            result(state, frame.id, { ok: true });
+          })
           .catch((error: unknown) => fail(state, frame.id, "INTERNAL", errorText(error)));
         return;
       }
@@ -1058,6 +1066,16 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
         void generateImage(prompt, model)
           .then((report) => result(state, frame.id, report))
           .catch((error: unknown) => failAux(state, frame.id, error));
+        return;
+      }
+      case "env.probe": {
+        if (params.refresh !== undefined && typeof params.refresh !== "boolean") {
+          fail(state, frame.id, "E_INVALID_PARAMS", "refresh must be a boolean");
+          return;
+        }
+        void probeDevEnvironment({ refresh: params.refresh === true })
+          .then((report) => result(state, frame.id, report))
+          .catch((error: unknown) => fail(state, frame.id, "INTERNAL", errorText(error)));
         return;
       }
       case "decision.classify": {
@@ -1479,6 +1497,7 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       } catch (error) {
         log(`failed to close MCP management connections: ${errorText(error)}`);
       }
+      clearAllBrowserSessionGrants();
 
       try {
         const stopped = await stopAllManagedProcesses();

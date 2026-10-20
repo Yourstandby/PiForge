@@ -41,6 +41,10 @@ export interface DesktopSettings {
   imageModel?: AuxModelSelection;
   /** Classifier model used by the `classify_decision` tool. */
   decisionModel?: AuxModelSelection;
+  /** Allow web_preview to read page text / screenshots (default off). */
+  browserReadEnabled?: boolean;
+  /** Allow web_preview to open / navigate the built-in browser (default off). */
+  browserInteractEnabled?: boolean;
   /** Optional LTM config; omitted when unset. Merged by getLtmConfig. */
   ltm?: DesktopLtmSettings;
 }
@@ -52,6 +56,9 @@ export function defaultDesktopSettings(): DesktopSettings {
     defaultAgentMode: DEFAULT_AGENT_MODE,
     defaultToolPreset: DEFAULT_TOOL_PRESET,
     codemodeEnabled: false,
+    // Browser capabilities are explicit opt-ins for the agent.
+    browserReadEnabled: false,
+    browserInteractEnabled: false,
   };
 }
 
@@ -91,6 +98,8 @@ export function mergeDesktopSettings(raw: unknown): DesktopSettings {
   };
   if (ltm) result.ltm = ltm;
   result.codemodeEnabled = typeof obj.codemodeEnabled === "boolean" ? obj.codemodeEnabled : false;
+  result.browserReadEnabled = obj.browserReadEnabled === true;
+  result.browserInteractEnabled = obj.browserInteractEnabled === true;
   const fast = parseAutoRoutingSelection(obj.autoRoutingFast);
   const strong = parseAutoRoutingSelection(obj.autoRoutingStrong);
   if (fast) result.autoRoutingFast = fast;
@@ -129,6 +138,11 @@ export function validateDesktopSettingsBody(body: unknown): string | null {
   const obj = body as Record<string, unknown>;
   if (obj.codemodeEnabled !== undefined && typeof obj.codemodeEnabled !== "boolean") {
     return "codemodeEnabled must be a boolean";
+  }
+  for (const key of ["browserReadEnabled", "browserInteractEnabled"] as const) {
+    if (obj[key] !== undefined && typeof obj[key] !== "boolean") {
+      return `${key} must be a boolean`;
+    }
   }
   if (obj.defaultAgentMode !== undefined && !isAgentMode(obj.defaultAgentMode)) {
     return "defaultAgentMode must be plan | ask | full";
