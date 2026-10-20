@@ -8,6 +8,7 @@ import {
   SPAWN_AGENT_TOOL_NAME,
 } from "./aux-tool-names.ts";
 import { TOOL_HISTORY_TOOL_NAME } from "./tool-outputs.ts";
+import { PROCESS_READ_TOOL_NAME, PROCESS_WAIT_TOOL_NAME } from "./process-tool-names.ts";
 
 /** Auxiliary model tools are only declared once the user configured them. */
 export interface AuxToolAvailability {
@@ -33,6 +34,9 @@ export function desktopRuntimeTools(mode: AgentMode, preset: ToolPreset, codemod
   // Background processes are a desktop capability registered by our inline
   // extension; ask mode still gates them through the approval hook.
   if (registered.some((tool) => tool.name === "run_bg")) names.push("run_bg");
+  // Read-only managed-process tools (no stop/restart tools by design).
+  if (registered.some((tool) => tool.name === PROCESS_READ_TOOL_NAME)) names.push(PROCESS_READ_TOOL_NAME);
+  if (registered.some((tool) => tool.name === PROCESS_WAIT_TOOL_NAME)) names.push(PROCESS_WAIT_TOOL_NAME);
   // Sub-agent delegation: available whenever the extension is registered.
   if (registered.some((tool) => tool.name === SPAWN_AGENT_TOOL_NAME)) names.push(SPAWN_AGENT_TOOL_NAME);
   // Oversized tool outputs are persisted; the agent reads them back by page.

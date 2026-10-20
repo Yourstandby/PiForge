@@ -200,6 +200,12 @@ export function listManagedProcesses(): ManagedProcessView[] {
     .map(toView);
 }
 
+/** Single-process snapshot for the read/wait tools. */
+export function getManagedProcess(id: string): ManagedProcessView | null {
+  const entry = registry.get(id);
+  return entry ? toView(entry) : null;
+}
+
 export interface StartManagedProcessOptions {
   cwd: string;
   command: string;
