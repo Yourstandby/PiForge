@@ -66,10 +66,17 @@ test("spawnSubagent runs an isolated child and returns its final answer", { time
       assert.match(result.text, /sub-agent final report/);
       assert.ok(result.agent.endedAt);
       assert.ok(result.agent.durationMs >= 0);
+      // No test/build result in the report: the guardrail flags it, but the
+      // sub-agent still completes (default is not to block).
+      assert.equal(result.agent.verification?.verified, false);
+      assert.match(result.agent.verification?.reason ?? "", /未找到/);
+      assert.match(result.text, /UNVERIFIED/);
 
       assert.ok(events.some((event) => event.type === "subagent_started"));
       assert.ok(events.some((event) => event.type === "subagent_output"));
-      assert.ok(events.some((event) => event.type === "subagent_finished"));
+      const finished = events.find((event) => event.type === "subagent_finished");
+      assert.ok(finished && finished.type === "subagent_finished");
+      assert.equal(finished.agent.verification?.verified, false);
 
       const listed = listSubagents();
       const found = listed.find((agent) => agent.id === result.agent.id);
@@ -79,6 +86,28 @@ test("spawnSubagent runs an isolated child and returns its final answer", { time
     } finally {
       off();
     }
+  } finally {
+    await env.cleanup();
+  }
+});
+
+test("spawnSubagent marks explicit test evidence as verified", { timeout: 30000 }, async () => {
+  const env = setupEnv();
+  try {
+    const faux = await registerFaux("subagent-fixture-verified", [
+      "Ran npm test: 5 passed, 0 failed.",
+    ]);
+    const result = await spawnSubagent({
+      name: "verifier",
+      task: "Check the test status.",
+      cwd: env.dir,
+      parentSessionId: "parent-session",
+      model: faux.getModel(),
+    });
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.agent.verification?.verified, true);
+    assert.match(result.agent.verification?.reason ?? "", /通过证据/);
+    assert.match(result.text, /Verification: test\/build evidence found/);
   } finally {
     await env.cleanup();
   }

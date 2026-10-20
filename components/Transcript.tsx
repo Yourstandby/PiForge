@@ -571,6 +571,8 @@ interface SubagentDetailsView {
   status?: string;
   durationMs?: number;
   toolCalls?: number;
+  verified?: boolean;
+  verificationReason?: string;
   error?: string;
 }
 
@@ -584,6 +586,8 @@ function readSubagentDetails(details: unknown): SubagentDetailsView | null {
     ...(typeof record.status === "string" ? { status: record.status } : {}),
     ...(typeof record.durationMs === "number" ? { durationMs: record.durationMs } : {}),
     ...(typeof record.toolCalls === "number" ? { toolCalls: record.toolCalls } : {}),
+    ...(typeof record.verified === "boolean" ? { verified: record.verified } : {}),
+    ...(typeof record.verificationReason === "string" ? { verificationReason: record.verificationReason } : {}),
     ...(typeof record.error === "string" ? { error: record.error } : {}),
   };
 }
@@ -942,6 +946,14 @@ function ToolCallCard({
               >
                 {SUBAGENT_STATUS_LABEL[subagent?.status ?? ""] ?? (subagent?.ok === false ? "失败" : "已完成")}
               </span>
+              {subagent?.status === "completed" && subagent.verified === false && (
+                <span
+                  title={subagent.verificationReason}
+                  className="rounded-full border border-[#F0E0C2] bg-[#FFF9EE] px-1.5 py-0.5 text-[9.5px] font-medium text-[#9A6B1F]"
+                >
+                  未验证
+                </span>
+              )}
               {subagent?.durationMs !== undefined && (
                 <span className="tabular-nums text-ink-faint">{formatDuration(subagent.durationMs)}</span>
               )}

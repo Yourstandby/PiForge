@@ -25,6 +25,7 @@ import type {
   SubagentView,
 } from "../contract/domains/subagents.ts";
 import { getSharedAuxRuntime } from "./aux-models.ts";
+import { checkSubagentVerification } from "./subagent-verification.ts";
 
 const MAX_RUNNING = 4;
 const MAX_FINISHED = 20;
@@ -136,6 +137,17 @@ function lastAssistantText(entries: unknown[]): string {
     if (text) return text;
   }
   return "";
+}
+
+function toolDetail(name: string, args: unknown): string | undefined {
+  if (!args || typeof args !== "object") return undefined;
+  const values = args as Record<string, unknown>;
+  const raw = name === "bash" || name === "powershell"
+    ? values.command
+    : values.path ?? values.file_path ?? values.pattern ?? values.query;
+  if (typeof raw !== "string") return undefined;
+  const clean = raw.replace(/\s+/g, " ").trim();
+  return clean ? clean.slice(0, 500) : undefined;
 }
 
 function appendOutput(record: SubagentRecord, text: string): void {
@@ -269,12 +281,14 @@ export async function spawnSubagent(input: SpawnSubagentInput): Promise<SpawnSub
         return;
       }
       if (event.type === "tool_execution_start") {
+        const detail = toolDetail(event.toolName, event.args);
         const call: SubagentToolCallView = {
           id: event.toolCallId,
           name: event.toolName,
           status: "running",
           startedAt: Date.now(),
           endedAt: null,
+          ...(detail ? { detail } : {}),
         };
         record.view.toolCalls.push(call);
         notify({
@@ -335,17 +349,27 @@ export async function spawnSubagent(input: SpawnSubagentInput): Promise<SpawnSub
       // Session already gone.
     }
     record.session = null;
+    record.view.verification = checkSubagentVerification({
+      output: record.view.output,
+      toolCalls: record.view.toolCalls,
+    });
     notify({ type: "subagent_finished", agent: snapshotView(record), timestamp: Date.now() });
   }
 
   const agent = snapshotView(record);
   if (ok) {
+    const verification = agent.verification;
+    const verificationLine = verification?.verified
+      ? `Verification: test/build evidence found (${verification.reason}).`
+      : `Verification: UNVERIFIED — ${verification?.reason ?? "no test evidence"}. This did not block completion; treat the report as research, not a validated change.`;
     return {
       agent,
       ok: true,
       text: `Sub-agent "${name}" completed.
 
-${finalText || "(no text output)"}`,
+${finalText || "(no text output)"}
+
+${verificationLine}`,
     };
   }
   const reason = record.view.error ?? "unknown error";

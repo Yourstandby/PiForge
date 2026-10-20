@@ -14,6 +14,18 @@ export interface SubagentToolCallView {
   status: "running" | "ok" | "error";
   startedAt: number;
   endedAt: number | null;
+  /** Truncated command/path/pattern, used for verification evidence. */
+  detail?: string;
+}
+
+/** Host-side check of the child's final report for test/build evidence. */
+export interface SubagentVerification {
+  verified: boolean;
+  checkedAt: number;
+  /** Human-readable explanation shown in the UI badge tooltip. */
+  reason: string;
+  /** Bounded excerpts that justified the decision. */
+  evidence: string[];
 }
 
 export interface SubagentView {
@@ -32,6 +44,8 @@ export interface SubagentView {
   output: string;
   toolCalls: SubagentToolCallView[];
   error?: string;
+  /** Present after the child finishes; absent while running. */
+  verification?: SubagentVerification;
 }
 
 /** Lifecycle frames carried on the `subagents` topic (alongside the snapshot). */

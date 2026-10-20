@@ -49,6 +49,10 @@ function SubagentCard({
   const [open, setOpen] = useState(running);
   const duration = running ? Math.max(0, now - agent.startedAt) : agent.durationMs;
   const tools = toolSummary(agent);
+  const unverified = agent.status === "completed" && agent.verification?.verified === false;
+  const verificationTitle = agent.verification
+    ? `${agent.verification.reason}${agent.verification.evidence.length > 0 ? `\n${agent.verification.evidence.join("\n")}` : ""}`
+    : undefined;
 
   return (
     <div className="mx-1.5 mb-1.5 rounded-lg border border-[#E7E9EE] bg-white px-2.5 py-2 shadow-[0_1px_2px_rgba(17,17,17,0.03)]">
@@ -72,6 +76,14 @@ function SubagentCard({
         >
           {STATUS_LABEL[agent.status]}
         </span>
+        {unverified && (
+          <span
+            title={verificationTitle}
+            className="shrink-0 rounded-full border border-[#F0E0C2] bg-[#FFF9EE] px-1.5 py-0.5 text-[9.5px] font-medium text-[#9A6B1F]"
+          >
+            未验证
+          </span>
+        )}
         <span className="shrink-0 tabular-nums text-[10px] text-ink-faint">{formatDuration(duration)}</span>
         {running && (
           <button
@@ -98,6 +110,15 @@ function SubagentCard({
 
       {agent.error && (
         <p className="mt-1 whitespace-pre-wrap break-words text-[10.5px] text-[#B0443C]">{agent.error}</p>
+      )}
+
+      {!running && agent.verification && (
+        <p
+          className={`mt-1 text-[10px] ${unverified ? "text-[#9A6B1F]" : "text-[#2F7A55]"}`}
+          title={verificationTitle}
+        >
+          {agent.verification.verified ? "已验证：找到测试/构建证据" : `未验证：${agent.verification.reason}`}
+        </p>
       )}
 
       <button

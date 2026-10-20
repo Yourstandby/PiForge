@@ -74,6 +74,10 @@ export function createDesktopSubagentFactory(): ExtensionFactory {
               durationMs: result.agent.durationMs,
               task: summaryOfTask(task),
               toolCalls: result.agent.toolCalls.length,
+              verified: result.agent.verification?.verified ?? false,
+              ...(result.agent.verification?.reason
+                ? { verificationReason: result.agent.verification.reason }
+                : {}),
               ...(result.error ? { error: result.error } : {}),
             },
           };
