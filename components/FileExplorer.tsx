@@ -40,8 +40,11 @@ type GitStatusMap = Record<string, GitMark>;
 
 function changedMark(status: string): { label: string; color: string; title: string } {
   const code = status.replace(/\s+/g, "");
-  if (code === "??" || code.startsWith("A")) {
-    return { label: "A", color: "#3E8A63", title: "新增（未跟踪）" };
+  if (code === "??") {
+    return { label: "U", color: "#2563EB", title: "未跟踪文件" };
+  }
+  if (code.startsWith("A")) {
+    return { label: "A", color: "#3E8A63", title: "新增文件" };
   }
   if (code.startsWith("D")) {
     return { label: "D", color: "#C2554E", title: "已删除" };

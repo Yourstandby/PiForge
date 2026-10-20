@@ -29,6 +29,8 @@ interface Props {
   onNewSession?: () => void;
   /** Insert a rendered Markdown code block into the composer. */
   onInsertCode?: (code: string, language?: string) => void;
+  /** Open the repository Git Diff pane in the right panel. */
+  onOpenGitDiff?: () => void;
 }
 
 /**
@@ -58,6 +60,7 @@ function ChatSession({
   onOpenFile,
   onNewSession,
   onInsertCode,
+  onOpenGitDiff,
   onReload,
 }: Props & { onReload: () => void }) {
   const { soundEnabled, onSoundToggle, playDoneSound } = useAudio();
@@ -297,6 +300,7 @@ function ChatSession({
       soundEnabled={soundEnabled}
       onSoundToggle={onSoundToggle}
       onCompactRequest={() => setCompactConfirmOpen(true)}
+      onGitDiff={onOpenGitDiff}
       canCompact={canCompact}
       compacting={chat.isCompacting}
       sessionStats={chat.sessionStats}

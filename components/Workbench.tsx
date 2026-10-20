@@ -39,6 +39,7 @@ export function Workbench() {
   const [cwd, setCwd] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [openFile, setOpenFile] = useState<FloatingFileTarget | null>(null);
+  const [gitDiffOpen, setGitDiffOpen] = useState(false);
   const draftKeyRef = useRef<string>("");
   // Mirrors AppShell's sessionKey: remount the chat surface so all
   // session-scoped hook state starts clean on every switch.
@@ -154,13 +155,21 @@ export function Workbench() {
 
   const handleOpenFile = useCallback(
     (filePath: string, fileName: string, line?: number) => {
+      setGitDiffOpen(false);
       setOpenFile({ filePath, fileName, line });
     },
     [],
   );
 
   const handleOpenDiff = useCallback((filePath: string, fileName: string) => {
+    setGitDiffOpen(false);
     setOpenFile({ filePath, fileName, diff: true });
+  }, []);
+
+  const handleOpenGitDiff = useCallback(() => {
+    setRightPanelOpen(true);
+    setOpenFile(null);
+    setGitDiffOpen(true);
   }, []);
 
   const handleCloseFile = useCallback(() => setOpenFile(null), []);
@@ -465,6 +474,7 @@ ${fenced}`
               void handleNewSession();
             }}
             onInsertCode={handleInsertCode}
+            onOpenGitDiff={handleOpenGitDiff}
             onOpenFile={(filePath, fileName, line) => {
               // Chat file links must land in the right panel, never over chat.
               setRightPanelOpen(true);
@@ -524,9 +534,11 @@ ${fenced}`
           <FilePanel
             cwd={cwd}
             openFile={openFile}
+            gitDiffOpen={gitDiffOpen}
             onOpenFile={handleOpenFile}
             onOpenDiff={handleOpenDiff}
             onCloseFile={handleCloseFile}
+            onCloseGitDiff={() => setGitDiffOpen(false)}
             onCollapse={() => setRightPanelOpen(false)}
           />
         </div>

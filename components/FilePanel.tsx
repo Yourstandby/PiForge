@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { FileExplorer } from "./FileExplorer";
 import { FloatingFileViewer, type FloatingFileTarget } from "./FloatingFileViewer";
+import { FloatingGitDiffViewer } from "./FloatingGitDiffViewer";
 import { ProcessPanel } from "./ProcessPanel";
 
 /**
@@ -42,16 +43,20 @@ const PANEL_TABS = [
 export function FilePanel({
   cwd,
   openFile,
+  gitDiffOpen = false,
   onOpenFile,
   onOpenDiff,
   onCloseFile,
+  onCloseGitDiff,
   onCollapse,
 }: {
   cwd: string | null;
   openFile: FloatingFileTarget | null;
+  gitDiffOpen?: boolean;
   onOpenFile?: (filePath: string, fileName: string, line?: number) => void;
   onOpenDiff?: (filePath: string, fileName: string) => void;
   onCloseFile?: () => void;
+  onCloseGitDiff?: () => void;
   onCollapse?: () => void;
 }) {
   const [tab, setTab] = useState<PanelTab>("files");
@@ -59,8 +64,8 @@ export function FilePanel({
   // Chat file links and tree clicks must always surface in the Files tab,
   // without touching the chat surface.
   useEffect(() => {
-    if (openFile) setTab("files");
-  }, [openFile]);
+    if (openFile || gitDiffOpen) setTab("files");
+  }, [openFile, gitDiffOpen]);
 
   const handleOpenFile = useCallback(
     (filePath: string, fileName: string, line?: number) => {
@@ -131,13 +136,18 @@ export function FilePanel({
                 <p className="px-3 py-2 text-[11px] text-ink-faint">暂无项目</p>
               )}
             </div>
-            {openFile && (
+            {gitDiffOpen ? (
+              <FloatingGitDiffViewer
+                cwd={cwd}
+                onClose={() => onCloseGitDiff?.()}
+              />
+            ) : openFile ? (
               <FloatingFileViewer
                 target={openFile}
                 cwd={cwd}
                 onClose={() => onCloseFile?.()}
               />
-            )}
+            ) : null}
           </>
         )}
 

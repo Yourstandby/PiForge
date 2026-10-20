@@ -7,6 +7,7 @@ import {
   ChevronDown,
   FileArchive,
   Gauge,
+  GitCompare,
   Loader2,
   ShieldAlert,
   ShieldCheck,
@@ -65,6 +66,7 @@ interface Props {
   soundEnabled: boolean;
   onSoundToggle: () => void;
   onCompactRequest: () => void;
+  onGitDiff?: () => void;
   canCompact: boolean;
   compacting: boolean;
   sessionStats: SessionStats | null;
@@ -230,6 +232,7 @@ export function StatusBar({
   soundEnabled,
   onSoundToggle,
   onCompactRequest,
+  onGitDiff,
   canCompact,
   compacting,
   sessionStats,
@@ -271,6 +274,17 @@ export function StatusBar({
             <FileArchive size={14} strokeWidth={1.75} aria-hidden="true" />
           )}
         </button>
+        {onGitDiff && (
+          <button
+            type="button"
+            onClick={onGitDiff}
+            aria-label="查看 Git Diff"
+            title="查看 Git Diff"
+            className="flex h-7 w-7 items-center justify-center rounded-md text-ink-faint transition-colors duration-150 hover:bg-[#ECECEF] hover:text-ink"
+          >
+            <GitCompare size={14} strokeWidth={1.75} aria-hidden="true" />
+          </button>
+        )}
         <button
           type="button"
           onClick={onSoundToggle}
