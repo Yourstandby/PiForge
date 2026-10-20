@@ -144,6 +144,14 @@ import {
   readAuxConfig,
   setAuxConfig,
 } from "./aux-models.ts";
+import {
+  CustomProviderError,
+  listCustomProviders,
+  removeCustomProvider,
+  saveCustomProvider,
+  syncCustomProvidersToModels,
+} from "./custom-providers.ts";
+import { createHostWebSocketServer, type HostWebSocketServer } from "./ws-server.ts";
 
 export interface AgentHostServerOptions {
   /** Named pipe path (Windows) or Unix domain socket path. */
@@ -252,6 +260,16 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
   let handshaked = 0;
   let requests = 0;
   let listenersDetached = false;
+  const wsServer: HostWebSocketServer = createHostWebSocketServer({
+    token: options.token,
+    log,
+    onCall: async (request) => {
+      // Plugin/UI WS call surface intentionally small in module 1; module 2
+      // extends this through the plugin manager.
+      if (request.method === "host.transport") return wsServer.info();
+      throw new Error(`Unsupported WebSocket method: ${request.method}`);
+    },
+  });
 
   const offProcessesChange = onManagedProcessesChange(() => scheduleBroadcast("processes"));
   const offTerminalChange = onTerminalLogChange(() => scheduleBroadcast("terminal"));
@@ -363,6 +381,14 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
   function failBranch(state: ConnectionState, id: number, error: unknown): void {
     if (error instanceof SessionBranchError) {
       fail(state, id, error.code, error.message);
+      return;
+    }
+    fail(state, id, "INTERNAL", errorText(error));
+  }
+
+  function failCustomProvider(state: ConnectionState, id: number, error: unknown): void {
+    if (error instanceof CustomProviderError) {
+      fail(state, id, error.code === "E_INVALID_PARAMS" ? "E_INVALID_PARAMS" : "INTERNAL", error.message);
       return;
     }
     fail(state, id, "INTERNAL", errorText(error));
@@ -616,6 +642,48 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       }
       case "host.subscribe": {
         registerSubscription(state, frame.id, params);
+        return;
+      }
+      case "host.transport": {
+        result(state, frame.id, wsServer.info());
+        return;
+      }
+      case "models.providers.list": {
+        try {
+          result(state, frame.id, { providers: listCustomProviders() });
+        } catch (error) {
+          failCustomProvider(state, frame.id, error);
+        }
+        return;
+      }
+      case "models.providers.save": {
+        try {
+          const input = params as unknown as Parameters<typeof saveCustomProvider>[0];
+          const provider = saveCustomProvider(input);
+          invalidateAuxRuntime();
+          requestSessionResourceReload();
+          wsServer.publish("models.providers.changed", { provider });
+          result(state, frame.id, { provider });
+        } catch (error) {
+          failCustomProvider(state, frame.id, error);
+        }
+        return;
+      }
+      case "models.providers.remove": {
+        const id = readString(params, "id");
+        if (!id) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "id is required");
+          return;
+        }
+        try {
+          removeCustomProvider(id);
+          invalidateAuxRuntime();
+          requestSessionResourceReload();
+          wsServer.publish("models.providers.changed", { removed: id });
+          result(state, frame.id, { ok: true });
+        } catch (error) {
+          failCustomProvider(state, frame.id, error);
+        }
         return;
       }
       case "host.unsubscribe": {
@@ -1719,6 +1787,12 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       }
       subscriptions.clear();
 
+      try {
+        await wsServer.close();
+      } catch (error) {
+        log(`failed to close websocket bus: ${errorText(error)}`);
+      }
+
       for (const subscriptionId of [...agentSubscriptions.keys()]) {
         removeAgentSubscription(subscriptionId);
       }
@@ -1788,6 +1862,11 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
   }
 
   async function start(): Promise<void> {
+    try {
+      syncCustomProvidersToModels();
+    } catch (error) {
+      log(`custom provider sync failed: ${errorText(error)}`);
+    }
     prepareEndpoint(options.endpoint);
     server = createServer(handleConnection);
     await new Promise<void>((resolve, reject) => {
@@ -1823,6 +1902,13 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
         }
       })
       .catch((error: unknown) => log(`crash reaper failed: ${errorText(error)}`));
+
+    try {
+      await wsServer.start();
+    } catch (error) {
+      log(`websocket bus failed to start: ${errorText(error)}`);
+      throw error;
+    }
 
     options.onReady?.(options.endpoint);
   }
