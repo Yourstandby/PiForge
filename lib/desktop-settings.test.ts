@@ -134,3 +134,35 @@ test("Auto routing model selections merge, validate and clear", () => {
   });
   assert.equal(cleared.autoRoutingFast, undefined);
 });
+
+test("auxiliary image/decision model selections merge, validate and clear", () => {
+  const merged = mergeDesktopSettings({
+    imageModel: { provider: "openrouter", modelId: "black-forest-labs/flux.2-pro" },
+    decisionModel: { provider: "openai", modelId: "gpt-6-luna" },
+  });
+  assert.deepEqual(merged.imageModel, {
+    provider: "openrouter",
+    modelId: "black-forest-labs/flux.2-pro",
+  });
+  assert.deepEqual(merged.decisionModel, { provider: "openai", modelId: "gpt-6-luna" });
+
+  assert.equal(
+    validateDesktopSettingsBody({
+      imageModel: { provider: "p", modelId: "m" },
+      decisionModel: null,
+    }),
+    null,
+  );
+  assert.match(
+    validateDesktopSettingsBody({ decisionModel: { provider: "", modelId: "m" } })!,
+    /decisionModel\.provider/,
+  );
+  assert.match(
+    validateDesktopSettingsBody({ imageModel: { provider: "p", modelId: "" } })!,
+    /imageModel\.modelId/,
+  );
+
+  const cleared = mergeDesktopSettings({ ...merged, imageModel: null });
+  assert.equal(cleared.imageModel, undefined);
+  assert.deepEqual(cleared.decisionModel, merged.decisionModel);
+});

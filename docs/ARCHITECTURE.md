@@ -585,6 +585,15 @@ components/models-config/     模型配置弹窗的子组件
 
 > v0.5.0 起，MCP 连接、OAuth（PKCE + loopback 回调，凭据复用 Pi 的 `<agent-dir>/mcp-auth.json`）与资源读取全部在 Agent Host 的 `agent-host/mcp-service.ts` 内执行；Next 只做 RPC 代理。工具默认暴露方式改为 `deferred`（工具搜索按需激活），避免把所有 MCP 工具塞进模型工具列表。
 
+
+### 辅助模型（生图 / 决策，1 条）
+
+| 路由 | 方法 | 用途 |
+| --- | --- | --- |
+| `app/api/models/auxiliary/route.ts` | GET / PUT | 经 Host `models.auxCatalogue` 列出可用的生图 / 分类模型；`models.setAuxConfig` 保存 Provider + Model 选择 |
+
+> `agent-host/aux-models.ts` 持有专用 `ModelRuntime`，负责模型目录、凭据解析与 `generateImages` / `classify` 调用；`desktop-image-extension.ts` 与 `desktop-decision-extension.ts` 注册 `generate_image` / `classify_decision`（`defaultActive: false`，仅在设置中选定模型后由 `desktopRuntimeTools` 激活）。RPC：`models.auxCatalogue`、`models.auxConfig`、`models.setAuxConfig`、`image.generate`、`decision.classify`。
+
 ### 扩展与 Skill 管理（4 条）
 
 | 路由 | 方法 | 用途 |

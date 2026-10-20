@@ -22,6 +22,7 @@ import {
 import { parseClientFrame } from "../contract/guards.ts";
 import type { HostHealth } from "../contract/methods.ts";
 import type { McpConnectionConfig } from "../contract/domains/mcp.ts";
+import type { DecisionQuestion } from "../contract/domains/aux-models.ts";
 import { validateAgentCommand } from "../lib/agent-commands.ts";
 import { isAgentMode, isToolPreset } from "../lib/approval-policy.ts";
 import {
@@ -99,6 +100,15 @@ import {
   readMcpResource,
   refreshMcpAuth,
 } from "./mcp-service.ts";
+import {
+  AuxModelError,
+  classifyDecision,
+  generateImage,
+  getAuxCatalogue,
+  invalidateAuxRuntime,
+  readAuxConfig,
+  setAuxConfig,
+} from "./aux-models.ts";
 
 export interface AgentHostServerOptions {
   /** Named pipe path (Windows) or Unix domain socket path. */
@@ -303,6 +313,35 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       return;
     }
     fail(state, id, "INTERNAL", errorText(error));
+  }
+
+  function failAux(state: ConnectionState, id: number, error: unknown): void {
+    if (error instanceof AuxModelError) {
+      fail(state, id, error.code, error.message);
+      return;
+    }
+    fail(state, id, "AUX_MODEL_FAILED", errorText(error));
+  }
+
+  /** `undefined` = not provided, `null` = clear, otherwise a validated selection. */
+  function readAuxSelection(
+    params: Record<string, unknown>,
+    key: string,
+  ): { provider: string; modelId: string } | null | undefined {
+    const value = params[key];
+    if (value === undefined) return undefined;
+    if (value === null) return null;
+    if (typeof value !== "object" || Array.isArray(value)) {
+      throw new AuxModelError("E_INVALID_PARAMS", `${key} must be an object or null`);
+    }
+    const record = value as Record<string, unknown>;
+    if (typeof record.provider !== "string" || !record.provider.trim()) {
+      throw new AuxModelError("E_INVALID_PARAMS", `${key}.provider must be a non-empty string`);
+    }
+    if (typeof record.modelId !== "string" || !record.modelId.trim()) {
+      throw new AuxModelError("E_INVALID_PARAMS", `${key}.modelId must be a non-empty string`);
+    }
+    return { provider: record.provider, modelId: record.modelId };
   }
 
   function readMcpRef(params: Record<string, unknown>): { cwd?: string; serverId: string; scope?: "global" | "project" } | null {
@@ -965,6 +1004,91 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       }
 
       // ---------------------------------------------------------------------
+      // Auxiliary models: image generation and structured decisions.
+      // ---------------------------------------------------------------------
+      case "models.auxCatalogue": {
+        void getAuxCatalogue()
+          .then((catalogue) => result(state, frame.id, catalogue))
+          .catch((error: unknown) => failAux(state, frame.id, error));
+        return;
+      }
+      case "models.auxConfig": {
+        void Promise.resolve()
+          .then(() => readAuxConfig())
+          .then((config) => result(state, frame.id, config))
+          .catch((error: unknown) => failAux(state, frame.id, error));
+        return;
+      }
+      case "models.setAuxConfig": {
+        let image: { provider: string; modelId: string } | null | undefined;
+        let decision: { provider: string; modelId: string } | null | undefined;
+        try {
+          image = readAuxSelection(params, "image");
+          decision = readAuxSelection(params, "decision");
+        } catch (error) {
+          failAux(state, frame.id, error);
+          return;
+        }
+        if (image === undefined && decision === undefined) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "image or decision is required");
+          return;
+        }
+        void setAuxConfig({ image, decision })
+          .then((config) => {
+            // Running sessions pick the new tools up on their next prompt.
+            requestSessionResourceReload();
+            result(state, frame.id, config);
+          })
+          .catch((error: unknown) => failAux(state, frame.id, error));
+        return;
+      }
+      case "image.generate": {
+        const prompt = readString(params, "prompt");
+        if (!prompt) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "prompt is required");
+          return;
+        }
+        let model: { provider: string; modelId: string } | null | undefined;
+        try {
+          model = readAuxSelection(params, "model");
+        } catch (error) {
+          failAux(state, frame.id, error);
+          return;
+        }
+        void generateImage(prompt, model)
+          .then((report) => result(state, frame.id, report))
+          .catch((error: unknown) => failAux(state, frame.id, error));
+        return;
+      }
+      case "decision.classify": {
+        const state0 = params.state;
+        if (!state0 || typeof state0 !== "object" || Array.isArray(state0)) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "state must be an object");
+          return;
+        }
+        const questions = params.questions;
+        if (!Array.isArray(questions) || questions.length === 0) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "questions must be a non-empty array");
+          return;
+        }
+        let model: { provider: string; modelId: string } | null | undefined;
+        try {
+          model = readAuxSelection(params, "model");
+        } catch (error) {
+          failAux(state, frame.id, error);
+          return;
+        }
+        void classifyDecision({
+          state: state0 as Record<string, unknown>,
+          questions: questions as DecisionQuestion[],
+          model,
+        })
+          .then((report) => result(state, frame.id, report))
+          .catch((error: unknown) => failAux(state, frame.id, error));
+        return;
+      }
+
+      // ---------------------------------------------------------------------
       // Session metadata / mutation
       // ---------------------------------------------------------------------
       case "sessions.locate": {
@@ -1205,6 +1329,9 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       }
 
       case "models.refresh": {
+        // Credentials or models.json changed: drop cached auxiliary runtime
+        // state so image/decision calls resolve fresh auth.
+        invalidateAuxRuntime();
         requestSessionResourceReload();
         result(state, frame.id, { sessions: listRpcSessions().length });
         return;

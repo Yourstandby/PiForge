@@ -17,6 +17,14 @@ import type {
   BrowserPageSnapshot,
 } from "./domains/browser.ts";
 import type {
+  AuxModelCatalogue,
+  AuxModelConfig,
+  AuxModelSelection,
+  DecisionQuestion,
+  DecisionReport,
+  ImageGenerationReport,
+} from "./domains/aux-models.ts";
+import type {
   McpAuthState,
   McpConnectionConfig,
   McpConnectionReport,
@@ -231,6 +239,35 @@ export interface AgentHostMethods {
     result: { login: McpPendingLogin | null };
   };
 
+  // ---- auxiliary models (image generation / structured decisions) ----
+  "models.auxCatalogue": {
+    params: Record<string, never>;
+    result: AuxModelCatalogue;
+  };
+  "models.auxConfig": {
+    params: Record<string, never>;
+    result: AuxModelConfig;
+  };
+  "models.setAuxConfig": {
+    params: {
+      image?: AuxModelSelection | null;
+      decision?: AuxModelSelection | null;
+    };
+    result: AuxModelConfig;
+  };
+  "image.generate": {
+    params: { prompt: string; model?: AuxModelSelection };
+    result: ImageGenerationReport;
+  };
+  "decision.classify": {
+    params: {
+      state: Record<string, unknown>;
+      questions: DecisionQuestion[];
+      model?: AuxModelSelection;
+    };
+    result: DecisionReport;
+  };
+
   // ---- session metadata / mutation ----
   "sessions.locate": {
     params: { sessionId: string };
@@ -369,6 +406,11 @@ export const IMPLEMENTED_HOST_METHODS = [
   "mcp.logout",
   "mcp.refreshAuth",
   "mcp.loginStatus",
+  "models.auxCatalogue",
+  "models.auxConfig",
+  "models.setAuxConfig",
+  "image.generate",
+  "decision.classify",
   "sessions.locate",
   "sessions.state",
   "sessions.rename",

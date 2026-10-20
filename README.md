@@ -42,6 +42,7 @@ Agent Host 关闭时会先排空会话 JSONL、终止所有受管进程树；Nex
 - **内置浏览器与终端** — 右侧面板拥有原生 Electron `webview` 浏览器（Agent 可通过 `web_preview` 读取页面文本 / 截图，自动跟随 `run_bg` 启动的本地服务）与零依赖 ANSI 终端日志流（bash 与后台进程输出合并展示）。
 - **独立 Git 面板** — 按目录分组的工作区改动、双行号可视化 Diff、底部填写提交信息一键 `git add -A` + commit。
 - **MCP 高级管理** — 设置面板内完成 MCP 生命周期管理：OAuth 登录 / 取消登录 / 退出登录、凭据刷新、连接测试；服务端提供 Resources 或 Resource Templates 时可直接浏览并预览内容。连接、OAuth 与资源读取全部在 Agent Host 内执行（凭据复用 Pi 的 `mcp-auth.json`），Next 只走 RPC 代理。默认采用「工具搜索」暴露方式，模型按需通过 `tool_search` 发现并激活 MCP 工具，避免把所有工具一次性塞给大模型。
+- **生图与决策模型** — 设置 → 辅助模型分别为生图与结构化决策选择 Provider / Model。输入框工具栏、`/imagine` 斜杠命令都能触发 `generate_image`：图片直接渲染在对话的工具卡片里（URL 或 Base64 Markdown 图片也支持）。`classify_decision` 用决策模型做分类 / 打分 / 是否判断，工具卡片以小徽章 + JSON 展示结果。两条通道的 API 调用全部在 Agent Host 内完成，未配置时不会向模型声明工具，不占提示词。
 - **霜蓝米白极简 UI** — 固定三栏、低对比浅色、细腻阴影；不引入深色主题干扰阅读。
 - **悬浮文件预览** — 文件树常驻右侧，点击文件弹出带阴影的悬浮窗；支持代码高亮、行号、Markdown / HTML / 图片预览与就地编辑。
 - **Auto 智能模型路由** — 在模型菜单选择 `Auto`，按提问长度、关键词、图片与上下文规模自动切换快 / 强模型；快、强模型可在设置中指定。
@@ -118,6 +119,7 @@ Compress-Archive -Path 'release\win-unpacked\*' -DestinationPath 'release\PiForg
 | `@` | 在输入框引用项目文件 |
 | 拖拽文件 / `Ctrl + V` | 图片变缩略图附件、代码文件变 `@` 引用；截图可直接粘贴发给视觉模型 |
 | `/` | 打开斜杠命令面板 |
+| `/imagine 描述` | 让 Agent 调用生图模型生成图片（也可点输入框工具栏的图片按钮） |
 | `Enter` | 发送；Agent 生成中则立即 Steer |
 | `Alt + Enter` | Agent 生成中加入 Follow-up 队列 |
 | `Esc` | 立即中断当前生成 |

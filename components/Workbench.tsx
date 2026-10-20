@@ -15,6 +15,7 @@ import { SessionSidebar } from "./SessionSidebar";
 import { SessionTabBar } from "./SessionTabBar";
 import { ExtensionsConfigModal } from "./ExtensionsConfigModal";
 import { AutoRoutingConfig } from "./AutoRoutingConfig";
+import { AuxModelsConfig } from "./AuxModelsConfig";
 import { McpSettingsModal } from "./McpSettingsModal";
 import type { FloatingFileTarget } from "./FloatingFileViewer";
 import { SkillsConfig } from "./SkillsConfig";
@@ -24,7 +25,7 @@ function byModifiedDesc(a: SessionInfo, b: SessionInfo): number {
   return new Date(b.modified).getTime() - new Date(a.modified).getTime();
 }
 
-type SettingsModal = "skills" | "models" | "extensions" | "auto" | "mcp" | null;
+type SettingsModal = "skills" | "models" | "extensions" | "auto" | "aux" | "mcp" | null;
 
 const MIN_RIGHT_PANEL_WIDTH = 280;
 const MAX_RIGHT_PANEL_WIDTH = 800;
@@ -674,6 +675,7 @@ ${fenced}`
                 {[
                   { label: "模型与登录", action: () => setSettingsModal("models") },
                   { label: "Auto 路由", action: () => setSettingsModal("auto") },
+                  { label: "辅助模型（生图 / 决策）", action: () => setSettingsModal("aux") },
                   { label: "扩展与集成", action: () => setSettingsModal("extensions") },
                   { label: "技能安装", action: () => setSettingsModal("skills") },
                   { label: "添加项目…", action: () => { void handleAddProject(); } },
@@ -816,6 +818,9 @@ ${fenced}`
             setModelsVersion((version) => version + 1);
           }}
         />
+      )}
+      {settingsModal === "aux" && (
+        <AuxModelsConfig onClose={() => setSettingsModal(null)} />
       )}
       {settingsModal === "extensions" && (
         <ExtensionsConfigModal

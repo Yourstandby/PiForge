@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, ChevronDown, ChevronUp, File, Folder, GripVertical, Paperclip, Square } from "lucide-react";
+import { ArrowUp, ChevronDown, ChevronUp, File, Folder, GripVertical, ImagePlus, Paperclip, Square } from "lucide-react";
 import type { AttachedImage } from "./chat-input/types";
 import { AttachmentPreview } from "./chat-input/AttachmentPreview";
 import { buildReferenceInsertion, isImageFileLike } from "@/lib/composer-files";
@@ -410,6 +410,12 @@ export function Composer({
   const submit = (mode: "send" | "steer" | "follow-up" = "send") => {
     if (!canSend) return;
     const text = value.trim();
+    // A bare `/imagine` is an invitation to type a prompt, not a message.
+    if (/^\/imagine$/i.test(text)) {
+      onValueChange("/imagine ");
+      focusCaretAtEnd();
+      return;
+    }
     const attached = images.length > 0 ? images : undefined;
     if (text) rememberPrompt(text);
     if (busy) {
@@ -765,6 +771,19 @@ export function Composer({
             className="flex h-7 w-7 items-center justify-center rounded-md text-ink-faint transition-colors duration-150 hover:bg-[#ECECEF] hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Paperclip size={15} strokeWidth={1.5} />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              onValueChange(value.trim() ? `${value.replace(/\s+$/, "")}\n/imagine ` : "/imagine ");
+              focusCaretAtEnd();
+            }}
+            disabled={disabled}
+            aria-label="生成图片"
+            title="生成图片（/imagine 描述）"
+            className="flex h-7 w-7 items-center justify-center rounded-md text-ink-faint transition-colors duration-150 hover:bg-[#ECECEF] hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <ImagePlus size={15} strokeWidth={1.5} />
           </button>
           <span className="text-[11px] text-ink-faint">
             {busy

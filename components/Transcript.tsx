@@ -242,6 +242,19 @@ function createMarkdownComponents(
     );
   },
   pre: ({ children }) => <>{children}</>,
+  img: ({ src, alt }) => {
+    const url = typeof src === "string" ? src : undefined;
+    if (!url) return null;
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={url}
+        alt={alt ?? ""}
+        loading="lazy"
+        className="my-2 max-h-80 rounded-lg border border-[#E3E8F2] bg-white object-contain"
+      />
+    );
+  },
   code: ({ className, children }) => {
     const lang = /language-([\w-]+)/.exec(className ?? "")?.[1]?.toLowerCase() ?? "";
     if (lang || String(children).includes("\n")) {
@@ -316,6 +329,136 @@ function contentImages(content: unknown): string[] {
     .filter((block): block is Record<string, unknown> => Boolean(block) && typeof block === "object" && (block as { type?: unknown }).type === "image")
     .map((block) => imageSrc(block))
     .filter((src): src is string => Boolean(src));
+}
+
+interface DecisionAnswerView {
+  kind: string;
+  choice?: string;
+  score?: number;
+  probability?: number;
+  confidence?: number;
+  probabilities?: Record<string, number>;
+}
+
+interface DecisionDetailsView {
+  kind: "decision";
+  ok: boolean;
+  mode: string;
+  provider?: string;
+  model?: string;
+  answers: Record<string, DecisionAnswerView>;
+  elapsedMs?: number;
+  error?: string;
+}
+
+interface ImageDetailsView {
+  kind: "image-generation";
+  ok: boolean;
+  provider?: string;
+  model?: string;
+  prompt?: string;
+  count?: number;
+  error?: string;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function readDecisionDetails(details: unknown): DecisionDetailsView | null {
+  const record = asRecord(details);
+  if (!record || record.kind !== "decision") return null;
+  const answers = asRecord(record.answers) ?? {};
+  return {
+    kind: "decision",
+    ok: record.ok !== false,
+    mode: typeof record.mode === "string" ? record.mode : "choice",
+    ...(typeof record.provider === "string" ? { provider: record.provider } : {}),
+    ...(typeof record.model === "string" ? { model: record.model } : {}),
+    answers: answers as Record<string, DecisionAnswerView>,
+    ...(typeof record.elapsedMs === "number" ? { elapsedMs: record.elapsedMs } : {}),
+    ...(typeof record.error === "string" ? { error: record.error } : {}),
+  };
+}
+
+function readImageDetails(details: unknown): ImageDetailsView | null {
+  const record = asRecord(details);
+  if (!record || record.kind !== "image-generation") return null;
+  return {
+    kind: "image-generation",
+    ok: record.ok !== false,
+    ...(typeof record.provider === "string" ? { provider: record.provider } : {}),
+    ...(typeof record.model === "string" ? { model: record.model } : {}),
+    ...(typeof record.prompt === "string" ? { prompt: record.prompt } : {}),
+    ...(typeof record.count === "number" ? { count: record.count } : {}),
+    ...(typeof record.error === "string" ? { error: record.error } : {}),
+  };
+}
+
+function percent(value: number | undefined): string | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const normalized = value > 1 ? value : value * 100;
+  return `${Math.round(normalized)}%`;
+}
+
+/** Compact badges for `classify_decision` results (choice / score / bool). */
+function DecisionBadges({ details }: { details: DecisionDetailsView }) {
+  const entries = Object.entries(details.answers);
+  const modelLabel = [details.provider, details.model].filter(Boolean).join("/");
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 border-t border-[#EDF1F7] bg-[#F7FAFF] px-3 py-1.5">
+      <span className="rounded bg-[#EDF3FD] px-1.5 py-0.5 text-[10px] font-medium text-accent-strong">
+        决策
+      </span>
+      {!details.ok && (
+        <span className="rounded-full border border-[#F5D3D3] bg-white px-2 py-0.5 text-[11px] text-[#B0443C]">
+          {details.error ?? "决策失败"}
+        </span>
+      )}
+      {entries.map(([key, answer]) => {
+        const confidence = percent(answer.confidence);
+        if (answer.kind === "choice") {
+          return (
+            <span
+              key={key}
+              className="inline-flex items-center gap-1 rounded-full border border-[#D9E5FB] bg-white px-2 py-0.5 text-[11px] text-ink"
+              title={answer.probabilities ? JSON.stringify(answer.probabilities) : undefined}
+            >
+              <span className="font-medium">{answer.choice ?? "—"}</span>
+              {confidence && <span className="text-ink-faint">{confidence}</span>}
+            </span>
+          );
+        }
+        if (answer.kind === "score") {
+          return (
+            <span
+              key={key}
+              className="inline-flex items-center gap-1 rounded-full border border-[#D9E5FB] bg-white px-2 py-0.5 text-[11px] text-ink"
+            >
+              <span>
+                评分 <span className="font-medium">{answer.score ?? "—"}</span>
+              </span>
+              {confidence && <span className="text-ink-faint">{confidence}</span>}
+            </span>
+          );
+        }
+        const probability = percent(answer.probability);
+        return (
+          <span
+            key={key}
+            className="inline-flex items-center gap-1 rounded-full border border-[#D9E5FB] bg-white px-2 py-0.5 text-[11px] text-ink"
+          >
+            概率 <span className="font-medium">{probability ?? "—"}</span>
+          </span>
+        );
+      })}
+      {modelLabel && (
+        <span className="ml-auto truncate font-mono text-[10px] text-ink-faint">{modelLabel}</span>
+      )}
+    </div>
+  );
 }
 
 const SUMMARY_KEYS = [
@@ -495,11 +638,13 @@ function ToolCallCard({
   name,
   input,
   result,
+  details,
   nestedExecutions,
 }: {
   name: string;
   input: Record<string, unknown>;
   result?: ToolResultMessage;
+  details?: unknown;
   nestedExecutions?: Record<string, NestedExecutionView>;
 }) {
   const [open, setOpen] = useState(false);
@@ -511,6 +656,8 @@ function ToolCallCard({
   const tree = nested?.calls.length ? buildNestedTree(nested.calls) : null;
   const output = result ? resultText(result).trim() : "";
   const resultImages = result ? contentImages(result.content) : [];
+  const decision = useMemo(() => readDecisionDetails(details), [details]);
+  const generatedImage = useMemo(() => readImageDetails(details), [details]);
   // Successful edit/write calls show what changed, right in the card: users
   // should not have to open the Git panel to see the AI's own edit.
   const codeDiff = useMemo(
@@ -533,6 +680,16 @@ function ToolCallCard({
         <span className="shrink-0 rounded bg-[#EDF3FD] px-1.5 py-0.5 text-[10px] font-medium text-accent-strong">
           工具
         </span>
+        {generatedImage && (
+          <span className="shrink-0 rounded bg-[#F1ECFE] px-1.5 py-0.5 text-[10px] font-medium text-[#6D56C1]">
+            生图
+          </span>
+        )}
+        {decision && (
+          <span className="shrink-0 rounded bg-[#EAF7F0] px-1.5 py-0.5 text-[10px] font-medium text-[#2F7A55]">
+            决策
+          </span>
+        )}
         <span className="shrink-0 font-mono text-[11px] text-ink-muted">· {name}</span>
         <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-ink-soft">
           {summary || "（无参数）"}
@@ -561,6 +718,34 @@ function ToolCallCard({
           />
         )}
       </button>
+      {generatedImage && (generatedImage.ok || generatedImage.error) && (
+        <div className="flex flex-wrap items-center gap-1.5 border-t border-[#EDF1F7] bg-[#FBF9FF] px-3 py-1.5 text-[11px] text-ink-muted">
+          <span className="truncate">
+            {generatedImage.ok
+              ? `已生成 ${generatedImage.count ?? resultImages.length} 张图片`
+              : `生成失败：${generatedImage.error ?? "未知错误"}`}
+          </span>
+          <span className="ml-auto shrink-0 font-mono text-[10px] text-ink-faint">
+            {[generatedImage.provider, generatedImage.model].filter(Boolean).join("/")}
+          </span>
+        </div>
+      )}
+      {/* Generated images stay visible without expanding the card. */}
+      {resultImages.length > 0 && (
+        <div className="flex flex-wrap gap-2 border-t border-[#EDF1F7] bg-white p-2">
+          {resultImages.map((src, index) => (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              key={index}
+              src={src}
+              alt={`工具输出图片 ${index + 1}`}
+              loading="lazy"
+              className="max-h-72 rounded-md border border-[#E3E8F2] object-contain"
+            />
+          ))}
+        </div>
+      )}
+      {decision && <DecisionBadges details={decision} />}
       {open && hasDetails && (
         <div className="border-t border-[#EDF1F7] bg-[#FBFCFE]">
           {tree && (
@@ -609,6 +794,16 @@ function ToolCallCard({
               </div>
             </div>
           )}
+          {decision && Object.keys(decision.answers).length > 0 && (
+            <details className="border-b border-[#EDF1F7] last:border-b-0">
+              <summary className="cursor-pointer select-none px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-ink-faint">
+                决策结果（JSON）
+              </summary>
+              <pre className="max-h-64 overflow-auto px-3 pb-2 font-mono text-[11.5px] leading-5 text-ink-soft">
+                {JSON.stringify(decision.answers, null, 2)}
+              </pre>
+            </details>
+          )}
           {hasArgs && (
             <details className="border-b border-[#EDF1F7] last:border-b-0" open={!tree && !output}>
               <summary className="cursor-pointer select-none px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-ink-faint">
@@ -618,19 +813,6 @@ function ToolCallCard({
                 {JSON.stringify(input, null, 2)}
               </pre>
             </details>
-          )}
-          {resultImages.length > 0 && (
-            <div className="flex flex-wrap gap-2 border-b border-[#EDF1F7] p-2">
-              {resultImages.map((src, index) => (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  key={index}
-                  src={src}
-                  alt={`工具输出图片 ${index + 1}`}
-                  className="max-h-72 rounded-md border border-[#E3E8F2] object-contain"
-                />
-              ))}
-            </div>
           )}
           {result && (
             <details className="border-b border-[#EDF1F7] last:border-b-0" open={!tree && !hasArgs}>
@@ -862,6 +1044,7 @@ export function Transcript({
                       name={block.name}
                       input={block.input}
                       result={block.result}
+                      details={block.result?.details}
                       nestedExecutions={nestedExecutions}
                     />
                   ),

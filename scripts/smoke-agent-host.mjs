@@ -315,6 +315,64 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     assert.equal(mcpMissing.ok, false);
     assert.equal(mcpMissing.error.code, "MCP_SERVER_NOT_FOUND");
 
+    // ---- auxiliary models (image generation / decisions) ----
+    client.send({ kind: "req", id: 17, method: "models.auxConfig", params: {} });
+    const auxEmpty = await client.waitFor((frame) => frame.kind === "res" && frame.id === 17);
+    assert.equal(auxEmpty.ok, true, JSON.stringify(auxEmpty.error));
+    assert.deepEqual(auxEmpty.result, { image: null, decision: null });
+
+    client.send({ kind: "req", id: 18, method: "models.auxCatalogue", params: {} });
+    const auxCatalogue = await client.waitFor((frame) => frame.kind === "res" && frame.id === 18);
+    assert.equal(auxCatalogue.ok, true, JSON.stringify(auxCatalogue.error));
+    assert.ok(Array.isArray(auxCatalogue.result.image));
+    assert.ok(Array.isArray(auxCatalogue.result.classifier));
+
+    client.send({
+      kind: "req",
+      id: 19,
+      method: "models.setAuxConfig",
+      params: { image: { provider: "openrouter", modelId: "black-forest-labs/flux.2-pro" } },
+    });
+    const auxSaved = await client.waitFor((frame) => frame.kind === "res" && frame.id === 19);
+    assert.equal(auxSaved.ok, true, JSON.stringify(auxSaved.error));
+    assert.equal(auxSaved.result.image.provider, "openrouter");
+
+    client.send({ kind: "req", id: 20, method: "models.auxConfig", params: {} });
+    const auxRead = await client.waitFor((frame) => frame.kind === "res" && frame.id === 20);
+    assert.equal(auxRead.ok, true, JSON.stringify(auxRead.error));
+    assert.equal(auxRead.result.image.modelId, "black-forest-labs/flux.2-pro");
+
+    client.send({
+      kind: "req",
+      id: 21,
+      method: "models.setAuxConfig",
+      params: { image: { provider: "openrouter", modelId: "not-a-real-model" } },
+    });
+    const auxInvalid = await client.waitFor((frame) => frame.kind === "res" && frame.id === 21);
+    assert.equal(auxInvalid.ok, false);
+    assert.equal(auxInvalid.error.code, "E_INVALID_PARAMS");
+
+    // Configured model, but no provider credentials in this sandbox: the call
+    // reports the failure instead of throwing.
+    client.send({ kind: "req", id: 22, method: "image.generate", params: { prompt: "a cat" } });
+    const imageReport = await client.waitFor((frame) => frame.kind === "res" && frame.id === 22);
+    assert.equal(imageReport.ok, true, JSON.stringify(imageReport.error));
+    assert.equal(imageReport.result.ok, false);
+    assert.match(imageReport.result.error, /not configured/i);
+
+    client.send({
+      kind: "req",
+      id: 23,
+      method: "decision.classify",
+      params: {
+        state: { diffLines: 12 },
+        questions: [{ key: "risk", mode: "bool", instructions: "Is this change risky?" }],
+      },
+    });
+    const decisionReport = await client.waitFor((frame) => frame.kind === "res" && frame.id === 23);
+    assert.equal(decisionReport.ok, false);
+    assert.equal(decisionReport.error.code, "AUX_MODEL_NOT_CONFIGURED");
+
     // ---- cascade cleanup on host shutdown ----
     client.send({
       kind: "req",

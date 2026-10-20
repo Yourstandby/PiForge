@@ -27,6 +27,9 @@ export interface AutoRoutingModelSelection {
   modelId: string;
 }
 
+/** Auxiliary (non-chat) model selection: image generation or decision/classifier. */
+export type AuxModelSelection = AutoRoutingModelSelection;
+
 export interface DesktopSettings {
   defaultAgentMode: AgentMode;
   defaultToolPreset: ToolPreset;
@@ -34,6 +37,10 @@ export interface DesktopSettings {
   /** User-picked fast/strong models for the "Auto" routing mode. */
   autoRoutingFast?: AutoRoutingModelSelection;
   autoRoutingStrong?: AutoRoutingModelSelection;
+  /** Image-generation model used by the `generate_image` tool. */
+  imageModel?: AuxModelSelection;
+  /** Classifier model used by the `classify_decision` tool. */
+  decisionModel?: AuxModelSelection;
   /** Optional LTM config; omitted when unset. Merged by getLtmConfig. */
   ltm?: DesktopLtmSettings;
 }
@@ -88,6 +95,10 @@ export function mergeDesktopSettings(raw: unknown): DesktopSettings {
   const strong = parseAutoRoutingSelection(obj.autoRoutingStrong);
   if (fast) result.autoRoutingFast = fast;
   if (strong) result.autoRoutingStrong = strong;
+  const imageModel = parseAutoRoutingSelection(obj.imageModel);
+  const decisionModel = parseAutoRoutingSelection(obj.decisionModel);
+  if (imageModel) result.imageModel = imageModel;
+  if (decisionModel) result.decisionModel = decisionModel;
   return result;
 }
 
@@ -125,7 +136,7 @@ export function validateDesktopSettingsBody(body: unknown): string | null {
   if (obj.defaultToolPreset !== undefined && !isToolPreset(obj.defaultToolPreset)) {
     return "defaultToolPreset must be none | default | full";
   }
-  for (const key of ["autoRoutingFast", "autoRoutingStrong"] as const) {
+  for (const key of ["autoRoutingFast", "autoRoutingStrong", "imageModel", "decisionModel"] as const) {
     const value = obj[key];
     if (value === undefined || value === null) continue;
     if (!value || typeof value !== "object" || Array.isArray(value)) {

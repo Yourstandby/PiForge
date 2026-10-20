@@ -7,6 +7,7 @@ import { useAgentSession } from "@/hooks/useAgentSession";
 import { useAudio } from "@/hooks/useAudio";
 import { useHostHealth } from "@/hooks/useHostHealth";
 import { conversationToMarkdown } from "@/lib/conversation-markdown";
+import { buildImagineMessage } from "@/lib/imagine-command";
 import { BranchCloneModal, type BranchCloneMode } from "./BranchCloneModal";
 import { BranchNavigator } from "./BranchNavigator";
 import { Composer } from "./Composer";
@@ -300,6 +301,31 @@ function ChatSession({
     </div>
   ) : null;
 
+  /**
+   * `/imagine <prompt>` becomes an instruction that names the generate_image
+   * tool. If no image model is configured the Agent cannot call the tool, so
+   * the composer explains that instead of sending a doomed prompt.
+   */
+  const prepareOutgoing = async (text: string): Promise<{ cancel: boolean; text: string }> => {
+    const message = buildImagineMessage(text);
+    if (message === null) return { cancel: false, text };
+    if (message === "") {
+      setCompactToast({ ok: false, text: "请在 /imagine 后输入图片描述" });
+      return { cancel: true, text };
+    }
+    try {
+      const res = await fetch("/api/desktop-settings");
+      const data = (await res.json()) as { imageModel?: unknown };
+      if (res.ok && !data.imageModel) {
+        setCompactToast({ ok: false, text: "请先在 设置 → 辅助模型 中选择生图模型" });
+        return { cancel: true, text };
+      }
+    } catch {
+      // Host unavailable: let the send fail through the normal error path.
+    }
+    return { cancel: false, text: message };
+  };
+
   const composer = (
     <div className="flex flex-col gap-2">
       {chat.canExecutePlan && chat.agentMode === "plan" && (
@@ -355,21 +381,29 @@ function ChatSession({
           void chat.handleAbort();
         }}
         onSubmit={(text, images) => {
-          void chat.handleSend(text, images);
+          void prepareOutgoing(text).then((outgoing) => {
+            if (!outgoing.cancel) void chat.handleSend(outgoing.text, images);
+          });
         }}
         onSteer={(text, images) => {
-          void chat.handleSteer(text, images).catch((error) => {
-            setCompactToast({
-              ok: false,
-              text: `打断失败：${error instanceof Error ? error.message : String(error)}`,
+          void prepareOutgoing(text).then((outgoing) => {
+            if (outgoing.cancel) return;
+            void chat.handleSteer(outgoing.text, images).catch((error) => {
+              setCompactToast({
+                ok: false,
+                text: `打断失败：${error instanceof Error ? error.message : String(error)}`,
+              });
             });
           });
         }}
         onFollowUp={(text, images) => {
-          void chat.handleFollowUp(text, images).catch((error) => {
-            setCompactToast({
-              ok: false,
-              text: `加入队列失败：${error instanceof Error ? error.message : String(error)}`,
+          void prepareOutgoing(text).then((outgoing) => {
+            if (outgoing.cancel) return;
+            void chat.handleFollowUp(outgoing.text, images).catch((error) => {
+              setCompactToast({
+                ok: false,
+                text: `加入队列失败：${error instanceof Error ? error.message : String(error)}`,
+              });
             });
           });
         }}

@@ -24,6 +24,9 @@ import { desktopRuntimeTools } from "./desktop-runtime-tools.ts";
 import { desktopProcessInlineExtension } from "./desktop-process-extension.ts";
 import { desktopBrowserInlineExtension } from "./desktop-browser-extension.ts";
 import { desktopTerminalInlineExtension } from "./desktop-terminal-extension.ts";
+import { desktopImageInlineExtension } from "./desktop-image-extension.ts";
+import { desktopDecisionInlineExtension } from "./desktop-decision-extension.ts";
+import { auxToolAvailability } from "./aux-models.ts";
 import { loadDesktopMcpConfig } from "../lib/mcp-config.ts";
 import { findLastAgentMode } from "./agent-mode-persistence.ts";
 import {
@@ -163,7 +166,7 @@ export class AgentSessionWrapper {
     this._agentMode = mode;
     this._modeRef.current = mode;
     this._modeRef.toolPreset = this._toolPreset;
-    const tools = desktopRuntimeTools(mode, this._toolPreset, this._modeRef.codemodeEnabled ?? false, this.inner.getAllTools(), this.inner.getActiveToolNames());
+    const tools = desktopRuntimeTools(mode, this._toolPreset, this._modeRef.codemodeEnabled ?? false, this.inner.getAllTools(), this.inner.getActiveToolNames(), auxToolAvailability());
     this.inner.setActiveToolsByName(tools);
   }
   setCodemodeEnabled(enabled: boolean): void {
@@ -936,6 +939,8 @@ export async function startRpcSession(
         desktopProcessInlineExtension({ getCwd: () => cwd }),
         desktopBrowserInlineExtension(),
         desktopTerminalInlineExtension({ getCwd: () => cwd }),
+        desktopImageInlineExtension(),
+        desktopDecisionInlineExtension(),
       ],
     });
     await resourceLoader.reload();
