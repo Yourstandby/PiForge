@@ -1,15 +1,39 @@
-import test from "node:test";
+import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AccessDeniedError, addAllowedRoot } from "./allowed-roots.ts";
 import { FileApplyError, MAX_APPLY_CODE_BYTES, applyCodeToFile } from "./file-apply.ts";
 
+// [新增] 记录所有创建的临时目录，确保测试结束后清理
+const createdTempDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of createdTempDirs) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  createdTempDirs.length = 0;
+});
+
 function tempProject(): { dir: string; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), "pi-apply-code-"));
-  addAllowedRoot(dir);
-  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  // [关键修复] 获取真实的绝对路径，解决 macOS 上 /var 和 /private/var 的映射问题
+  const realDir = realpathSync(dir); 
+  
+  // 将真实的绝对路径加入白名单
+  addAllowedRoot(realDir);
+  createdTempDirs.push(realDir);
+
+  return { 
+    dir: realDir, 
+    cleanup: () => {
+      // 配合 afterEach 进行双重清理，保持原有测试用例结构兼容
+      rmSync(realDir, { recursive: true, force: true });
+      const index = createdTempDirs.indexOf(realDir);
+      if (index !== -1) createdTempDirs.splice(index, 1);
+    } 
+  };
 }
 
 test("applyCodeToFile overwrites the whole file", async () => {
