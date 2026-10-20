@@ -7,6 +7,7 @@ const eslintConfig = [
       ".claude/worktrees/**",
       ".next/**",
       "electron/dist/**",
+      "agent-host/dist/**",
       "release/**",
       "out/**",
       "coverage/**",

@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { AgentHostClient } from "../contract/client.ts";
+import type { TerminalBlockStatus } from "../contract/domains/terminal.ts";
 import {
   TERMINAL_MAX_BLOCKS,
   appendShellOutput,
@@ -12,10 +14,53 @@ import {
   setShellOutput,
   startShellBlock,
 } from "./terminal-log.ts";
-import { createDesktopTerminalFactory } from "./desktop-terminal-extension.ts";
+import { createDesktopTerminalFactory } from "../lib/desktop-terminal-extension.ts";
 
 test.beforeEach(() => resetTerminalLogForTest());
 test.afterEach(() => resetTerminalLogForTest());
+
+/**
+ * The desktop terminal extension forwards events to the Agent Host. Tests
+ * inject this fake client so the ring-buffer behavior can be asserted without
+ * spawning a host process.
+ */
+function createFakeClient(): Pick<AgentHostClient, "call"> {
+  const fake = {
+    async call(method: string, params: Record<string, unknown>): Promise<unknown> {
+      switch (method) {
+        case "terminal.shellStart":
+          startShellBlock({
+            id: params.id as string,
+            command: params.command as string,
+            cwd: (params.cwd as string | null | undefined) ?? null,
+          });
+          return { ok: true };
+        case "terminal.shellUpdate":
+          setShellOutput(params.id as string, params.text as string);
+          return { ok: true };
+        case "terminal.shellFinish":
+          return {
+            ok:
+              finishShellBlock({
+                id: params.id as string,
+                text: params.text as string | undefined,
+                status: params.status as TerminalBlockStatus | undefined,
+              }) !== null,
+          };
+        default:
+          throw new Error(`unexpected method: ${method}`);
+      }
+    },
+  };
+  return fake as unknown as Pick<AgentHostClient, "call">;
+}
+
+function createExtension() {
+  return createDesktopTerminalFactory({
+    getCwd: () => "D:/proj",
+    client: createFakeClient(),
+  });
+}
 
 test("shell block starts running and finishes with ANSI text intact", () => {
   startShellBlock({ id: "call-1", command: "npm test", cwd: "/repo" });
@@ -83,7 +128,7 @@ test("extension mirrors bash tool calls into the log", () => {
     registerTool: () => {},
   } as unknown as ExtensionAPI;
 
-  createDesktopTerminalFactory({ getCwd: () => "D:/proj" })(pi);
+  createExtension()(pi);
 
   handlers.get("tool_call")?.({
     type: "tool_call",
@@ -126,7 +171,7 @@ test("extension ignores non-shell tools", () => {
     registerTool: () => {},
   } as unknown as ExtensionAPI;
 
-  createDesktopTerminalFactory({ getCwd: () => "D:/proj" })(pi);
+  createExtension()(pi);
   handlers.get("tool_call")?.({
     type: "tool_call",
     toolCallId: "t2",

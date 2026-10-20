@@ -1,35 +1,19 @@
+/**
+ * Managed background processes (`run_bg`, dev servers, watchers).
+ *
+ * Owned by the Agent Host after the Step 1 migration. Next.js only proxies
+ * RPC calls and SSE events; it no longer spawns or tracks child processes.
+ *
+ * Scope is deliberately small: start a long-running command in the project
+ * cwd, keep the last chunk of its output, and let the user stop / restart it.
+ * No PTY, no port allocation.
+ */
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-
-/**
- * Tiny managed-process registry for the right-panel "进程" tab.
- *
- * Scope is deliberately small: start a long-running command (dev server,
- * watcher, …) in the project cwd, keep the last chunk of its output, and let
- * the user stop / restart it. No PTY, no stdin, no port allocation.
- *
- * State lives on globalThis so Next.js hot reloads do not orphan children or
- * lose the process list.
- */
-
-export type ManagedProcessStatus = "running" | "exited" | "failed";
-
-export interface ManagedProcessView {
-  id: string;
-  name: string;
-  command: string;
-  cwd: string;
-  status: ManagedProcessStatus;
-  pid: number | null;
-  startedAt: number;
-  endedAt: number | null;
-  exitCode: number | null;
-  /** First http(s) URL seen in the output — handy for dev servers. */
-  url: string | null;
-  /** Heuristic readiness: a loopback URL or a "ready/listening" log line. */
-  ready: boolean;
-  logs: string[];
-}
+import type {
+  ManagedProcessStatus,
+  ManagedProcessView,
+} from "../contract/domains/processes.ts";
 
 interface ManagedProcessEntry {
   id: string;
@@ -43,11 +27,6 @@ interface ManagedProcessEntry {
   url: string | null;
   logs: string[];
   child: ChildProcess | null;
-}
-
-declare global {
-  var __piManagedProcesses: Map<string, ManagedProcessEntry> | undefined;
-  var __piManagedProcessListeners: Set<() => void> | undefined;
 }
 
 const MAX_LOG_LINES = 400;
@@ -72,30 +51,25 @@ export function sanitizeLogLine(line: string): string {
   return output.slice(0, 4000);
 }
 
-function listeners(): Set<() => void> {
-  if (!globalThis.__piManagedProcessListeners) globalThis.__piManagedProcessListeners = new Set();
-  return globalThis.__piManagedProcessListeners;
-}
+// A single registry lives in the host process; there is no HMR inside the
+// utility process, so plain module state is enough.
+const registry = new Map<string, ManagedProcessEntry>();
+const listeners = new Set<() => void>();
 
-/** Subscribe to list/log changes (used by the SSE process stream). */
+/** Subscribe to list/log changes (used by the host event broadcaster). */
 export function onManagedProcessesChange(listener: () => void): () => void {
-  listeners().add(listener);
-  return () => listeners().delete(listener);
+  listeners.add(listener);
+  return () => listeners.delete(listener);
 }
 
 function notifyChange(): void {
-  for (const listener of listeners()) {
+  for (const listener of listeners) {
     try {
       listener();
     } catch (error) {
       console.error("managed-process listener failed:", error);
     }
   }
-}
-
-function registry(): Map<string, ManagedProcessEntry> {
-  if (!globalThis.__piManagedProcesses) globalThis.__piManagedProcesses = new Map();
-  return globalThis.__piManagedProcesses;
 }
 
 function pushLog(entry: ManagedProcessEntry, chunk: string): void {
@@ -147,7 +121,7 @@ function defaultName(command: string): string {
 }
 
 export function listManagedProcesses(): ManagedProcessView[] {
-  return [...registry().values()]
+  return [...registry.values()]
     .sort((a, b) => b.startedAt - a.startedAt)
     .map(toView);
 }
@@ -209,7 +183,7 @@ export function startManagedProcess(
     notifyChange();
   });
 
-  registry().set(entry.id, entry);
+  registry.set(entry.id, entry);
   notifyChange();
   return toView(entry);
 }
@@ -246,7 +220,7 @@ function killTree(entry: ManagedProcessEntry): Promise<void> {
 
 /** Send one line to the process stdin (REPLs, interactive dev servers). */
 export function sendManagedProcessInput(id: string, input: string): boolean {
-  const entry = registry().get(id);
+  const entry = registry.get(id);
   if (!entry || entry.status !== "running" || !entry.child?.stdin?.writable) return false;
   try {
     entry.child.stdin.write(input.endsWith("\n") ? input : input + "\n");
@@ -258,7 +232,7 @@ export function sendManagedProcessInput(id: string, input: string): boolean {
 }
 
 export async function stopManagedProcess(id: string): Promise<boolean> {
-  const entry = registry().get(id);
+  const entry = registry.get(id);
   if (!entry) return false;
   pushLog(entry, "[desktop] stopping…");
   await killTree(entry);
@@ -270,10 +244,10 @@ export async function stopManagedProcess(id: string): Promise<boolean> {
 }
 
 export async function restartManagedProcess(id: string): Promise<ManagedProcessView | null> {
-  const previous = registry().get(id);
+  const previous = registry.get(id);
   if (!previous) return null;
   await stopManagedProcess(id);
-  registry().delete(id);
+  registry.delete(id);
 
   const next = startManagedProcess({
     cwd: previous.cwd,
@@ -281,7 +255,7 @@ export async function restartManagedProcess(id: string): Promise<ManagedProcessV
     name: previous.name,
   });
   // Keep history so the panel shows what happened before the restart.
-  const entry = registry().get(next.id);
+  const entry = registry.get(next.id);
   if (entry) {
     entry.logs = [...previous.logs.slice(-40), "--- restarted ---", ...entry.logs];
     notifyChange();
@@ -290,10 +264,27 @@ export async function restartManagedProcess(id: string): Promise<ManagedProcessV
 }
 
 export async function removeManagedProcessEntry(id: string): Promise<boolean> {
-  const entry = registry().get(id);
+  const entry = registry.get(id);
   if (!entry) return false;
   if (entry.status === "running") await stopManagedProcess(id);
-  const removed = registry().delete(id);
+  const removed = registry.delete(id);
   if (removed) notifyChange();
   return removed;
+}
+
+/**
+ * Stop every running child before the host process exits. Shell wrappers on
+ * Windows are killed as a tree so dev servers never survive as orphans.
+ */
+export async function stopAllManagedProcesses(): Promise<number> {
+  const running = [...registry.values()].filter((entry) => entry.child !== null);
+  await Promise.all(running.map((entry) => stopManagedProcess(entry.id)));
+  return running.length;
+}
+
+/** Test helper: drop all state and kill any live children. */
+export async function resetManagedProcessesForTest(): Promise<void> {
+  await stopAllManagedProcesses();
+  registry.clear();
+  listeners.clear();
 }

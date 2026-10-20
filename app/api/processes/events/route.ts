@@ -1,22 +1,31 @@
-import { listManagedProcesses, onManagedProcessesChange } from "@/lib/managed-processes";
+import type { HostSubscription } from "@contract/client";
+import type { Result } from "@contract/methods";
+import { getAgentHostClient } from "@/lib/agent-host-client";
+import { jsonAgentHostError } from "@/lib/agent-host-http";
 
 export const dynamic = "force-dynamic";
 
-// GET /api/processes/events - SSE stream of the managed-process list + logs
+// GET /api/processes/events - SSE stream of the host-owned process list + logs
 export async function GET(req: Request) {
+  const client = getAgentHostClient();
+
+  let initial: Result<"processes.list">;
+  try {
+    initial = await client.call("processes.list", {}, { timeoutMs: 3_000 });
+  } catch (error) {
+    return jsonAgentHostError(req, error, { route: "/api/processes/events", method: "GET" });
+  }
+
   let heartbeat: ReturnType<typeof setInterval> | undefined;
-  let unsubscribe: (() => void) | undefined;
-  let trailing: ReturnType<typeof setTimeout> | undefined;
-  let closed = false;
-  let lastSentAt = 0;
+  let subscription: HostSubscription | undefined;
   let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null;
+  let closed = false;
 
   const cleanup = () => {
     if (closed) return;
     closed = true;
     if (heartbeat) clearInterval(heartbeat);
-    if (trailing) clearTimeout(trailing);
-    unsubscribe?.();
+    subscription?.close();
     try {
       controllerRef?.close();
     } catch {
@@ -26,33 +35,34 @@ export async function GET(req: Request) {
   };
 
   const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
+    async start(controller) {
       controllerRef = controller;
       const encode = (data: unknown) => {
-        controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`));
-      };
-      const send = () => {
         if (closed) return;
-        lastSentAt = Date.now();
-        encode({ type: "processes", processes: listManagedProcesses() });
-      };
-      // Coalesce bursts of output into at most ~4 updates/second.
-      const schedule = () => {
-        if (closed) return;
-        const wait = 250 - (Date.now() - lastSentAt);
-        if (wait <= 0) {
-          send();
-          return;
+        try {
+          controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`));
+        } catch {
+          cleanup();
         }
-        if (trailing) return;
-        trailing = setTimeout(() => {
-          trailing = undefined;
-          send();
-        }, wait);
       };
 
-      send();
-      unsubscribe = onManagedProcessesChange(schedule);
+      // Snapshot from the explicit list call, then the host subscription keeps
+      // the panel live. The subscription also sends its own snapshot, which is
+      // harmless and covers the gap between the two calls.
+      encode({ type: "processes", processes: initial.processes });
+
+      try {
+        subscription = await client.subscribe("processes", (payload) => {
+          encode({ type: "processes", processes: payload.processes });
+        });
+      } catch {
+        cleanup();
+        return;
+      }
+      if (closed) {
+        subscription.close();
+        return;
+      }
 
       heartbeat = setInterval(() => {
         if (controller.desiredSize === null) {

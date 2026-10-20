@@ -1,8 +1,9 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, session, shell, utilityProcess, webContents } from "electron";
 import type { UpdateInfo } from "electron-updater";
 import path from "path";
+import { randomBytes } from "crypto";
 import { appendFileSync, existsSync, mkdirSync } from "fs";
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import net from "net";
 import { createTray } from "./tray";
 import { waitForNextServerReady } from "./server-wait";
@@ -63,9 +64,17 @@ const appWindows = new Set<BrowserWindow>();
 const windowPaths = new WeakMap<BrowserWindow, string>();
 let sessionCspInstalled = false;
 let nextProcess: ServerProcess | null = null;
+let agentHostProcess: ReturnType<typeof utilityProcess.fork> | null = null;
+let agentHostEndpoint: string | null = null;
+let agentHostToken: string | null = null;
+let agentHostReady = false;
+let agentHostShutdownStarted = false;
+let agentHostShutdownComplete = false;
 let isQuitting = false;
 let logFilePath: string | null = null;
 const DEFAULT_PORT = 30141;
+const AGENT_HOST_READY_TIMEOUT_MS = 10_000;
+const AGENT_HOST_SHUTDOWN_TIMEOUT_MS = 4_000;
 let serverState: ServerState = "starting";
 let activePort: number | null = null;
 let startupUiReady = false;
@@ -164,6 +173,163 @@ function reservePort(port: number): Promise<number> {
 }
 
 // ---------------------------------------------------------------------------
+// Agent Host lifecycle
+// ---------------------------------------------------------------------------
+function resolveAgentHostEntry(): string | null {
+  const entryPath = app.isPackaged
+    ? path.join(process.resourcesPath, "standalone", "agent-host", "index.js")
+    : path.join(app.getAppPath(), "agent-host", "dist", "agent-host", "index.js");
+  return existsSync(entryPath) ? entryPath : null;
+}
+
+/** Stable for the lifetime of the app run so a host restart keeps the same address. */
+function createAgentHostEndpoint(): string {
+  if (process.platform === "win32") {
+    return `\\\\.\\pipe\\piforge-agent-${randomBytes(16).toString("hex")}`;
+  }
+  const runDir = path.join(app.getPath("userData"), "run");
+  mkdirSync(runDir, { recursive: true, mode: 0o700 });
+  return path.join(runDir, "agent-host.sock");
+}
+
+function agentHostEnvVars(): Record<string, string> {
+  if (!agentHostEndpoint || !agentHostToken) return {};
+  return {
+    PIFORGE_AGENT_ENDPOINT: agentHostEndpoint,
+    PIFORGE_AGENT_TOKEN: agentHostToken,
+  };
+}
+
+function agentHostProcessEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(pickApiKeys(process.env))) {
+    if (value !== undefined) env[key] = value;
+  }
+  return { ...env, ...agentHostEnvVars() };
+}
+
+function isHostReadyMessage(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { type?: unknown }).type === "host_ready"
+  );
+}
+
+async function startAgentHost(): Promise<void> {
+  if (agentHostProcess) return;
+
+  const entry = resolveAgentHostEntry();
+  if (!entry) {
+    logError("Agent Host entry not found; continuing without host isolation", {
+      expected: app.isPackaged
+        ? "resources/standalone/agent-host/index.js"
+        : "agent-host/dist/agent-host/index.js",
+    });
+    return;
+  }
+
+  agentHostEndpoint ??= createAgentHostEndpoint();
+  agentHostToken ??= randomBytes(32).toString("hex");
+
+  const child = utilityProcess.fork(entry, [], {
+    cwd: app.isPackaged ? path.join(process.resourcesPath, "standalone") : app.getAppPath(),
+    env: agentHostProcessEnv(),
+    stdio: "pipe",
+    serviceName: "PiForge Agent Host",
+  });
+  agentHostProcess = child;
+  agentHostReady = false;
+
+  child.stdout?.on("data", (chunk: Buffer) => logInfo(`[AgentHost] ${chunk.toString().trim()}`));
+  child.stderr?.on("data", (chunk: Buffer) => logError(`[AgentHost] ${chunk.toString().trim()}`));
+
+  child.once("exit", (code) => {
+    agentHostReady = false;
+    if (agentHostProcess === child) agentHostProcess = null;
+    logError("Agent Host exited", { code });
+  });
+
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = (ready: boolean, detail?: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      agentHostReady = ready;
+      if (ready) {
+        logInfo("Agent Host ready", { pid: child.pid, endpoint: agentHostEndpoint, detail });
+      } else {
+        logError("Agent Host failed to become ready", detail);
+      }
+      resolve();
+    };
+    const timer = setTimeout(
+      () => finish(false, { timeoutMs: AGENT_HOST_READY_TIMEOUT_MS }),
+      AGENT_HOST_READY_TIMEOUT_MS,
+    );
+    child.on("message", (message: unknown) => {
+      if (isHostReadyMessage(message)) finish(true, message);
+    });
+    child.once("exit", (code) => finish(false, { code }));
+    child.once("error", (type, location) => finish(false, { type, location }));
+  });
+}
+
+function stopAgentHost(): Promise<void> {
+  const child = agentHostProcess;
+  agentHostProcess = null;
+  agentHostReady = false;
+
+  if (!child) {
+    agentHostShutdownComplete = true;
+    return Promise.resolve();
+  }
+  if (agentHostShutdownComplete) return Promise.resolve();
+  agentHostShutdownStarted = true;
+
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      agentHostShutdownComplete = true;
+      resolve();
+    };
+
+    // Give the host time to drain: it kills every managed process tree before
+    // exiting. If it hangs, kill the whole utility process tree so no dev
+    // server survives the app.
+    const timer = setTimeout(() => {
+      logError("Agent Host did not exit in time; killing its process tree");
+      const pid = child.pid;
+      if (pid) {
+        if (process.platform === "win32") {
+          spawnSync("taskkill.exe", ["/PID", String(pid), "/F", "/T"], { windowsHide: true });
+        } else {
+          const error = killProcessDescendants(pid, "SIGKILL");
+          if (error) logError("Failed to kill Agent Host descendants", error);
+        }
+      }
+      try {
+        child.kill();
+      } catch {
+        // Already gone.
+      }
+      finish();
+    }, AGENT_HOST_SHUTDOWN_TIMEOUT_MS);
+
+    child.once("exit", finish);
+    try {
+      child.postMessage({ type: "shutdown", reason: "app-quit" });
+    } catch {
+      // Already gone; the exit listener (or the timeout) resolves us.
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Next.js server lifecycle
 // ---------------------------------------------------------------------------
 function startNextServer(port: number): ServerProcess {
@@ -176,6 +342,7 @@ function startNextServer(port: number): ServerProcess {
       cwd: app.getAppPath(),
       env: {
         ...pickApiKeys(process.env),
+        ...agentHostEnvVars(),
         NODE_ENV: process.env.NODE_ENV ?? "development",
         PORT: String(port),
         NEXT_TELEMETRY_DISABLED: "1",
@@ -195,6 +362,7 @@ function startNextServer(port: number): ServerProcess {
   const serverScript = path.join(standaloneDir, "server.js");
   const serverEnv = {
     ...pickApiKeys(process.env),
+    ...agentHostEnvVars(),
     NODE_ENV: process.env.NODE_ENV ?? "production",
     PORT: String(port),
     HOSTNAME: "127.0.0.1",
@@ -761,10 +929,22 @@ app.on("child-process-gone", (_event, details) => {
   });
 });
 
-app.on("before-quit", () => {
+app.on("before-quit", (event) => {
   logInfo("before-quit");
   isQuitting = true;
   cleanup();
+
+  // Delay the quit until the host has drained and killed its managed process
+  // trees. Without this, utilityProcess termination would orphan dev servers.
+  if (agentHostProcess && !agentHostShutdownComplete) {
+    event.preventDefault();
+    if (!agentHostShutdownStarted) {
+      logInfo("Stopping Agent Host");
+      void stopAgentHost().finally(() => {
+        app.quit();
+      });
+    }
+  }
 });
 
 app.on("window-all-closed", () => {
@@ -799,6 +979,12 @@ app.whenReady().then(async () => {
     logStartupTiming("window created");
     createTray(mainWindow!, { onNewWindow: () => { openNewWindow(); } });
     startupUiReady = true;
+
+    // The Agent Host is forked before the Next.js server so the server is
+    // launched with a live endpoint in its environment. A failed host start is
+    // non-fatal in this phase: the UI still boots and reports the host state.
+    await startAgentHost();
+    logStartupTiming("agent host startup finished", { ready: agentHostReady });
 
     nextProcess = startNextServer(port);
     logStartupTiming("next process spawned");

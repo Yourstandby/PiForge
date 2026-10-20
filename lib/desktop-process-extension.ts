@@ -2,8 +2,8 @@
  * Inline pi extension: `run_bg` managed background processes.
  *
  * The agent can start a dev server / watcher that must outlive a single tool
- * call. Processes are owned by lib/managed-processes.ts and surfaced in the
- * right-panel "进程" tab, where the user can stop or restart them.
+ * call. Processes are owned by the Agent Host (`agent-host/managed-processes.ts`)
+ * and surfaced in the right-panel "进程" tab, where the user can stop/restart.
  */
 import { Type } from "typebox";
 import type {
@@ -11,13 +11,16 @@ import type {
   ExtensionFactory,
   InlineExtension,
 } from "@earendil-works/pi-coding-agent";
-import { startManagedProcess } from "./managed-processes.ts";
+import type { AgentHostClient } from "../contract/client.ts";
+import { getAgentHostClient } from "./agent-host-client.ts";
 
 export const RUN_BG_TOOL_NAME = "run_bg";
 
 export type DesktopProcessExtensionOptions = {
   /** Session project cwd, resolved at execute time. */
   getCwd: () => string;
+  /** Test/alternate transport hook; defaults to the shared host client. */
+  client?: Pick<AgentHostClient, "call">;
 };
 
 const RunBgParams = Type.Object({
@@ -41,6 +44,7 @@ export function createDesktopProcessFactory(
   options: DesktopProcessExtensionOptions,
 ): ExtensionFactory {
   const { getCwd } = options;
+  const client = options.client ?? getAgentHostClient();
   return (pi: ExtensionAPI) => {
     pi.registerTool({
       name: RUN_BG_TOOL_NAME,
@@ -52,10 +56,10 @@ export function createDesktopProcessFactory(
       parameters: RunBgParams,
       async execute(_toolCallId, params) {
         try {
-          const started = startManagedProcess({
+          const { process: started } = await client.call("processes.start", {
             cwd: getCwd(),
             command: params.command,
-            name: params.name,
+            ...(params.name !== undefined ? { name: params.name } : {}),
           });
           return textResult(
             [
