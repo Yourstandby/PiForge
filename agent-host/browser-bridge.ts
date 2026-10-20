@@ -2,9 +2,9 @@
  * Bridge between the renderer's built-in browser panel and the agent tool
  * `web_preview`.
  *
- * Runs inside the Agent Host. The live page still lives in the Electron
- * renderer's `<webview>`; the renderer polls the Next proxy, which forwards
- * polls/snapshots/results here. No network layer, no queue server.
+ * Runs inside the Agent Host. The live page is a Main-owned WebContentsView;
+ * Main polls this queue over the named pipe and posts snapshots/results back.
+ * No network layer, no queue server.
  */
 import { randomUUID } from "node:crypto";
 import type {

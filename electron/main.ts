@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, session, shell, utilityProcess, webContents } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, session, shell, utilityProcess, WebContentsView, webContents } from "electron";
 import type { UpdateInfo } from "electron-updater";
 import path from "path";
 import { randomBytes } from "crypto";
@@ -29,6 +29,8 @@ import {
   wrapChildServerProcess,
   wrapUtilityServerProcess,
 } from "./server-process";
+import { BrowserManager } from "./browser-manager";
+import { BrowserHostBridge } from "./browser-host-bridge";
 
 // ---------------------------------------------------------------------------
 // Single Instance Lock
@@ -71,6 +73,8 @@ let agentHostReady = false;
 let agentHostShutdownStarted = false;
 let agentHostShutdownComplete = false;
 let agentHostRestartAttempts: number[] = [];
+const browserManagers = new Map<number, BrowserManager>();
+let browserHostBridge: BrowserHostBridge | null = null;
 let agentHostRestartTimer: ReturnType<typeof setTimeout> | null = null;
 let isQuitting = false;
 let logFilePath: string | null = null;
@@ -262,6 +266,7 @@ async function startAgentHost(): Promise<void> {
       agentHostReady = ready;
       if (ready) {
         logInfo("Agent Host ready", { pid: child.pid, endpoint: agentHostEndpoint, detail });
+        startBrowserHostBridge();
       } else {
         logError("Agent Host failed to become ready", detail);
         // Force the exit handler to run so the restart policy applies to a
@@ -549,9 +554,9 @@ function createWindow(options: { initialPath?: string; showStartup?: boolean } =
       // preload 只用 contextBridge + ipcRenderer.{on,off,invoke,send}，
       // 这些 API 在 sandbox 模式下都可用，不会破坏功能。
       sandbox: true,
-      // 右侧面板的内置浏览器用 <webview> 渲染（见 installWebviewSecurity：
-      // 强制独立 session 分区、无 preload、无 node），否则该标签不可用。
-      webviewTag: true,
+      // The built-in browser is a Main-owned WebContentsView (stage 9).
+      // Renderer webviews are disabled so Next/Renderer cannot instantiate one.
+      webviewTag: false,
     },
   });
 
@@ -848,6 +853,68 @@ function installWebviewSecurity(window: BrowserWindow) {
   }
 }
 
+/**
+ * One Main-owned WebContentsView per app window. Renderer only reports the DOM
+ * placeholder bounds; it never creates or navigates the view itself.
+ */
+function getBrowserManager(window: BrowserWindow): BrowserManager {
+  const existing = browserManagers.get(window.id);
+  if (existing) return existing;
+  const view = new WebContentsView({
+    webPreferences: {
+      partition: BROWSER_PARTITION,
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+    },
+  });
+  view.setBackgroundColor("#ffffff");
+  window.contentView.addChildView(view);
+  const manager = new BrowserManager({
+    createSurface: () => ({
+      webContents: view.webContents as unknown as import("./browser-manager").BrowserPageContents,
+      setBounds: (bounds) => view.setBounds(bounds),
+      setVisible: (visible) => view.setVisible(visible),
+      close: () => {
+        try {
+          window.contentView.removeChildView(view);
+        } catch {
+          // Window may already be gone.
+        }
+        view.webContents.close();
+      },
+    }),
+  });
+  manager.onStateChange((state) => {
+    if (!window.isDestroyed()) window.webContents.send("browser:state", state);
+  });
+  manager.setVisible(false);
+  browserManagers.set(window.id, manager);
+  window.once("closed", () => {
+    manager.destroy();
+    browserManagers.delete(window.id);
+  });
+  return manager;
+}
+
+function startBrowserHostBridge(): void {
+  if (!agentHostEndpoint || !agentHostToken) return;
+  browserHostBridge?.stop();
+  browserHostBridge = new BrowserHostBridge({
+    endpoint: agentHostEndpoint,
+    token: agentHostToken,
+    connect: (endpoint) => net.connect(endpoint),
+    getManager: () =>
+      mainWindow && !mainWindow.isDestroyed() ? getBrowserManager(mainWindow) : null,
+    onAgentOpen: () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      mainWindow.webContents.send("browser:agent-open");
+      if (!mainWindow.isVisible()) mainWindow.show();
+    },
+  });
+  browserHostBridge.start();
+}
+
 /** Guest pages open links in place instead of spawning unmanaged windows. */
 function installWebviewGuests() {
   app.on("web-contents-created", (_event, contents) => {
@@ -913,6 +980,51 @@ function registerIpcHandlers() {
 
   // Screenshot for the agent's `web_preview` tool. The guest lives in the
   // renderer, so capture runs here (main holds the only reliable capturePage).
+  ipcMain.handle("browser:set-bounds", (event, bounds: unknown, visible: unknown) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window || !bounds || typeof bounds !== "object") return { ok: false };
+    const value = bounds as Record<string, unknown>;
+    if (![value.x, value.y, value.width, value.height].every((part) => typeof part === "number")) {
+      return { ok: false };
+    }
+    getBrowserManager(window).setBounds(
+      { x: value.x as number, y: value.y as number, width: value.width as number, height: value.height as number },
+      visible === true,
+    );
+    return { ok: true };
+  });
+
+  ipcMain.handle("browser:navigate", async (event, url: unknown) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window || typeof url !== "string") return { ok: false, error: "url is required" };
+    try {
+      await getBrowserManager(window).navigate(url);
+      return { ok: true, state: getBrowserManager(window).getState() };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle("browser:action", async (event, action: unknown) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window) return { ok: false };
+    if (action !== "back" && action !== "forward" && action !== "reload" && action !== "stop") {
+      return { ok: false, error: "unsupported browser action" };
+    }
+    const manager = getBrowserManager(window);
+    if (action === "stop") {
+      manager.stop();
+      return { ok: true, state: manager.getState() };
+    }
+    const result = await manager.executeCommand({ id: "renderer", kind: action });
+    return { ok: result.ok, error: result.error, state: manager.getState() };
+  });
+
+  ipcMain.handle("browser:get-state", (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    return window ? getBrowserManager(window).getState() : null;
+  });
+
   ipcMain.handle("capture-webview", async (_event, contentsId: unknown) => {
     if (typeof contentsId !== "number" || !Number.isFinite(contentsId)) return null;
     const guest = webContents.fromId(contentsId);
@@ -968,6 +1080,8 @@ app.on("child-process-gone", (_event, details) => {
 app.on("before-quit", (event) => {
   logInfo("before-quit");
   isQuitting = true;
+  browserHostBridge?.stop();
+  browserHostBridge = null;
   cleanup();
 
   // Delay the quit until the host has drained and killed its managed process

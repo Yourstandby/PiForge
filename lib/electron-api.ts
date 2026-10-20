@@ -5,6 +5,15 @@
  * caller has to tolerate the bridge being absent.
  */
 
+export interface BrowserState {
+  url: string;
+  title: string;
+  loading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  visible: boolean;
+}
+
 export interface ElectronApi {
   /** Native folder picker. Resolves null when the user cancels. */
   selectDirectory: () => Promise<string | null>;
@@ -12,8 +21,15 @@ export interface ElectronApi {
   openWindow?: (path: string) => Promise<{ ok: boolean } | undefined>;
   /** Resolves a drag-dropped File to its absolute filesystem path. */
   getPathForFile?: (file: File) => string;
-  /** PNG screenshot of a `<webview>` guest (main-process capture). */
+  /** PNG screenshot of a `<webview>` guest (legacy; browser is Main-owned now). */
   captureWebview?: (webContentsId: number) => Promise<{ data: string; mimeType: string } | null>;
+  /** Main-owned WebContentsView placement; Renderer only supplies the rect. */
+  browserSetBounds?: (bounds: { x: number; y: number; width: number; height: number }, visible: boolean) => Promise<{ ok: boolean }>;
+  browserNavigate?: (url: string) => Promise<{ ok: boolean; error?: string; state?: BrowserState }>;
+  browserAction?: (action: "back" | "forward" | "reload" | "stop") => Promise<{ ok: boolean; error?: string; state?: BrowserState }>;
+  browserGetState?: () => Promise<BrowserState | null>;
+  onBrowserState?: (callback: (state: BrowserState) => void) => () => void;
+  onBrowserAgentOpen?: (callback: () => void) => () => void;
   setTheme?: (theme: "light" | "dark" | "glacier") => void;
 }
 

@@ -1,9 +1,11 @@
 /**
- * Bridge between the renderer's built-in browser panel and the agent tool
- * `web_preview`. The command queue now lives in the Agent Host.
+ * Browser commands exchanged between the Agent Host and Electron Main.
+ *
+ * The WebContentsView is Main-owned; Host queues commands over the named pipe
+ * and Main executes them. Renderer only owns the placeholder/address-bar UI.
  */
 
-export type BrowserCommandKind = "read" | "screenshot" | "open";
+export type BrowserCommandKind = "read" | "screenshot" | "open" | "back" | "forward" | "reload";
 
 export interface BrowserCommand {
   id: string;

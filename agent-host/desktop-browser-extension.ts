@@ -33,6 +33,27 @@ const OPEN_TIMEOUT_MS = 25_000;
 const READ_TIMEOUT_MS = 15_000;
 const SCREENSHOT_TIMEOUT_MS = 20_000;
 
+export const BROWSER_READ_TOOL_NAME = "browser_read";
+export const BROWSER_INTERACT_TOOL_NAME = "browser_interact";
+
+const BrowserReadParams = Type.Object({
+  action: Type.Optional(
+    Type.Union([Type.Literal("read"), Type.Literal("screenshot")], {
+      description: "read = page text (default); screenshot = PNG of the visible viewport.",
+    }),
+  ),
+  url: Type.Optional(Type.String({ description: "Optional http(s) URL to open before reading." })),
+  maxChars: Type.Optional(Type.Number({ description: `Max characters of page text (default ${DEFAULT_MAX_CHARS}).` })),
+});
+
+const BrowserInteractParams = Type.Object({
+  action: Type.Union(
+    [Type.Literal("open"), Type.Literal("back"), Type.Literal("forward"), Type.Literal("reload")],
+    { description: "Navigate the Main-owned built-in browser." },
+  ),
+  url: Type.Optional(Type.String({ description: "Required for action=open." })),
+});
+
 const WebPreviewParams = Type.Object({
   action: Type.Union(
     [Type.Literal("read"), Type.Literal("screenshot"), Type.Literal("open")],
@@ -161,12 +182,23 @@ export function createDesktopBrowserFactory(): ExtensionFactory {
     // Enforce the browser capability policy before the tool runs. This also
     // covers codemode scripts, which go through the same tool pipeline.
     pi.on("tool_call", async (event, ctx) => {
-      if (event.toolName !== BROWSER_PREVIEW_TOOL_NAME) return;
+      const isLegacy = event.toolName === BROWSER_PREVIEW_TOOL_NAME;
+      const isRead = event.toolName === BROWSER_READ_TOOL_NAME;
+      const isInteract = event.toolName === BROWSER_INTERACT_TOOL_NAME;
+      if (!isLegacy && !isRead && !isInteract) return;
       const input = (event.input ?? {}) as Record<string, unknown>;
-      const kinds = requestedBrowserPermissions(
-        typeof input.action === "string" ? input.action : "",
-        typeof input.url === "string" && input.url.trim() ? input.url : undefined,
-      );
+      const url = typeof input.url === "string" && input.url.trim() ? input.url : undefined;
+      const kinds = isInteract
+        ? (["interact"] as BrowserPermissionKind[])
+        : isRead
+          ? [
+              ...(input.action === "screenshot" || input.action === "read" || !input.action ? ["read" as const] : []),
+              ...(url ? ["interact" as const] : []),
+            ]
+          : requestedBrowserPermissions(
+              typeof input.action === "string" ? input.action : "",
+              url,
+            );
       if (kinds.length === 0) return;
       const sessionId = ctx.sessionManager.getSessionId();
       const missing = missingBrowserPermissions(sessionId, kinds);
@@ -270,6 +302,83 @@ export function createDesktopBrowserFactory(): ExtensionFactory {
             truncated ? `\n[truncated to ${maxChars} chars — pass a larger maxChars for more]` : "",
           ]),
           { url: read.url ?? url ?? null, title: read.title ?? null, truncated, source: "webview" },
+        );
+      },
+    });
+
+    pi.registerTool({
+      name: BROWSER_READ_TOOL_NAME,
+      label: "Browser Read",
+      description:
+        "Read the rendered text or take a screenshot of the Main-owned built-in browser. " +
+        "Use it after starting a dev server or after browser_interact navigates to a page.",
+      promptSnippet: "Read text or screenshot the built-in browser",
+      promptGuidelines: [
+        "Use browser_read instead of guessing what the UI looks like; pass maxChars if the page is long.",
+        "Screenshots come from the visible viewport of the shared browser.",
+      ],
+      parameters: BrowserReadParams,
+      async execute(_toolCallId, params) {
+        const action = params.action === "screenshot" ? "screenshot" : "read";
+        const url = typeof params.url === "string" && params.url.trim() ? normalizeBrowserUrl(params.url) : undefined;
+        const maxChars = typeof params.maxChars === "number" ? params.maxChars : DEFAULT_MAX_CHARS;
+        if (!isBrowserPanelConnected()) {
+          if (action === "read" && url && isLoopbackHttpUrl(url)) {
+            return fetchLoopbackText(url, maxChars);
+          }
+          return notConnectedResult(url ?? getBrowserSnapshot()?.url);
+        }
+        if (url) {
+          const opened = await requestBrowserCommand({ kind: "open", url }, OPEN_TIMEOUT_MS);
+          if (!opened.ok) return textResult(`Could not open ${url}: ${opened.error ?? "unknown error"}`, { error: opened.error }, true);
+        }
+        if (action === "screenshot") {
+          const shot = await requestBrowserCommand({ kind: "screenshot" }, SCREENSHOT_TIMEOUT_MS);
+          if (!shot.ok || !shot.image?.data) return textResult(`Screenshot failed: ${shot.error ?? "no image returned"}`, { error: shot.error }, true);
+          return {
+            content: [
+              { type: "image" as const, data: shot.image.data, mimeType: shot.image.mimeType },
+              { type: "text" as const, text: pageHeader([`Screenshot: ${shot.url ?? url ?? "unknown"}`, shot.title ? `Title: ${shot.title}` : ""]) },
+            ],
+            details: { url: shot.url ?? url ?? null, source: "main-webcontentsview" },
+          };
+        }
+        const read = await requestBrowserCommand({ kind: "read" }, READ_TIMEOUT_MS);
+        if (!read.ok) return textResult(`Could not read the page: ${read.error ?? "unknown error"}`, { error: read.error }, true);
+        const { text, truncated } = clip(read.text ?? "", maxChars);
+        return textResult(
+          pageHeader([
+            "Page loaded in the shared browser.",
+            `URL: ${read.url ?? url ?? "unknown"}`,
+            read.title ? `Title: ${read.title}` : "",
+            "--- rendered text ---",
+            text || "(page has no text content)",
+            truncated ? `
+[truncated to ${maxChars} chars]` : "",
+          ]),
+          { url: read.url ?? url ?? null, title: read.title ?? null, truncated, source: "main-webcontentsview" },
+        );
+      },
+    });
+
+    pi.registerTool({
+      name: BROWSER_INTERACT_TOOL_NAME,
+      label: "Browser Interact",
+      description: "Navigate the Main-owned built-in browser: open a URL, go back, forward or reload.",
+      promptSnippet: "Navigate the built-in browser",
+      promptGuidelines: ["After opening a localhost URL, use browser_read to verify the rendered page."],
+      parameters: BrowserInteractParams,
+      async execute(_toolCallId, params) {
+        const url = typeof params.url === "string" && params.url.trim() ? normalizeBrowserUrl(params.url) : undefined;
+        if (params.action === "open" && !url) return textResult("`open` needs a `url` parameter.", { error: "missing url" }, true);
+        const command = params.action === "open"
+          ? { kind: "open" as const, url }
+          : { kind: params.action };
+        const result = await requestBrowserCommand(command, OPEN_TIMEOUT_MS);
+        if (!result.ok) return textResult(`Browser ${params.action} failed: ${result.error ?? "unknown error"}`, { error: result.error }, true);
+        return textResult(
+          pageHeader([`Browser ${params.action} complete.`, `URL: ${result.url ?? url ?? "unknown"}`, result.title ? `Title: ${result.title}` : ""]),
+          { url: result.url ?? url ?? null, title: result.title ?? null, source: "main-webcontentsview" },
         );
       },
     });
