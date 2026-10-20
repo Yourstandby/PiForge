@@ -7,6 +7,7 @@ import {
   GitBranch,
   Globe,
   PanelRightClose,
+  Puzzle,
   SquareTerminal,
   Terminal,
   Users,
@@ -19,6 +20,7 @@ import { ProcessPanel } from "./ProcessPanel";
 import { TerminalPanel } from "./TerminalPanel";
 import { SubagentPanel } from "./SubagentPanel";
 import { HerdrPanel } from "./HerdrPanel";
+import { PluginPanel } from "./PluginPanel";
 
 /**
  * FileExplorer renders its rows with inline styles that read the legacy theme
@@ -38,7 +40,7 @@ const explorerTokens = {
   "--font-mono": "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
 } as CSSProperties;
 
-type PanelTab = "files" | "git" | "browser" | "processes" | "terminal" | "agents" | "fleet";
+type PanelTab = "files" | "git" | "browser" | "processes" | "terminal" | "agents" | "fleet" | "plugins";
 
 const PANEL_TABS = [
   { id: "files" as const, label: "文件", Icon: FileCode },
@@ -48,6 +50,7 @@ const PANEL_TABS = [
   { id: "terminal" as const, label: "终端", Icon: SquareTerminal },
   { id: "agents" as const, label: "Agents", Icon: Bot },
   { id: "fleet" as const, label: "舰队", Icon: Users },
+  { id: "plugins" as const, label: "插件", Icon: Puzzle },
 ];
 
 export function FilePanel({
@@ -226,6 +229,12 @@ export function FilePanel({
         {tab === "fleet" && (
           <div className="h-full overflow-y-auto py-1">
             <HerdrPanel />
+          </div>
+        )}
+
+        {tab === "plugins" && (
+          <div className="h-full">
+            <PluginPanel />
           </div>
         )}
 

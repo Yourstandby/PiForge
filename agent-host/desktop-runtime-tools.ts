@@ -51,6 +51,12 @@ export function desktopRuntimeTools(mode: AgentMode, preset: ToolPreset, codemod
   for (const name of ["herdr_spawn", "herdr_status", "herdr_message"]) {
     if (registered.some((tool) => tool.name === name)) names.push(name);
   }
+  // Sandboxed plugins: always visible when the plugin manager loaded them.
+  // Plan mode returned above, so plugin tools (which may request Host writes
+  // through RPC) stay out of read-only plans.
+  for (const tool of registered) {
+    if (tool.name.startsWith("plugin__")) names.push(tool.name);
+  }
   // Auxiliary model lanes: declared only when a model is configured, so a
   // session without them pays no prompt tokens for their schemas.
   if (aux?.image && registered.some((tool) => tool.name === GENERATE_IMAGE_TOOL_NAME)) names.push(GENERATE_IMAGE_TOOL_NAME);

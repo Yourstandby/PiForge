@@ -152,6 +152,13 @@ import {
   syncCustomProvidersToModels,
 } from "./custom-providers.ts";
 import { createHostWebSocketServer, type HostWebSocketServer } from "./ws-server.ts";
+import {
+  initPlugins,
+  listPlugins,
+  PluginManagerError,
+  setPluginEnabled,
+  stopPlugins,
+} from "./plugin-manager.ts";
 
 export interface AgentHostServerOptions {
   /** Named pipe path (Windows) or Unix domain socket path. */
@@ -264,10 +271,36 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
     token: options.token,
     log,
     onCall: async (request) => {
-      // Plugin/UI WS call surface intentionally small in module 1; module 2
-      // extends this through the plugin manager.
-      if (request.method === "host.transport") return wsServer.info();
-      throw new Error(`Unsupported WebSocket method: ${request.method}`);
+      // Privileged operations requested by plugins go through this narrow
+      // Host RPC surface. A plugin never gets fs/child_process itself.
+      switch (request.method) {
+        case "host.health":
+          return health();
+        case "host.transport":
+          return wsServer.info();
+        case "plugins.list":
+          return { plugins: listPlugins() };
+        case "files.authorize": {
+          const target = request.params.path;
+          const mode = request.params.mode;
+          if (typeof target !== "string" || (mode !== "read" && mode !== "write")) {
+            throw new Error("files.authorize requires path and mode=read|write");
+          }
+          return { path: await authorizePath(target, mode) };
+        }
+        case "processes.start": {
+          const cwd = request.params.cwd;
+          const command = request.params.command;
+          if (typeof cwd !== "string" || typeof command !== "string") {
+            throw new Error("processes.start requires cwd and command");
+          }
+          return { process: startManagedProcess({ cwd, command, owner: "agent" }) };
+        }
+        case "mcp.probe":
+          return probeMcpServer(request.params as never);
+        default:
+          throw new Error(`Unsupported WebSocket method: ${request.method}`);
+      }
     },
   });
 
@@ -646,6 +679,40 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       }
       case "host.transport": {
         result(state, frame.id, wsServer.info());
+        return;
+      }
+      case "plugins.list": {
+        result(state, frame.id, { plugins: listPlugins(), transport: wsServer.info() });
+        return;
+      }
+      case "plugins.setEnabled": {
+        const id = readString(params, "id");
+        if (!id || typeof params.enabled !== "boolean") {
+          fail(state, frame.id, "E_INVALID_PARAMS", "id and enabled are required");
+          return;
+        }
+        void setPluginEnabled(id, params.enabled)
+          .then((plugin) => {
+            requestSessionResourceReload();
+            wsServer.publish("plugins.changed", { plugin });
+            result(state, frame.id, { plugin });
+          })
+          .catch((error: unknown) => {
+            fail(state, frame.id, error instanceof PluginManagerError ? "E_INVALID_PARAMS" : "INTERNAL", errorText(error));
+          });
+        return;
+      }
+      case "plugins.reload": {
+        void initPlugins({
+          wsUrl: wsServer.info().wsUrl,
+          token: options.token,
+        })
+          .then((plugins) => {
+            requestSessionResourceReload();
+            wsServer.publish("plugins.changed", { plugins });
+            result(state, frame.id, { plugins });
+          })
+          .catch((error: unknown) => fail(state, frame.id, "INTERNAL", errorText(error)));
         return;
       }
       case "models.providers.list": {
@@ -1788,6 +1855,11 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       subscriptions.clear();
 
       try {
+        stopPlugins();
+      } catch (error) {
+        log(`failed to stop plugins: ${errorText(error)}`);
+      }
+      try {
         await wsServer.close();
       } catch (error) {
         log(`failed to close websocket bus: ${errorText(error)}`);
@@ -1908,6 +1980,16 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
     } catch (error) {
       log(`websocket bus failed to start: ${errorText(error)}`);
       throw error;
+    }
+
+    try {
+      await initPlugins({
+        wsUrl: wsServer.info().wsUrl,
+        token: options.token,
+        log,
+      });
+    } catch (error) {
+      log(`plugin manager failed to initialize: ${errorText(error)}`);
     }
 
     options.onReady?.(options.endpoint);

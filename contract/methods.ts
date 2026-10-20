@@ -45,6 +45,7 @@ import type {
 } from "./domains/memory.ts";
 import type { ManagedProcessView } from "./domains/processes.ts";
 import type { HerdrAgentView } from "./domains/herdr.ts";
+import type { PluginView } from "./domains/plugins.ts";
 import type {
   CustomProviderInput,
   CustomProviderView,
@@ -112,6 +113,20 @@ export interface AgentHostMethods {
   "models.providers.remove": {
     params: { id: string };
     result: { ok: true };
+  };
+
+  // ---- sandboxed plugins ----
+  "plugins.list": {
+    params: Record<string, never>;
+    result: { plugins: PluginView[]; transport: HostTransportInfo };
+  };
+  "plugins.setEnabled": {
+    params: { id: string; enabled: boolean };
+    result: { plugin: PluginView };
+  };
+  "plugins.reload": {
+    params: Record<string, never>;
+    result: { plugins: PluginView[] };
   };
 
   // ---- managed background processes ----
@@ -490,6 +505,9 @@ export const IMPLEMENTED_HOST_METHODS = [
   "models.providers.list",
   "models.providers.save",
   "models.providers.remove",
+  "plugins.list",
+  "plugins.setEnabled",
+  "plugins.reload",
   "processes.list",
   "processes.start",
   "processes.stop",
