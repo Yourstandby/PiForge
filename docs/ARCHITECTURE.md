@@ -186,6 +186,7 @@ pi-agent-desktop/
 │   ├── ExtensionUiDialog.tsx     Extension 交互弹窗（confirm/select/input/editor）
 │   ├── ProjectTrustDialog.tsx    Project Trust 授权对话框
 │   ├── McpConfigModal.tsx        MCP 服务器配置与状态管理弹窗
+│   ├── McpResourceBrowser.tsx    MCP 资源浏览与内容预览
 │   ├── SessionExportModal.tsx    会话导出弹窗（HTML/Markdown）
 │   ├── ExtensionsConfigModal.tsx 扩展与 Skill 统一管理弹窗
 │   ├── BranchCloneModal.tsx      会话分叉与克隆对话框
@@ -469,7 +470,7 @@ Worktree 创建使用 `git worktree add --no-checkout` 后显式 checkout，并�
 | `ExecutePlanBar.tsx` | Plan 模式生成计划后的“一键执行计划”操作条 |
 | `ExtensionUiDialog.tsx` | Extension UI Bridge 交互弹窗 (confirm/select/input/editor) |
 | `ProjectTrustDialog.tsx` | Project Trust 409 握手与目录信任授权弹窗 |
-| `McpConfigModal.tsx` | MCP 服务器发现、在线状态、全局与项目级配置编辑弹窗 |
+| `McpConfigModal.tsx` | MCP 服务器发现、在线状态、全局与项目级配置编辑弹窗（含 OAuth 登录与凭据管理） |
 | `SessionExportModal.tsx` | 会话导出弹窗（支持格式与主题选择、预览与下载） |
 | `ExtensionsConfigModal.tsx` | 扩展、Skill 与 MCP 服务器的多 Tab 统一管理弹窗 |
 | `BranchCloneModal.tsx` | 会话节点分叉 (Branch) 与目录克隆 (Clone) 确认弹窗 |
@@ -571,13 +572,18 @@ components/models-config/     模型配置弹窗的子组件
 | `app/api/sessions/[id]/export/route.ts` | GET | 导出会话为独立 HTML 或 Markdown 文件 |
 | `app/api/sessions/new/route.ts` | — | 已弃用，返回 410 |
 
-### MCP 服务器管理（3 条）
+### MCP 服务器管理（6 条）
 
 | 路由 | 方法 | 用途 |
 | --- | --- | --- |
-| `app/api/mcp/route.ts` | GET / POST / DELETE | 读取合并配置与连线状态；新增/更新 MCP 配置；删除 MCP 配置 |
+| `app/api/mcp/route.ts` | GET / POST / DELETE | 读取合并配置；新增/更新 MCP 配置；删除 MCP 配置 |
 | `app/api/mcp/toggle/route.ts` | POST | 启用或禁用特定 MCP 服务器 (`disabled` 标志) |
-| `app/api/mcp/test/route.ts` | POST | 测试特定 MCP 服务器配置连接与工具探针 |
+| `app/api/mcp/test/route.ts` | POST | 经 Host `mcp.probe` 测试已保存服务器或未保存表单的连接与工具探针 |
+| `app/api/mcp/auth/route.ts` | GET / POST | 经 Host 读取 OAuth 凭据状态；发起/取消登录、退出登录、刷新凭据 |
+| `app/api/mcp/resources/route.ts` | GET | 经 Host 列出服务器的 Resources 与 Resource Templates |
+| `app/api/mcp/resources/read/route.ts` | POST | 经 Host 读取单个资源内容（超出 256KB 截断） |
+
+> v0.5.0 起，MCP 连接、OAuth（PKCE + loopback 回调，凭据复用 Pi 的 `<agent-dir>/mcp-auth.json`）与资源读取全部在 Agent Host 的 `agent-host/mcp-service.ts` 内执行；Next 只做 RPC 代理。工具默认暴露方式改为 `deferred`（工具搜索按需激活），避免把所有 MCP 工具塞进模型工具列表。
 
 ### 扩展与 Skill 管理（4 条）
 

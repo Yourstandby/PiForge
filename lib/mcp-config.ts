@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, readFileSync } from "fs";
 import { dirname, join } from "path";
 import { isDeepStrictEqual } from "node:util";
-import { McpClient, StdioTransport, StreamableHttpTransport } from "@earendil-works/pi-mcp";
 import { writeFileAtomic } from "./atomic-write.ts";
 import { getAgentDir, type LoadedMcpConfig, type McpServerConfig as NativeMcpServerConfig } from "@earendil-works/pi-coding-agent";
 
@@ -307,7 +306,7 @@ export function saveMcpServer(
     ...rest,
     type: transport,
     enabled: serverConfig.disabled !== undefined ? !serverConfig.disabled : serverConfig.enabled ?? true,
-    exposure: serverConfig.exposure ?? currentServers[id]?.exposure ?? "direct",
+    exposure: serverConfig.exposure ?? currentServers[id]?.exposure ?? "deferred",
   };
   delete entry.transport;
   delete entry.disabled;
@@ -385,45 +384,4 @@ export function toggleMcpServer(
 
   writeMcpConfig(scope, { ...config, mcpServers: currentServers }, cwd, options);
   return true;
-}
-export interface TestMcpServerOptions {
-  command?: string;
-  args?: string[];
-  env?: Record<string, string>;
-  url?: string;
-  transport?: McpTransportType;
-  headers?: Record<string, string>;
-  cwd?: string;
-}
-
-export interface TestMcpServerResult {
-  success: boolean;
-  message?: string;
-  toolsCount?: number;
-}
-
-/** A user-requested protocol probe; session connections remain owned by Pi. */
-export async function testMcpServerConnection(options: TestMcpServerOptions): Promise<TestMcpServerResult> {
-  const client = new McpClient({ name: "pi-desktop-probe", version: "1.0.0", requestTimeoutMs: 5000 });
-  const resolveValues = (values?: Record<string, string>) => Object.fromEntries(Object.entries(values ?? {}).map(([key, value]) => {
-    if (value.startsWith("!")) throw new Error("Command-valued credentials are resolved by Pi during the session; use /mcp to check this server.");
-    return [key, value.replace(/\$\{([^}]+)\}/g, (_, name: string) => process.env[name] ?? "")];
-  }));
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    if (options.transport === "sse") throw new Error("Legacy SSE is not supported; use Streamable HTTP.");
-    const transport = options.url
-      ? new StreamableHttpTransport({ url: options.url, headers: resolveValues(options.headers), openGetStream: false })
-      : new StdioTransport({ command: options.command ?? "", args: options.args, env: resolveValues(options.env), cwd: options.cwd });
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => { void client.close(); reject(new Error("MCP connection timed out")); }, 7000);
-    });
-    const tools = await Promise.race([(async () => { await client.connect(transport); return client.listTools(); })(), timeout]);
-    return { success: true, toolsCount: tools.length };
-  } catch (error) {
-    return { success: false, message: error instanceof Error ? error.message : String(error) };
-  } finally {
-    if (timer) clearTimeout(timer);
-    await client.close();
-  }
 }

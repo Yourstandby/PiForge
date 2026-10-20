@@ -17,6 +17,15 @@ import type {
   BrowserPageSnapshot,
 } from "./domains/browser.ts";
 import type {
+  McpAuthState,
+  McpConnectionConfig,
+  McpConnectionReport,
+  McpPendingLogin,
+  McpResourceReadResult,
+  McpScope,
+  McpServerRef,
+} from "./domains/mcp.ts";
+import type {
   MemoryHealth,
   MemoryStats,
   MemoryType,
@@ -175,6 +184,53 @@ export interface AgentHostMethods {
     result: { updated: number };
   };
 
+  // ---- MCP management (connections and OAuth live only in the host) ----
+  "mcp.probe": {
+    params: {
+      cwd?: string;
+      serverId?: string;
+      scope?: McpScope;
+      connection?: McpConnectionConfig;
+    };
+    result: McpConnectionReport;
+  };
+  "mcp.resources": {
+    params: McpServerRef;
+    result: {
+      toolsCount: number;
+      resources: McpConnectionReport["resources"];
+      resourceTemplates: McpConnectionReport["resourceTemplates"];
+    };
+  };
+  "mcp.readResource": {
+    params: McpServerRef & { uri: string };
+    result: McpResourceReadResult;
+  };
+  "mcp.authStatus": {
+    params: McpServerRef;
+    result: McpAuthState;
+  };
+  "mcp.login": {
+    params: McpServerRef;
+    result: { loginId: string; authorizationUrl: string };
+  };
+  "mcp.cancelLogin": {
+    params: { loginId: string };
+    result: { ok: boolean };
+  };
+  "mcp.logout": {
+    params: McpServerRef;
+    result: { ok: boolean };
+  };
+  "mcp.refreshAuth": {
+    params: McpServerRef;
+    result: McpAuthState;
+  };
+  "mcp.loginStatus": {
+    params: { loginId: string };
+    result: { login: McpPendingLogin | null };
+  };
+
   // ---- session metadata / mutation ----
   "sessions.locate": {
     params: { sessionId: string };
@@ -304,6 +360,15 @@ export const IMPLEMENTED_HOST_METHODS = [
   "agent.unsubscribe",
   "agent.reloadResources",
   "agent.updateCodemode",
+  "mcp.probe",
+  "mcp.resources",
+  "mcp.readResource",
+  "mcp.authStatus",
+  "mcp.login",
+  "mcp.cancelLogin",
+  "mcp.logout",
+  "mcp.refreshAuth",
+  "mcp.loginStatus",
   "sessions.locate",
   "sessions.state",
   "sessions.rename",

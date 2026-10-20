@@ -9,7 +9,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { desktopApprovalInlineExtension, type AgentModeRef } from "./desktop-approval-extension.ts";
 import { desktopRuntimeTools } from "./desktop-runtime-tools.ts";
-import { loadDesktopMcpConfig, saveMcpServer, testMcpServerConnection, writeMcpConfig } from "../lib/mcp-config.ts";
+import { loadDesktopMcpConfig, saveMcpServer, writeMcpConfig } from "../lib/mcp-config.ts";
+import { probeMcpConnection } from "./mcp-service.ts";
 
 const fixture = `import { createInterface } from 'node:readline';
 createInterface({input:process.stdin}).on('line', line => {
@@ -39,8 +40,9 @@ test("native MCP handshake, discovery, invocation and Codemode nested permission
   await loader.reload();
   const { session } = await createAgentSession({ cwd: dir, agentDir: dir, resourceLoader: loader, sessionManager: SessionManager.inMemory(dir), noTools: "builtin" });
   try {
-    const probe = await testMcpServerConnection({ command: process.execPath, args: [serverPath] });
-    assert.deepEqual(probe, { success: true, toolsCount: 1 });
+    const probe = await probeMcpConnection({ command: process.execPath, args: [serverPath] });
+    assert.equal(probe.ok, true, probe.message);
+    assert.equal(probe.toolsCount, 1);
     await session.bindExtensions({ mode: "rpc", uiContext: { confirm: async () => false, notify: () => {} } as never });
     for (let attempt = 0; !session.getAllTools().some((tool) => tool.name === "mcp__fixture__echo"); attempt++) {
       assert.ok(attempt < 300, "MCP discovery timed out");
@@ -117,6 +119,6 @@ test("native MCP rejects project provider auth before creating a transport", { t
 });
 
 test("non-MCP processes are not reported as successful protocol connections", async () => {
-  const result = await testMcpServerConnection({ command: process.execPath, args: ["-v"] });
-  assert.equal(result.success, false);
+  const result = await probeMcpConnection({ command: process.execPath, args: ["-v"] });
+  assert.equal(result.ok, false);
 });

@@ -21,6 +21,7 @@ import {
 } from "../contract/events.ts";
 import { parseClientFrame } from "../contract/guards.ts";
 import type { HostHealth } from "../contract/methods.ts";
+import type { McpConnectionConfig } from "../contract/domains/mcp.ts";
 import { validateAgentCommand } from "../lib/agent-commands.ts";
 import { isAgentMode, isToolPreset } from "../lib/approval-policy.ts";
 import {
@@ -84,6 +85,20 @@ import {
   setShellOutput,
   startShellBlock,
 } from "./terminal-log.ts";
+import {
+  cancelMcpLogin,
+  closeAllMcpClients,
+  getLoginStatus,
+  isMcpAuthRequiredError,
+  listMcpResources,
+  loginMcpServer,
+  logoutMcpServer,
+  McpServiceError,
+  mcpAuthStatus,
+  probeMcpServer,
+  readMcpResource,
+  refreshMcpAuth,
+} from "./mcp-service.ts";
 
 export interface AgentHostServerOptions {
   /** Named pipe path (Windows) or Unix domain socket path. */
@@ -276,6 +291,31 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       return;
     }
     fail(state, id, "INTERNAL", errorText(error));
+  }
+
+  function failMcp(state: ConnectionState, id: number, error: unknown): void {
+    if (error instanceof McpServiceError) {
+      fail(state, id, error.code, error.message);
+      return;
+    }
+    if (isMcpAuthRequiredError(error)) {
+      fail(state, id, "MCP_AUTH_REQUIRED", errorText(error));
+      return;
+    }
+    fail(state, id, "INTERNAL", errorText(error));
+  }
+
+  function readMcpRef(params: Record<string, unknown>): { cwd?: string; serverId: string; scope?: "global" | "project" } | null {
+    const serverId = readString(params, "serverId");
+    if (!serverId) return null;
+    const scope = params.scope;
+    if (scope !== undefined && scope !== "global" && scope !== "project") return null;
+    const cwd = readOptionalString(params, "cwd");
+    return {
+      serverId,
+      ...(cwd ? { cwd } : {}),
+      ...(scope ? { scope } : {}),
+    };
   }
 
   function emitTopicSnapshot(topic: GlobalTopic): void {
@@ -808,6 +848,123 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       }
 
       // ---------------------------------------------------------------------
+      // MCP management: all connections and OAuth stay in this process.
+      // ---------------------------------------------------------------------
+      case "mcp.probe": {
+        const serverId = readOptionalString(params, "serverId");
+        const connection = params.connection;
+        if (serverId !== undefined && (typeof serverId !== "string" || !serverId.trim())) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "serverId must be a non-empty string");
+          return;
+        }
+        if (!serverId && (!connection || typeof connection !== "object" || Array.isArray(connection))) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "serverId or connection is required");
+          return;
+        }
+        const scope = params.scope;
+        if (scope !== undefined && scope !== "global" && scope !== "project") {
+          fail(state, frame.id, "E_INVALID_PARAMS", "scope must be 'global' or 'project'");
+          return;
+        }
+        void probeMcpServer({
+          ...(readOptionalString(params, "cwd") ? { cwd: readOptionalString(params, "cwd") } : {}),
+          ...(serverId ? { serverId, scope } : {}),
+          ...(connection ? { connection: connection as McpConnectionConfig } : {}),
+        })
+          .then((report) => result(state, frame.id, report))
+          .catch((error: unknown) => failMcp(state, frame.id, error));
+        return;
+      }
+      case "mcp.resources": {
+        const ref = readMcpRef(params);
+        if (!ref) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "serverId is required");
+          return;
+        }
+        void listMcpResources(ref)
+          .then((resources) => result(state, frame.id, resources))
+          .catch((error: unknown) => failMcp(state, frame.id, error));
+        return;
+      }
+      case "mcp.readResource": {
+        const ref = readMcpRef(params);
+        const uri = readString(params, "uri");
+        if (!ref || !uri) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "serverId and uri are required");
+          return;
+        }
+        void readMcpResource({ ...ref, uri })
+          .then((resource) => result(state, frame.id, resource))
+          .catch((error: unknown) => failMcp(state, frame.id, error));
+        return;
+      }
+      case "mcp.authStatus": {
+        const ref = readMcpRef(params);
+        if (!ref) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "serverId is required");
+          return;
+        }
+        void Promise.resolve()
+          .then(() => mcpAuthStatus(ref))
+          .then((auth) => result(state, frame.id, auth))
+          .catch((error: unknown) => failMcp(state, frame.id, error));
+        return;
+      }
+      case "mcp.login": {
+        const ref = readMcpRef(params);
+        if (!ref) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "serverId is required");
+          return;
+        }
+        void loginMcpServer(ref)
+          .then((login) => result(state, frame.id, login))
+          .catch((error: unknown) => failMcp(state, frame.id, error));
+        return;
+      }
+      case "mcp.cancelLogin": {
+        const loginId = readString(params, "loginId");
+        if (!loginId) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "loginId is required");
+          return;
+        }
+        void cancelMcpLogin(loginId)
+          .then((ok) => result(state, frame.id, { ok }))
+          .catch((error: unknown) => failMcp(state, frame.id, error));
+        return;
+      }
+      case "mcp.loginStatus": {
+        const loginId = readString(params, "loginId");
+        if (!loginId) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "loginId is required");
+          return;
+        }
+        result(state, frame.id, { login: getLoginStatus(loginId) });
+        return;
+      }
+      case "mcp.logout": {
+        const ref = readMcpRef(params);
+        if (!ref) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "serverId is required");
+          return;
+        }
+        void logoutMcpServer(ref)
+          .then((ok) => result(state, frame.id, { ok }))
+          .catch((error: unknown) => failMcp(state, frame.id, error));
+        return;
+      }
+      case "mcp.refreshAuth": {
+        const ref = readMcpRef(params);
+        if (!ref) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "serverId is required");
+          return;
+        }
+        void refreshMcpAuth(ref)
+          .then((auth) => result(state, frame.id, auth))
+          .catch((error: unknown) => failMcp(state, frame.id, error));
+        return;
+      }
+
+      // ---------------------------------------------------------------------
       // Session metadata / mutation
       // ---------------------------------------------------------------------
       case "sessions.locate": {
@@ -1190,6 +1347,12 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
 
       // Cascade cleanup: every shell wrapper/dev server spawned by this host
       // is killed as a process tree before the host exits.
+      try {
+        await closeAllMcpClients();
+      } catch (error) {
+        log(`failed to close MCP management connections: ${errorText(error)}`);
+      }
+
       try {
         const stopped = await stopAllManagedProcesses();
         if (stopped > 0) log(`stopped ${stopped} managed process(es)`);

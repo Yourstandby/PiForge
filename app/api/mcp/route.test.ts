@@ -129,13 +129,40 @@ test("DELETE /api/mcp removes server config", async () => {
   }
 });
 
-test("POST /api/mcp/test tests server execution", async () => {
-  const testReq = new Request("http://localhost/api/mcp/test", {
-    method: "POST",
-    body: JSON.stringify({ command: "node", args: ["-v"] }),
-  });
-  const res = await testMcp(testReq);
-  assert.equal(res.status, 200);
-  const body = await res.json();
-  assert.equal(typeof body.success, "boolean");
+test("POST /api/mcp/test rejects an empty probe and proxies saved-server probes to the host", async () => {
+  const emptyReq = new Request("http://localhost/api/mcp/test", { method: "POST", body: JSON.stringify({}) });
+  const emptyRes = await testMcp(emptyReq);
+  assert.equal(emptyRes.status, 400);
+
+  const previous = globalThis.__piforgeAgentHostClient;
+  const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+  globalThis.__piforgeAgentHostClient = {
+    call: async (method: string, params: Record<string, unknown>) => {
+      calls.push({ method, params });
+      return {
+        ok: true,
+        elapsedMs: 3,
+        authRequired: false,
+        toolsCount: 1,
+        tools: [{ name: "echo" }],
+        resources: [],
+        resourceTemplates: [],
+      };
+    },
+  } as unknown as typeof previous;
+  try {
+    const testReq = new Request("http://localhost/api/mcp/test", {
+      method: "POST",
+      body: JSON.stringify({ serverId: "fixture", scope: "global" }),
+    });
+    const res = await testMcp(testReq);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.success, true);
+    assert.equal(body.toolsCount, 1);
+    assert.equal(calls[0]?.method, "mcp.probe");
+    assert.equal(calls[0]?.params.serverId, "fixture");
+  } finally {
+    globalThis.__piforgeAgentHostClient = previous;
+  }
 });

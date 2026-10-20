@@ -1,12 +1,40 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import type { McpServerStatus, McpServerConfig } from "@/lib/mcp-config";
+import type { McpAuthState, McpScope } from "@contract/domains/mcp";
 import { useI18n } from "./I18nProvider";
 import { apiJson } from "./apiJson";
+import { McpResourceBrowser } from "./McpResourceBrowser";
 
 export interface McpConfigContentProps {
   cwd?: string;
+}
+
+interface ProbeSummary {
+  success: boolean;
+  message?: string;
+  toolsCount?: number;
+  authRequired?: boolean;
+}
+
+const EXPOSURE_VALUES = ["deferred", "codemode", "direct", "hidden"] as const;
+type Exposure = (typeof EXPOSURE_VALUES)[number];
+type ConfiguredExposure = NonNullable<McpServerConfig["exposure"]>;
+
+/** Older configs may use `codemode-deferred`; the UI collapses it to `codemode`. */
+function normalizeExposure(value: ConfiguredExposure | undefined): Exposure {
+  return EXPOSURE_VALUES.includes(value as Exposure) ? (value as Exposure) : "codemode";
+}
+
+function serverKey(server: { scope: string; id: string }): string {
+  return `${server.scope}:${server.id}`;
+}
+
+/** OAuth applies to HTTP servers that do not send an Authorization header. */
+function usesOAuth(server: McpServerStatus): boolean {
+  if (server.transport === "stdio" || !server.url) return false;
+  return !Object.keys(server.headers ?? {}).some((header) => header.toLowerCase() === "authorization");
 }
 
 export function McpConfigContent({ cwd }: McpConfigContentProps) {
@@ -27,38 +55,134 @@ export function McpConfigContent({ cwd }: McpConfigContentProps) {
   const [formEnv, setFormEnv] = useState("");
   const [formUrl, setFormUrl] = useState("");
   const [formHeaders, setFormHeaders] = useState("");
-  const [formExposure, setFormExposure] = useState<NonNullable<McpServerConfig["exposure"]>>("direct");
+  const [formExposure, setFormExposure] = useState<Exposure>("deferred");
 
-  // Testing connection state
+  // Live connection state (host-owned)
   const [testingId, setTestingId] = useState<string | null>(null);
   const [testingForm, setTestingForm] = useState(false);
+  const [authStates, setAuthStates] = useState<Record<string, McpAuthState>>({});
+  const [reports, setReports] = useState<Record<string, ProbeSummary>>({});
+  const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [resourceServer, setResourceServer] = useState<McpServerStatus | null>(null);
   const [testResult, setTestResult] = useState<{
     success: boolean;
     message?: string;
     toolsCount?: number;
   } | null>(null);
 
-  const fetchServers = useCallback(async () => {
+  const loginTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  const authUrlFor = useCallback(
+    (server: { id: string; scope: McpScope }) =>
+      `/api/mcp/auth?id=${encodeURIComponent(server.id)}&scope=${server.scope}${
+        cwd ? `&cwd=${encodeURIComponent(cwd)}` : ""
+      }`,
+    [cwd],
+  );
+
+  const loadServers = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const url = cwd ? `/api/mcp?cwd=${encodeURIComponent(cwd)}` : "/api/mcp";
-      const data = await apiJson<{ servers?: McpServerStatus[] }>(
-        url,
-        undefined,
-        { fallback: t("mcp.loadFailed") },
-      );
-      setServers(data.servers || []);
+      const data = await apiJson<{ servers?: McpServerStatus[] }>(url, undefined, {
+        fallback: t("mcp.loadFailed"),
+      });
+      const list = data.servers || [];
+      setServers(list);
+
+      const withOAuth = list.filter(usesOAuth);
+      if (withOAuth.length > 0) {
+        const entries = await Promise.all(
+          withOAuth.map(async (server) => {
+            try {
+              const auth = await apiJson<McpAuthState>(authUrlFor(server), undefined, {
+                fallback: t("mcp.authLoadFailed"),
+              });
+              return [serverKey(server), auth] as const;
+            } catch {
+              // Host down: the configuration list still renders.
+              return null;
+            }
+          }),
+        );
+        setAuthStates((prev) => {
+          const next = { ...prev };
+          for (const entry of entries) {
+            if (entry) next[entry[0]] = entry[1];
+          }
+          return next;
+        });
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : t("mcp.loadFailed"));
     } finally {
       setLoading(false);
     }
-  }, [cwd, t]);
+  }, [authUrlFor, cwd, t]);
 
   useEffect(() => {
-    fetchServers();
-  }, [fetchServers]);
+    void loadServers();
+  }, [loadServers]);
+
+  useEffect(
+    () => () => {
+      for (const timer of loginTimers.current.values()) clearTimeout(timer);
+      loginTimers.current.clear();
+    },
+    [],
+  );
+
+  /** Poll the host while a browser sign-in is outstanding. */
+  const pollLogin = useCallback(
+    (server: McpServerStatus, loginId: string) => {
+      if (loginTimers.current.has(loginId)) return;
+      const started = Date.now();
+      const tick = async () => {
+        if (Date.now() - started > 5 * 60_000) {
+          loginTimers.current.delete(loginId);
+          return;
+        }
+        try {
+          const auth = await apiJson<McpAuthState>(authUrlFor(server), undefined, {
+            fallback: t("mcp.authLoadFailed"),
+          });
+          setAuthStates((prev) => ({ ...prev, [serverKey(server)]: auth }));
+          const login = auth.login;
+          if (login && login.loginId === loginId && login.status === "pending") {
+            loginTimers.current.set(loginId, setTimeout(() => void tick(), 1500));
+            return;
+          }
+          loginTimers.current.delete(loginId);
+          if (!login || login.loginId !== loginId) return;
+          if (login.status === "authorized") {
+            setTestResult({ success: true, message: t("mcp.loginSucceeded", { name: server.name || server.id }) });
+            void loadServers();
+          } else if (login.status === "cancelled") {
+            setTestResult({ success: false, message: t("mcp.loginCancelled") });
+          } else {
+            setTestResult({ success: false, message: login.message || t("mcp.loginFailed") });
+          }
+        } catch {
+          loginTimers.current.delete(loginId);
+        }
+      };
+      void tick();
+    },
+    [authUrlFor, loadServers, t],
+  );
+
+  // Resume polling after reopening the modal while a sign-in is outstanding.
+  useEffect(() => {
+    for (const server of servers) {
+      const login = authStates[serverKey(server)]?.login;
+      if (login?.status === "pending") pollLogin(server, login.loginId);
+    }
+  }, [authStates, pollLogin, servers]);
+
+  const updateAuthState = (server: McpServerStatus, auth: McpAuthState) => {
+    setAuthStates((prev) => ({ ...prev, [serverKey(server)]: auth }));
+  };
 
   const handleToggle = async (server: McpServerStatus) => {
     try {
@@ -72,7 +196,7 @@ export function McpConfigContent({ cwd }: McpConfigContentProps) {
           cwd,
         }),
       }, { fallback: t("mcp.toggleFailed") });
-      fetchServers();
+      loadServers();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : t("mcp.toggleFailed"));
     }
@@ -90,36 +214,38 @@ export function McpConfigContent({ cwd }: McpConfigContentProps) {
           cwd,
         }),
       }, { fallback: t("mcp.deleteFailed") });
-      fetchServers();
+      loadServers();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : t("mcp.deleteFailed"));
     }
   };
 
   const handleTestServer = async (server: McpServerStatus) => {
-    setTestingId(server.id);
+    const key = serverKey(server);
+    setTestingId(key);
     setTestResult(null);
     try {
       const res = await fetch("/api/mcp/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          command: server.command,
-          args: server.args,
-          env: server.env,
-          url: server.url,
-          headers: server.headers,
-          transport: server.transport,
-          cwd,
-        }),
+        body: JSON.stringify({ serverId: server.id, scope: server.scope, cwd }),
       });
       const data = await res.json();
-      setTestResult({
+      const report: ProbeSummary = {
         success: data.success ?? false,
-        message: data.message || (data.success
-          ? t("mcp.connectedTools", { count: data.toolsCount ?? 0 })
-          : t("mcp.connectionFailed")),
+        message: data.message,
         toolsCount: data.toolsCount,
+        authRequired: data.authRequired ?? false,
+      };
+      setReports((prev) => ({ ...prev, [key]: report }));
+      setTestResult({
+        success: report.success,
+        message:
+          report.message ||
+          (report.success
+            ? t("mcp.connectedTools", { count: report.toolsCount ?? 0 })
+            : t("mcp.connectionFailed")),
+        toolsCount: report.toolsCount,
       });
     } catch (err: unknown) {
       setTestResult({
@@ -152,12 +278,14 @@ export function McpConfigContent({ cwd }: McpConfigContentProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          command: formTransport === "stdio" ? formCommand.trim() : undefined,
-          args: formTransport === "stdio" ? formArgs.split(/\s+/).filter(Boolean) : undefined,
-          env: parsedEnv,
-          url: formTransport !== "stdio" ? formUrl.trim() : undefined,
-          transport: formTransport,
-          headers: formHeaders.trim() ? JSON.parse(formHeaders) : undefined,
+          connection: {
+            command: formTransport === "stdio" ? formCommand.trim() : undefined,
+            args: formTransport === "stdio" ? formArgs.split(/\s+/).filter(Boolean) : undefined,
+            env: parsedEnv,
+            url: formTransport !== "stdio" ? formUrl.trim() : undefined,
+            transport: formTransport,
+            headers: formHeaders.trim() ? JSON.parse(formHeaders) : undefined,
+          },
           cwd,
         }),
       });
@@ -179,6 +307,104 @@ export function McpConfigContent({ cwd }: McpConfigContentProps) {
     }
   };
 
+  const postAuthAction = async (
+    server: McpServerStatus,
+    body: Record<string, unknown>,
+  ): Promise<McpAuthState | null> => {
+    return apiJson<McpAuthState>(authUrlFor(server), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...body, id: server.id, scope: server.scope, cwd }),
+    }, { fallback: t("mcp.authFailed") });
+  };
+
+  const handleLogin = async (server: McpServerStatus) => {
+    const key = serverKey(server);
+    setBusyAction(key);
+    setTestResult(null);
+    try {
+      const login = await apiJson<{ loginId: string; authorizationUrl: string }>(
+        "/api/mcp/auth",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "login", id: server.id, scope: server.scope, cwd }),
+        },
+        { fallback: t("mcp.loginFailed") },
+      );
+      window.open(login.authorizationUrl, "_blank", "noopener,noreferrer");
+      setTestResult({ success: true, message: t("mcp.loginStarted") });
+      setAuthStates((prev) => ({
+        ...prev,
+        [key]: {
+          ...(prev[key] ?? { oauth: true, authenticated: false, hasClient: false, hasRefreshToken: false }),
+          login: {
+            loginId: login.loginId,
+            serverId: server.id,
+            scope: server.scope,
+            status: "pending",
+            authorizationUrl: login.authorizationUrl,
+            startedAt: Date.now(),
+          },
+        },
+      }));
+      pollLogin(server, login.loginId);
+    } catch (err: unknown) {
+      setTestResult({ success: false, message: err instanceof Error ? err.message : t("mcp.loginFailed") });
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleCancelLogin = async (server: McpServerStatus) => {
+    const login = authStates[serverKey(server)]?.login;
+    if (!login || login.status !== "pending") return;
+    try {
+      await apiJson("/api/mcp/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "cancel", loginId: login.loginId }),
+      }, { fallback: t("mcp.loginCancelFailed") });
+      setTestResult({ success: false, message: t("mcp.loginCancelled") });
+      void loadServers();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : t("mcp.loginCancelFailed"));
+    }
+  };
+
+  const handleLogout = async (server: McpServerStatus) => {
+    const key = serverKey(server);
+    setBusyAction(key);
+    try {
+      await postAuthAction(server, { action: "logout" });
+      setReports((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      setTestResult({ success: true, message: t("mcp.logoutSucceeded") });
+      void loadServers();
+    } catch (err: unknown) {
+      setTestResult({ success: false, message: err instanceof Error ? err.message : t("mcp.logoutFailed") });
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleRefreshAuth = async (server: McpServerStatus) => {
+    const key = serverKey(server);
+    setBusyAction(key);
+    try {
+      const auth = await postAuthAction(server, { action: "refresh" });
+      if (auth) updateAuthState(server, auth);
+      setTestResult({ success: true, message: t("mcp.refreshSucceeded") });
+    } catch (err: unknown) {
+      setTestResult({ success: false, message: err instanceof Error ? err.message : t("mcp.refreshFailed") });
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
   const openAddForm = () => {
     setIsNew(true);
     setEditingServer({});
@@ -191,7 +417,7 @@ export function McpConfigContent({ cwd }: McpConfigContentProps) {
     setFormEnv("");
     setFormUrl("");
     setFormHeaders("");
-    setFormExposure("direct");
+    setFormExposure("deferred");
     setTestResult(null);
   };
 
@@ -213,7 +439,7 @@ export function McpConfigContent({ cwd }: McpConfigContentProps) {
     );
     setFormUrl(server.url || "");
     setFormHeaders(server.headers ? JSON.stringify(server.headers, null, 2) : "");
-    setFormExposure(server.exposure ?? "codemode");
+    setFormExposure(normalizeExposure(server.exposure));
     setTestResult(null);
   };
 
@@ -261,11 +487,22 @@ export function McpConfigContent({ cwd }: McpConfigContentProps) {
         }),
       }, { fallback: t("mcp.saveFailed") });
       setEditingServer(null);
-      fetchServers();
+      loadServers();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : t("mcp.saveFailed"));
     }
   };
+
+  if (resourceServer) {
+    return (
+      <McpResourceBrowser
+        serverId={resourceServer.id}
+        scope={resourceServer.scope}
+        cwd={cwd}
+        onClose={() => setResourceServer(null)}
+      />
+    );
+  }
 
   return (
     <div className="flex flex-col h-full bg-bg text-text text-[13px]">
@@ -365,13 +602,21 @@ export function McpConfigContent({ cwd }: McpConfigContentProps) {
               </div>
             </div>
 
-            <label className="text-[12px] text-text-muted">
-              {t("mcp.exposure")}
-              <select value={formExposure} onChange={(e) => setFormExposure(e.target.value as NonNullable<McpServerConfig["exposure"]>)}
-                className="block mt-1 w-full px-2.5 py-1.5 rounded-control bg-bg border border-border text-text">
-                {["direct", "codemode", "codemode-deferred", "deferred", "hidden"].map((value) => <option key={value} value={value}>{value}</option>)}
+            <div>
+              <label className="block text-[11px] font-medium text-text-muted mb-1">
+                {t("mcp.exposure")}
+              </label>
+              <select
+                value={formExposure}
+                onChange={(e) => setFormExposure(e.target.value as Exposure)}
+                className="w-full px-2.5 py-1.5 rounded-control bg-bg border border-border text-text text-[12px]"
+              >
+                {EXPOSURE_VALUES.map((value) => (
+                  <option key={value} value={value}>{t(`mcp.exposure.${value}`)}</option>
+                ))}
               </select>
-            </label>
+              <p className="mt-1 text-[11px] leading-relaxed text-text-dim">{t("mcp.exposureHint")}</p>
+            </div>
 
             {formTransport === "stdio" ? (
               <>
@@ -430,6 +675,7 @@ export function McpConfigContent({ cwd }: McpConfigContentProps) {
                     placeholder={'{"Authorization": "Bearer ${TOKEN}"}'}
                     className="block mt-1 w-full px-2.5 py-1.5 rounded-control bg-bg border border-border text-text font-mono resize-y" />
                 </label>
+                <p className="mt-1 text-[11px] leading-relaxed text-text-dim">{t("mcp.oauthHint")}</p>
               </div>
             )}
 
@@ -508,127 +754,213 @@ export function McpConfigContent({ cwd }: McpConfigContentProps) {
             )}
 
             {servers.map((server) => {
-              const isTesting = testingId === server.id;
-              const isDisabled = server.disabled;
+              const key = serverKey(server);
+              const isTesting = testingId === key;
+              const isBusy = busyAction === key;
+              const isDisabled = Boolean(server.disabled);
+              const auth = authStates[key];
+              const report = reports[key];
+              const login = auth?.login;
+              const loginPending = login?.status === "pending";
+              const oauthCapable = usesOAuth(server);
+              const needsLogin = oauthCapable && !auth?.authenticated && !loginPending;
+              const exposure = normalizeExposure(server.exposure);
+              const statusLabel = isDisabled
+                ? t("common.disabled")
+                : loginPending
+                  ? t("mcp.waitingAuthorization")
+                  : needsLogin
+                    ? t("mcp.needsLogin")
+                    : report?.success
+                      ? `${t("common.connected")}${report.toolsCount ? ` (${t("common.toolsCount", { count: report.toolsCount })})` : ""}`
+                      : auth?.authenticated
+                        ? t("mcp.authorized")
+                        : server.status === "error"
+                          ? t("common.error")
+                          : t("mcp.configured");
 
               return (
                 <div
-                  key={`${server.scope}-${server.id}`}
-                  className={`flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-panel border transition-[background-color,border-color,color] duration-150 ${
+                  key={key}
+                  className={`flex flex-col gap-2 p-3.5 rounded-panel border transition-[background-color,border-color,color] duration-150 ${
                     isDisabled
                       ? "bg-bg-panel/40 border-border/50 opacity-65"
                       : "bg-bg-panel border-border"
                   }`}
                 >
-                  <div className="flex flex-col gap-1 pr-2">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-semibold text-text text-[13px]">
-                        {server.name || server.id}
-                      </span>
-                      {server.name && (
-                        <span className="font-mono text-[11px] text-text-dim">
-                          ({server.id})
+                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                    <div className="flex flex-col gap-1 pr-2 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-text text-[13px]">
+                          {server.name || server.id}
                         </span>
-                      )}
+                        {server.name && (
+                          <span className="font-mono text-[11px] text-text-dim">
+                            ({server.id})
+                          </span>
+                        )}
 
-                      {/* Scope Badge */}
-                      <span
-                        className={`px-1.5 py-0.5 rounded text-[10px] font-mono border uppercase tracking-wider ${
-                          server.scope === "global"
-                            ? "bg-indigo-500/10 text-indigo-400 border-indigo-500/20"
-                            : "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                        }`}
-                      >
-                        {t(server.scope === "global" ? "scope.global" : "scope.project")}
-                      </span>
-
-                      {/* Transport Badge */}
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-bg-elevated text-text-dim border border-border">
-                        {server.transport || "stdio"}
-                      </span>
-
-                      {/* Status Badge */}
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-medium border flex items-center gap-1 ${
-                          isDisabled
-                            ? "bg-gray-500/10 text-gray-400 border-gray-500/20"
-                            : server.status === "connected"
-                            ? "bg-green-500/10 text-green-400 border-green-500/20"
-                            : server.status === "error"
-                            ? "bg-red-500/10 text-red-400 border-red-500/20"
-                            : "bg-yellow-500/10 text-yellow-400 border-yellow-500/20"
-                        }`}
-                      >
+                        {/* Scope Badge */}
                         <span
-                          className={`w-1.5 h-1.5 rounded-full ${
-                            isDisabled
-                              ? "bg-gray-400"
-                              : server.status === "connected"
-                              ? "bg-green-400"
-                              : server.status === "error"
-                              ? "bg-red-400"
-                              : "bg-yellow-400"
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-mono border uppercase tracking-wider ${
+                            server.scope === "global"
+                              ? "bg-indigo-500/10 text-indigo-400 border-indigo-500/20"
+                              : "bg-amber-500/10 text-amber-400 border-amber-500/20"
                           }`}
-                        />
-                        {isDisabled
-                          ? t("common.disabled")
-                          : server.status === "connected"
-                          ? `${t("common.connected")} ${server.toolsCount ? `(${t("common.toolsCount", { count: server.toolsCount })})` : ""}`
-                          : server.status === "error"
-                          ? t("common.error")
-                          : t("mcp.configured")}
-                      </span>
-                    </div>
-
-                    {/* Command / URL details */}
-                    <div className="font-mono text-[11px] text-text-muted truncate max-w-lg mt-0.5">
-                      {server.transport !== "stdio" ? (
-                        <span>{server.url}</span>
-                      ) : (
-                        <span>
-                          {server.command} {(server.args || []).join(" ")}
+                        >
+                          {t(server.scope === "global" ? "scope.global" : "scope.project")}
                         </span>
+
+                        {/* Transport Badge */}
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-bg-elevated text-text-dim border border-border">
+                          {server.transport || "stdio"}
+                        </span>
+
+                        {/* Exposure badge */}
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-bg-elevated text-text-dim border border-border">
+                          {t(`mcp.exposure.${exposure}`)}
+                        </span>
+
+                        {/* Status Badge */}
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-medium border flex items-center gap-1 ${
+                            isDisabled
+                              ? "bg-gray-500/10 text-gray-400 border-gray-500/20"
+                              : loginPending || needsLogin
+                                ? "bg-amber-500/10 text-amber-600 border-amber-500/20"
+                                : report?.success || auth?.authenticated
+                                  ? "bg-green-500/10 text-green-600 border-green-500/20"
+                                  : server.status === "error"
+                                    ? "bg-red-500/10 text-red-500 border-red-500/20"
+                                    : "bg-gray-500/10 text-gray-500 border-gray-500/20"
+                          }`}
+                        >
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full ${
+                              isDisabled
+                                ? "bg-gray-400"
+                                : loginPending || needsLogin
+                                  ? "bg-amber-400"
+                                  : report?.success || auth?.authenticated
+                                    ? "bg-green-400"
+                                    : server.status === "error"
+                                      ? "bg-red-400"
+                                      : "bg-gray-400"
+                            }`}
+                          />
+                          {statusLabel}
+                        </span>
+                      </div>
+
+                      {/* Command / URL details */}
+                      <div className="font-mono text-[11px] text-text-muted truncate max-w-lg mt-0.5">
+                        {server.transport !== "stdio" ? (
+                          <span>{server.url}</span>
+                        ) : (
+                          <span>
+                            {server.command} {(server.args || []).join(" ")}
+                          </span>
+                        )}
+                      </div>
+
+                      {loginPending && login?.authorizationUrl && (
+                        <div className="mt-1 flex flex-col gap-1 rounded-control border border-amber-200 bg-amber-50 px-2.5 py-1.5">
+                          <p className="text-[11px] text-amber-700">{t("mcp.waitingAuthorizationHint")}</p>
+                          <a
+                            href={login.authorizationUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="truncate text-[11px] text-accent underline"
+                          >
+                            {t("mcp.reopenAuthorization")}
+                          </a>
+                        </div>
+                      )}
+
+                      {server.errorMessage && !isDisabled && (
+                        <div className="text-[11px] text-red-400 mt-1">
+                          {server.errorMessage}
+                        </div>
+                      )}
+                      {!isDisabled && report && !report.success && report.message && (
+                        <div className="text-[11px] text-red-500 mt-1">
+                          {report.authRequired ? t("mcp.authRequiredHint") : report.message}
+                        </div>
                       )}
                     </div>
 
-                    {server.errorMessage && !isDisabled && (
-                      <div className="text-[11px] text-red-400 mt-1">
-                        {server.errorMessage}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Actions */}
-                  <div className="flex items-center gap-2 mt-3 sm:mt-0 shrink-0">
-                    <button
-                      onClick={() => handleTestServer(server)}
-                      disabled={isTesting || isDisabled}
-                      className="px-2.5 py-1 rounded-control border border-border text-text-muted hover:text-text hover:bg-bg-hover transition-colors text-[11px] disabled:opacity-40 cursor-pointer"
-                    >
-                      {isTesting ? t("mcp.testing") : t("common.test")}
-                    </button>
-                    <button
-                      onClick={() => handleToggle(server)}
-                      className={`px-2.5 py-1 rounded-control text-[11px] font-medium transition-colors cursor-pointer border ${
-                        isDisabled
-                          ? "bg-accent/10 text-accent border-accent/30 hover:bg-accent/20"
-                          : "bg-bg-elevated text-text-muted border-border hover:text-text"
-                      }`}
-                    >
-                      {isDisabled ? t("common.enable") : t("common.disable")}
-                    </button>
-                    <button
-                      onClick={() => openEditForm(server)}
-                      className="px-2.5 py-1 rounded-control border border-border text-text-muted hover:text-text hover:bg-bg-hover transition-colors text-[11px] cursor-pointer"
-                    >
-                      {t("common.edit")}
-                    </button>
-                    <button
-                      onClick={() => handleDelete(server)}
-                      className="px-2.5 py-1 rounded-control border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors text-[11px] cursor-pointer"
-                    >
-                      {t("common.delete")}
-                    </button>
+                    {/* Actions */}
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      <button
+                        onClick={() => handleTestServer(server)}
+                        disabled={isTesting || isDisabled}
+                        className="px-2.5 py-1 rounded-control border border-border text-text-muted hover:text-text hover:bg-bg-hover transition-colors text-[11px] disabled:opacity-40 cursor-pointer"
+                      >
+                        {isTesting ? t("mcp.testing") : t("common.test")}
+                      </button>
+                      <button
+                        onClick={() => setResourceServer(server)}
+                        disabled={isDisabled}
+                        className="px-2.5 py-1 rounded-control border border-border text-text-muted hover:text-text hover:bg-bg-hover transition-colors text-[11px] disabled:opacity-40 cursor-pointer"
+                      >
+                        {t("mcp.resources")}
+                      </button>
+                      {oauthCapable && !isDisabled && (loginPending ? (
+                        <button
+                          onClick={() => handleCancelLogin(server)}
+                          className="px-2.5 py-1 rounded-control border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors text-[11px] cursor-pointer"
+                        >
+                          {t("mcp.cancelLogin")}
+                        </button>
+                      ) : auth?.authenticated ? (
+                        <>
+                          <button
+                            onClick={() => handleRefreshAuth(server)}
+                            disabled={isBusy}
+                            className="px-2.5 py-1 rounded-control border border-border text-text-muted hover:text-text hover:bg-bg-hover transition-colors text-[11px] disabled:opacity-40 cursor-pointer"
+                          >
+                            {t("mcp.refreshAuth")}
+                          </button>
+                          <button
+                            onClick={() => handleLogout(server)}
+                            disabled={isBusy}
+                            className="px-2.5 py-1 rounded-control border border-border text-text-muted hover:text-text hover:bg-bg-hover transition-colors text-[11px] disabled:opacity-40 cursor-pointer"
+                          >
+                            {t("mcp.logout")}
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          onClick={() => handleLogin(server)}
+                          disabled={isBusy}
+                          className="px-2.5 py-1 rounded-control bg-accent/10 text-accent border border-accent/30 hover:bg-accent/20 transition-colors text-[11px] font-medium disabled:opacity-40 cursor-pointer"
+                        >
+                          {t("mcp.login")}
+                        </button>
+                      ))}
+                      <button
+                        onClick={() => handleToggle(server)}
+                        className={`px-2.5 py-1 rounded-control text-[11px] font-medium transition-colors cursor-pointer border ${
+                          isDisabled
+                            ? "bg-accent/10 text-accent border-accent/30 hover:bg-accent/20"
+                            : "bg-bg-elevated text-text-muted border-border hover:text-text"
+                        }`}
+                      >
+                        {isDisabled ? t("common.enable") : t("common.disable")}
+                      </button>
+                      <button
+                        onClick={() => openEditForm(server)}
+                        className="px-2.5 py-1 rounded-control border border-border text-text-muted hover:text-text hover:bg-bg-hover transition-colors text-[11px] cursor-pointer"
+                      >
+                        {t("common.edit")}
+                      </button>
+                      <button
+                        onClick={() => handleDelete(server)}
+                        className="px-2.5 py-1 rounded-control border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors text-[11px] cursor-pointer"
+                      >
+                        {t("common.delete")}
+                      </button>
+                    </div>
                   </div>
                 </div>
               );

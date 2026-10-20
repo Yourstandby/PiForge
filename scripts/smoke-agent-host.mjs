@@ -13,7 +13,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -146,11 +146,39 @@ async function waitForPidExit(pid) {
 async function main() {
   const endpoint = createEndpoint();
   const token = randomBytes(32).toString("hex");
+  const sandbox = mkdtempSync(path.join(tmpdir(), "piforge-smoke-mcp-"));
+  const agentDir = path.join(sandbox, "agent");
+  const fixturePath = path.join(sandbox, "mcp-fixture.mjs");
+  mkdirSync(agentDir, { recursive: true });
+  writeFileSync(
+    fixturePath,
+    `import { createInterface } from "node:readline";
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const request = JSON.parse(line);
+  if (request.id === undefined) return;
+  let result = {};
+  if (request.method === "initialize") result = { protocolVersion: "2025-11-25", capabilities: { tools: {}, resources: {} }, serverInfo: { name: "smoke-mcp", version: "1" } };
+  if (request.method === "tools/list") result = { tools: [{ name: "echo", description: "Echo", inputSchema: { type: "object" } }] };
+  if (request.method === "resources/list") result = { resources: [{ uri: "smoke://note", name: "note", mimeType: "text/plain" }] };
+  if (request.method === "resources/templates/list") result = { resourceTemplates: [{ uriTemplate: "smoke://note/{id}", name: "note-template" }] };
+  if (request.method === "resources/read") result = { contents: [{ uri: request.params.uri, mimeType: "text/plain", text: "smoke-resource-body" }] };
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
+});`,
+  );
+  writeFileSync(
+    path.join(agentDir, "mcp.json"),
+    JSON.stringify({
+      mcpServers: {
+        smoke: { command: process.execPath, args: [fixturePath], exposure: "deferred" },
+      },
+    }),
+  );
   const child = spawn(process.execPath, [hostEntry], {
     cwd: repoRoot,
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
+      PI_CODING_AGENT_DIR: agentDir,
       PIFORGE_AGENT_ENDPOINT: endpoint,
       PIFORGE_AGENT_TOKEN: token,
     },
@@ -251,6 +279,42 @@ async function main() {
     assert.equal(stopped.result.ok, true);
     assert.ok(await waitForPidExit(processPid), "stopped process should no longer be alive");
 
+    // ---- MCP management (connections stay in the host) ----
+    client.send({ kind: "req", id: 11, method: "mcp.probe", params: { serverId: "smoke", cwd: repoRoot } });
+    const mcpProbe = await client.waitFor((frame) => frame.kind === "res" && frame.id === 11);
+    assert.equal(mcpProbe.ok, true, JSON.stringify(mcpProbe.error));
+    assert.equal(mcpProbe.result.ok, true, mcpProbe.result.message);
+    assert.equal(mcpProbe.result.toolsCount, 1);
+    assert.equal(mcpProbe.result.resources.length, 1);
+    assert.equal(mcpProbe.result.resourceTemplates.length, 1);
+
+    client.send({ kind: "req", id: 12, method: "mcp.resources", params: { serverId: "smoke", cwd: repoRoot } });
+    const mcpResources = await client.waitFor((frame) => frame.kind === "res" && frame.id === 12);
+    assert.equal(mcpResources.ok, true, JSON.stringify(mcpResources.error));
+    assert.equal(mcpResources.result.resources[0].uri, "smoke://note");
+
+    client.send({ kind: "req", id: 13, method: "mcp.readResource", params: { serverId: "smoke", cwd: repoRoot, uri: "smoke://note" } });
+    const mcpRead = await client.waitFor((frame) => frame.kind === "res" && frame.id === 13);
+    assert.equal(mcpRead.ok, true, JSON.stringify(mcpRead.error));
+    assert.equal(mcpRead.result.contents[0].text, "smoke-resource-body");
+    assert.equal(mcpRead.result.truncated, false);
+
+    client.send({ kind: "req", id: 14, method: "mcp.authStatus", params: { serverId: "smoke", cwd: repoRoot } });
+    const mcpAuth = await client.waitFor((frame) => frame.kind === "res" && frame.id === 14);
+    assert.equal(mcpAuth.ok, true, JSON.stringify(mcpAuth.error));
+    assert.equal(mcpAuth.result.oauth, false);
+    assert.equal(mcpAuth.result.authenticated, false);
+
+    client.send({ kind: "req", id: 15, method: "mcp.login", params: { serverId: "smoke", cwd: repoRoot } });
+    const mcpLogin = await client.waitFor((frame) => frame.kind === "res" && frame.id === 15);
+    assert.equal(mcpLogin.ok, false);
+    assert.equal(mcpLogin.error.code, "E_INVALID_PARAMS");
+
+    client.send({ kind: "req", id: 16, method: "mcp.probe", params: { serverId: "missing", cwd: repoRoot } });
+    const mcpMissing = await client.waitFor((frame) => frame.kind === "res" && frame.id === 16);
+    assert.equal(mcpMissing.ok, false);
+    assert.equal(mcpMissing.error.code, "MCP_SERVER_NOT_FOUND");
+
     // ---- cascade cleanup on host shutdown ----
     client.send({
       kind: "req",
@@ -286,6 +350,7 @@ async function main() {
     console.log("agent-host smoke: OK");
   } finally {
     if (child.exitCode === null) child.kill("SIGKILL");
+    rmSync(sandbox, { recursive: true, force: true });
   }
 }
 

@@ -488,3 +488,18 @@ test("removeMcpServer deletes entry from mcp.json", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("new servers default to tool-search exposure instead of declaring every tool", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-mcp-default-exposure-"));
+  const agentDir = join(dir, "agent");
+  try {
+    const saved = saveMcpServer("global", { id: "searchable", command: "node" }, undefined, { agentDir });
+    assert.equal(saved.exposure, "deferred");
+    assert.equal(readMcpConfig("global", undefined, { agentDir }).mcpServers?.searchable?.exposure, "deferred");
+    const visible = getMcpServers(undefined, { agentDir }).find((server) => server.id === "searchable");
+    assert.equal(visible?.exposure, "deferred");
+    assert.equal(loadDesktopMcpConfig(agentDir, dir, false).servers[0].config.exposure, "deferred");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
