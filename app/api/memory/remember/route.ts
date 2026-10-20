@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { getRequestId, jsonError } from "@/lib/api-error";
-import { jsonLtmError, LTM_DISABLED, parseRememberBody } from "@/lib/ltm/http";
-import { getMemoryService } from "@/lib/ltm/service";
+import { getAgentHostClient } from "@/lib/agent-host-client";
+import { jsonAgentHostError } from "@/lib/agent-host-http";
+import type { MemoryType } from "@contract/domains/memory";
 
 export const dynamic = "force-dynamic";
 
@@ -15,30 +16,30 @@ export async function POST(req: Request) {
     } catch {
       return jsonError(req, 400, "JSON body is required");
     }
-
-    const parsed = parseRememberBody(body);
-    if (!parsed.ok) {
-      return jsonError(req, 400, parsed.error);
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return jsonError(req, 400, "JSON body is required");
+    }
+    const input = body as {
+      cwd?: string;
+      content?: string;
+      type?: MemoryType;
+      concepts?: string[];
+      files?: string[];
+    };
+    if (!input.cwd) return jsonError(req, 400, "cwd is required");
+    if (typeof input.content !== "string" || input.content.trim().length === 0) {
+      return jsonError(req, 400, "content is required");
     }
 
-    const service = getMemoryService();
-    if (!service.isEnabled()) {
-      return jsonError(req, 503, LTM_DISABLED);
-    }
-
-    const { cwd, content, type, concepts, files } = parsed.value;
-    const result = await service.rememberFromCwd(cwd, {
-      content,
-      ...(type !== undefined ? { type } : {}),
-      ...(concepts !== undefined ? { concepts } : {}),
-      ...(files !== undefined ? { files } : {}),
+    const result = await getAgentHostClient().call("memory.remember", {
+      cwd: input.cwd,
+      content: input.content,
+      ...(input.type !== undefined ? { type: input.type } : {}),
+      ...(input.concepts !== undefined ? { concepts: input.concepts } : {}),
+      ...(input.files !== undefined ? { files: input.files } : {}),
     });
     return NextResponse.json(result, { headers: { "x-request-id": requestId } });
   } catch (error) {
-    return jsonLtmError(req, error, {
-      route: "/api/memory/remember",
-      method: "POST",
-      requestId,
-    });
+    return jsonAgentHostError(req, error, { route: "/api/memory/remember", method: "POST" });
   }
 }

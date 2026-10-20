@@ -1,4 +1,5 @@
 import { SessionManager, buildSessionProjection, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getAgentHostClient } from "./agent-host-client.ts";
 import type { SessionEntry, SessionInfo, SessionContext, SessionTreeNode, AssistantMessage, SessionHeader } from "./types.ts";
 import type { SessionEntry as PiSessionEntry, SessionInfo as PiSessionInfo } from "@earendil-works/pi-coding-agent";
 import { normalizeToolCalls } from "./normalize.ts";
@@ -21,14 +22,14 @@ export { getAgentDir };
 // Positive + short-TTL negative cache (see session-path-cache.ts)
 // ============================================================================
 declare global {
-  var __piSessionPathCacheState: SessionPathCacheState | undefined;
+  var __piforgeSessionPathCacheState: SessionPathCacheState | undefined;
 }
 
 function getPathCacheState(): SessionPathCacheState {
-  if (!globalThis.__piSessionPathCacheState) {
-    globalThis.__piSessionPathCacheState = createSessionPathCacheState();
+  if (!globalThis.__piforgeSessionPathCacheState) {
+    globalThis.__piforgeSessionPathCacheState = createSessionPathCacheState();
   }
-  return globalThis.__piSessionPathCacheState;
+  return globalThis.__piforgeSessionPathCacheState;
 }
 
 function getPathCache(): Map<string, string> {
@@ -72,32 +73,50 @@ export async function resolveSessionPath(sessionId: string): Promise<string | nu
   const cached = getCachedSessionPath(state, sessionId);
   if (cached.hit) return cached.path;
 
-  // A negative entry can go stale within its TTL: the session file may have
-  // been created right after the miss was recorded (先查后建 — a fork/clone
-  // registering a brand-new id), which would hide the now-existing session
-  // from real requests → false 404. If a live RPC wrapper exists for this id,
-  // the file is guaranteed to exist (startRpcSession opened it), so drop the
-  // stale negative and fall through to a re-scan instead of returning null.
+  // The active AgentSession lives in the Agent Host now. A session created
+  // there may not be flushed to disk yet (fork/new-session window), so the
+  // host is the only place that can resolve it. Session-only trust means the
+  // lookup never leaks data: it returns a path already known to the host.
   if (cached.negative) {
-    if (!getLiveRpcSession(sessionId)) return null;
+    const livePath = await locateViaHost(sessionId);
+    if (!livePath) return null;
     state.misses.delete(sessionId);
+    cacheSessionPathEntry(state, sessionId, livePath);
+    return livePath;
   }
 
-  // Cache miss: scan all sessions to populate cache, then retry
+  // Cache miss: scan all sessions to populate cache, then retry.
   await listAllSessions();
   const after = getPathCache().get(sessionId) ?? null;
-  if (!after) markSessionPathMiss(state, sessionId);
-  else state.misses.delete(sessionId);
-  return after;
+  if (after) {
+    state.misses.delete(sessionId);
+    return after;
+  }
+
+  const livePath = await locateViaHost(sessionId);
+  if (livePath) {
+    state.misses.delete(sessionId);
+    cacheSessionPathEntry(state, sessionId, livePath);
+    return livePath;
+  }
+
+  markSessionPathMiss(state, sessionId);
+  return null;
 }
 
-/** Live RPC wrappers are stored on globalThis by lib/rpc-manager.ts (HMR-safe). */
-type LiveRpcSession = { isAlive(): boolean };
-
-function getLiveRpcSession(sessionId: string): LiveRpcSession | undefined {
-  const registry = (globalThis as { __piSessions?: Map<string, LiveRpcSession> }).__piSessions;
-  const session = registry?.get(sessionId);
-  return session?.isAlive() ? session : undefined;
+/** Ask the Agent Host for a live (possibly not-yet-flushed) session file. */
+async function locateViaHost(sessionId: string): Promise<string | null> {
+  try {
+    const result = await getAgentHostClient().call(
+      "sessions.locate",
+      { sessionId },
+      { timeoutMs: 1_500 },
+    );
+    return result.filePath ?? null;
+  } catch {
+    // Host down / not configured: fall back to the on-disk scan result.
+    return null;
+  }
 }
 
 export function cacheSessionPath(sessionId: string, filePath: string): void {

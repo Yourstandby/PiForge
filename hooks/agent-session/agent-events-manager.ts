@@ -5,7 +5,7 @@ import type { AgentMessage } from "@/lib/types";
  * by `type`, so `switch (event.type)` narrows automatically — no `as` casts
  * needed at call sites.
  *
- * Note: the server-side `AgentEvent` in `lib/rpc-manager.ts` is intentionally
+ * Note: the server-side `AgentEvent` in `agent-host/rpc-manager.ts` is intentionally
  * a separate, broader type — the server only forwards pi's events without
  * narrowing, and the two runtimes should not share a type.
  */

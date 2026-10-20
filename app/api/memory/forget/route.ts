@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getRequestId, jsonError } from "@/lib/api-error";
-import { jsonLtmError, LTM_DISABLED, parseForgetBody } from "@/lib/ltm/http";
-import { getMemoryService } from "@/lib/ltm/service";
+import { getAgentHostClient } from "@/lib/agent-host-client";
+import { jsonAgentHostError } from "@/lib/agent-host-http";
 
 export const dynamic = "force-dynamic";
 
@@ -15,28 +15,23 @@ export async function POST(req: Request) {
     } catch {
       return jsonError(req, 400, "JSON body is required");
     }
-
-    const parsed = parseForgetBody(body);
-    if (!parsed.ok) {
-      return jsonError(req, 400, parsed.error);
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return jsonError(req, 400, "JSON body is required");
     }
+    const input = body as {
+      cwd?: string;
+      memoryIds?: string[];
+      observationIds?: string[];
+    };
+    if (!input.cwd) return jsonError(req, 400, "cwd is required");
 
-    const service = getMemoryService();
-    if (!service.isEnabled()) {
-      return jsonError(req, 503, LTM_DISABLED);
-    }
-
-    const { cwd, memoryIds, observationIds } = parsed.value;
-    const result = await service.forgetFromCwd(cwd, {
-      ...(memoryIds !== undefined ? { memoryIds } : {}),
-      ...(observationIds !== undefined ? { observationIds } : {}),
+    const result = await getAgentHostClient().call("memory.forget", {
+      cwd: input.cwd,
+      ...(input.memoryIds !== undefined ? { memoryIds: input.memoryIds } : {}),
+      ...(input.observationIds !== undefined ? { observationIds: input.observationIds } : {}),
     });
     return NextResponse.json(result, { headers: { "x-request-id": requestId } });
   } catch (error) {
-    return jsonLtmError(req, error, {
-      route: "/api/memory/forget",
-      method: "POST",
-      requestId,
-    });
+    return jsonAgentHostError(req, error, { route: "/api/memory/forget", method: "POST" });
   }
 }

@@ -21,7 +21,7 @@ interface FxCache {
 }
 
 const globalRef = globalThis as typeof globalThis & {
-  __piFxRateCache?: FxCache;
+  __piforgeFxRateCache?: FxCache;
 };
 
 export const dynamic = "force-dynamic";
@@ -48,7 +48,7 @@ async function fetchRate(): Promise<FxCache> {
 }
 
 export async function GET() {
-  const cached = globalRef.__piFxRateCache;
+  const cached = globalRef.__piforgeFxRateCache;
   const fresh = cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS;
   if (fresh) {
     return NextResponse.json(cached);
@@ -56,14 +56,14 @@ export async function GET() {
 
   try {
     const next = await fetchRate();
-    globalRef.__piFxRateCache = next;
+    globalRef.__piforgeFxRateCache = next;
     return NextResponse.json(next);
   } catch {
     // Keep serving the last good rate; only fall back to the constant if none.
     const fallback: FxCache = cached
       ? { ...cached, source: "fallback" }
       : { rate: FALLBACK_RATE, fetchedAt: Date.now(), source: "fallback" };
-    globalRef.__piFxRateCache = fallback;
+    globalRef.__piforgeFxRateCache = fallback;
     return NextResponse.json(fallback);
   }
 }

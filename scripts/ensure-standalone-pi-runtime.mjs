@@ -9,7 +9,11 @@ import { dirname, join, relative } from "node:path";
 const projectRoot = process.cwd();
 const sourceNodeModules = join(projectRoot, "node_modules");
 const standaloneNodeModules = join(projectRoot, ".next", "standalone", "node_modules");
-const roots = ["@earendil-works/pi-coding-agent", "@earendil-works/pi-ai"];
+const roots = [
+  "@earendil-works/pi-coding-agent",
+  "@earendil-works/pi-ai",
+  "@earendil-works/pi-mcp",
+];
 
 function packageDirectory(name, fromDirectory) {
   let current = fromDirectory;
@@ -89,4 +93,16 @@ while (queue.length > 0) {
   }
 }
 
+for (const name of [
+  "@earendil-works/pi-coding-agent",
+  "@earendil-works/pi-ai",
+  "@earendil-works/pi-mcp",
+  "typebox",
+]) {
+  const manifest = join(standaloneNodeModules, ...name.split("/"), "package.json");
+  if (!existsSync(manifest)) {
+    console.error(`ensure-standalone-pi-runtime: missing ${name} in standalone node_modules`);
+    process.exit(1);
+  }
+}
 console.log(`ensure-standalone-pi-runtime: copied ${copied} runtime packages`);

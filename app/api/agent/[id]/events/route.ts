@@ -1,133 +1,138 @@
 import { resolveSessionPath, getHeaderAsync } from "@/lib/session-reader";
-import { getRpcSession, startRpcSession, getSessionOnlyTrustMap } from "@/lib/rpc-manager";
-import { errorMessage, getRequestId, jsonError, logApiError } from "@/lib/api-error";
-import { evaluateProjectTrust } from "@/lib/project-trust-desktop";
+import type { HostSubscription } from "@contract/client";
+import { getAgentHostClient } from "@/lib/agent-host-client";
+import { jsonAgentHostError } from "@/lib/agent-host-http";
+import { getRequestId, jsonError, logApiError } from "@/lib/api-error";
 
 export const dynamic = "force-dynamic";
 
-// GET /api/agent/[id]/events - SSE stream of agent events
+// GET /api/agent/[id]/events - SSE stream of agent events.
+// Next no longer owns the event queue: it subscribes to the Agent Host and
+// fans the events out to the browser.
 export async function GET(
   req: Request,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
   const requestId = getRequestId(req);
+  const client = getAgentHostClient();
 
-  // Fast path: already-running session
-  let session = getRpcSession(id);
-  if (!session || !session.isAlive()) {
-    let filePath: string;
-    let cwd: string;
-    try {
-      const resolvedPath = await resolveSessionPath(id);
-      if (!resolvedPath) {
-        return jsonError(req, 404, "Session not found", { errorCode: "SESSION_NOT_FOUND" });
-      }
-      filePath = resolvedPath;
-      const header = await getHeaderAsync(filePath);
-      cwd = header?.cwd ?? process.cwd();
-      const trustGate = evaluateProjectTrust(cwd, { sessionOnlyTrust: getSessionOnlyTrustMap() });
-      if (trustGate.action === "prompt") {
-        return new Response(JSON.stringify(trustGate.payload), {
-          status: 409,
-          headers: {
-            "content-type": "application/json",
-            "x-request-id": requestId,
-          },
-        });
-      }
-    } catch (error) {
-      logApiError({ route: "/api/agent/[id]/events", method: "GET", requestId, error, params: { id } });
-      return jsonError(req, 500, errorMessage(error), { errorCode: "AGENT_EVENTS_INIT_FAILED" });
+  let filePath: string;
+  let cwd: string;
+  try {
+    const resolved = await resolveSessionPath(id);
+    if (!resolved) {
+      return jsonError(req, 404, "Session not found", { errorCode: "SESSION_NOT_FOUND" });
     }
+    filePath = resolved;
+    const header = await getHeaderAsync(filePath);
+    cwd = header?.cwd ?? process.cwd();
 
-    try {
-      ({ session } = await startRpcSession(id, filePath, cwd));
-    } catch (error) {
-      logApiError({ route: "/api/agent/[id]/events", method: "GET", requestId, error, params: { id } });
-      return jsonError(req, 500, `Failed to start agent: ${errorMessage(error)}`, {
-        errorCode: "AGENT_START_FAILED",
+    const trustGate = await client.call("trust.evaluate", { cwd });
+    if (trustGate.action === "prompt") {
+      return new Response(JSON.stringify(trustGate.payload), {
+        status: 409,
+        headers: {
+          "content-type": "application/json",
+          "x-request-id": requestId,
+        },
       });
     }
+
+    await client.call("agent.ensure", { sessionId: id, filePath, cwd });
+  } catch (error) {
+    logApiError({
+      route: "/api/agent/[id]/events",
+      method: "GET",
+      requestId,
+      error,
+      params: { id },
+    });
+    return jsonAgentHostError(req, error, { route: "/api/agent/[id]/events", method: "GET" });
   }
 
-  // Shared cleanup state — lifted out of ReadableStream so both `start`
-  // (via abort signal) and `cancel` (via consumer-side cancellation) can
-  // invoke the SAME idempotent cleanup. Without this, a silently-dropped
-  // client (proxy timeout, network blip) that never fires `abort` would
-  // leave the heartbeat interval running, the listener attached to the
-  // wrapper, and the stream object pinned in memory forever.
-  let controllerRef: ReadableStreamController<Uint8Array> | null = null;
+  // Browsers that auto-reconnect the same EventSource send Last-Event-ID.
+  // The renderer usually creates a new EventSource, in which case the host
+  // resumes from its last delivered sequence by itself.
+  const lastEventId = Number(req.headers.get("last-event-id") ?? "");
+  const fromSeq = Number.isFinite(lastEventId) && lastEventId > 0 ? lastEventId + 1 : undefined;
+
   let heartbeat: ReturnType<typeof setInterval> | undefined;
-  let unsubscribe: (() => void) | undefined;
-  let cleaned = false;
+  let subscription: HostSubscription | undefined;
+  let offStatus: (() => void) | undefined;
+  let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null;
+  let closed = false;
 
   const cleanup = () => {
-    if (cleaned) return;
-    cleaned = true;
+    if (closed) return;
+    closed = true;
     if (heartbeat) clearInterval(heartbeat);
-    if (unsubscribe) {
-      try {
-        unsubscribe();
-      } catch {
-        /* already unsubscribed */
-      }
-    }
-    if (controllerRef) {
-      try {
-        // On the `cancel` path the controller is already disposed by the
-        // runtime; on the `abort` path it is still writable. try/catch
-        // covers both cases.
-        controllerRef.close();
-      } catch {
-        /* already closed */
-      }
+    subscription?.close();
+    offStatus?.();
+    try {
+      controllerRef?.close();
+    } catch {
+      /* already closed */
     }
     req.signal?.removeEventListener("abort", cleanup);
   };
 
   const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
+    async start(controller) {
       controllerRef = controller;
-
-      const encode = (data: unknown) => {
-        const text = `data: ${JSON.stringify(data)}\n\n`;
-        controller.enqueue(new TextEncoder().encode(text));
+      const encoder = new TextEncoder();
+      const send = (text: string) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(text));
+        } catch {
+          cleanup();
+        }
       };
+      const sendData = (data: unknown) => send(`data: ${JSON.stringify(data)}\n\n`);
+      const sendEvent = (seq: number, event: unknown) =>
+        send(`id: ${seq}\ndata: ${JSON.stringify(event)}\n\n`);
 
-      // Send initial connected event
-      encode({ type: "connected", sessionId: id });
+      sendData({ type: "connected", sessionId: id });
 
-      unsubscribe = session.onEvent((event) => {
-        encode(event);
+      try {
+        subscription = await client.subscribeAgent(
+          id,
+          (event, seq) => sendEvent(seq, event),
+          fromSeq !== undefined ? { fromSeq } : {},
+        );
+      } catch {
+        cleanup();
+        return;
+      }
+      if (closed) {
+        subscription?.close();
+        return;
+      }
+
+      offStatus = client.onStatusChange((status) => {
+        if (status !== "ready") cleanup();
       });
 
-      // Heartbeat every 30s to prevent server/proxy timeout (Next.js default ~120-150s).
-      // keepAlive() is called only after a successful enqueue so that when the client
-      // silently disappears, the idle timer eventually fires and destroys the wrapper.
       heartbeat = setInterval(() => {
-        // desiredSize === null means the stream is closed/errored. Detect it
-        // explicitly so we clean up even when the abort signal never fires
-        // (e.g. reverse-proxy that drops the connection without sending FIN).
         if (controller.desiredSize === null) {
           cleanup();
           return;
         }
         try {
-          controller.enqueue(new TextEncoder().encode(":\n\n"));
-          session.keepAlive();
+          controller.enqueue(encoder.encode(":\n\n"));
         } catch {
-          // controller already closed; clean up so the idle timer can
-          // eventually destroy the wrapper (no orphan).
           cleanup();
+          return;
         }
+        void client.call("agent.keepAlive", { sessionId: id }, { timeoutMs: 2_000 }).catch(() => {
+          // The next heartbeat will retry; a dead host also closes the pipe.
+        });
       }, 30_000);
 
-      // Detect client disconnect via abort signal
       req.signal?.addEventListener("abort", cleanup);
     },
     cancel() {
-      // Consumer cancelled the stream (reader.cancel(), page close, etc.).
       cleanup();
     },
   });

@@ -245,7 +245,7 @@ test("getUpstreamProviderUsage normalizes openai to openai-codex when fetching",
 });
 
 test("getUpstreamProviderUsage deduplicates concurrent requests", async () => {
-  globalThis.__piUpstreamUsageCache?.clear();
+  globalThis.__piforgeUpstreamUsageCache?.clear();
   let fetchCount = 0;
   let release!: () => void;
   const pending = new Promise<void>((resolve) => {
@@ -274,7 +274,7 @@ test("getUpstreamProviderUsage deduplicates concurrent requests", async () => {
 });
 
 test("getUpstreamProviderUsage never sends custom-provider credentials to OpenRouter", async () => {
-  globalThis.__piUpstreamUsageCache?.clear();
+  globalThis.__piforgeUpstreamUsageCache?.clear();
   let fetchCount = 0;
   const usage = await getUpstreamProviderUsage("company-openrouter-proxy", {
     auth: { "company-openrouter-proxy": { key: "private-token" } },
@@ -432,7 +432,7 @@ test("getUpstreamProviderUsage recovers from transient error after 15s cooldown 
     "openai-codex": { access: "tok-recovery" },
   };
 
-  globalThis.__piUpstreamUsageCache?.clear();
+  globalThis.__piforgeUpstreamUsageCache?.clear();
   const t0 = 200_000;
   // 1. First fetch fails with 503
   const res1 = await getUpstreamProviderUsage("openai-codex", {

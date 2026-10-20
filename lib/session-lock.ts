@@ -1,7 +1,7 @@
 import path from "node:path";
 
 declare global {
-  var __piWriteLocks: Map<string, Promise<unknown>> | undefined;
+  var __piforgeWriteLocks: Map<string, Promise<unknown>> | undefined;
 }
 
 /**
@@ -12,14 +12,14 @@ declare global {
  *   holding the lock will deadlock.
  * - Map entry is cleaned up after release if no later caller has chained on.
  * - globalThis is used to survive Next.js hot reloads (matches the
- *   __piSessions / __piStartLocks pattern in lib/rpc-manager.ts).
+ *   agent-host/rpc-manager.ts registry pattern).
  */
 export async function withFileLock<T>(
   filePath: string,
   fn: () => Promise<T>,
 ): Promise<T> {
   const key = path.resolve(filePath);
-  const locks = (globalThis.__piWriteLocks ??= new Map<string, Promise<unknown>>());
+  const locks = (globalThis.__piforgeWriteLocks ??= new Map<string, Promise<unknown>>());
 
   const prev = locks.get(key) ?? Promise.resolve();
   let release!: () => void;

@@ -22,7 +22,7 @@ interface CacheEntry {
 }
 
 declare global {
-  var __piFileIndexCache: Map<string, CacheEntry> | undefined;
+  var __piforgeFileIndexCache: Map<string, CacheEntry> | undefined;
 }
 
 const CACHE_TTL_MS = 15_000;
@@ -43,8 +43,8 @@ const EXTRA_IGNORED = new Set([
 ]);
 
 function cache(): Map<string, CacheEntry> {
-  if (!globalThis.__piFileIndexCache) globalThis.__piFileIndexCache = new Map();
-  return globalThis.__piFileIndexCache;
+  if (!globalThis.__piforgeFileIndexCache) globalThis.__piforgeFileIndexCache = new Map();
+  return globalThis.__piforgeFileIndexCache;
 }
 
 async function walk(

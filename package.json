@@ -1,6 +1,6 @@
 {
   "name": "piforge",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "PiForge — multi-session desktop workbench for the Pi coding agent: built-in browser, terminal, Git panel and plan mode.",
   "license": "MIT",
   "author": "PiForge",
@@ -28,24 +28,28 @@
     "package.json"
   ],
   "scripts": {
-    "dev": "next dev -p 30141",
+    "dev": "npm run build:agent-host && node scripts/dev.mjs",
     "build": "npm run build:standalone",
-    "build:standalone": "next build && node scripts/ensure-standalone-next-runtimes.mjs && node scripts/ensure-standalone-pi-runtime.mjs && node scripts/ensure-standalone-macos-universal-runtimes.mjs && node scripts/dereference-standalone-symlinks.mjs && node scripts/smoke-standalone-server.mjs",
+    "build:standalone": "next build && node scripts/ensure-standalone-next-runtimes.mjs && node scripts/ensure-standalone-pi-runtime.mjs && npm run build:agent-host && node scripts/ensure-standalone-agent-host.mjs && node scripts/ensure-standalone-macos-universal-runtimes.mjs && node scripts/dereference-standalone-symlinks.mjs && node scripts/smoke-standalone-server.mjs",
     "start": "next start -p 30141",
     "lint": "eslint .",
     "icons": "node scripts/build-brand-icons.mjs",
     "check:electron-deps": "node lib/electron-updater-runtime-deps.mjs --check",
+    "build:agent-host": "tsc -p agent-host/tsconfig.json",
+    "smoke:agent-host": "node scripts/smoke-agent-host.mjs",
     "sync:wiki-pages": "node scripts/sync-github-pages-wiki.mjs",
-    "test": "node --test --test-force-exit \"lib/**/*.test.ts\" \"lib/**/*.test.mjs\" \"electron/**/*.test.ts\" \"app/**/*.test.ts\" \"app/api/sessions/[[]id]/routes.test.ts\" \"hooks/**/*.test.ts\" \"components/**/*.test.ts\" \"scripts/**/*.test.mjs\" \"package.test.ts\" \"middleware.test.ts\"",
-    "test:windows": "node --test --test-force-exit \"electron/**/*.test.ts\" \"lib/file-paths.test.ts\" \"lib/path-policy.test.ts\" \"lib/session-lock.test.ts\" \"lib/session-path-cache.test.ts\" \"lib/file-browser.test.ts\" \"lib/git-worktree.test.ts\" \"app/api/sessions/[[]id]/routes.test.ts\" \"lib/electron-*.test.mjs\" \"lib/installer-script.test.mjs\" \"lib/electron-builder-config.test.mjs\" \"package.test.ts\"",
-    "test:macos": "node --test --test-force-exit \"electron/**/*.test.ts\" \"lib/file-paths.test.ts\" \"lib/path-policy.test.ts\" \"lib/session-lock.test.ts\" \"lib/session-path-cache.test.ts\" \"lib/file-browser.test.ts\" \"lib/git-worktree.test.ts\" \"app/api/sessions/[[]id]/routes.test.ts\" \"lib/electron-*.test.mjs\" \"lib/electron-builder-config.test.mjs\" \"scripts/ensure-standalone-macos-universal-runtimes.test.mjs\" \"package.test.ts\"",
+    "test": "node --test --test-force-exit \"lib/**/*.test.ts\" \"agent-host/**/*.test.ts\" \"lib/**/*.test.mjs\" \"electron/**/*.test.ts\" \"app/**/*.test.ts\" \"app/api/sessions/[[]id]/routes.test.ts\" \"hooks/**/*.test.ts\" \"components/**/*.test.ts\" \"scripts/**/*.test.mjs\" \"package.test.ts\" \"middleware.test.ts\"",
+    "test:windows": "node --test --test-force-exit \"electron/**/*.test.ts\" \"agent-host/**/*.test.ts\" \"lib/file-paths.test.ts\" \"lib/path-policy.test.ts\" \"lib/session-lock.test.ts\" \"lib/session-path-cache.test.ts\" \"lib/file-browser.test.ts\" \"lib/git-worktree.test.ts\" \"app/api/sessions/[[]id]/routes.test.ts\" \"lib/electron-*.test.mjs\" \"lib/installer-script.test.mjs\" \"lib/electron-builder-config.test.mjs\" \"package.test.ts\"",
+    "test:macos": "node --test --test-force-exit \"electron/**/*.test.ts\" \"agent-host/**/*.test.ts\" \"lib/file-paths.test.ts\" \"lib/path-policy.test.ts\" \"lib/session-lock.test.ts\" \"lib/session-path-cache.test.ts\" \"lib/file-browser.test.ts\" \"lib/git-worktree.test.ts\" \"app/api/sessions/[[]id]/routes.test.ts\" \"lib/electron-*.test.mjs\" \"lib/electron-builder-config.test.mjs\" \"scripts/ensure-standalone-macos-universal-runtimes.test.mjs\" \"package.test.ts\"",
     "release": "npm version patch --no-git-tag-version && npm run build:standalone && npm publish --access public",
-    "build:electron": "tsc -p electron/tsconfig.json && node -e \"const fs=require('fs'); fs.copyFileSync('electron/startup.html', 'electron/dist/startup.html'); fs.copyFileSync('electron/startup.js', 'electron/dist/startup.js')\"",
+    "build:electron": "tsc -p electron/tsconfig.json && npm run build:agent-host && node -e \"const fs=require('fs'); fs.copyFileSync('electron/startup.html', 'electron/dist/startup.html'); fs.copyFileSync('electron/startup.js', 'electron/dist/startup.js')\"",
     "dev:electron": "npm run build:electron && node scripts/run-electron.mjs",
     "pack": "npm run build:standalone && npm run build:electron && npx electron-builder --dir && node scripts/smoke-packaged-standalone.mjs",
     "pack:mac": "npm run build:standalone && npm run build:electron && npx electron-builder --mac --universal --dir && node scripts/smoke-packaged-standalone.mjs",
     "dist": "npm run build:standalone && npm run build:electron && npx electron-builder --publish never && node scripts/smoke-packaged-standalone.mjs",
-    "dist:mac": "npm run build:standalone && npm run build:electron && npx electron-builder --mac --universal --publish never && node scripts/smoke-packaged-standalone.mjs"
+    "dist:mac": "npm run build:standalone && npm run build:electron && npx electron-builder --mac --universal --publish never && node scripts/smoke-packaged-standalone.mjs",
+    "smoke:agent-isolation": "node scripts/smoke-agent-isolation.mjs",
+    "smoke:host-reconnect": "node scripts/smoke-host-reconnect.mjs"
   },
   "build": {
     "extends": "electron-builder.yml"

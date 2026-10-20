@@ -4,12 +4,19 @@ import { readFileSync } from "node:fs";
 
 const source = readFileSync(new URL("./route.ts", import.meta.url), "utf8");
 
-test("agent events route uses the shared JSON error contract", () => {
-  assert.match(source, /import \{ errorMessage, getRequestId, jsonError, logApiError \}/);
+test("agent events route proxies the host stream and keeps the JSON error contract", () => {
+  assert.match(source, /import \{ getAgentHostClient \}/);
   assert.match(source, /return jsonError\(req, 404, ["']Session not found["']/);
   assert.match(source, /errorCode: ["']SESSION_NOT_FOUND["']/);
-  assert.match(source, /return jsonError\(req, 500, errorMessage\(error\)/);
-  assert.match(source, /errorCode: ["']AGENT_EVENTS_INIT_FAILED["']/);
-  assert.match(source, /return jsonError\(req, 500, `Failed to start agent:/);
-  assert.match(source, /errorCode: ["']AGENT_START_FAILED["']/);
+
+  // Trust gate + lazy session start stay at the HTTP boundary.
+  assert.match(source, /client\.call\(["']trust\.evaluate["']/);
+  assert.match(source, /status: 409/);
+  assert.match(source, /client\.call\(["']agent\.ensure["']/);
+
+  // Streaming is a host subscription fanned out as SSE; Next owns no queue.
+  assert.match(source, /client\.subscribeAgent\(/);
+  assert.match(source, /id: \$\{seq\}/);
+  assert.match(source, /agent\.keepAlive/);
+  assert.match(source, /subscription\?\.close\(\)/);
 });

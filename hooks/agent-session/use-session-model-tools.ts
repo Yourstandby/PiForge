@@ -37,7 +37,7 @@ function persistAutoRouting(enabled: boolean): void {
   }
 }
 
-type ModelListItem = { id: string; name: string; provider: string };
+type ModelListItem = { id: string; name: string; provider: string; input?: string[] };
 
 export type UseSessionModelToolsOptions = {
   isNew: boolean;

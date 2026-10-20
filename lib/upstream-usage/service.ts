@@ -12,11 +12,11 @@ interface CacheEntry {
 }
 
 declare global {
-  var __piUpstreamUsageCache: Map<string, CacheEntry> | undefined;
+  var __piforgeUpstreamUsageCache: Map<string, CacheEntry> | undefined;
 }
 
 function getCache(): Map<string, CacheEntry> {
-  return (globalThis.__piUpstreamUsageCache ??= new Map<string, CacheEntry>());
+  return (globalThis.__piforgeUpstreamUsageCache ??= new Map<string, CacheEntry>());
 }
 
 export const CACHE_TTL_MS = 120 * 1000; // 120 seconds TTL to protect upstream rate limits

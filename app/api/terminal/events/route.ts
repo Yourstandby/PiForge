@@ -1,29 +1,34 @@
 import { NextResponse } from "next/server";
-import { errorMessage, getRequestId, jsonError, logApiError } from "@/lib/api-error";
-import {
-  clearTerminalLog,
-  listTerminalBlocks,
-  onTerminalLogChange,
-  type TerminalBlock,
-} from "@/lib/terminal-log";
+import type { HostSubscription } from "@contract/client";
+import type { Result } from "@contract/methods";
+import { getAgentHostClient } from "@/lib/agent-host-client";
+import { jsonAgentHostError } from "@/lib/agent-host-http";
 
 export const dynamic = "force-dynamic";
 
-// GET /api/terminal/events - SSE stream of the shell-output log
+// GET /api/terminal/events - SSE stream of the host-owned shell-output log
 export async function GET(req: Request) {
+  const client = getAgentHostClient();
+
+  let initial: Result<"terminal.list">;
+  try {
+    initial = await client.call("terminal.list", {}, { timeoutMs: 3_000 });
+  } catch (error) {
+    return jsonAgentHostError(req, error, { route: "/api/terminal/events", method: "GET" });
+  }
+
   let heartbeat: ReturnType<typeof setInterval> | undefined;
-  let unsubscribe: (() => void) | undefined;
-  let trailing: ReturnType<typeof setTimeout> | undefined;
-  let closed = false;
-  let lastSentAt = 0;
+  let subscription: HostSubscription | undefined;
+  let offStatus: (() => void) | undefined;
   let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null;
+  let closed = false;
 
   const cleanup = () => {
     if (closed) return;
     closed = true;
     if (heartbeat) clearInterval(heartbeat);
-    if (trailing) clearTimeout(trailing);
-    unsubscribe?.();
+    subscription?.close();
+    offStatus?.();
     try {
       controllerRef?.close();
     } catch {
@@ -33,33 +38,35 @@ export async function GET(req: Request) {
   };
 
   const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
+    async start(controller) {
       controllerRef = controller;
       const encode = (data: unknown) => {
-        controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`));
-      };
-      const send = () => {
         if (closed) return;
-        lastSentAt = Date.now();
-        encode({ type: "blocks", blocks: listTerminalBlocks() satisfies TerminalBlock[] });
-      };
-      // Streaming shell output can be chatty; coalesce into ~4 updates/second.
-      const schedule = () => {
-        if (closed) return;
-        const wait = 250 - (Date.now() - lastSentAt);
-        if (wait <= 0) {
-          send();
-          return;
+        try {
+          controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`));
+        } catch {
+          cleanup();
         }
-        if (trailing) return;
-        trailing = setTimeout(() => {
-          trailing = undefined;
-          send();
-        }, wait);
       };
 
-      send();
-      unsubscribe = onTerminalLogChange(schedule);
+      encode({ type: "blocks", blocks: initial.blocks });
+
+      try {
+        subscription = await client.subscribe("terminal", (payload) => {
+          encode({ type: "blocks", blocks: payload.blocks });
+        });
+      } catch {
+        cleanup();
+        return;
+      }
+      if (closed) {
+        subscription.close();
+        return;
+      }
+
+      offStatus = client.onStatusChange((status) => {
+        if (status !== "ready") cleanup();
+      });
 
       heartbeat = setInterval(() => {
         if (controller.desiredSize === null) {
@@ -92,11 +99,9 @@ export async function GET(req: Request) {
 // DELETE /api/terminal/events - clear the log ("清空" button)
 export async function DELETE(req: Request) {
   try {
-    clearTerminalLog();
+    await getAgentHostClient().call("terminal.clear", {});
     return NextResponse.json({ ok: true });
   } catch (error) {
-    const requestId = getRequestId(req);
-    logApiError({ route: "/api/terminal/events", method: "DELETE", requestId, error });
-    return jsonError(req, 500, errorMessage(error));
+    return jsonAgentHostError(req, error, { route: "/api/terminal/events", method: "DELETE" });
   }
 }

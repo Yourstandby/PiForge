@@ -360,14 +360,14 @@ function hasRegisteredBranch(stdout: string, branchName: string): boolean {
 type WorktreeLockMap = Map<string, Promise<void>>;
 
 declare global {
-  var __piGitWorktreeLocks: WorktreeLockMap | undefined;
+  var __piforgeGitWorktreeLocks: WorktreeLockMap | undefined;
 }
 
 function getWorktreeLocks(): WorktreeLockMap {
-  if (!globalThis.__piGitWorktreeLocks) {
-    globalThis.__piGitWorktreeLocks = new Map();
+  if (!globalThis.__piforgeGitWorktreeLocks) {
+    globalThis.__piforgeGitWorktreeLocks = new Map();
   }
-  return globalThis.__piGitWorktreeLocks;
+  return globalThis.__piforgeGitWorktreeLocks;
 }
 
 function isErrorCode(error: unknown, code: string): boolean {

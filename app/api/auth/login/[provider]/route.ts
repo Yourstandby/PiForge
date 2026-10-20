@@ -5,18 +5,19 @@ import {
   loginProvider,
   type AuthInteraction,
 } from "@/lib/pi-runtime";
+import { notifyAgentHostModelsChanged } from "@/lib/agent-host-client";
 import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
 
 export const dynamic = "force-dynamic";
 
 // In-memory registry: loginToken -> resolve/reject for the manualCodeInput promise
 declare global {
-  var __piLoginCallbacks: Map<string, { resolve: (v: string) => void; reject: (e: Error) => void }> | undefined;
+  var __piforgeLoginCallbacks: Map<string, { resolve: (v: string) => void; reject: (e: Error) => void }> | undefined;
 }
 
 function getCallbackRegistry() {
-  if (!globalThis.__piLoginCallbacks) globalThis.__piLoginCallbacks = new Map();
-  return globalThis.__piLoginCallbacks;
+  if (!globalThis.__piforgeLoginCallbacks) globalThis.__piforgeLoginCallbacks = new Map();
+  return globalThis.__piforgeLoginCallbacks;
 }
 
 // POST /api/auth/login/[provider] — frontend sends redirect URL or auth code
@@ -197,6 +198,7 @@ export async function GET(
 
       try {
         await loginProvider(runtime, provider, "oauth", interaction);
+        notifyAgentHostModelsChanged();
         send(controller, { type: "success" });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

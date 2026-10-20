@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getRequestId, jsonError } from "@/lib/api-error";
-import { jsonLtmError, LTM_DISABLED, parseStatsQuery } from "@/lib/ltm/http";
-import { getMemoryService } from "@/lib/ltm/service";
+import { getAgentHostClient } from "@/lib/agent-host-client";
+import { jsonAgentHostError } from "@/lib/agent-host-http";
 
 export const dynamic = "force-dynamic";
 
@@ -9,20 +9,11 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   const requestId = getRequestId(req);
   try {
-    const parsed = parseStatsQuery(new URL(req.url));
-    if (!parsed.ok) return jsonError(req, 400, parsed.error);
-
-    const service = getMemoryService();
-    if (!service.isEnabled()) return jsonError(req, 503, LTM_DISABLED);
-
-    const stats = await service.statsFromCwd(parsed.value.cwd);
+    const cwd = new URL(req.url).searchParams.get("cwd");
+    if (!cwd) return jsonError(req, 400, "cwd is required");
+    const stats = await getAgentHostClient().call("memory.stats", { cwd });
     return NextResponse.json(stats, { headers: { "x-request-id": requestId } });
   } catch (error) {
-    return jsonLtmError(
-      req,
-      error,
-      { route: "/api/memory/stats", method: "GET", requestId },
-      { statsNotSupported: true },
-    );
+    return jsonAgentHostError(req, error, { route: "/api/memory/stats", method: "GET" });
   }
 }
