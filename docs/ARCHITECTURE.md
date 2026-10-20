@@ -602,7 +602,13 @@ components/models-config/     模型配置弹窗的子组件
 
 > 探测在 `agent-host/dev-tools.ts` 内执行（Node 子进程 + `where`/`which`，带超时与短缓存）。浏览器权限由 `agent-host/browser-permissions.ts` 管理：全局开关存于 `desktop-settings.json`（`browserReadEnabled` / `browserInteractEnabled`，默认关闭），临时授权按会话 id 存在 Host 内存；`desktop-browser-extension.ts` 在 `tool_call` 钩子里校验 `read`（文本 / 截图）与 `interact`（打开 / 导航），未授权时通过 Extension UI 确认框询问用户，拒绝则以 block reason 返回模型。
 
-### 大工具结果持久化（1 条）
+### 会话分支切换（1 条）
+
+| 路由 | 方法 | 用途 |
+| --- | --- | --- |
+| `app/api/sessions/[id]/branches/route.ts` | GET / POST | 经 Host `sessions.getBranches` 返回 JSONL 树与各节点的最深叶子；`sessions.switchBranch` 切换活跃叶节点 |
+
+> Pi 会话 JSONL 天然是树：每条 entry 有 `id` / `parentId`，叶指针可移动。`agent-host/session-branches.ts` 负责读取树（live 会话读内存，冷会话校验 `filePath` 后用 `SessionManager.open`）、live 会话调用 `navigateTree()`（用户消息会回到父节点并把文本交还输入框），冷会话把选择写入 `session-branch-state.ts`，下一次 `startRpcSession` 在首条消息前应用。渲染层用扁平节点计算同类型兄弟分组，在消息上方显示 `‹ 1/2 ›`，切换只调用 `/context` 重载 transcript。### 大工具结果持久化（1 条）
 
 | 路由 | 方法 | 用途 |
 | --- | --- | --- |

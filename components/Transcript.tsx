@@ -5,9 +5,10 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
-import { Check, ChevronDown, Copy, CornerDownLeft, GitFork, X } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Copy, CornerDownLeft, GitBranch, GitFork, X } from "lucide-react";
 import type { AgentMessage, ToolResultMessage } from "@/lib/types";
 import { diffStats } from "@/lib/diff-lines";
+import type { BranchSwitchInfo } from "@/lib/session-branches-view";
 import { isEditToolName, toolDiffPath, toolDiffRows } from "@/lib/tool-diff";
 import { DiffRows } from "./DiffRows";
 import { getFileName } from "@/lib/file-paths";
@@ -1036,6 +1037,9 @@ export function Transcript({
   onInsertCode,
   onApplyCode,
   applyTargetName,
+  onBranch,
+  branchSwitch,
+  onSwitchBranch,
   nestedExecutions,
 }: {
   messages: AgentMessage[];
@@ -1051,6 +1055,11 @@ export function Transcript({
   onApplyCode?: (code: string, language?: string) => void;
   /** File name shown on the Apply button / confirmation dialog. */
   applyTargetName?: string | null;
+  /** In-session branch at this message (GitBranch button). */
+  onBranch?: (entryId: string) => void | Promise<void>;
+  /** Sibling switcher info per message entry id (`1/2` arrows). */
+  branchSwitch?: (entryId: string) => BranchSwitchInfo | null;
+  onSwitchBranch?: (leafId: string | null) => void;
   /** Live nested tool results captured from SSE (not persisted by pi). */
   nestedExecutions?: Record<string, NestedExecutionView>;
 }) {
@@ -1113,13 +1122,48 @@ export function Transcript({
         // The very first message cannot be forked (nothing before it), and a
         // fork mid-stream would race the entry ids the SSE events don't carry.
         const canFork = Boolean(onFork && entryId) && turn.messageIndex > 0;
+        const canBranch = Boolean(onBranch && entryId);
         const forking = Boolean(entryId) && forkingEntryId === entryId;
+        const switcher = entryId && branchSwitch ? branchSwitch(entryId) : null;
         return (
         <article key={index} className="group mb-8 last:mb-0">
           <div className="mb-2 flex items-center justify-between gap-2">
-            <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-ink-faint">
-              {turn.role === "user" ? "你" : "PiForge"}
-            </span>
+            <div className="flex min-w-0 items-center gap-2">
+              {switcher && switcher.total > 1 && (
+                <span
+                  className="flex shrink-0 items-center gap-0.5 rounded-full border border-[#E3E8F2] bg-white px-1 py-0.5 text-[10.5px] text-ink-muted shadow-[0_1px_2px_rgba(17,17,17,0.03)]"
+                  aria-label={`分支 ${switcher.index + 1}/${switcher.total}`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => onSwitchBranch?.(switcher.targets[switcher.index - 1]?.leafId ?? null)}
+                    disabled={switcher.index <= 0}
+                    aria-label="上一个分支"
+                    title="上一个分支"
+                    className="flex h-4 w-4 items-center justify-center rounded-full transition-colors hover:bg-[#ECECEF] hover:text-ink disabled:cursor-default disabled:opacity-30"
+                  >
+                    <ChevronLeft size={11} strokeWidth={2.2} aria-hidden="true" />
+                  </button>
+                  <span className="tabular-nums px-0.5">
+                    {switcher.index + 1}/{switcher.total}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => onSwitchBranch?.(switcher.targets[switcher.index + 1]?.leafId ?? null)}
+                    disabled={switcher.index >= switcher.total - 1}
+                    aria-label="下一个分支"
+                    title="下一个分支"
+                    className="flex h-4 w-4 items-center justify-center rounded-full transition-colors hover:bg-[#ECECEF] hover:text-ink disabled:cursor-default disabled:opacity-30"
+                  >
+                    <ChevronRight size={11} strokeWidth={2.2} aria-hidden="true" />
+                  </button>
+                </span>
+              )}
+              <span className="truncate text-[11px] font-medium uppercase tracking-[0.08em] text-ink-faint">
+                {turn.role === "user" ? "你" : "PiForge"}
+              </span>
+            </div>
+            <div className="flex shrink-0 items-center gap-1">
             <button
               type="button"
               onClick={() =>
@@ -1144,6 +1188,18 @@ export function Transcript({
               )}
               {copiedTurn === index ? "已复制" : "复制"}
             </button>
+            {canBranch && (
+              <button
+                type="button"
+                onClick={() => void onBranch!(entryId!)}
+                title="从此消息开启新分支"
+                aria-label="从此消息开启新分支"
+                className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-ink-faint opacity-0 transition-colors duration-150 hover:bg-[#ECECEF] hover:text-accent-strong focus:opacity-100 group-hover:opacity-100"
+              >
+                <GitBranch size={11} strokeWidth={1.9} aria-hidden="true" />
+                分支
+              </button>
+            )}
             {canFork && (
               <button
                 type="button"
@@ -1161,6 +1217,7 @@ export function Transcript({
                 {forking ? "创建中…" : "派生"}
               </button>
             )}
+            </div>
           </div>
 
           {turn.role === "user" ? (

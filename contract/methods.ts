@@ -17,6 +17,7 @@ import type {
   BrowserPageSnapshot,
 } from "./domains/browser.ts";
 import type { DevEnvironmentReport } from "./domains/dev-environment.ts";
+import type { SessionBranches, SessionBranchSwitchResult } from "./domains/sessions.ts";
 import type { ToolOutputPageDto } from "./domains/tool-outputs.ts";
 import type {
   AuxModelCatalogue,
@@ -282,6 +283,16 @@ export interface AgentHostMethods {
     result: ToolOutputPageDto;
   };
 
+  // ---- session branches (tree already exists in the JSONL) ----
+  "sessions.getBranches": {
+    params: { sessionId: string; filePath?: string };
+    result: SessionBranches;
+  };
+  "sessions.switchBranch": {
+    params: { sessionId: string; filePath?: string; leafId: string | null };
+    result: SessionBranchSwitchResult;
+  };
+
   // ---- session metadata / mutation ----
   "sessions.locate": {
     params: { sessionId: string };
@@ -431,6 +442,8 @@ export const IMPLEMENTED_HOST_METHODS = [
   "decision.classify",
   "env.probe",
   "toolOutput.read",
+  "sessions.getBranches",
+  "sessions.switchBranch",
   "sessions.locate",
   "sessions.state",
   "sessions.rename",

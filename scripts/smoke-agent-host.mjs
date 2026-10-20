@@ -437,6 +437,69 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     assert.equal(applyInvalid.ok, false);
     assert.equal(applyInvalid.error.code, "E_INVALID_PARAMS");
 
+    // ---- session branches (JSONL tree already carries parentId) ----
+    const { SessionManager } = await import("@earendil-works/pi-coding-agent");
+    const branchSessionDir = path.join(agentDir, "sessions", "smoke-branch");
+    mkdirSync(branchSessionDir, { recursive: true });
+    const branchManager = SessionManager.create(sandbox, branchSessionDir);
+    const branchUser1 = branchManager.appendMessage({
+      role: "user",
+      content: "smoke branch prompt",
+      timestamp: Date.now(),
+    });
+    const branchAssistant = branchManager.appendMessage({
+      role: "assistant",
+      api: "openai-completions",
+      provider: "smoke",
+      model: "smoke",
+      content: [{ type: "text", text: "smoke answer" }],
+      stopReason: "stop",
+      timestamp: Date.now(),
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+    });
+    const branchUser2 = branchManager.appendMessage({
+      role: "user",
+      content: "second smoke prompt",
+      timestamp: Date.now(),
+    });
+    const branchFile = branchManager.getSessionFile();
+    const branchSessionId = branchManager.getSessionId();
+    assert.ok(branchFile);
+
+    client.send({
+      kind: "req",
+      id: 29,
+      method: "sessions.getBranches",
+      params: { sessionId: branchSessionId, filePath: branchFile },
+    });
+    const branches = await client.waitFor((frame) => frame.kind === "res" && frame.id === 29);
+    assert.equal(branches.ok, true, JSON.stringify(branches.error));
+    assert.equal(branches.result.live, false);
+    assert.equal(branches.result.leafId, branchUser2);
+    assert.ok(branches.result.nodes.some((node) => node.id === branchUser1));
+    assert.ok(branches.result.nodes.some((node) => node.id === branchAssistant));
+
+    client.send({
+      kind: "req",
+      id: 30,
+      method: "sessions.switchBranch",
+      params: { sessionId: branchSessionId, filePath: branchFile, leafId: branchAssistant },
+    });
+    const switched = await client.waitFor((frame) => frame.kind === "res" && frame.id === 30);
+    assert.equal(switched.ok, true, JSON.stringify(switched.error));
+    assert.equal(switched.result.leafId, branchAssistant);
+    assert.equal(switched.result.live, false);
+
+    client.send({
+      kind: "req",
+      id: 31,
+      method: "sessions.switchBranch",
+      params: { sessionId: branchSessionId, filePath: branchFile, leafId: "missing-entry" },
+    });
+    const switchInvalid = await client.waitFor((frame) => frame.kind === "res" && frame.id === 31);
+    assert.equal(switchInvalid.ok, false);
+    assert.equal(switchInvalid.error.code, "E_INVALID_PARAMS");
+
     // ---- cascade cleanup on host shutdown ----
     client.send({
       kind: "req",

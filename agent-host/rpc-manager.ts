@@ -30,6 +30,7 @@ import { desktopToolOutputInlineExtension } from "./desktop-tool-output-extensio
 import { auxToolAvailability } from "./aux-models.ts";
 import { loadDesktopMcpConfig } from "../lib/mcp-config.ts";
 import { findLastAgentMode } from "./agent-mode-persistence.ts";
+import { applyPendingSessionLeaf } from "./session-branch-state.ts";
 import {
   branchEntriesToMessagesText,
   lastAssistantFromBranch,
@@ -905,6 +906,9 @@ export async function startRpcSession(
     const sessionManager = sessionFile
       ? SessionManager.open(sessionFile, undefined)
       : SessionManager.create(cwd, undefined);
+    // A branch selected while the session was cold must be honored before the
+    // first prompt appends to the transcript.
+    applyPendingSessionLeaf(sessionId, sessionManager);
 
     const storedMode = findLastAgentMode(sessionManager.getEntries() as never);
     const agentMode: AgentMode = isAgentMode(opts.agentMode)

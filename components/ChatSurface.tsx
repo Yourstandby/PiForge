@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, CheckCircle2, ListTodo } from "lucide-react";
 import type { AgentMessage, SessionInfo, SessionTreeNode } from "@/lib/types";
 import { useAgentSession } from "@/hooks/useAgentSession";
 import { useAudio } from "@/hooks/useAudio";
 import { useHostHealth } from "@/hooks/useHostHealth";
 import { conversationToMarkdown } from "@/lib/conversation-markdown";
+import { buildBranchSwitchMap } from "@/lib/session-branches-view";
 import { buildImagineMessage } from "@/lib/imagine-command";
 import { BranchCloneModal, type BranchCloneMode } from "./BranchCloneModal";
 import { BranchNavigator } from "./BranchNavigator";
@@ -248,6 +249,27 @@ function ChatSession({
   const availableThinkingLevels = currentModel
     ? (chat.modelThinkingLevels[`${currentModel.provider}:${currentModel.modelId}`] ?? null)
     : null;
+
+  const branchSwitchMap = useMemo(
+    () => buildBranchSwitchMap(chat.branches?.nodes ?? []),
+    [chat.branches],
+  );
+
+  const handleSwitchBranch = useCallback(
+    (leafId: string | null) => {
+      void chat.handleLeafChange(leafId);
+    },
+    [chat],
+  );
+
+  /** GitBranch button: fork at this message, prefilling the composer when pi returns text. */
+  const handleBranchAt = useCallback(
+    async (entryId: string) => {
+      const editorText = await chat.handleBranchAt(entryId);
+      if (editorText) onDraftChange(editorText);
+    },
+    [chat, onDraftChange],
+  );
 
   const streaming = chat.streamState.isStreaming ? chat.streamState.streamingMessage : null;
   const messages: AgentMessage[] = streaming
@@ -515,6 +537,9 @@ function ChatSession({
                   onApplyCode={onApplyCode ? handleApplyCode : undefined}
                   applyTargetName={applyTargetName}
                   nestedExecutions={chat.nestedToolExecutions}
+                  onBranch={handleBranchAt}
+                  branchSwitch={(entryId) => branchSwitchMap.get(entryId) ?? null}
+                  onSwitchBranch={handleSwitchBranch}
                 />
               )}
 

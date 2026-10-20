@@ -2,9 +2,10 @@
 
 import { useCallback, useRef, useState } from "react";
 import type { AgentMessage, SessionTreeNode } from "../../lib/types";
+import type { SessionBranches } from "@contract/domains/sessions";
 import type { FollowUpQueueSnapshot } from "../../lib/follow-up-queue";
 import type { SessionStats } from "./session-stats.ts";
-import { fetchSession, fetchContext } from "./session-loader-api.ts";
+import { fetchSession, fetchContext, fetchBranches } from "./session-loader-api.ts";
 
 /** Latest-request-wins guard: stale() goes true once a newer call bumps the ref. */
 export function latestRequestStale(ref: { current: number }): () => boolean {
@@ -50,12 +51,28 @@ export function useSessionLoader(isNew: boolean) {
   const [activeLeafId, setActiveLeafId] = useState<string | null>(null);
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [entryIds, setEntryIds] = useState<Array<string | undefined>>([]);
+  const [branches, setBranches] = useState<SessionBranches | null>(null);
 
   // Latest-request-wins guard (M3): when sessions switch quickly, a stale
   // response must not overwrite newer state. The caller's `cancelled` flag
   // only guards its outer .then, not these setState calls.
   const loadReqIdRef = useRef(0);
   const loadContextReqIdRef = useRef(0);
+  const branchReqIdRef = useRef(0);
+
+  const loadBranches = useCallback(async (sid: string, filePath?: string | null) => {
+    const requestId = ++branchReqIdRef.current;
+    try {
+      const next = await fetchBranches(sid, filePath);
+      // A newer session load wins; never show another session's branches.
+      if (requestId !== branchReqIdRef.current) return null;
+      setBranches(next);
+      return next;
+    } catch {
+      // Branch switchers are optional chrome; keep the current tree on failure.
+      return null;
+    }
+  }, []);
 
   const loadSession = useCallback(async (sid: string, showLoading = false, includeState = false): Promise<LoadedSessionState | null> => {
     const stale = latestRequestStale(loadReqIdRef);
@@ -68,6 +85,7 @@ export function useSessionLoader(isNew: boolean) {
           setData(null);
           setActiveLeafId(null);
           setMessages([]);
+          setBranches(null);
           setError(null);
         }
         return null;
@@ -77,6 +95,8 @@ export function useSessionLoader(isNew: boolean) {
       setMessages(d.context.messages);
       setEntryIds(d.context.entryIds ?? []);
       setError(null);
+      // Fire-and-forget: the tree powers the inline 1/2 switchers.
+      void loadBranches(sid, d.filePath);
       return { agentState: d.agentState ?? null, contextThinkingLevel: d.context.thinkingLevel };
     } catch (e) {
       if (stale()) return null;
@@ -88,7 +108,7 @@ export function useSessionLoader(isNew: boolean) {
       // never set loading true — skipping the reset here would wedge it).
       if (!stale()) setLoading(false);
     }
-  }, []);
+  }, [loadBranches]);
 
   const loadContext = useCallback(async (sid: string, leafId: string | null) => {
     const stale = latestRequestStale(loadContextReqIdRef);
@@ -114,7 +134,10 @@ export function useSessionLoader(isNew: boolean) {
     setMessages,
     entryIds,
     setEntryIds,
+    branches,
+    setBranches,
     loadSession,
     loadContext,
+    loadBranches,
   };
 }

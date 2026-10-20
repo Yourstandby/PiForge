@@ -107,6 +107,12 @@ import {
 import { probeDevEnvironment } from "./dev-tools.ts";
 import { applyCodeToFile, FileApplyError } from "./file-apply.ts";
 import {
+  getSessionBranches,
+  SessionBranchError,
+  switchSessionBranch,
+} from "./session-branches.ts";
+import { clearPendingSessionLeaves, forgetPendingSessionLeaf } from "./session-branch-state.ts";
+import {
   HISTORY_DEFAULT_LIMIT,
   HISTORY_MAX_LIMIT,
   isToolOutputPath,
@@ -322,6 +328,14 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
     }
     if (isMcpAuthRequiredError(error)) {
       fail(state, id, "MCP_AUTH_REQUIRED", errorText(error));
+      return;
+    }
+    fail(state, id, "INTERNAL", errorText(error));
+  }
+
+  function failBranch(state: ConnectionState, id: number, error: unknown): void {
+    if (error instanceof SessionBranchError) {
+      fail(state, id, error.code, error.message);
       return;
     }
     fail(state, id, "INTERNAL", errorText(error));
@@ -1146,6 +1160,43 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       }
 
       // ---------------------------------------------------------------------
+      // Session branches
+      // ---------------------------------------------------------------------
+      case "sessions.getBranches": {
+        const sessionId = readString(params, "sessionId");
+        if (!sessionId) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "sessionId is required");
+          return;
+        }
+        const filePath = readOptionalString(params, "filePath");
+        void getSessionBranches({ sessionId, ...(filePath ? { filePath } : {}) })
+          .then((branches) => result(state, frame.id, branches))
+          .catch((error: unknown) => failBranch(state, frame.id, error));
+        return;
+      }
+      case "sessions.switchBranch": {
+        const sessionId = readString(params, "sessionId");
+        if (!sessionId) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "sessionId is required");
+          return;
+        }
+        const leafId = params.leafId;
+        if (leafId !== null && typeof leafId !== "string") {
+          fail(state, frame.id, "E_INVALID_PARAMS", "leafId must be a string or null");
+          return;
+        }
+        const filePath = readOptionalString(params, "filePath");
+        void switchSessionBranch({
+          sessionId,
+          leafId,
+          ...(filePath ? { filePath } : {}),
+        })
+          .then((switched) => result(state, frame.id, switched))
+          .catch((error: unknown) => failBranch(state, frame.id, error));
+        return;
+      }
+
+      // ---------------------------------------------------------------------
       // Session metadata / mutation
       // ---------------------------------------------------------------------
       case "sessions.locate": {
@@ -1213,7 +1264,10 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
           return;
         }
         void deleteSession(sessionId, filePath)
-          .then(() => result(state, frame.id, { ok: true }))
+          .then(() => {
+            forgetPendingSessionLeaf(sessionId);
+            result(state, frame.id, { ok: true });
+          })
           .catch((error: unknown) => fail(state, frame.id, "INTERNAL", errorText(error)));
         return;
       }
@@ -1560,6 +1614,7 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
         log(`failed to close MCP management connections: ${errorText(error)}`);
       }
       clearAllBrowserSessionGrants();
+      clearPendingSessionLeaves();
 
       try {
         const stopped = await stopAllManagedProcesses();
