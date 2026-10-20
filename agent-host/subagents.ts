@@ -14,7 +14,7 @@ import { randomUUID } from "node:crypto";
 import {
   DefaultResourceLoader,
   SessionManager,
-  createAgentSession,
+  createHostAgentSession,
   getAgentDir,
 } from "./sdk-adapter.ts";
 import type { ThinkingLevel } from "./sdk-adapter.ts";
@@ -43,7 +43,7 @@ export class SubagentError extends Error {
 
 interface SubagentRecord {
   view: SubagentView;
-  session: Awaited<ReturnType<typeof createAgentSession>>["session"] | null;
+  session: Awaited<ReturnType<typeof createHostAgentSession>>["session"] | null;
   abort: AbortController;
   timedOut: boolean;
   lastAssistantText: string;
@@ -252,7 +252,7 @@ export async function spawnSubagent(input: SpawnSubagentInput): Promise<SpawnSub
     await resourceLoader.reload();
 
     const runtime = await getSharedAuxRuntime();
-    const { session } = await createAgentSession({
+    const { session } = await createHostAgentSession({
       cwd: input.cwd,
       agentDir,
       modelRuntime: runtime,

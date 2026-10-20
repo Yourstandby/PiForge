@@ -16,7 +16,41 @@
  * Contract for business modules: do not add a direct `@earendil-works/*`
  * import outside this file. CI checks that rule (`scripts/check-sdk-imports.mjs`).
  */
+import {
+  createAgentSession as createPiAgentSession,
+  type CreateAgentSessionOptions,
+  type CreateAgentSessionResult,
+} from "@earendil-works/pi-coding-agent";
+
 export * from "@earendil-works/pi-coding-agent";
+
+/** Stable error shape for Host callers; keeps upstream stack in `cause`. */
+export class SdkAdapterError extends Error {
+  readonly operation: string;
+  readonly cause: unknown;
+
+  constructor(operation: string, cause: unknown) {
+    super(`${operation} failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+    this.name = "SdkAdapterError";
+    this.operation = operation;
+    this.cause = cause;
+  }
+}
+
+/**
+ * Compatibility wrapper for the most common construction seam. A future Pi
+ * release that renames options or changes the return shape is normalized here;
+ * callers keep one Host-owned error type.
+ */
+export async function createHostAgentSession(
+  options: CreateAgentSessionOptions,
+): Promise<CreateAgentSessionResult> {
+  try {
+    return await createPiAgentSession(options);
+  } catch (error) {
+    throw new SdkAdapterError("createHostAgentSession", error);
+  }
+}
 
 // Pi-ai and agent-core types used by Host managers. Keep this list explicit so
 // an upstream rename is visible in one diff instead of silently breaking the

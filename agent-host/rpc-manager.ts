@@ -1,7 +1,7 @@
 import { existsSync } from "fs";
 import { unlink } from "fs/promises";
 import { randomUUID } from "node:crypto";
-import { createAgentSession, createCodemodeExtension, createMcpExtension, createToolSearchExtension, SessionManager } from "./sdk-adapter.ts";
+import { createHostAgentSession, createCodemodeExtension, createMcpExtension, createToolSearchExtension, SessionManager } from "./sdk-adapter.ts";
 import type { AgentSessionLike, ToolInfo } from "../lib/pi-types.ts";
 import {
   DEFAULT_AGENT_MODE,
@@ -962,7 +962,7 @@ export async function startRpcSession(
     });
     await resourceLoader.reload();
 
-    const { session: inner } = await createAgentSession({
+    const { session: inner } = await createHostAgentSession({
       cwd,
       agentDir,
       sessionManager,

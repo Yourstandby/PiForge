@@ -11,7 +11,7 @@ import type { ThinkingLevel } from "./sdk-adapter.ts";
 import {
   DefaultResourceLoader,
   SessionManager,
-  createAgentSession,
+  createHostAgentSession,
   getAgentDir,
 } from "./sdk-adapter.ts";
 import type { SubagentToolCallView } from "../contract/domains/subagents.ts";
@@ -95,7 +95,7 @@ async function main(): Promise<void> {
   const model = config.provider && config.modelId
     ? runtime.getModel(config.provider, config.modelId)
     : undefined;
-  const { session } = await createAgentSession({
+  const { session } = await createHostAgentSession({
     cwd: config.cwd,
     agentDir,
     sessionManager: SessionManager.create(config.cwd, undefined),

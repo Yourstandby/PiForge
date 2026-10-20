@@ -35,12 +35,14 @@ test("packaging and release scripts call build:standalone", () => {
   assert.match(pkg.scripts.release, /npm run build:standalone/);
   assert.match(pkg.scripts.pack, /^npm run build:standalone &&/);
   assert.match(pkg.scripts.dist, /^npm run build:standalone &&/);
-  for (const scriptName of ["pack", "dist"]) {
-    assert.match(
-      pkg.scripts[scriptName],
-      /electron-builder.+&& node scripts\/smoke-packaged-standalone\.mjs/
-    );
-  }
+  assert.match(
+    pkg.scripts.pack,
+    /electron-builder.+&& node scripts\/smoke-packaged-standalone\.mjs/
+  );
+  // dist uses the NSIS launcher (preloads the Windows Job Object workaround)
+  // and still finishes with the packaged smoke.
+  assert.match(pkg.scripts.dist, /node scripts\/build-installer\.mjs/);
+  assert.match(pkg.scripts.dist, /&& node scripts\/smoke-packaged-standalone\.mjs$/);
   assert.match(pkg.scripts["pack:mac"], /electron-builder --mac --universal --dir/);
   assert.match(pkg.scripts["dist:mac"], /electron-builder --mac --universal --publish never/);
   for (const scriptName of ["pack:mac", "dist:mac"]) {
