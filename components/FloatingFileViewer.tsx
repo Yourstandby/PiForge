@@ -22,6 +22,34 @@ interface FileData {
   size: number;
 }
 
+const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "ico", "avif"]);
+const HTML_EXTENSIONS = new Set(["html", "htm"]);
+const MARKDOWN_EXTENSIONS = new Set(["md", "markdown"]);
+const TEXT_EXTENSIONS = new Set([
+  "ts", "tsx", "js", "jsx", "mjs", "cjs", "json", "jsonl", "css", "scss", "sass",
+  "less", "xml", "yaml", "yml", "toml", "ini", "cfg", "conf", "env", "sh", "bash",
+  "zsh", "ps1", "bat", "cmd", "py", "pyi", "go", "rs", "java", "kt", "kts", "swift",
+  "c", "cc", "cpp", "cxx", "h", "hpp", "cs", "rb", "php", "sql", "graphql", "gql",
+  "txt", "log", "csv", "tsv", "lock", "gitignore", "npmrc", "editorconfig",
+  "properties", "gradle", "dockerfile", "makefile", "license", "readme", "notice",
+  "changelog", "procfile",
+]);
+
+type FileKind = "image" | "html" | "markdown" | "text" | "unsupported";
+
+function fileExtension(fileName: string): string {
+  return fileName.toLowerCase().split(".").pop() ?? "";
+}
+
+function fileKind(fileName: string): FileKind {
+  const ext = fileExtension(fileName);
+  if (IMAGE_EXTENSIONS.has(ext)) return "image";
+  if (HTML_EXTENSIONS.has(ext)) return "html";
+  if (MARKDOWN_EXTENSIONS.has(ext)) return "markdown";
+  if (ext && !TEXT_EXTENSIONS.has(ext)) return "unsupported";
+  return "text";
+}
+
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -48,6 +76,16 @@ export function FloatingFileViewer({
   const [saving, setSaving] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
+  const fileName = target.fileName || getFileName(target.filePath);
+  const kind = fileKind(fileName);
+  const isPreviewable = kind === "image" || kind === "html" || kind === "markdown";
+  const isTextEditable = kind === "text" || kind === "html" || kind === "markdown";
+  const language = target.diff
+    ? "diff"
+    : kind === "image"
+      ? fileExtension(fileName)
+      : (data?.language ?? fileExtension(fileName) ?? "text");
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -55,8 +93,12 @@ export function FloatingFileViewer({
     setData(null);
     setDiff(null);
     setEditing(false);
-    setPreview(false);
+    setPreview(kind === "image");
     const relative = getRelativeFilePath(target.filePath, cwd ?? undefined);
+
+    const finish = () => {
+      if (!cancelled) setLoading(false);
+    };
 
     if (target.diff) {
       fetch(
@@ -71,9 +113,11 @@ export function FloatingFileViewer({
         .catch((e: unknown) => {
           if (!cancelled) setError(e instanceof Error ? e.message : String(e));
         })
-        .finally(() => {
-          if (!cancelled) setLoading(false);
-        });
+        .finally(finish);
+    } else if (kind === "image") {
+      finish();
+    } else if (kind === "unsupported") {
+      finish();
     } else {
       fetch(`/api/files/${encodeFilePathForApi(target.filePath)}?type=read`)
         .then((res) => res.json())
@@ -85,13 +129,13 @@ export function FloatingFileViewer({
         .catch((e: unknown) => {
           if (!cancelled) setError(e instanceof Error ? e.message : String(e));
         })
-        .finally(() => {
-          if (!cancelled) setLoading(false);
-        });
+        .finally(finish);
     }
     return () => {
       cancelled = true;
     };
+    // kind derives from target.fileName, covered by filePath changes in practice.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target.filePath, target.diff, cwd]);
 
   const lines = useMemo(() => (data?.content ?? "").split("\n"), [data?.content]);
@@ -148,10 +192,7 @@ export function FloatingFileViewer({
     }
   };
 
-  const fileName = target.fileName || getFileName(target.filePath);
-  const language = target.diff ? "diff" : (data?.language ?? "text");
-  const isMarkdown =
-    data?.language === "markdown" || /\.(md|markdown)$/i.test(fileName);
+  const imageSrc = `/api/files/${encodeFilePathForApi(target.filePath)}?type=read`;
 
   return (
     <div className="absolute left-2 right-2 top-2 z-30 flex h-[80%] min-h-[220px] flex-col overflow-hidden rounded-lg border border-gray-200/80 bg-white shadow-xl">
@@ -167,7 +208,7 @@ export function FloatingFileViewer({
           </>
         )}
         <span className="flex-1" />
-        {!target.diff && !editing && (
+        {isTextEditable && !target.diff && !editing && (
           <button
             type="button"
             onClick={startEditing}
@@ -179,12 +220,12 @@ export function FloatingFileViewer({
             编辑
           </button>
         )}
-        {isMarkdown && !editing && !target.diff && (
+        {isPreviewable && !editing && !target.diff && (
           <button
             type="button"
             onClick={() => setPreview((value) => !value)}
-            disabled={!data || loading}
-            title={preview ? "切换到源码" : "预览 Markdown"}
+            disabled={loading}
+            title={preview ? "切换到源码" : "预览文件"}
             aria-pressed={preview}
             className={`flex h-6 items-center gap-1 rounded px-1.5 text-[10.5px] transition-colors disabled:opacity-40 ${
               preview
@@ -200,17 +241,19 @@ export function FloatingFileViewer({
             {preview ? "源码" : "预览"}
           </button>
         )}
-        <button
-          type="button"
-          onClick={() => setWrap((value) => !value)}
-          aria-pressed={wrap}
-          title={wrap ? "关闭自动换行" : "开启自动换行"}
-          className={`flex h-6 w-6 items-center justify-center rounded transition-colors ${
-            wrap ? "bg-[#E8EFFB] text-accent-strong" : "text-ink-faint hover:bg-[#ECECEF] hover:text-ink"
-          }`}
-        >
-          <WrapText size={12} strokeWidth={1.9} aria-hidden="true" />
-        </button>
+        {(isTextEditable || target.diff) && !editing && (
+          <button
+            type="button"
+            onClick={() => setWrap((value) => !value)}
+            aria-pressed={wrap}
+            title={wrap ? "关闭自动换行" : "开启自动换行"}
+            className={`flex h-6 w-6 items-center justify-center rounded transition-colors ${
+              wrap ? "bg-[#E8EFFB] text-accent-strong" : "text-ink-faint hover:bg-[#ECECEF] hover:text-ink"
+            }`}
+          >
+            <WrapText size={12} strokeWidth={1.9} aria-hidden="true" />
+          </button>
+        )}
         {editing && (
           <>
             <button
@@ -250,22 +293,6 @@ export function FloatingFileViewer({
           </p>
         ) : error ? (
           <p className="px-3 py-2 text-[11px] text-danger">{error}</p>
-        ) : editing ? (
-          <textarea
-            value={editContent}
-            onChange={(event) => setEditContent(event.target.value)}
-            rows={1}
-            spellCheck={false}
-            className="block h-full min-h-0 w-full resize-none bg-[#FBFCFE] px-3 py-2 font-mono text-[12px] leading-5 text-ink outline-none"
-            style={{ boxSizing: "border-box", overflow: "auto", tabSize: 2 }}
-          />
-        ) : preview && isMarkdown && data ? (
-          <div
-            className="markdown-body markdown-file-preview"
-            style={{ padding: "16px 18px", maxWidth: 860, margin: "0 auto" }}
-          >
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{data.content}</ReactMarkdown>
-          </div>
         ) : target.diff ? (
           <pre className="m-0 py-1 font-mono text-[11.5px] leading-5">
             {(diff ?? "").split(/\r?\n/).map((line, index) => {
@@ -286,6 +313,54 @@ export function FloatingFileViewer({
               );
             })}
           </pre>
+        ) : kind === "unsupported" ? (
+          <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
+            <p className="text-[12px] text-ink-muted">
+              暂不支持预览此格式，请下载或使用本地软件打开
+            </p>
+            <p className="font-mono text-[11px] uppercase text-ink-faint">
+              {fileExtension(fileName) || "unknown"}
+            </p>
+          </div>
+        ) : editing ? (
+          <textarea
+            value={editContent}
+            onChange={(event) => setEditContent(event.target.value)}
+            rows={1}
+            spellCheck={false}
+            className="block h-full min-h-0 w-full resize-none bg-[#FBFCFE] px-3 py-2 font-mono text-[12px] leading-5 text-ink outline-none"
+            style={{ boxSizing: "border-box", overflow: "auto", tabSize: 2 }}
+          />
+        ) : kind === "image" ? (
+          preview ? (
+            <div className="flex min-h-full items-center justify-center overflow-auto p-2">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={imageSrc}
+                alt={fileName}
+                className="mx-auto block max-w-full"
+                style={{ height: "auto" }}
+              />
+            </div>
+          ) : (
+            <p className="px-3 py-2 text-[11px] text-ink-faint">
+              图片为二进制文件，切换到预览查看。
+            </p>
+          )
+        ) : kind === "html" && preview && data ? (
+          <iframe
+            sandbox="allow-scripts"
+            srcDoc={data.content}
+            title={fileName}
+            className="h-full w-full border-0 bg-white"
+          />
+        ) : kind === "markdown" && preview && data ? (
+          <div
+            className="markdown-body markdown-file-preview"
+            style={{ padding: "16px 18px", maxWidth: 860, margin: "0 auto" }}
+          >
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{data.content}</ReactMarkdown>
+          </div>
         ) : data ? (
           <SyntaxHighlighter
             language={data.language === "text" ? "plaintext" : data.language}
