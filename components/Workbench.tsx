@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SessionInfo } from "@/lib/types";
-import { PanelRightOpen, Settings } from "lucide-react";
+import { PanelRightOpen, Plug, Settings, Sparkles } from "lucide-react";
 import { getElectronApi } from "@/lib/electron-api";
 import { resolveForkedSession } from "@/lib/fork-session-wait";
 import { buildProjectWindowPath, resolveInitialView } from "@/lib/project-window";
@@ -15,6 +15,7 @@ import { SessionExportModal } from "./SessionExportModal";
 import { SessionSidebar } from "./SessionSidebar";
 import { ExtensionsConfigModal } from "./ExtensionsConfigModal";
 import { AutoRoutingConfig } from "./AutoRoutingConfig";
+import { McpSettingsModal } from "./McpSettingsModal";
 import { SkillsConfig } from "./SkillsConfig";
 import { TitleBar } from "./TitleBar";
 
@@ -22,7 +23,7 @@ function byModifiedDesc(a: SessionInfo, b: SessionInfo): number {
   return new Date(b.modified).getTime() - new Date(a.modified).getTime();
 }
 
-type SettingsModal = "skills" | "models" | "extensions" | "auto" | null;
+type SettingsModal = "skills" | "models" | "extensions" | "auto" | "mcp" | null;
 
 const MIN_RIGHT_PANEL_WIDTH = 280;
 const MAX_RIGHT_PANEL_WIDTH = 800;
@@ -360,7 +361,25 @@ export function Workbench() {
                 {projectError}
               </p>
             )}
-            <div className="flex justify-end">
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setSettingsModal("skills")}
+                title="Skill"
+                aria-label="Skill"
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-500 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900"
+              >
+                <Sparkles size={16} strokeWidth={1.75} className="h-4 w-4" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setSettingsModal("mcp")}
+                title="MCP"
+                aria-label="MCP"
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-500 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900"
+              >
+                <Plug size={16} strokeWidth={1.75} className="h-4 w-4" aria-hidden="true" />
+              </button>
               <button
                 type="button"
                 onClick={() => setMenuOpen((open) => !open)}
@@ -469,6 +488,9 @@ export function Workbench() {
 
       {settingsModal === "skills" && (
         <SkillsConfig cwd={cwd ?? ""} onClose={() => setSettingsModal(null)} />
+      )}
+      {settingsModal === "mcp" && (
+        <McpSettingsModal cwd={cwd ?? ""} onClose={() => setSettingsModal(null)} />
       )}
       {settingsModal === "auto" && (
         <AutoRoutingConfig
