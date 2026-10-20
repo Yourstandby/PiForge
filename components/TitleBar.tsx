@@ -13,8 +13,19 @@
 
 export function TitleBar() {
   return (
-    <header className="app-titlebar relative z-40 flex h-9 shrink-0 items-center border-b border-[#E4E6EA] bg-[#F5F5F7]">
+    <header className="app-titlebar relative z-40 flex h-9 shrink-0 items-center border-b border-black/[0.06] bg-white/70 backdrop-blur-md">
       <div className="app-titlebar-inner flex min-w-0 items-center gap-2">
+        {/* Brand mark. Served as SVG: some managed Windows setups mangle .png at
+            rest, and the SVG twin embeds the same raster. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/logo.svg"
+          alt=""
+          width={22}
+          height={22}
+          draggable={false}
+          className="pointer-events-none shrink-0 select-none"
+        />
         <span className="shrink-0 text-[12px] font-semibold tracking-[0.08em] text-ink-soft">
           PiForge
         </span>

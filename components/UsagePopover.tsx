@@ -47,10 +47,12 @@ export function UsagePopover({
 
   if (!open || !anchorRect) return null;
 
-  const top = anchorRect.bottom + 6;
-  const right = Math.max(12, window.innerWidth - anchorRect.right);
   const viewportHeight = typeof window !== "undefined" ? (window.visualViewport?.height ?? window.innerHeight) : 800;
-  const maxH = Math.max(200, Math.min(520, viewportHeight - top - 16));
+  // The token chip lives in the status bar at the very bottom of the window,
+  // so the panel opens upwards from the anchor instead of below it.
+  const bottom = Math.max(12, viewportHeight - anchorRect.top + 6);
+  const right = Math.max(12, window.innerWidth - anchorRect.right);
+  const maxH = Math.min(520, Math.max(160, anchorRect.top - 18));
 
   const tks = sessionStats?.tokens;
   const c = sessionStats?.cost ?? 0;
@@ -86,8 +88,8 @@ export function UsagePopover({
       role="dialog"
       aria-label={t("usage.title")}
       className="t-dropdown is-open material-popover fixed z-[700] w-[350px] rounded-panel border border-border p-3.5 shadow-popover text-text select-none flex flex-col"
-      data-origin="top-right"
-      style={{ top, right, maxHeight: maxH }}
+      data-origin="bottom-right"
+      style={{ bottom, right, maxHeight: maxH }}
     >
       {/* Header */}
       <div className="flex items-center justify-between shrink-0">

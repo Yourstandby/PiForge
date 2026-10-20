@@ -6,6 +6,12 @@ directories:
   output: release
   buildResources: build
 
+# GitHub release assets are unreliable from mainland China; use the npmmirror
+# mirror for the Electron binary. For helper binaries (winCodeSign/nsis) export
+# ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
+electronDownload:
+  mirror: https://npmmirror.com/mirrors/electron/
+
 files:
   - package.json
   - build/icon.ico

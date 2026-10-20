@@ -119,7 +119,7 @@ export const StatsBar = React.memo(function StatsBar({
   );
 
   return (
-    <div ref={containerRef} className="relative h-full flex items-stretch [-webkit-app-region:no-drag]">
+    <div ref={containerRef} className="relative flex items-stretch [-webkit-app-region:no-drag]">
       <button
         type="button"
         onClick={togglePopover}
@@ -127,7 +127,7 @@ export const StatsBar = React.memo(function StatsBar({
         aria-label={t("usage.title")}
         aria-haspopup="dialog"
         aria-expanded={popoverOpen}
-        className={`flex items-center gap-2 h-full px-2.5 text-[11px] font-mono tabular-nums select-none cursor-pointer border-none border-l border-divider transition-colors duration-150 ${
+        className={`flex items-center gap-2 h-7 px-2.5 text-[11px] font-mono tabular-nums select-none cursor-pointer border-none border-l border-divider transition-colors duration-150 ${
           popoverOpen
             ? "bg-bg-selected text-text border-t-2 border-t-accent"
             : "bg-transparent text-text-muted hover:text-text hover:bg-bg-hover/60 border-t-2 border-t-transparent"

@@ -653,3 +653,90 @@ span.linenumber { color: var(--text-dim) !important; font-style: normal !importa
   align-items: center;
   gap: 2px;
 }
+
+/* ---------------------------------------------------------------------------
+   Frosted glass chrome + selection indicator (Cursor/Raycast inspired)
+--------------------------------------------------------------------------- */
+.sidebar-workspace,
+.sidebar-project-list,
+.sidebar-header {
+  background: transparent;
+}
+.sidebar-session-row {
+  position: relative;
+  transition: background-color 200ms ease-in-out;
+}
+.sidebar-session-row:hover {
+  background: rgb(0 0 0 / 0.04);
+}
+.sidebar-session-row[data-selected] {
+  background: rgb(59 130 246 / 0.10);
+}
+.sidebar-session-row[data-selected]:hover {
+  background: rgb(59 130 246 / 0.14);
+}
+.sidebar-session-row[data-selected]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  border-radius: 2px;
+  background: #2563eb;
+  transition: opacity 200ms ease-in-out;
+}
+.sidebar-project-row,
+.sidebar-new-session-button,
+.sidebar-icon-button,
+.sidebar-project-toggle,
+.sidebar-session-select,
+.sidebar-explorer-toggle {
+  transition: background-color 200ms ease-in-out, color 200ms ease-in-out,
+    border-color 200ms ease-in-out, opacity 200ms ease-in-out;
+}
+.sidebar-project-content {
+  transition: opacity 200ms ease-in-out;
+}
+
+/* ---------------------------------------------------------------------------
+   Global motion: every interactive surface eases instead of snapping.
+--------------------------------------------------------------------------- */
+button,
+a,
+[role="button"],
+[role="menuitem"],
+[role="option"],
+input,
+textarea {
+  transition-property: color, background-color, border-color, box-shadow,
+    opacity, transform;
+  transition-duration: 200ms;
+  transition-timing-function: ease-in-out;
+}
+
+.material-popover,
+.ui-dialog-surface,
+.t-modal,
+.t-dropdown,
+.sidebar-session-menu,
+.sidebar-sort-menu,
+.sidebar-picker-menu {
+  transition: opacity 200ms ease-in-out, transform 200ms ease-in-out,
+    box-shadow 200ms ease-in-out;
+}
+
+/* Sidebar project reveal */
+.sidebar-project-content[data-expanded="true"] .sidebar-project-content-inner {
+  animation: sidebar-reveal 200ms ease-in-out;
+}
+@keyframes sidebar-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

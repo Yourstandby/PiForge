@@ -1,56 +1,39 @@
-// Generates PiForge's brand icons from one SVG source.
+// Generates PiForge's brand icons from the master artwork.
 //
-//   node scripts/build-brand-icons.mjs
+//   node scripts/build-brand-icons.mjs   (npm run icons)
 //
-// Outputs: build/icon.ico, build/icon.icns, build/icon.png,
-// build/tray-icon.ico, app/favicon.ico
+// Master: PiForge_ico/PiForge.ico (PNG payload, icon tile + ® mark).
+// Outputs: build/icon.ico, build/icon.icns, build/icon.png, build/tray-icon.ico,
+//          app/favicon.ico, public/logo.png, public/logo.svg, app/icon.svg
 //
 // ICO/ICNS are assembled directly from PNG frames (Vista+ ICO supports PNG
 // entries; ICNS uses the modern `ic07`-`ic14` PNG chunk types), so no native
 // image tooling beyond sharp is required.
-import { mkdirSync, writeFileSync } from "node:fs";
+//
+// The SVG copies embed the raster as a data URI: some managed Windows machines
+// run endpoint encryption that mangles `.png` files at rest, so the web UI
+// loads the SVG twin while packaging keeps using the PNG/ICO files.
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const master = readFileSync(join(root, "PiForge_ico", "PiForge.ico"));
 
-const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#0c1c31"/>
-      <stop offset="1" stop-color="#050a12"/>
-    </linearGradient>
-    <radialGradient id="glow" cx="0.5" cy="0.08" r="0.78">
-      <stop offset="0" stop-color="#58a6ff" stop-opacity="0.32"/>
-      <stop offset="1" stop-color="#58a6ff" stop-opacity="0"/>
-    </radialGradient>
-    <linearGradient id="beam" x1="244" y1="344" x2="780" y2="344" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#8fd6ff"/>
-      <stop offset="0.52" stop-color="#d6f2ff"/>
-      <stop offset="1" stop-color="#5ba8ff"/>
-    </linearGradient>
-    <linearGradient id="leg" x1="0" y1="352" x2="0" y2="798" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#7cc9ff"/>
-      <stop offset="1" stop-color="#3f7fe0" stop-opacity="0.78"/>
-    </linearGradient>
-  </defs>
-  <rect width="1024" height="1024" rx="224" fill="url(#bg)"/>
-  <rect width="1024" height="1024" rx="224" fill="url(#glow)"/>
-  <rect x="244" y="306" width="536" height="76" rx="38" fill="url(#beam)"/>
-  <rect x="330" y="352" width="76" height="446" rx="34" transform="rotate(-3 368 575)" fill="url(#leg)"/>
-  <rect x="618" y="352" width="76" height="446" rx="34" transform="rotate(3 656 575)" fill="url(#leg)"/>
-  <rect x="292" y="836" width="440" height="10" rx="5" fill="#7cc9ff" opacity="0.18"/>
-  <path d="M812 232 l15 42 42 15 -42 15 -15 42 -15 -42 -42 -15 42 -15 z" fill="#d9f2ff" opacity="0.9"/>
-</svg>`;
-
-const svgBuffer = Buffer.from(svg);
+// Tight square around the rounded tile (drops the "PiForge" wordmark).
+const TILE = { left: 50, top: 15, width: 280, height: 280 };
+const source = await sharp(master).extract(TILE).png().toBuffer();
 
 async function png(size) {
-  return sharp(svgBuffer, { density: 384 })
-    .resize(size, size, { fit: "contain" })
-    .png({ compressionLevel: 9 })
-    .toBuffer();
+  const pipeline = sharp(source).resize(size, size, {
+    fit: "contain",
+    background: { r: 0, g: 0, b: 0, alpha: 0 },
+    kernel: "lanczos3",
+  });
+  // Small frames lose the thin arcs otherwise.
+  if (size <= 64) pipeline.sharpen({ sigma: 0.6 });
+  return pipeline.png({ compressionLevel: 9 }).toBuffer();
 }
 
 function buildIco(frames) {
@@ -92,6 +75,13 @@ function buildIcns(chunks) {
   return Buffer.concat([head, body]);
 }
 
+function svgFrom(data, size) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+  <image width="${size}" height="${size}" href="data:image/png;base64,${data.toString("base64")}"/>
+</svg>
+`;
+}
+
 const icoSizes = [16, 24, 32, 48, 64, 128, 256];
 const icoFrames = [];
 for (const size of icoSizes) {
@@ -122,5 +112,12 @@ writeFileSync(join(root, "build", "tray-icon.ico"), ico);
 writeFileSync(join(root, "app", "favicon.ico"), ico);
 writeFileSync(join(root, "build", "icon.icns"), icns);
 writeFileSync(join(root, "build", "icon.png"), await png(512));
+writeFileSync(join(root, "public", "logo.png"), await png(256));
 
-console.log(`icon.ico ${ico.length} bytes, icon.icns ${icns.length} bytes`);
+const svgPng = await png(256);
+writeFileSync(join(root, "public", "logo.svg"), svgFrom(svgPng, 280));
+writeFileSync(join(root, "app", "icon.svg"), svgFrom(svgPng, 280));
+
+console.log(
+  `icon.ico ${ico.length} bytes · icon.icns ${icns.length} bytes · png/svg variants written`,
+);

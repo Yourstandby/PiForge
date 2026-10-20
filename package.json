@@ -4,6 +4,14 @@
   "description": "PiForge — desktop client for the pi coding agent",
   "license": "MIT",
   "author": "PiForge",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yourstandby/PiForge.git"
+  },
+  "homepage": "https://github.com/yourstandby/PiForge#readme",
+  "bugs": {
+    "url": "https://github.com/yourstandby/PiForge/issues"
+  },
   "desktopName": "piforge",
   "main": "electron/dist/main.js",
   "bin": {
