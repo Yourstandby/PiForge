@@ -4,6 +4,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, ChevronDown, ChevronUp, File, Folder, GripVertical, Paperclip, Square } from "lucide-react";
 import type { AttachedImage } from "./chat-input/types";
 import { AttachmentPreview } from "./chat-input/AttachmentPreview";
+import { buildReferenceInsertion, isImageFileLike } from "@/lib/composer-files";
+import { getElectronApi } from "@/lib/electron-api";
+import { getRelativeFilePath } from "@/lib/file-paths";
+import {
+  pushPromptHistory,
+  readPromptHistory,
+  stepHistory,
+  writePromptHistory,
+} from "@/lib/prompt-history";
 import {
   buildSlashCommandItems,
   getSlashTriggerQuery,
@@ -55,6 +64,34 @@ function fileToAttachment(file: File): Promise<AttachedImage> {
   });
 }
 
+/** Drag payload carries files (not a reorder drag of the follow-up queue). */
+function hasFilePayload(dataTransfer: DataTransfer | null): boolean {
+  return Boolean(dataTransfer && Array.from(dataTransfer.types).includes("Files"));
+}
+
+/**
+ * Clipboard files. Screenshots usually arrive in `files`; some apps only expose
+ * them as `items[kind=file]`, so both are checked.
+ */
+function clipboardFiles(data: DataTransfer | null): File[] {
+  if (!data) return [];
+  const direct = Array.from(data.files ?? []);
+  if (direct.length > 0) return direct;
+  return Array.from(data.items ?? [])
+    .filter((item) => item.kind === "file")
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => Boolean(file));
+}
+
+/** Absolute path of a dropped file (Electron only; browsers never expose it). */
+function fileSystemPath(file: File): string | null {
+  try {
+    return getElectronApi()?.getPathForFile?.(file) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function Composer({
   value = "",
   onValueChange,
@@ -90,6 +127,39 @@ export function Composer({
   const [images, setImages] = useState<AttachedImage[]>([]);
   const imagesRef = useRef<AttachedImage[]>([]);
   imagesRef.current = images;
+  const [dragActive, setDragActive] = useState(false);
+  // dragenter/leave fire for every child element; count them instead of
+  // toggling so the highlight does not flicker.
+  const dragDepth = useRef(0);
+
+  // Terminal-style prompt history (↑ / ↓), newest first.
+  const [history, setHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState<number | null>(null);
+  // Text the user had typed before starting to browse history.
+  const historyDraftRef = useRef("");
+
+  useEffect(() => {
+    setHistory(readPromptHistory());
+  }, []);
+
+  const rememberPrompt = useCallback((prompt: string) => {
+    setHistory((current) => {
+      const next = pushPromptHistory(current, prompt);
+      writePromptHistory(next);
+      return next;
+    });
+  }, []);
+
+  const focusCaretAtEnd = useCallback(() => {
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      const position = el.value.length;
+      el.setSelectionRange(position, position);
+      setCaret(position);
+    });
+  }, []);
 
   const [mention, setMention] = useState<MentionToken | null>(null);
   const [suggestions, setSuggestions] = useState<FileSuggestion[]>([]);
@@ -221,7 +291,7 @@ export function Composer({
   );
 
   const addFiles = useCallback(async (files: FileList | File[]) => {
-    const picked = Array.from(files).filter((file) => file.type.startsWith("image/"));
+    const picked = Array.from(files).filter((file) => isImageFileLike(file.name, file.type));
     if (picked.length === 0) return;
     try {
       const attachments = await Promise.all(picked.map(fileToAttachment));
@@ -229,6 +299,89 @@ export function Composer({
     } catch {
       // Silent: an unreadable image should not block typing.
     }
+  }, []);
+
+  /** Append `@path` references for non-image files. */
+  const insertRefs = useCallback(
+    (paths: string[]) => {
+      const next = buildReferenceInsertion(value, paths);
+      if (next === value) return;
+      onValueChange(next);
+      requestAnimationFrame(() => {
+        const el = textareaRef.current;
+        if (!el) return;
+        el.focus();
+        setCaret(next.length);
+        el.setSelectionRange(next.length, next.length);
+      });
+    },
+    [onValueChange, value],
+  );
+
+  /** Resolve a dropped/pasted file to a project-relative reference path. */
+  const resolveRef = useCallback(
+    async (file: File): Promise<string> => {
+      const absolute = fileSystemPath(file);
+      if (absolute) return cwd ? getRelativeFilePath(absolute, cwd) : absolute;
+      // Browser fallback: <input type=file> exposes no path, so look the name up
+      // in the project index before settling for the bare filename.
+      if (cwd) {
+        try {
+          const res = await fetch(
+            `/api/file-index?cwd=${encodeURIComponent(cwd)}&q=${encodeURIComponent(file.name)}`,
+          );
+          if (res.ok) {
+            const data = (await res.json()) as { matches?: FileSuggestion[] };
+            const hit = data.matches?.find(
+              (match) => !match.isDir && (match.path === file.name || match.path.endsWith(`/${file.name}`)),
+            );
+            if (hit) return hit.path;
+          }
+        } catch {
+          // Offline / not indexed: fall back to the filename.
+        }
+      }
+      return file.name;
+    },
+    [cwd],
+  );
+
+  /** Images become attachments, anything else becomes `@path` references. */
+  const handleFiles = useCallback(
+    async (files: File[]) => {
+      if (files.length === 0) return;
+      const imagesPicked = files.filter((file) => isImageFileLike(file.name, file.type));
+      const others = files.filter((file) => !isImageFileLike(file.name, file.type));
+      if (imagesPicked.length > 0) await addFiles(imagesPicked);
+      if (others.length > 0) {
+        const paths = await Promise.all(others.map(resolveRef));
+        insertRefs(paths);
+      }
+    },
+    [addFiles, resolveRef, insertRefs],
+  );
+
+  // A drop outside the composer must never navigate the window to the file.
+  useEffect(() => {
+    const preventNavigation = (event: DragEvent) => {
+      if (hasFilePayload(event.dataTransfer)) event.preventDefault();
+    };
+    // Safety net: `dragleave` is not guaranteed for every dragenter, so a drag
+    // that ends anywhere clears the composer highlight.
+    const resetDrag = () => {
+      dragDepth.current = 0;
+      setDragActive(false);
+    };
+    window.addEventListener("dragover", preventNavigation);
+    window.addEventListener("drop", preventNavigation);
+    window.addEventListener("drop", resetDrag);
+    window.addEventListener("dragend", resetDrag);
+    return () => {
+      window.removeEventListener("dragover", preventNavigation);
+      window.removeEventListener("drop", preventNavigation);
+      window.removeEventListener("drop", resetDrag);
+      window.removeEventListener("dragend", resetDrag);
+    };
   }, []);
 
   const removeImage = useCallback((index: number) => {
@@ -247,6 +400,8 @@ export function Composer({
     onValueChange("");
     setImages([]);
     setMention(null);
+    setHistoryIndex(null);
+    historyDraftRef.current = "";
     textareaRef.current?.focus();
   };
 
@@ -256,6 +411,7 @@ export function Composer({
     if (!canSend) return;
     const text = value.trim();
     const attached = images.length > 0 ? images : undefined;
+    if (text) rememberPrompt(text);
     if (busy) {
       if (mode === "follow-up") {
         if (!onFollowUp) return;
@@ -309,15 +465,47 @@ export function Composer({
   };
 
   return (
-    <div className="w-full rounded-2xl border-none bg-white p-2.5 shadow-[0_8px_30px_rgb(0,0,0,0.04)] ring-1 ring-black/[0.03] transition-all duration-200 ease-in-out focus-within:ring-2 focus-within:ring-accent/15 focus-within:shadow-[0_10px_38px_rgb(0,0,0,0.07)]">
+    <div
+      onDragEnter={(event) => {
+        if (!hasFilePayload(event.dataTransfer)) return;
+        dragDepth.current += 1;
+        setDragActive(true);
+      }}
+      onDragOver={(event) => {
+        if (!hasFilePayload(event.dataTransfer)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+      }}
+      onDragLeave={(event) => {
+        if (!hasFilePayload(event.dataTransfer)) return;
+        dragDepth.current = Math.max(0, dragDepth.current - 1);
+        if (dragDepth.current === 0) setDragActive(false);
+      }}
+      onDrop={(event) => {
+        if (!hasFilePayload(event.dataTransfer)) return;
+        event.preventDefault();
+        dragDepth.current = 0;
+        setDragActive(false);
+        void handleFiles(Array.from(event.dataTransfer.files));
+      }}
+      className={`relative w-full rounded-2xl border-none bg-white p-2.5 shadow-[0_8px_30px_rgb(0,0,0,0.04)] ring-1 transition-all duration-200 ease-in-out focus-within:ring-2 focus-within:shadow-[0_10px_38px_rgb(0,0,0,0.07)] ${
+        dragActive
+          ? "ring-2 ring-accent/40 bg-[#F7FAFF]"
+          : "ring-black/[0.03] focus-within:ring-accent/15"
+      }`}
+    >
+      {dragActive && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl border-2 border-dashed border-accent/40 bg-white/85 text-[12px] font-medium text-accent-strong">
+          松开以添加图片或文件引用
+        </div>
+      )}
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*"
         multiple
         className="hidden"
         onChange={(e) => {
-          if (e.target.files) void addFiles(e.target.files);
+          if (e.target.files) void handleFiles(Array.from(e.target.files));
           e.target.value = "";
         }}
       />
@@ -464,6 +652,8 @@ export function Composer({
           onChange={(e) => {
             onValueChange(e.target.value);
             setSlashDismissedValue(null);
+            // Typing leaves history browsing; the edited text becomes the draft.
+            setHistoryIndex(null);
             const position = e.target.selectionStart ?? e.target.value.length;
             setCaret(position);
             setMention(detectMention(e.target.value, position));
@@ -524,17 +714,39 @@ export function Composer({
                 return;
               }
             }
+            // ↑ / ↓ walk previously sent prompts when the composer is empty.
+            // With text already in the box, ↑ keeps its native caret behavior.
+            if ((e.key === "ArrowUp" || e.key === "ArrowDown") && history.length > 0) {
+              const browsing = historyIndex !== null;
+              if (e.key === "ArrowUp" && (value.length === 0 || browsing)) {
+                e.preventDefault();
+                if (!browsing) historyDraftRef.current = value;
+                const next = stepHistory(historyIndex, "older", history.length);
+                setHistoryIndex(next.index);
+                onValueChange(history[next.index ?? 0] ?? "");
+                focusCaretAtEnd();
+                return;
+              }
+              if (e.key === "ArrowDown" && browsing) {
+                e.preventDefault();
+                const next = stepHistory(historyIndex, "newer", history.length);
+                setHistoryIndex(next.index);
+                onValueChange(next.restoreDraft ? historyDraftRef.current : (history[next.index ?? 0] ?? ""));
+                focusCaretAtEnd();
+                return;
+              }
+            }
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
               submit(busy && e.altKey ? "follow-up" : "send");
             }
           }}
           onPaste={(e) => {
-            const files = Array.from(e.clipboardData.files);
-            if (files.some((file) => file.type.startsWith("image/"))) {
-              e.preventDefault();
-              void addFiles(files);
-            }
+            const files = clipboardFiles(e.clipboardData);
+            if (files.length === 0) return;
+            // Screenshots and copied files: attach images, reference the rest.
+            e.preventDefault();
+            void handleFiles(files);
           }}
           rows={1}
           placeholder="问点什么，或者描述你想构建的东西…（@ 引用文件）"
@@ -549,7 +761,7 @@ export function Composer({
             onClick={() => fileInputRef.current?.click()}
             disabled={disabled}
             aria-label="添加附件"
-            title="添加图片附件"
+            title="添加附件（图片或文件引用）"
             className="flex h-7 w-7 items-center justify-center rounded-md text-ink-faint transition-colors duration-150 hover:bg-[#ECECEF] hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Paperclip size={15} strokeWidth={1.5} />
@@ -557,7 +769,7 @@ export function Composer({
           <span className="text-[11px] text-ink-faint">
             {busy
               ? "Enter 打断并发送 · Alt + Enter 加入队列"
-              : "Enter 发送 · Shift + Enter 换行 · @ 引用文件"}
+              : "Enter 发送 · Shift + Enter 换行 · @ 引用文件 · 拖拽添加"}
           </span>
         </div>
         <div className="flex items-center gap-1">

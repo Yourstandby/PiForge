@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { diffStats, parseUnifiedDiff } from "./diff-lines.ts";
+import { diffLines, diffStats, parseUnifiedDiff } from "./diff-lines.ts";
 
 const DIFF = [
   "diff --git a/src/app.ts b/src/app.ts",
@@ -78,4 +78,42 @@ test("untracked /dev/null diff and no-newline marker", () => {
 test("empty diff yields no rows", () => {
   assert.deepEqual(parseUnifiedDiff(""), []);
   assert.deepEqual(parseUnifiedDiff("   \n"), []);
+});
+
+test("diffLines marks replaced lines and keeps shared context", () => {
+  const rows = diffLines("a\nb\nc\nd", "a\nb\nB2\nc\nd");
+  assert.deepEqual(
+    rows.map((row) => `${row.kind}:${row.text}`),
+    ["context:a", "context:b", "add:B2", "context:c", "context:d"],
+  );
+  const added = rows.find((row) => row.kind === "add");
+  assert.deepEqual(added, { kind: "add", oldLine: null, newLine: 3, text: "B2" });
+});
+
+test("diffLines reports deletions and additions in one hunk", () => {
+  const rows = diffLines("keep\nold1\nold2\ntail", "keep\nnew1\ntail");
+  assert.deepEqual(
+    rows.map((row) => [row.kind, row.text, row.oldLine, row.newLine]),
+    [
+      ["context", "keep", 1, 1],
+      ["del", "old1", 2, null],
+      ["del", "old2", 3, null],
+      ["add", "new1", null, 2],
+      ["context", "tail", 4, 3],
+    ],
+  );
+});
+
+test("diffLines treats an empty old side as a new file", () => {
+  const rows = diffLines("", "line1\nline2\n");
+  assert.deepEqual(rows.map((row) => [row.kind, row.text, row.newLine]), [
+    ["add", "line1", 1],
+    ["add", "line2", 2],
+  ]);
+});
+
+test("diffLines returns nothing for identical text", () => {
+  const rows = diffLines("same\ntext", "same\ntext");
+  assert.deepEqual(rows.map((row) => row.kind), ["context", "context"]);
+  assert.deepEqual(diffStats(rows), { added: 0, removed: 0 });
 });

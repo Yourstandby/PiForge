@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertCircle, CheckCircle2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, ListTodo } from "lucide-react";
 import type { AgentMessage, SessionInfo, SessionTreeNode } from "@/lib/types";
 import { useAgentSession } from "@/hooks/useAgentSession";
 import { useAudio } from "@/hooks/useAudio";
+import { conversationToMarkdown } from "@/lib/conversation-markdown";
 import { BranchCloneModal, type BranchCloneMode } from "./BranchCloneModal";
 import { BranchNavigator } from "./BranchNavigator";
 import { Composer } from "./Composer";
@@ -148,6 +149,48 @@ function ChatSession({
 
   const canCompact = Boolean(session?.id) && !chat.agentRunning && !chat.isCompacting;
 
+  /** Ctrl/Cmd+Shift+C: whole conversation as Markdown on the clipboard. */
+  const copyConversation = useCallback(async () => {
+    const markdown = conversationToMarkdown(chat.messages);
+    try {
+      await navigator.clipboard.writeText(markdown);
+      setCompactToast({ ok: true, text: "对话已复制" });
+    } catch {
+      setCompactToast({ ok: false, text: "复制失败：剪贴板不可用" });
+    }
+  }, [chat.messages]);
+
+  /** Ctrl/Cmd+K: same reset as the /clear slash command. */
+  const clearConversation = useCallback(() => {
+    if (chat.agentRunning) {
+      setCompactToast({ ok: false, text: "正在生成，先按 Esc 中断" });
+      return;
+    }
+    void chat.handleSend("/clear");
+    setCompactToast({ ok: true, text: "已清空当前对话视图" });
+  }, [chat]);
+
+  // Global (active-tab only) shortcuts. Capture phase so a focused textarea
+  // cannot swallow them. Dialogs keep the keyboard to themselves.
+  useEffect(() => {
+    if (!active) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+      if (document.querySelector('[role="dialog"], [aria-modal="true"]')) return;
+      if (event.shiftKey && event.key.toLowerCase() === "c") {
+        event.preventDefault();
+        void copyConversation();
+        return;
+      }
+      if (!event.shiftKey && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        clearConversation();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [active, copyConversation, clearConversation]);
+
   const runCompact = useCallback(async () => {
     setCompactConfirmOpen(false);
     const outcome = await chat.handleCompact();
@@ -242,6 +285,33 @@ function ChatSession({
 
   const composer = (
     <div className="flex flex-col gap-2">
+      {chat.canExecutePlan && chat.agentMode === "plan" && (
+        <div
+          role="group"
+          aria-label="计划已生成"
+          className="flex items-center gap-2 self-start rounded-xl border border-[#D9E5FB] bg-[#F5F9FF] px-2.5 py-1.5 text-[12px] text-ink-soft shadow-[0_1px_2px_rgba(15,23,42,0.04)]"
+        >
+          <ListTodo size={13} strokeWidth={1.9} className="shrink-0 text-accent" aria-hidden="true" />
+          <span className="min-w-0">计划已生成，批准后开始执行。</span>
+          <button
+            type="button"
+            onClick={() => {
+              void chat.handleExecutePlan();
+            }}
+            disabled={chat.agentRunning}
+            className="ml-1 shrink-0 rounded-md bg-accent px-2 py-1 text-[11.5px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            批准并执行
+          </button>
+          <button
+            type="button"
+            onClick={() => chat.dismissPlan()}
+            className="shrink-0 rounded-md px-1.5 py-1 text-[11.5px] text-ink-muted transition-colors hover:bg-[#ECECEF] hover:text-ink"
+          >
+            拒绝
+          </button>
+        </div>
+      )}
       {compactToast && (
         <div
           role="status"

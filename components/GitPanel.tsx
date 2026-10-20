@@ -13,6 +13,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { diffStats, parseUnifiedDiff, type DiffLine } from "@/lib/diff-lines";
+import { DiffRow } from "./DiffRows";
 
 /**
  * Git tab: working-tree status, per-file diff and a commit box.
@@ -88,41 +89,6 @@ function windowDiff(rows: DiffLine[]): { rows: DiffLine[]; skipped: number } {
     rows: [...rows.slice(0, DIFF_HEAD_LIMIT), ...rows.slice(rows.length - DIFF_TAIL_LIMIT)],
     skipped: rows.length - DIFF_HEAD_LIMIT - DIFF_TAIL_LIMIT,
   };
-}
-
-function DiffRow({ row }: { row: DiffLine }) {
-  const tone =
-    row.kind === "add"
-      ? "bg-[#EAF6EE] text-[#22603D]"
-      : row.kind === "del"
-        ? "bg-[#FBEDEC] text-[#A03A32]"
-        : row.kind === "hunk"
-          ? "bg-[#F0F5FD] text-[#3B6DB5]"
-          : row.kind === "meta"
-            ? "text-ink-faint"
-            : "text-[#374151]";
-
-  if (row.kind === "hunk" || row.kind === "meta") {
-    return (
-      <div className={`flex font-mono text-[11px] leading-[1.6] ${tone}`}>
-        <span className="w-[34px] shrink-0" aria-hidden="true" />
-        <span className="w-[34px] shrink-0" aria-hidden="true" />
-        <span className="min-w-0 flex-1 whitespace-pre-wrap break-all px-2">{row.text || " "}</span>
-      </div>
-    );
-  }
-
-  return (
-    <div className={`flex font-mono text-[11px] leading-[1.6] ${tone}`}>
-      <span className="w-[34px] shrink-0 select-none border-r border-black/[0.04] pr-1 text-right text-[10px] text-ink-faint">
-        {row.oldLine ?? ""}
-      </span>
-      <span className="w-[34px] shrink-0 select-none border-r border-black/[0.04] pr-1 text-right text-[10px] text-ink-faint">
-        {row.newLine ?? ""}
-      </span>
-      <span className="min-w-0 flex-1 whitespace-pre-wrap break-all px-2">{row.text || " "}</span>
-    </div>
-  );
 }
 
 export function GitPanel({ cwd, active = true }: { cwd: string | null; active?: boolean }) {
