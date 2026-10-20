@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { PLAN_MODE_SYSTEM_PROMPT } from "./approval-policy.ts";
+import { PLAN_MODE_SYSTEM_PROMPT } from "../lib/approval-policy.ts";
 import { createDesktopApprovalFactory } from "./desktop-approval-extension.ts";
 
 type Handler = (event: unknown, ctx?: unknown) => unknown;

@@ -1,5 +1,5 @@
-import { isAgentMode, type AgentMode } from "./approval-policy.ts";
-import type { SessionEntry } from "./types.ts";
+import { isAgentMode, type AgentMode } from "../lib/approval-policy.ts";
+import type { SessionEntry } from "../lib/types.ts";
 
 export interface AgentModeCustomData {
   mode: AgentMode;

@@ -1,4 +1,5 @@
 import { createPiRuntime, isOAuthProvider, logoutProvider } from "@/lib/pi-runtime";
+import { notifyAgentHostModelsChanged } from "@/lib/agent-host-client";
 
 export const dynamic = "force-dynamic";
 
@@ -12,5 +13,6 @@ export async function POST(
     return Response.json({ error: `Unknown provider: ${provider}` }, { status: 400 });
   }
   await logoutProvider(runtime, provider);
+  notifyAgentHostModelsChanged();
   return Response.json({ ok: true });
 }

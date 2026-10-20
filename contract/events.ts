@@ -28,6 +28,15 @@ export interface HostEventPayloads {
   "terminal.changed": {
     blocks: TerminalBlock[];
   };
+  "agent.event": {
+    sessionId: string;
+    event: Record<string, unknown>;
+  };
+  "agent.lagged": {
+    sessionId: string;
+    fromSeq: number;
+    reason: "slow_subscriber" | "buffer_overflow";
+  };
 }
 
 export type HostEventTopic = keyof HostEventPayloads;

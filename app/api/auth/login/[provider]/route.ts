@@ -5,6 +5,7 @@ import {
   loginProvider,
   type AuthInteraction,
 } from "@/lib/pi-runtime";
+import { notifyAgentHostModelsChanged } from "@/lib/agent-host-client";
 import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
 
 export const dynamic = "force-dynamic";
@@ -197,6 +198,7 @@ export async function GET(
 
       try {
         await loginProvider(runtime, provider, "oauth", interaction);
+        notifyAgentHostModelsChanged();
         send(controller, { type: "success" });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

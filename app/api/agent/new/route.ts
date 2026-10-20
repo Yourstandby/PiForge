@@ -1,17 +1,16 @@
 import { NextResponse } from "next/server";
 import { existsSync } from "fs";
-import { getSessionOnlyTrustMap, startRpcSession } from "@/lib/rpc-manager";
-import { errorMessage, getRequestId, jsonError, logApiError } from "@/lib/api-error";
-import { validateAgentCwd } from "@/lib/path-policy";
+import type { AgentCommandDto, AgentModeDto, ToolPresetDto } from "@contract/domains/agent";
 import { validateAgentCommand } from "@/lib/agent-commands";
-import { evaluateProjectTrust } from "@/lib/project-trust-desktop";
-import { isAgentMode, isToolPreset } from "@/lib/approval-policy";
+import { getAgentHostClient } from "@/lib/agent-host-client";
+import { jsonAgentHostError } from "@/lib/agent-host-http";
+import { jsonError } from "@/lib/api-error";
+import { validateAgentCwd } from "@/lib/path-policy";
 
 // POST /api/agent/new  body: { cwd: string; type: string; message: string; ... }
-// Spawns a brand-new pi session and immediately sends the first command.
-// Returns { sessionId, data } where sessionId is pi's real session id.
+// The Agent Host owns session creation and prompt dispatch; this route only
+// performs HTTP-boundary validation and the trust gate.
 export async function POST(req: Request) {
-  const requestId = getRequestId(req);
   try {
     const body = await req.json() as { cwd?: string; [key: string]: unknown };
     const { cwd, ...command } = body;
@@ -23,25 +22,25 @@ export async function POST(req: Request) {
       return jsonError(req, 400, `Directory does not exist: ${cwd}`);
     }
 
-    // Reject dangerous cwd values (filesystem root, user home, system dirs)
-    // before granting the agent file access via the allowed-roots cache.
-    // Without this, a single POST with cwd="C:\\" or "/" would let subsequent
-    // /api/files requests read/write anywhere on disk.
     const cwdError = validateAgentCwd(cwd);
     if (cwdError) {
       return jsonError(req, 400, cwdError);
     }
 
-    const trustGate = evaluateProjectTrust(cwd, { sessionOnlyTrust: getSessionOnlyTrustMap() });
-    if (trustGate.action === "prompt") {
-      return NextResponse.json(trustGate.payload, {
-        status: 409,
-        headers: { "x-request-id": requestId },
-      });
+    const cmdError = validateAgentCommand(command);
+    if (cmdError) {
+      return jsonError(req, 400, cmdError);
     }
 
-    // Use a one-time key so startRpcSession's lock doesn't conflict with real session ids
-    const { provider, modelId, toolNames, thinkingLevel, agentMode, toolPreset, ...promptCommand } = command as {
+    const {
+      provider,
+      modelId,
+      toolNames,
+      thinkingLevel,
+      agentMode,
+      toolPreset,
+      ...promptCommand
+    } = command as {
       provider?: string;
       modelId?: string;
       toolNames?: string[];
@@ -51,48 +50,29 @@ export async function POST(req: Request) {
       [key: string]: unknown;
     };
 
-    // Validate the command before allocating a session — mirrors /api/agent/[id]
-    // behavior so invalid command types fail with 400 instead of 500 after
-    // unnecessarily consuming session resources.
-    const cmdError = validateAgentCommand(promptCommand);
-    if (cmdError) {
-      return jsonError(req, 400, cmdError);
+    const client = getAgentHostClient();
+
+    const trustGate = await client.call("trust.evaluate", { cwd });
+    if (trustGate.action === "prompt") {
+      return NextResponse.json(trustGate.payload, { status: 409 });
     }
 
-    const tempKey = `__new__${Date.now()}__${Math.random().toString(36).slice(2, 8)}`;
-    const { session, realSessionId } = await startRpcSession(tempKey, "", cwd, {
-      toolNames,
-      agentMode: isAgentMode(agentMode) ? agentMode : undefined,
-      toolPreset: isToolPreset(toolPreset) ? toolPreset : undefined,
+    const result = await client.call("agent.create", {
+      cwd,
+      command: promptCommand as AgentCommandDto,
+      ...(provider !== undefined ? { provider } : {}),
+      ...(modelId !== undefined ? { modelId } : {}),
+      ...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
+      ...(toolNames !== undefined ? { toolNames } : {}),
+      ...(agentMode !== undefined ? { agentMode: agentMode as AgentModeDto } : {}),
+      ...(toolPreset !== undefined ? { toolPreset: toolPreset as ToolPresetDto } : {}),
     });
 
-    // Keep the files-route allowed-roots cache (see app/api/files/[...path]/route.ts)
-    // in sync so the new cwd is immediately readable via /api/files. Without this,
-    // a file request under a brand-new cwd would 403 for up to the cache TTL.
+    // Keep the files-route allowed-roots cache in sync for the new cwd.
     globalThis.__piAllowedRootsCache?.roots.add(cwd);
 
-    // Apply pre-selected model before sending the prompt
-    if (provider && modelId) {
-      await session.send({ type: "set_model", provider, modelId });
-    }
-
-    // Apply pre-selected thinking level before sending the prompt
-    if (thinkingLevel) {
-      await session.send({ type: "set_thinking_level", level: thinkingLevel });
-    }
-
-    // Dispatch the prompt in the background. Awaiting it here deadlocks any
-    // run that opens an extension dialog (ctx.ui.input/select/confirm): the
-    // renderer only learns the session id from this response, so it could
-    // never render the dialog the run is waiting for. Failures surface as an
-    // `agent_error` SSE event instead of an HTTP error.
-    void session.send(promptCommand).catch((error: unknown) => {
-      session.reportError(errorMessage(error));
-    });
-
-    return NextResponse.json({ success: true, sessionId: realSessionId });
+    return NextResponse.json({ success: true, sessionId: result.sessionId });
   } catch (error) {
-    logApiError({ route: "/api/agent/new", method: "POST", requestId, error });
-    return jsonError(req, 500, errorMessage(error));
+    return jsonAgentHostError(req, error, { route: "/api/agent/new", method: "POST" });
   }
 }

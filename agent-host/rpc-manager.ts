@@ -2,8 +2,7 @@ import { existsSync } from "fs";
 import { unlink } from "fs/promises";
 import { randomUUID } from "node:crypto";
 import { createAgentSession, createCodemodeExtension, createMcpExtension, createToolSearchExtension, SessionManager } from "@earendil-works/pi-coding-agent";
-import { cacheSessionPath, invalidateSessionPathCache } from "./session-reader.ts";
-import type { AgentSessionLike, ToolInfo } from "./pi-types";
+import type { AgentSessionLike, ToolInfo } from "../lib/pi-types.ts";
 import {
   DEFAULT_AGENT_MODE,
   DEFAULT_TOOL_PRESET,
@@ -13,19 +12,19 @@ import {
   type AgentMode,
   type ToolPreset,
   toolNamesForPreset,
-} from "./approval-policy.ts";
+} from "../lib/approval-policy.ts";
 import { ExtensionUiBridge } from "./extension-ui-bridge.ts";
 import { desktopApprovalInlineExtension, type AgentModeRef } from "./desktop-approval-extension.ts";
 import {
   desktopLtmInlineExtension,
   withMemoryTools,
 } from "./desktop-ltm-extension.ts";
-import { readDesktopSettings } from "./desktop-settings.ts";
+import { readDesktopSettings } from "../lib/desktop-settings.ts";
 import { desktopRuntimeTools } from "./desktop-runtime-tools.ts";
 import { desktopProcessInlineExtension } from "./desktop-process-extension.ts";
 import { desktopBrowserInlineExtension } from "./desktop-browser-extension.ts";
 import { desktopTerminalInlineExtension } from "./desktop-terminal-extension.ts";
-import { loadDesktopMcpConfig } from "./mcp-config.ts";
+import { loadDesktopMcpConfig } from "../lib/mcp-config.ts";
 import { findLastAgentMode } from "./agent-mode-persistence.ts";
 import {
   branchEntriesToMessagesText,
@@ -35,6 +34,7 @@ import {
   safeLtmPreCompactObserve,
 } from "./ltm/observe-hooks.ts";
 import { FollowUpQueue, type FollowUpQueueSnapshot, type QueuedFollowUp } from "./follow-up-queue.ts";
+import { attachSessionStream } from "./session-events.ts";
 import {
   countUserMessages,
   firstUserTextFromBranch,
@@ -563,7 +563,6 @@ export class AgentSessionWrapper {
         }
 
         const newSessionId = SessionManager.open(newSessionFile, sessionDir).getSessionId();
-        cacheSessionPath(newSessionId, newSessionFile);
 
         // Pre-register the new wrapper BEFORE destroying the old.
         // Contract: by the time send() returns, newSessionId is in the registry.
@@ -576,8 +575,6 @@ export class AgentSessionWrapper {
         } catch (err) {
           // startRpcSession failed: clean up the orphan .jsonl file (it uses a unique
           // <timestamp>_<uuid>.jsonl name, so it would never be overwritten by future forks).
-          // The cached path is also invalidated so future lookups don't find a dead entry.
-          invalidateSessionPathCache(newSessionId);
           await unlink(newSessionFile).catch(() => { /* best-effort: file may not exist */ });
           throw err;
         }
@@ -815,16 +812,8 @@ export class AgentSessionWrapper {
 // Session registry
 // ============================================================================
 
-declare global {
-  var __piSessions: Map<string, AgentSessionWrapper> | undefined;
-  var __piStartLocks: Map<string, Promise<{ session: AgentSessionWrapper; realSessionId: string }>> | undefined;
-  var __piSessionOnlyTrust: Map<string, boolean> | undefined;
-}
-
-export function getSessionOnlyTrustMap(): Map<string, boolean> {
-  if (!globalThis.__piSessionOnlyTrust) globalThis.__piSessionOnlyTrust = new Map();
-  return globalThis.__piSessionOnlyTrust;
-}
+const registry = new Map<string, AgentSessionWrapper>();
+const startLocks = new Map<string, Promise<{ session: AgentSessionWrapper; realSessionId: string }>>();
 
 export type StartRpcSessionOptions = {
   toolNames?: string[];
@@ -840,56 +829,33 @@ function normalizeStartOptions(
 }
 
 function getRegistry(): Map<string, AgentSessionWrapper> {
-  if (!globalThis.__piSessions) {
-    globalThis.__piSessions = new Map();
-    // The 'exit' event cannot await (the process is already tearing down), so
-    // per-wrapper destroy stays fire-and-forget here.
-    const exitCleanup = () => {
-      globalThis.__piSessions?.forEach((s) => {
-        s.destroy().catch((err) => console.error("Error during exit destroy:", err));
-      });
-    };
-    // SIGINT/SIGTERM handlers CAN await: drain every wrapper's destroy() before
-    // the process exits, so the final batch of .jsonl writes is not lost to a
-    // fire-and-forget destroy. destroy() never rejects (every step is wrapped),
-    // allSettled is belt-and-suspenders. Conventional signal exit codes are
-    // preserved (128 + signal).
-    //
-    // The event system never awaits the handler's Promise, so a one-shot `once`
-    // binding would be consumed by the first signal — a second SIGINT/SIGTERM
-    // would then fall back to default behavior and kill the process mid-destroy,
-    // losing the final .jsonl writes. The handlers therefore stay `process.on`
-    // (repeatable) behind a "cleaning in progress" guard flag:
-    //   - first signal → start the cleanup, await every destroy(), then exit
-    //   - second signal while cleaning → immediate exit (the first cleanup is
-    //     already draining destroys; a repeat Ctrl+C means force-quit), and no
-    //     duplicate cleanup flow is ever started
-    let signalCleanupStarted = false;
-    const gracefulCleanup = async (signal: string) => {
-      const exitNow = () => process.exit(signal === "SIGINT" ? 130 : 143);
-      if (signalCleanupStarted) {
-        exitNow();
-        return;
-      }
-      signalCleanupStarted = true;
-      const sessions = globalThis.__piSessions ? [...globalThis.__piSessions.values()] : [];
-      await Promise.allSettled(sessions.map((s) => s.destroy()));
-      exitNow();
-    };
-    process.once("exit", exitCleanup);
-    process.on("SIGINT", () => { void gracefulCleanup("SIGINT"); });
-    process.on("SIGTERM", () => { void gracefulCleanup("SIGTERM"); });
-  }
-  return globalThis.__piSessions;
+  return registry;
 }
 
 function getLocks(): Map<string, Promise<{ session: AgentSessionWrapper; realSessionId: string }>> {
-  if (!globalThis.__piStartLocks) globalThis.__piStartLocks = new Map();
-  return globalThis.__piStartLocks;
+  return startLocks;
 }
 
 export function getRpcSession(sessionId: string): AgentSessionWrapper | undefined {
   return getRegistry().get(sessionId);
+}
+
+/** Internal registry access for host-side introspection and tests. */
+export function getRpcSessionRegistry(): Map<string, AgentSessionWrapper> {
+  return getRegistry();
+}
+
+/** Live sessions (used by health, model refresh and shutdown). */
+export function listRpcSessions(): AgentSessionWrapper[] {
+  return [...getRegistry().values()].filter((session) => session.isAlive());
+}
+
+/** Destroy every live session so JSONL writes are flushed before the host exits. */
+export async function destroyAllRpcSessions(): Promise<number> {
+  const sessions = listRpcSessions();
+  await Promise.allSettled(sessions.map((session) => session.destroy()));
+  getRegistry().clear();
+  return sessions.length;
 }
 
 export function updateSessionCodemode(enabled: boolean): void {
@@ -1000,6 +966,7 @@ export async function startRpcSession(
       wrapper.emitEvent(event);
     });
     wrapper.attachUiBridge(bridge);
+    attachSessionStream(wrapper);
 
     wrapper.start();
 
@@ -1020,8 +987,6 @@ export async function startRpcSession(
     );
 
     const realSessionId = inner.sessionId as string;
-    const realSessionFile = inner.sessionFile as string | undefined;
-    if (realSessionFile) cacheSessionPath(realSessionId, realSessionFile);
 
     // Ownership guard on the registry delete: destroy() is async and only runs
     // onDestroy callbacks after awaiting abort/unsubscribe, so a NEWER wrapper

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getRequestId, jsonError } from "@/lib/api-error";
-import { jsonLtmError, LTM_DISABLED, parseRecallQuery } from "@/lib/ltm/http";
-import { getMemoryService } from "@/lib/ltm/service";
+import { getAgentHostClient } from "@/lib/agent-host-client";
+import { jsonAgentHostError } from "@/lib/agent-host-http";
 
 export const dynamic = "force-dynamic";
 
@@ -9,30 +9,21 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   const requestId = getRequestId(req);
   try {
-    const parsed = parseRecallQuery(new URL(req.url));
-    if (!parsed.ok) {
-      return jsonError(req, 400, parsed.error);
-    }
+    const params = new URL(req.url).searchParams;
+    const cwd = params.get("cwd");
+    const q = params.get("q");
+    if (!cwd) return jsonError(req, 400, "cwd is required");
+    if (!q) return jsonError(req, 400, "q is required");
 
-    const service = getMemoryService();
-    if (!service.isEnabled()) {
-      return jsonError(req, 503, LTM_DISABLED);
-    }
-
-    const { cwd, query, limit } = parsed.value;
-    const hits = await service.recallFromCwd(cwd, {
-      query,
-      ...(limit !== undefined ? { limit } : {}),
+    const limitRaw = params.get("limit");
+    const limit = limitRaw === null || limitRaw === "" ? undefined : Number(limitRaw);
+    const result = await getAgentHostClient().call("memory.recall", {
+      cwd,
+      q,
+      ...(limit !== undefined && Number.isFinite(limit) ? { limit } : {}),
     });
-    return NextResponse.json(
-      { hits },
-      { headers: { "x-request-id": requestId } }
-    );
+    return NextResponse.json(result, { headers: { "x-request-id": requestId } });
   } catch (error) {
-    return jsonLtmError(req, error, {
-      route: "/api/memory/recall",
-      method: "GET",
-      requestId,
-    });
+    return jsonAgentHostError(req, error, { route: "/api/memory/recall", method: "GET" });
   }
 }

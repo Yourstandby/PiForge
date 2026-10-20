@@ -5,7 +5,7 @@ import type {
   RecallHit,
   RecallInput,
   RememberInput,
-} from "./types";
+} from "./types.ts";
 
 export interface MemoryBackend {
   remember(input: RememberInput): Promise<{ id: string; type: MemoryType }>;

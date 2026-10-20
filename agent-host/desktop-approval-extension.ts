@@ -10,7 +10,7 @@ import {
   type AgentMode,
   type ToolPreset,
   PLAN_TOOLS,
-} from "./approval-policy.ts";
+} from "../lib/approval-policy.ts";
 import { desktopRuntimeTools, isMcpTool } from "./desktop-runtime-tools.ts";
 
 export type AgentModeRef = { current: AgentMode; toolPreset?: ToolPreset; codemodeEnabled?: boolean };

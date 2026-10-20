@@ -38,7 +38,7 @@ export const AGENT_COMMAND_TYPES: ReadonlySet<AgentCommandType> = new Set(
  *
  * NOTE: This is intentionally minimal — we check `type` is whitelisted and
  * that the body is an object. Deep field validation is left to
- * lib/rpc-manager.ts / pi (which will throw on malformed payloads,
+ * agent-host/rpc-manager.ts / pi (which will throw on malformed payloads,
  * surfaced as 500 with sanitized errorMessage).
  */
 export function validateAgentCommand(body: unknown): string | null {

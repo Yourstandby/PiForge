@@ -96,7 +96,7 @@ describe("AgentEventsManager", () => {
 
   // Reconnect/backoff tests drive the mocked clock instead of sleeping: the
   // production reconnect timer uses global setTimeout, which mock.timers
-  // intercepts (same pattern as lib/rpc-manager.test.ts). The reconnect
+  // intercepts (same pattern as agent-host/rpc-manager.test.ts). The reconnect
   // callback runs synchronously inside tick(), so instance counts can be
   // asserted immediately afterwards.
   test("auto-reconnects when onerror is triggered and agent is running", () => {

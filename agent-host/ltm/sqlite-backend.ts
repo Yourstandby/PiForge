@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { MemoryBackend } from "./backend";
+import type { MemoryBackend } from "./backend.ts";
 import { isNearDuplicate } from "./jaccard.ts";
 import type {
   ForgetInput,
@@ -10,7 +10,7 @@ import type {
   RecallHit,
   RecallInput,
   RememberInput,
-} from "./types";
+} from "./types.ts";
 
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 50;

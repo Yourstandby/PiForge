@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getRequestId } from "@/lib/api-error";
-import { jsonLtmError } from "@/lib/ltm/http";
-import { getMemoryService } from "@/lib/ltm/service";
+import { getAgentHostClient } from "@/lib/agent-host-client";
+import { jsonAgentHostError } from "@/lib/agent-host-http";
 
 export const dynamic = "force-dynamic";
 
@@ -9,20 +9,9 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   const requestId = getRequestId(req);
   try {
-    const service = getMemoryService();
-    const health = await service.health();
-    return NextResponse.json(
-      {
-        ...health,
-        enabled: service.isEnabled(),
-      },
-      { headers: { "x-request-id": requestId } }
-    );
+    const health = await getAgentHostClient().call("memory.health", {});
+    return NextResponse.json(health, { headers: { "x-request-id": requestId } });
   } catch (error) {
-    return jsonLtmError(req, error, {
-      route: "/api/memory/health",
-      method: "GET",
-      requestId,
-    });
+    return jsonAgentHostError(req, error, { route: "/api/memory/health", method: "GET" });
   }
 }

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { findLastAgentMode } from "./agent-mode-persistence.ts";
-import type { SessionEntry } from "./types.ts";
+import type { SessionEntry } from "../lib/types.ts";
 
 test("findLastAgentMode returns undefined for empty or entries without mode", () => {
   assert.equal(findLastAgentMode([]), undefined);

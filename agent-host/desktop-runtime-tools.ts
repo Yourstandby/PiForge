@@ -1,5 +1,5 @@
-import type { ToolInfo } from "./pi-types.ts";
-import { effectiveToolsForMode, type AgentMode, type ToolPreset } from "./approval-policy.ts";
+import type { ToolInfo } from "../lib/pi-types.ts";
+import { effectiveToolsForMode, type AgentMode, type ToolPreset } from "../lib/approval-policy.ts";
 import { withMemoryTools } from "./desktop-ltm-extension.ts";
 import { BROWSER_PREVIEW_TOOL_NAME } from "./browser-bridge.ts";
 

@@ -9,10 +9,11 @@
  * connection (and subscriptions) alive.
  */
 import { connect, type Socket } from "node:net";
-import type { AgentHostClient, HostSubscription } from "../contract/client.ts";
+import type { AgentHostClient, AgentEventSubscription, HostSubscription } from "../contract/client.ts";
 import {
   type GlobalEventPayloads,
   type GlobalTopic,
+  type HostEventPayloads,
 } from "../contract/events.ts";
 import type { MethodName, Params, Result } from "../contract/methods.ts";
 import {
@@ -78,6 +79,19 @@ interface TopicHub {
   pending: Promise<void> | null;
 }
 
+type AgentListener = (event: HostEventPayloads["agent.event"]["event"], seq: number) => void;
+
+interface AgentHub {
+  listeners: Set<AgentListener>;
+  hostSubscriptionId: string | null;
+  lastSeq: number;
+  pending: Promise<void> | null;
+}
+
+type HostSubscriptionRef =
+  | { kind: "topic"; topic: GlobalTopic }
+  | { kind: "agent"; sessionId: string };
+
 interface EarlyEvent {
   payload: unknown;
   seq: number;
@@ -91,7 +105,8 @@ class PipeAgentHostClient implements AgentHostClient {
   private nextId = 0;
   private readonly pending = new Map<number, PendingCall>();
   private readonly hubs = new Map<GlobalTopic, TopicHub>();
-  private readonly subscriptionTopics = new Map<string, GlobalTopic>();
+  private readonly agentHubs = new Map<string, AgentHub>();
+  private readonly hostSubscriptions = new Map<string, HostSubscriptionRef>();
   private readonly earlyEvents = new Map<string, EarlyEvent[]>();
   private connectPromise: Promise<void> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -190,9 +205,58 @@ class PipeAgentHostClient implements AgentHostClient {
         const subscriptionId = topicHub.hostSubscriptionId;
         topicHub.hostSubscriptionId = null;
         if (subscriptionId) {
-          this.subscriptionTopics.delete(subscriptionId);
+          this.hostSubscriptions.delete(subscriptionId);
           if (this.currentStatus === "ready") {
             void this.call("host.unsubscribe", { subscriptionId }).catch(() => {
+              // Host may already be gone; the subscription dies with the pipe.
+            });
+          }
+        }
+      },
+    };
+  }
+
+  async subscribeAgent(
+    sessionId: string,
+    handler: AgentListener,
+    options: { fromSeq?: number } = {},
+  ): Promise<AgentEventSubscription> {
+    let hub = this.agentHubs.get(sessionId);
+    if (!hub) {
+      hub = { listeners: new Set(), hostSubscriptionId: null, lastSeq: 0, pending: null };
+      this.agentHubs.set(sessionId, hub);
+    }
+    hub.listeners.add(handler);
+
+    try {
+      await this.ensureAgentSubscription(sessionId, options.fromSeq);
+    } catch (error) {
+      hub.listeners.delete(handler);
+      if (hub.listeners.size === 0) this.agentHubs.delete(sessionId);
+      throw error;
+    }
+
+    const agentHub = hub;
+    return {
+      get id(): string {
+        return agentHub.hostSubscriptionId ?? "";
+      },
+      get sessionId(): string {
+        return sessionId;
+      },
+      get lastSeq(): number {
+        return agentHub.lastSeq;
+      },
+      close: (): void => {
+        agentHub.listeners.delete(handler);
+        if (agentHub.listeners.size > 0) return;
+        this.agentHubs.delete(sessionId);
+        const subscriptionId = agentHub.hostSubscriptionId;
+        agentHub.hostSubscriptionId = null;
+        if (subscriptionId) {
+          this.hostSubscriptions.delete(subscriptionId);
+          if (this.currentStatus === "ready") {
+            void this.call("agent.unsubscribe", { subscriptionId }).catch(() => {
               // Host may already be gone; the subscription dies with the pipe.
             });
           }
@@ -214,7 +278,8 @@ class PipeAgentHostClient implements AgentHostClient {
       // Already gone.
     }
     this.hubs.clear();
-    this.subscriptionTopics.clear();
+    this.agentHubs.clear();
+    this.hostSubscriptions.clear();
     this.earlyEvents.clear();
   }
 
@@ -229,11 +294,45 @@ class PipeAgentHostClient implements AgentHostClient {
       if (hub.hostSubscriptionId) return;
       const { subscriptionId } = await this.call("host.subscribe", { topics: [topic] });
       hub.hostSubscriptionId = subscriptionId;
-      this.subscriptionTopics.set(subscriptionId, topic);
+      this.hostSubscriptions.set(subscriptionId, { kind: "topic", topic });
       const early = this.earlyEvents.get(subscriptionId);
       if (early) {
         this.earlyEvents.delete(subscriptionId);
         for (const event of early) this.dispatch(topic, event.payload, event.seq);
+      }
+    })();
+    hub.pending = pending;
+    try {
+      await pending;
+    } finally {
+      if (hub.pending === pending) hub.pending = null;
+    }
+  }
+
+  private async ensureAgentSubscription(sessionId: string, fromSeq?: number): Promise<void> {
+    const hub = this.agentHubs.get(sessionId);
+    if (!hub || hub.listeners.size === 0) return;
+    if (hub.hostSubscriptionId) return;
+    if (hub.pending) return hub.pending;
+
+    const pending = (async () => {
+      await this.ensureConnected(DEFAULT_CALL_TIMEOUT_MS);
+      if (hub.hostSubscriptionId) return;
+      const subscribeResult = await this.call(
+        "agent.subscribe",
+        fromSeq === undefined ? { sessionId } : { sessionId, fromSeq },
+      );
+      hub.hostSubscriptionId = subscribeResult.subscriptionId;
+      hub.lastSeq = subscribeResult.lastSeq;
+      this.hostSubscriptions.set(subscribeResult.subscriptionId, { kind: "agent", sessionId });
+      const early = this.earlyEvents.get(subscribeResult.subscriptionId);
+      if (early) {
+        this.earlyEvents.delete(subscribeResult.subscriptionId);
+        for (const event of early) {
+          if (isStreamEvent(event.payload)) {
+            this.dispatchAgent(sessionId, event.payload, event.seq);
+          }
+        }
       }
     })();
     hub.pending = pending;
@@ -331,7 +430,7 @@ class PipeAgentHostClient implements AgentHostClient {
                 this.currentStatus = "ready";
                 this.reconnectAttempts = 0;
                 resolve();
-                this.resubscribeTopics();
+                this.resubscribeAll();
               } else if (frame.kind === "hello_error") {
                 fail(new AgentHostError(frame.error));
                 return;
@@ -375,9 +474,16 @@ class PipeAgentHostClient implements AgentHostClient {
         return;
       }
       case "evt": {
-        const topic = this.subscriptionTopics.get(frame.subscriptionId);
-        if (topic) {
-          this.dispatch(topic, frame.payload, frame.seq);
+        const hostSubscription = this.hostSubscriptions.get(frame.subscriptionId);
+        if (hostSubscription?.kind === "topic") {
+          this.dispatch(hostSubscription.topic, frame.payload, frame.seq);
+          return;
+        }
+        if (hostSubscription?.kind === "agent") {
+          const payload = frame.payload as { sessionId?: unknown; event?: unknown } | null;
+          if (payload && typeof payload === "object" && isStreamEvent(payload.event)) {
+            this.dispatchAgent(hostSubscription.sessionId, payload.event, frame.seq);
+          }
           return;
         }
         const early = this.earlyEvents.get(frame.subscriptionId) ?? [];
@@ -408,12 +514,36 @@ class PipeAgentHostClient implements AgentHostClient {
     }
   }
 
-  private resubscribeTopics(): void {
+  private dispatchAgent(
+    sessionId: string,
+    event: HostEventPayloads["agent.event"]["event"],
+    seq: number,
+  ): void {
+    const hub = this.agentHubs.get(sessionId);
+    if (!hub) return;
+    hub.lastSeq = seq;
+    for (const listener of [...hub.listeners]) {
+      try {
+        listener(event, seq);
+      } catch (error) {
+        console.error("agent-host agent listener failed:", error);
+      }
+    }
+  }
+
+  private resubscribeAll(): void {
     for (const topic of [...this.hubs.keys()]) {
       const hub = this.hubs.get(topic);
       if (!hub || hub.listeners.size === 0 || hub.hostSubscriptionId || hub.pending) continue;
       void this.ensureTopicSubscription(topic).catch((error) => {
         console.error(`agent-host resubscribe failed (${topic}):`, error);
+      });
+    }
+    for (const sessionId of [...this.agentHubs.keys()]) {
+      const hub = this.agentHubs.get(sessionId);
+      if (!hub || hub.listeners.size === 0 || hub.hostSubscriptionId || hub.pending) continue;
+      void this.ensureAgentSubscription(sessionId).catch((error) => {
+        console.error(`agent-host resubscribe failed (${sessionId}):`, error);
       });
     }
   }
@@ -422,9 +552,13 @@ class PipeAgentHostClient implements AgentHostClient {
     if (this.closed) return;
     this.socket = null;
     this.currentStatus = "reconnecting";
-    this.subscriptionTopics.clear();
+    this.hostSubscriptions.clear();
     this.earlyEvents.clear();
     for (const hub of this.hubs.values()) {
+      hub.hostSubscriptionId = null;
+      hub.pending = null;
+    }
+    for (const hub of this.agentHubs.values()) {
       hub.hostSubscriptionId = null;
       hub.pending = null;
     }
@@ -434,7 +568,9 @@ class PipeAgentHostClient implements AgentHostClient {
 
   private scheduleReconnect(): void {
     if (this.closed || this.reconnectTimer) return;
-    const hasListeners = [...this.hubs.values()].some((hub) => hub.listeners.size > 0);
+    const hasListeners =
+      [...this.hubs.values()].some((hub) => hub.listeners.size > 0) ||
+      [...this.agentHubs.values()].some((hub) => hub.listeners.size > 0);
     if (!hasListeners) {
       this.currentStatus = "idle";
       return;
@@ -475,6 +611,14 @@ class PipeAgentHostClient implements AgentHostClient {
       return false;
     }
   }
+}
+
+function isStreamEvent(value: unknown): value is HostEventPayloads["agent.event"]["event"] {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { type?: unknown }).type === "string"
+  );
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
@@ -520,4 +664,16 @@ export async function probeAgentHost(timeoutMs = 1_200): Promise<"ok" | "down"> 
   } catch {
     return "down";
   }
+}
+
+/**
+ * Best-effort notification that auth/models.json changed. Running sessions
+ * reload their resources on the next prompt so a fresh login takes effect.
+ */
+export function notifyAgentHostModelsChanged(): void {
+  void getAgentHostClient()
+    .call("models.refresh", {})
+    .catch(() => {
+      // Host down: the change is still on disk for the next session start.
+    });
 }

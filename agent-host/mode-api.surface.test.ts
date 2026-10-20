@@ -5,14 +5,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { AGENT_COMMAND_TYPES, validateAgentCommand } from "./agent-commands.ts";
+import { AGENT_COMMAND_TYPES, validateAgentCommand } from "../lib/agent-commands.ts";
 import {
   ASK_CONFIRM_TOOLS,
   EXECUTE_PLAN_PROMPT,
   PLAN_MODE_SYSTEM_PROMPT,
   effectiveToolsForMode,
   needsAskConfirm,
-} from "./approval-policy.ts";
+} from "../lib/approval-policy.ts";
 import { AgentSessionWrapper } from "./rpc-manager.ts";
 import { ExtensionUiBridge } from "./extension-ui-bridge.ts";
 

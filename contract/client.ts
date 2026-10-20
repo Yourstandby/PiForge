@@ -1,6 +1,7 @@
 import type {
   GlobalEventPayloads,
   GlobalTopic,
+  HostEventPayloads,
 } from "./events.ts";
 import type { MethodName, Params, Result } from "./methods.ts";
 
@@ -14,6 +15,13 @@ export type AgentHostClientStatus =
 export interface HostSubscription {
   readonly id: string;
   /** Last sequence number delivered to the handler. */
+  readonly lastSeq: number;
+  close(): void;
+}
+
+export interface AgentEventSubscription {
+  readonly id: string;
+  readonly sessionId: string;
   readonly lastSeq: number;
   close(): void;
 }
@@ -37,6 +45,13 @@ export interface AgentHostClient {
     topic: T,
     handler: (payload: GlobalEventPayloads[T], seq: number) => void,
   ): Promise<HostSubscription>;
+
+  /** Subscribe to one agent session's event stream (raw pi events). */
+  subscribeAgent(
+    sessionId: string,
+    handler: (event: HostEventPayloads["agent.event"]["event"], seq: number) => void,
+    options?: { fromSeq?: number },
+  ): Promise<AgentEventSubscription>;
 
   close(): void;
 }

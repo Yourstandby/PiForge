@@ -12,7 +12,7 @@ declare global {
  *   holding the lock will deadlock.
  * - Map entry is cleaned up after release if no later caller has chained on.
  * - globalThis is used to survive Next.js hot reloads (matches the
- *   __piSessions / __piStartLocks pattern in lib/rpc-manager.ts).
+ *   agent-host/rpc-manager.ts registry pattern).
  */
 export async function withFileLock<T>(
   filePath: string,

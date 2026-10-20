@@ -9,7 +9,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { desktopApprovalInlineExtension, type AgentModeRef } from "./desktop-approval-extension.ts";
 import { desktopRuntimeTools } from "./desktop-runtime-tools.ts";
-import { loadDesktopMcpConfig, saveMcpServer, testMcpServerConnection, writeMcpConfig } from "./mcp-config.ts";
+import { loadDesktopMcpConfig, saveMcpServer, testMcpServerConnection, writeMcpConfig } from "../lib/mcp-config.ts";
 
 const fixture = `import { createInterface } from 'node:readline';
 createInterface({input:process.stdin}).on('line', line => {

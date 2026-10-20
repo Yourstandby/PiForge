@@ -88,11 +88,12 @@ function emit(agentDir: string, reason: string): void {
       console.error("config-watcher listener failed:", error);
     }
   }
-  // Lazy session reload: the next prompt uses fresh extensions/skills/MCP.
-  void import("./rpc-manager.ts")
-    .then(({ requestSessionResourceReload }) => requestSessionResourceReload())
+  // Lazy session reload in the Agent Host: the next prompt uses fresh
+  // extensions/skills/MCP.
+  void import("./agent-host-client.ts")
+    .then(({ getAgentHostClient }) => getAgentHostClient().call("agent.reloadResources", {}))
     .catch(() => {
-      /* sessions registry not loaded yet — nothing to reload */
+      /* host not running yet — nothing to reload */
     });
   // Refresh the fingerprint so the poll does not fire again for this change.
   void snapshot(agentDir).then((next) => {

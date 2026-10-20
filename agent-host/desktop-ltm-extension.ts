@@ -10,7 +10,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { isLtmDisabledError, isMemoryType, LTM_DISABLED } from "./ltm/http.ts";
 import { getMemoryService } from "./ltm/service.ts";
-import type { AgentMode } from "./approval-policy.ts";
+import type { AgentMode } from "../lib/approval-policy.ts";
 
 export const MEMORY_TOOL_NAMES = [
   "memory_save",

@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { readDesktopSettings } from "../desktop-settings.ts";
+import { readDesktopSettings } from "../../lib/desktop-settings.ts";
 
 export interface LtmConfig {
   enabled: boolean;

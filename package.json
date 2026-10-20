@@ -47,7 +47,8 @@
     "pack": "npm run build:standalone && npm run build:electron && npx electron-builder --dir && node scripts/smoke-packaged-standalone.mjs",
     "pack:mac": "npm run build:standalone && npm run build:electron && npx electron-builder --mac --universal --dir && node scripts/smoke-packaged-standalone.mjs",
     "dist": "npm run build:standalone && npm run build:electron && npx electron-builder --publish never && node scripts/smoke-packaged-standalone.mjs",
-    "dist:mac": "npm run build:standalone && npm run build:electron && npx electron-builder --mac --universal --publish never && node scripts/smoke-packaged-standalone.mjs"
+    "dist:mac": "npm run build:standalone && npm run build:electron && npx electron-builder --mac --universal --publish never && node scripts/smoke-packaged-standalone.mjs",
+    "smoke:agent-isolation": "node scripts/smoke-agent-isolation.mjs"
   },
   "build": {
     "extends": "electron-builder.yml"

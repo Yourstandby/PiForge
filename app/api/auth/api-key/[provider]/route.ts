@@ -6,6 +6,7 @@ import {
   removeProviderApiKey,
   setProviderApiKey,
 } from "@/lib/pi-runtime";
+import { notifyAgentHostModelsChanged } from "@/lib/agent-host-client";
 
 export const dynamic = "force-dynamic";
 
@@ -40,6 +41,7 @@ export async function POST(req: Request, { params }: Params) {
     }
     const { runtime } = await createPiRuntime();
     await setProviderApiKey(runtime, provider, apiKey);
+    notifyAgentHostModelsChanged();
     return NextResponse.json({ success: true });
   } catch (error) {
     logApiError({ route: "/api/auth/api-key/[provider]", method: "POST", requestId, error, params: { provider } });
@@ -58,6 +60,7 @@ export async function DELETE(req: Request, { params }: Params) {
   try {
     const { runtime } = await createPiRuntime();
     await removeProviderApiKey(runtime, provider);
+    notifyAgentHostModelsChanged();
     return NextResponse.json({ success: true });
   } catch (error) {
     logApiError({ route: "/api/auth/api-key/[provider]", method: "DELETE", requestId, error, params: { provider } });

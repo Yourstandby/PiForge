@@ -11,16 +11,13 @@ import type {
   ExtensionFactory,
   InlineExtension,
 } from "@earendil-works/pi-coding-agent";
-import type { AgentHostClient } from "../contract/client.ts";
-import { getAgentHostClient } from "./agent-host-client.ts";
+import { startManagedProcess } from "./managed-processes.ts";
 
 export const RUN_BG_TOOL_NAME = "run_bg";
 
 export type DesktopProcessExtensionOptions = {
   /** Session project cwd, resolved at execute time. */
   getCwd: () => string;
-  /** Test/alternate transport hook; defaults to the shared host client. */
-  client?: Pick<AgentHostClient, "call">;
 };
 
 const RunBgParams = Type.Object({
@@ -44,7 +41,6 @@ export function createDesktopProcessFactory(
   options: DesktopProcessExtensionOptions,
 ): ExtensionFactory {
   const { getCwd } = options;
-  const client = options.client ?? getAgentHostClient();
   return (pi: ExtensionAPI) => {
     pi.registerTool({
       name: RUN_BG_TOOL_NAME,
@@ -56,10 +52,10 @@ export function createDesktopProcessFactory(
       parameters: RunBgParams,
       async execute(_toolCallId, params) {
         try {
-          const { process: started } = await client.call("processes.start", {
+          const started = startManagedProcess({
             cwd: getCwd(),
             command: params.command,
-            ...(params.name !== undefined ? { name: params.name } : {}),
+            name: params.name,
           });
           return textResult(
             [

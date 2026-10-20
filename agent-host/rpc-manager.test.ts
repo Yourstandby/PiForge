@@ -1,7 +1,7 @@
 import test, { mock } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { AgentSessionWrapper, startRpcSession } from "./rpc-manager.ts";
+import { AgentSessionWrapper, getRpcSessionRegistry, startRpcSession } from "./rpc-manager.ts";
 
 type SubscribeFn = (cb: (event: unknown) => void) => () => void;
 
@@ -316,19 +316,16 @@ test("fork cleans up orphan .jsonl file when startRpcSession throws (source cont
   // name is a unique <timestamp>_<uuid>.jsonl and is never overwritten.
   assert.doesNotMatch(source, /next fork overwrites/);
 
-  // unlink + invalidateSessionPathCache must be imported.
+  // unlink must be imported.
   assert.match(source, /import \{ unlink \} from "fs\/promises"/);
-  assert.match(source, /invalidateSessionPathCache/);
 
   // startRpcSession must be awaited inside a try block.
   assert.match(source, /try \{\s*\n\s*await startRpcSession\(/);
 
-  // catch must invalidate the cache first, then best-effort unlink, then rethrow.
-  // Ordering matters: invalidate before unlink so a concurrent lookup can't
-  // resolve the id to a path that's about to disappear.
+  // catch must best-effort unlink the orphan, then rethrow.
   assert.match(
     source,
-    /invalidateSessionPathCache\(newSessionId\);\s*\n\s*await unlink\(newSessionFile\)\.catch\(\(\) => \{[^}]*\}\);\s*\n\s*throw err;/
+    /await unlink\(newSessionFile\)\.catch\(\(\) => \{[^}]*\}\);\s*\n\s*throw err;/
   );
 
   // this.destroy() must NOT be reachable when startRpcSession throws — it lives
@@ -449,11 +446,6 @@ test("destroy() source matches the Task B3 contract", () => {
   assert.match(
     source,
     /this\.destroy\(\)\.catch\(\(err\) => console\.error\("Error during idle destroy:", err\)\)/
-  );
-  // process exit / signal cleanup must handle the Promise per-wrapper too.
-  assert.match(
-    source,
-    /s\.destroy\(\)\.catch\(\(err\) => console\.error\("Error during exit destroy:", err\)\)/
   );
 });
 
@@ -885,107 +877,6 @@ test("send compact is rejected while streaming (P2-1)", async () => {
   await assert.rejects(w.send({ type: "compact" }), /Session is streaming/);
 });
 
-// --- P2-2: a negative path-cache entry recorded just before a session file
-// was created (先查后建) must not hide the now-existing session from real
-// requests for up to the 30s TTL. A live RPC wrapper means startRpcSession
-// opened the file, so a stale negative is dropped and the lookup re-scans.
-// resolveSessionPath is a behaviorally-testable exported function; we drive it
-// with a real session file (pointing the agent dir at a temp dir via env) and
-// a live wrapper in the registry.
-
-test("resolveSessionPath revalidates a stale negative cache when the session is live (P2-2)", async () => {
-  const { SessionManager } = await import("@earendil-works/pi-coding-agent");
-  const { mkdtempSync, rmSync } = await import("fs");
-  const { tmpdir } = await import("os");
-  const { join } = await import("path");
-
-  const dir = mkdtempSync(join(tmpdir(), "pi-pathcache-reval-"));
-  const prevAgentDir = process.env.PI_CODING_AGENT_DIR;
-  process.env.PI_CODING_AGENT_DIR = dir;
-  try {
-    // SessionManager.create(cwd) puts the file in the env-pointed default
-    // session dir (<agentDir>/sessions/<encoded-cwd>), which is exactly what
-    // SessionManager.listAll() scans — so the re-scan can find it.
-    const sm = SessionManager.create(dir);
-    sm.appendMessage({ role: "user", content: "hello" } as never);
-    (sm as unknown as { _rewriteFile?: () => void })._rewriteFile?.();
-    const file = sm.getSessionFile()!;
-    const id = sm.getSessionId();
-
-    // Simulate a lookup that ran BEFORE the file existed: a fresh cache state
-    // carrying a 30s negative entry for this id.
-    const { createSessionPathCacheState, markSessionPathMiss } = await import("./session-path-cache.ts");
-    const state = createSessionPathCacheState();
-    markSessionPathMiss(state, id, Date.now(), 30_000);
-    (globalThis as { __piSessionPathCacheState?: unknown }).__piSessionPathCacheState = state;
-
-    // A live RPC wrapper now exists for the id (startRpcSession opened it).
-    const w = new AgentSessionWrapper(makeStubInner());
-    (globalThis as { __piSessions?: Map<string, unknown> }).__piSessions = new Map([[id, w]]);
-
-    const { resolveSessionPath } = await import("./session-reader.ts");
-    const resolved = await resolveSessionPath(id);
-    assert.equal(resolved, file, "a live session must not be hidden by a stale negative cache entry");
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-    if (prevAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-    else process.env.PI_CODING_AGENT_DIR = prevAgentDir;
-    delete (globalThis as { __piSessionPathCacheState?: unknown }).__piSessionPathCacheState;
-    delete (globalThis as { __piSessions?: unknown }).__piSessions;
-  }
-});
-
-// --- P2-3: process-exit cleanup. The 'exit' event cannot await (the process
-// is already tearing down) so it stays fire-and-forget per wrapper; SIGINT /
-// SIGTERM handlers CAN await and must drain every wrapper's destroy() before
-// the process continues, or the final batch of .jsonl writes is lost.
-//
-// Important fix: the event system never awaits the handler's Promise, so a
-// one-shot `once` binding is consumed by the first signal — a second
-// SIGINT/SIGTERM would then fall back to default behavior and kill the
-// process mid-destroy, losing the final .jsonl writes. The handlers must stay
-// `process.on` (repeatable) behind a "cleaning in progress" guard flag:
-//   - first signal → start cleanup, await every destroy(), then exit
-//   - second signal while cleaning → immediate exit (user's force-quit), no
-//     duplicate cleanup flow started
-
-test("signal cleanup uses process.on with a re-entry guard so a second signal cannot interrupt destroy (P2-3, source contract)", () => {
-  // The core contract: the first signal must collect all wrappers and wait
-  // for each destroy() via Promise.allSettled before the process exits.
-  assert.match(source, /Promise\.allSettled\(sessions\.map\(\(s\) => s\.destroy\(\)\)\)/);
-  // Handlers must be `process.on` (repeatable) — never one-shot `once`, so a
-  // second signal while the first cleanup drains still reaches the guard
-  // instead of restoring default signal behavior (immediate process kill).
-  assert.match(source, /process\.on\("SIGINT"/);
-  assert.match(source, /process\.on\("SIGTERM"/);
-  assert.doesNotMatch(source, /process\.once\("SIGINT"/);
-  assert.doesNotMatch(source, /process\.once\("SIGTERM"/);
-  // A "cleaning in progress" guard flag gates re-entry: exactly one cleanup
-  // flow may run at a time.
-  assert.match(source, /signalCleanupStarted\s*=\s*false/);
-  assert.match(source, /signalCleanupStarted\s*=\s*true/);
-  // The flag is set synchronously before any await, so a second signal during
-  // the drain can never start a duplicate cleanup flow.
-  assert.match(
-    source,
-    /signalCleanupStarted = true;[\s\S]*?await Promise\.allSettled\(sessions\.map\(\(s\) => s\.destroy\(\)\)\);/
-  );
-  // A second signal while a cleanup is draining exits immediately instead of
-  // racing a duplicate destroy pass over the same wrappers. The exit is
-  // factored into exitNow() but the guard branch must still call it and return.
-  assert.match(
-    source,
-    /const exitNow = \(\) => process\.exit\(signal === "SIGINT" \? 130 : 143\);/i
-  );
-  assert.match(
-    source,
-    /if \(signalCleanupStarted\) \{\s*\n\s*exitNow\(\);\s*\n\s*return;/
-  );
-  // The 'exit' event stays fire-and-forget (unawaitable) with per-wrapper catch.
-  assert.match(source, /process\.once\("exit"/);
-  assert.match(source, /s\.destroy\(\)\.catch\(\(err\) => console\.error\("Error during exit destroy:", err\)\)/);
-});
-
 // --- P2-4: the onDestroy → registry.delete(realSessionId) callback must not
 // evict a NEWER wrapper that was registered under the same id while the old
 // wrapper's destroy() was still in flight (its onDestroy runs only after
@@ -1009,7 +900,7 @@ test("destroy of a replaced wrapper does not unregister the new wrapper (P2-4)",
     // Start a real wrapper — this registers it under `id` and installs the real
     // onDestroy → registry.delete(id) callback from lib/rpc-manager.ts.
     const first = await startRpcSession(id, file, dir);
-    const registry = (globalThis as { __piSessions: Map<string, AgentSessionWrapper> }).__piSessions;
+    const registry = getRpcSessionRegistry();
     assert.equal(registry.get(id), first.session);
 
     // Simulate the race: while the old wrapper is being destroyed, a NEW
@@ -1025,7 +916,7 @@ test("destroy of a replaced wrapper does not unregister the new wrapper (P2-4)",
   } finally {
     rmSync(dir, { recursive: true, force: true });
     // Best-effort cleanup so later tests don't observe a half-dead registry.
-    if (id) (globalThis as { __piSessions?: Map<string, unknown> }).__piSessions?.delete(id);
+    if (id) getRpcSessionRegistry().delete(id);
   }
 });
 
