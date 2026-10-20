@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { Loader2, Pencil, Save, WrapText, X } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { Eye, EyeOff, Loader2, Pencil, Save, WrapText, X } from "lucide-react";
 import { syntaxThemeFor } from "@/lib/syntax-theme";
 import { encodeFilePathForApi, getFileName, getRelativeFilePath } from "@/lib/file-paths";
 
@@ -42,6 +44,7 @@ export function FloatingFileViewer({
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState("");
   const [wrap, setWrap] = useState(false);
+  const [preview, setPreview] = useState(false);
   const [saving, setSaving] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -52,6 +55,7 @@ export function FloatingFileViewer({
     setData(null);
     setDiff(null);
     setEditing(false);
+    setPreview(false);
     const relative = getRelativeFilePath(target.filePath, cwd ?? undefined);
 
     if (target.diff) {
@@ -93,7 +97,7 @@ export function FloatingFileViewer({
   const lines = useMemo(() => (data?.content ?? "").split("\n"), [data?.content]);
 
   useEffect(() => {
-    if (!target.line || !data || editing || target.diff) return;
+    if (!target.line || !data || editing || preview || target.diff) return;
     const targetLine = Math.max(1, Math.min(target.line, lines.length));
     let frame = requestAnimationFrame(() => {
       frame = requestAnimationFrame(() => {
@@ -104,10 +108,11 @@ export function FloatingFileViewer({
       });
     });
     return () => cancelAnimationFrame(frame);
-  }, [target.line, target.diff, data, editing, lines.length]);
+  }, [target.line, target.diff, data, editing, preview, lines.length]);
 
   const startEditing = () => {
     if (!data) return;
+    setPreview(false);
     setEditContent(data.content);
     setEditing(true);
   };
@@ -145,6 +150,8 @@ export function FloatingFileViewer({
 
   const fileName = target.fileName || getFileName(target.filePath);
   const language = target.diff ? "diff" : (data?.language ?? "text");
+  const isMarkdown =
+    data?.language === "markdown" || /\.(md|markdown)$/i.test(fileName);
 
   return (
     <div className="absolute left-2 right-2 top-2 z-30 flex h-[80%] min-h-[220px] flex-col overflow-hidden rounded-lg border border-gray-200/80 bg-white shadow-xl">
@@ -170,6 +177,27 @@ export function FloatingFileViewer({
           >
             <Pencil size={11} strokeWidth={1.9} aria-hidden="true" />
             编辑
+          </button>
+        )}
+        {isMarkdown && !editing && !target.diff && (
+          <button
+            type="button"
+            onClick={() => setPreview((value) => !value)}
+            disabled={!data || loading}
+            title={preview ? "切换到源码" : "预览 Markdown"}
+            aria-pressed={preview}
+            className={`flex h-6 items-center gap-1 rounded px-1.5 text-[10.5px] transition-colors disabled:opacity-40 ${
+              preview
+                ? "bg-[#E8EFFB] font-medium text-accent-strong"
+                : "text-ink-muted hover:bg-[#ECECEF] hover:text-ink"
+            }`}
+          >
+            {preview ? (
+              <EyeOff size={11} strokeWidth={1.9} aria-hidden="true" />
+            ) : (
+              <Eye size={11} strokeWidth={1.9} aria-hidden="true" />
+            )}
+            {preview ? "源码" : "预览"}
           </button>
         )}
         <button
@@ -231,6 +259,13 @@ export function FloatingFileViewer({
             className="block h-full min-h-0 w-full resize-none bg-[#FBFCFE] px-3 py-2 font-mono text-[12px] leading-5 text-ink outline-none"
             style={{ boxSizing: "border-box", overflow: "auto", tabSize: 2 }}
           />
+        ) : preview && isMarkdown && data ? (
+          <div
+            className="markdown-body markdown-file-preview"
+            style={{ padding: "16px 18px", maxWidth: 860, margin: "0 auto" }}
+          >
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{data.content}</ReactMarkdown>
+          </div>
         ) : target.diff ? (
           <pre className="m-0 py-1 font-mono text-[11.5px] leading-5">
             {(diff ?? "").split(/\r?\n/).map((line, index) => {
