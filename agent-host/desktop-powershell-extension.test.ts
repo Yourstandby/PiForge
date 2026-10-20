@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createDesktopPowerShellFactory } from "./desktop-powershell-extension.ts";
@@ -10,10 +11,9 @@ const isWindows = process.platform === "win32";
 /**
  * The SDK resolves PowerShell via `where pwsh.exe` / `where powershell.exe`.
  * Some Windows CI images expose PowerShell by absolute path but not on the
- * child_process PATH; in that case the execution test cannot run and should
- * skip instead of crashing the whole suite. This mirrors the SDK probe rather
- * than using our own absolute-path fallback, so we skip exactly when the SDK
- * would throw "No PowerShell executable found".
+ * child_process PATH; the execution test cannot run there and should skip
+ * instead of crashing the whole suite. Mirrors the SDK probe (including its
+ * existsSync check), so we skip exactly when the SDK would throw.
  */
 function sdkCanFindPowerShell(): boolean {
   if (!isWindows || !resolvePowerShell()) return false;
@@ -24,7 +24,11 @@ function sdkCanFindPowerShell(): boolean {
         timeout: 5_000,
         windowsHide: true,
       });
-      return result.status === 0 && Boolean(result.stdout?.trim());
+      const first = (result.stdout ?? "")
+        .split("\n")
+        .map((line) => line.trim())
+        .find(Boolean);
+      return result.status === 0 && Boolean(first && existsSync(first));
     } catch {
       return false;
     }
@@ -58,37 +62,41 @@ test("does not double-register when powershell already exists", () => {
   assert.equal(tools.length, 0);
 });
 
-test("registered PowerShell tool executes UTF-8 multiline commands", { skip: !hasPowerShell && "PowerShell not discoverable by the SDK in this environment", timeout: 30000 }, async () => {
-  const tools: Array<{
-    execute: (
-      id: string,
-      params: { command: string; timeout?: number },
-      signal?: AbortSignal,
-      onUpdate?: unknown,
-      ctx?: unknown,
-    ) => Promise<{ content: Array<{ type: string; text?: string }> }>;
-  }> = [];
-  const pi = {
-    getAllTools: () => [],
-    registerTool: (tool: never) => tools.push(tool),
-  } as unknown as ExtensionAPI;
-  createDesktopPowerShellFactory(() => process.cwd())(pi);
-  const definition = tools[0];
-  assert.ok(definition);
-  const result = await definition.execute(
-    "ps-1",
-    { command: "Write-Output '第一行'; Write-Output 'second \"quoted\" line'" },
-    undefined,
-    undefined,
-    {
-      cwd: process.cwd(),
-      sessionManager: {
-        getSessionId: () => "test-session",
-        getSessionFile: () => null,
+test(
+  "registered PowerShell tool executes UTF-8 multiline commands",
+  { skip: !hasPowerShell && "PowerShell not discoverable by the SDK in this environment", timeout: 30000 },
+  async () => {
+    const tools: Array<{
+      execute: (
+        id: string,
+        params: { command: string; timeout?: number },
+        signal?: AbortSignal,
+        onUpdate?: unknown,
+        ctx?: unknown,
+      ) => Promise<{ content: Array<{ type: string; text?: string }> }>;
+    }> = [];
+    const pi = {
+      getAllTools: () => [],
+      registerTool: (tool: never) => tools.push(tool),
+    } as unknown as ExtensionAPI;
+    createDesktopPowerShellFactory(() => process.cwd())(pi);
+    const definition = tools[0];
+    assert.ok(definition);
+    const result = await definition.execute(
+      "ps-1",
+      { command: "Write-Output '第一行'; Write-Output 'second \"quoted\" line'" },
+      undefined,
+      undefined,
+      {
+        cwd: process.cwd(),
+        sessionManager: {
+          getSessionId: () => "test-session",
+          getSessionFile: () => null,
+        },
       },
-    },
-  );
-  const text = result.content.map((block) => block.text ?? "").join("\n");
-  assert.match(text, /第一行/);
-  assert.match(text, /second "quoted" line/);
-});
+    );
+    const text = result.content.map((block) => block.text ?? "").join("\n");
+    assert.match(text, /第一行/);
+    assert.match(text, /second "quoted" line/);
+  },
+);
