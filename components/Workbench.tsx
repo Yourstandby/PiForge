@@ -6,7 +6,6 @@ import { PanelLeftOpen, PanelRightOpen, Plug, Settings, Sparkles } from "lucide-
 import { getElectronApi } from "@/lib/electron-api";
 import { resolveForkedSession } from "@/lib/fork-session-wait";
 import { buildProjectWindowPath, resolveInitialView } from "@/lib/project-window";
-import { useFileTabs } from "@/hooks/useFileTabs";
 import { useConfigHotReload } from "@/hooks/useConfigHotReload";
 import { ChatSurface } from "./ChatSurface";
 import { FilePanel } from "./FilePanel";
@@ -16,6 +15,7 @@ import { SessionSidebar } from "./SessionSidebar";
 import { ExtensionsConfigModal } from "./ExtensionsConfigModal";
 import { AutoRoutingConfig } from "./AutoRoutingConfig";
 import { McpSettingsModal } from "./McpSettingsModal";
+import type { FloatingFileTarget } from "./FloatingFileViewer";
 import { SkillsConfig } from "./SkillsConfig";
 import { TitleBar } from "./TitleBar";
 
@@ -38,6 +38,7 @@ export function Workbench() {
   const [newSessionCwd, setNewSessionCwd] = useState<string | null>(null);
   const [cwd, setCwd] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [openFile, setOpenFile] = useState<FloatingFileTarget | null>(null);
   const draftKeyRef = useRef<string>("");
   // Mirrors AppShell's sessionKey: remount the chat surface so all
   // session-scoped hook state starts clean on every switch.
@@ -151,14 +152,18 @@ export function Workbench() {
     }
   }, []);
 
-  const {
-    fileTabs,
-    activeFileTabId,
-    setActiveFileTabId,
-    handleOpenFile,
-    handleOpenDiff,
-    handleCloseFileTab,
-  } = useFileTabs();
+  const handleOpenFile = useCallback(
+    (filePath: string, fileName: string, line?: number) => {
+      setOpenFile({ filePath, fileName, line });
+    },
+    [],
+  );
+
+  const handleOpenDiff = useCallback((filePath: string, fileName: string) => {
+    setOpenFile({ filePath, fileName, diff: true });
+  }, []);
+
+  const handleCloseFile = useCallback(() => setOpenFile(null), []);
 
   const loadSessions = useCallback(async (): Promise<SessionInfo[]> => {
     try {
@@ -495,12 +500,10 @@ export function Workbench() {
           )}
           <FilePanel
             cwd={cwd}
-            fileTabs={fileTabs}
-            activeFileTabId={activeFileTabId}
-            onSelectFileTab={setActiveFileTabId}
-            onCloseFileTab={handleCloseFileTab}
+            openFile={openFile}
             onOpenFile={handleOpenFile}
             onOpenDiff={handleOpenDiff}
+            onCloseFile={handleCloseFile}
             onCollapse={() => setRightPanelOpen(false)}
           />
         </div>
