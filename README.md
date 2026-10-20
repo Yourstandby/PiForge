@@ -15,9 +15,9 @@ Windows-first · Local-first · Electron + Next.js · MIT
 
 PiForge 把 Pi Coding Agent 的会话、工具调用与项目文件收进一个安静的三栏工作台：左侧管理会话，中间用浏览器式多会话标签并行对话，右侧常驻文件树、内置浏览器、终端与 Git 面板。界面采用 **霜蓝 × 米白** 的浅色体系，强调留白、克制和可读性。
 
-底层直接复用官方 [`@earendil-works/pi-coding-agent`](https://github.com/earendil-works/pi-coding-agent) SDK，不引入额外代理层或外部服务；会话、SSE 流式回复、工具执行与文件读写都在本地完成。v0.4.0 起采用 **Electron Main + Agent Host + Next/Renderer 三进程隔离**：即使 Next 重启，正在运行的 Agent 也不会中断。
+底层直接复用官方 [`@earendil-works/pi-coding-agent`](https://github.com/earendil-works/pi-coding-agent) SDK，不引入额外代理层或外部服务；会话、SSE 流式回复、工具执行与文件读写都在本地完成。v0.4.0 起采用 **Electron Main + Agent Host + Next/Renderer 三进程隔离**：即使 Next 重启，正在运行的 Agent 也不会中断。v0.5.0 在同一套隔离之上补齐了 **多智能体工作台**：MCP 全生命周期、辅助模型、浏览器分权、工具输出持久化、分支对话与子 Agent 并行协作全部由 Agent Host 承载。
 
-> 当前版本：`v0.4.0`（Agent Host Isolation）
+> 当前版本：`v0.5.0`（Multi-Agent Workspace）
 
 ## 🧱 进程架构
 
@@ -32,6 +32,16 @@ Electron Main ──spawn──▶ Next.js server ──HTTP/SSE──▶ Render
 Agent Host 关闭时会先排空会话 JSONL、终止所有受管进程树；Next 侧不持有任何 Agent 会话状态。
 
 ## ✦ 核心特性
+
+### v0.5.0 七大核心特性
+
+1. **MCP 高级管理** — OAuth 登录 / 退出 / 凭据刷新、连接测试、Resources 浏览与预览；连接与令牌全部在 Agent Host 内完成。
+2. **生图 / 决策模型** — 设置里为两条非对话模型通道选择 Provider + Model；`/imagine` 与 `generate_image` 直接出图，`classify_decision` 输出分类 / 打分徽章。
+3. **浏览器分权** — 「只读」与「允许交互」两档授权，默认关闭；未授权时弹一次性的会话级确认，Host 在 `tool_call` 钩子强制校验。
+4. **开发环境检测** — Host 扫描 PATH，列出 Node / Python / Git / Bash / Bun / jq 的版本与路径，关键工具缺失即时提示。
+5. **大工具输出持久化** — 超过 10KB / 2000 行自动截断预览并落盘 `tool-outputs/`，`tool_history_get` 分页取回，上下文压缩后依然可查。
+6. **一键应用与树状分支** — 代码块「应用」到右侧打开的文件（覆盖 / 追加）；消息级「分支」+ `‹ 1/2 ›` 切换器，在平行对话间无损切换。
+7. **Sub-Agents 并行协作** — `spawn_agent` 派生独立上下文的只读子 Agent（最多 4 个并行），右侧 Agents Tab 实时查看状态、工具与流式输出。
 
 - **三进程隔离（v0.4.0 核心）** — Main 只负责窗口 / 托盘 / 更新；Agent Host 独立承载 Pi SDK、AgentSession、工具执行、LTM 与受管进程；Next.js 只做页面、HTTP 与 SSE。Host 崩溃会自动重启并恢复订阅，Next 重启不会杀掉正在流式输出的 Agent。Host 与 Next 只通过命名管道 / Unix Socket 通信，零内部 TCP 端口。
 - **多会话并行标签** — 中栏顶部是浏览器式标签条，标签名带 VS Code 风格面包屑（项目名 › 会话标题）；多开互不干扰，草稿、流式输出与滚动位置各自独立。
