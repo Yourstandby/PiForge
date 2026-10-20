@@ -328,7 +328,7 @@ function ImageViewer({ filePath, cwd }: { filePath: string; cwd?: string }) {
   const formatSizeStr = size != null ? formatSize(size) : null;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, overflow: "hidden" }}>
       <div
         style={{
           display: "flex",
@@ -475,7 +475,7 @@ function AudioViewer({ filePath, cwd }: { filePath: string; cwd?: string }) {
   const src = `/api/files/${encoded}?type=read${bust ? `&v=${bust}` : ""}`;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, overflow: "hidden" }}>
       <div
         style={{
           display: "flex",
@@ -954,7 +954,7 @@ function TextFileViewer({ filePath, cwd, line }: Props) {
   if (!data) return null;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, overflow: "hidden" }}>
       {/* Status bar */}
       <div
         style={{
@@ -1134,7 +1134,7 @@ function TextFileViewer({ filePath, cwd, line }: Props) {
 
       {/* Content area */}
       {isEditing ? (
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <div style={{ flex: 1, minHeight: 0, height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
           <div
             style={{
               display: "flex",
@@ -1174,10 +1174,14 @@ function TextFileViewer({ filePath, cwd, line }: Props) {
           </div>
           <textarea
             value={editContent}
+            rows={1}
             onChange={(e) => setEditContent(e.target.value)}
             style={{
-              flex: 1,
+              flex: "1 1 0%",
+              minHeight: 0,
               width: "100%",
+              boxSizing: "border-box",
+              overflow: "auto",
               padding: "12px 16px",
               border: "none",
               outline: "none",

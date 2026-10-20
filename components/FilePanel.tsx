@@ -92,7 +92,7 @@ export function FilePanel({
   );
 
   return (
-    <aside className="flex w-full shrink-0 flex-col border-l border-gray-200/60 bg-[#F5F5F7]">
+    <aside className="flex h-full min-h-0 w-full shrink-0 flex-col border-l border-gray-200/60 bg-[#F5F5F7]">
       {/* Panel tabs: icon + label, full-width, selected = light blue + underline */}
       <div className="flex h-10 shrink-0 items-stretch border-b border-gray-200/60 bg-[#F5F5F7]">
         <div role="tablist" aria-label="右侧面板" className="flex min-w-0 flex-1 items-stretch">
@@ -130,7 +130,7 @@ export function FilePanel({
       </div>
 
       {tab === "files" && (
-        <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex h-full min-h-0 flex-1 flex-col">
           {fileTabs.length > 0 && (
             <div className="flex h-8 shrink-0 items-center gap-1 border-b border-gray-200/60 bg-white/60 px-1">
               <button
@@ -186,7 +186,7 @@ export function FilePanel({
             </div>
           )}
 
-          <div className="min-h-0 flex-1 overflow-hidden">
+          <div className="h-full min-h-0 flex-1 overflow-hidden">
             {cwd && !showTree && activeTab ? (
               <FileViewer
                 filePath={activeTab.filePath}
