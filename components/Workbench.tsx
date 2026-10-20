@@ -24,17 +24,12 @@ function byModifiedDesc(a: SessionInfo, b: SessionInfo): number {
 
 type SettingsModal = "skills" | "models" | "extensions" | "auto" | null;
 
-const MIN_RIGHT_PANEL_WIDTH = 240;
-const MAX_RIGHT_PANEL_WIDTH = 760;
+const MIN_RIGHT_PANEL_WIDTH = 280;
+const MAX_RIGHT_PANEL_WIDTH = 800;
 const RIGHT_PANEL_WIDTH_KEY = "piforge.rightPanelWidth";
 
 function clampRightPanelWidth(width: number): number {
-  if (typeof window === "undefined") return width;
-  const max = Math.max(
-    MIN_RIGHT_PANEL_WIDTH,
-    Math.min(MAX_RIGHT_PANEL_WIDTH, Math.round(window.innerWidth * 0.5)),
-  );
-  return Math.min(max, Math.max(MIN_RIGHT_PANEL_WIDTH, Math.round(width)));
+  return Math.min(MAX_RIGHT_PANEL_WIDTH, Math.max(MIN_RIGHT_PANEL_WIDTH, Math.round(width)));
 }
 
 export function Workbench() {
@@ -67,7 +62,7 @@ export function Workbench() {
     } catch {
       // storage disabled
     }
-    const fallback = Math.min(560, Math.max(360, Math.round(window.innerWidth * 0.36)));
+    const fallback = Math.min(800, Math.max(400, Math.round(window.innerWidth * 0.36)));
     setRightPanelWidth(clampRightPanelWidth(saved ?? fallback));
     const onWindowResize = () => {
       setRightPanelWidth((current) => clampRightPanelWidth(current));
@@ -429,21 +424,8 @@ export function Workbench() {
           )}
         </div>
 
-        {rightPanelOpen && (
-          <div
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="调整右侧面板宽度"
-            title="拖动调整右侧面板宽度"
-            onPointerDown={startRightPanelResize}
-            onPointerMove={moveRightPanelResize}
-            onPointerUp={endRightPanelResize}
-            onPointerCancel={endRightPanelResize}
-            className="relative z-20 w-1 shrink-0 touch-none cursor-col-resize bg-transparent transition-colors hover:bg-[#D9E5FB] active:bg-accent/30"
-          />
-        )}
         <div
-          className={`shrink-0 overflow-hidden ${
+          className={`relative shrink-0 overflow-hidden ${
             rightPanelResizing
               ? ""
               : "transition-[width] duration-200 ease-in-out"
@@ -451,6 +433,20 @@ export function Workbench() {
           style={{ width: rightPanelOpen ? rightPanelWidth : 0 }}
           aria-hidden={!rightPanelOpen}
         >
+          {rightPanelOpen && (
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="调整右侧面板宽度"
+              title="拖动调整右侧面板宽度"
+              onPointerDown={startRightPanelResize}
+              onPointerMove={moveRightPanelResize}
+              onPointerUp={endRightPanelResize}
+              onPointerCancel={endRightPanelResize}
+              className="absolute inset-y-0 left-0 z-30 w-1 touch-none cursor-col-resize bg-transparent transition-colors hover:bg-[#D9E5FB] active:bg-accent/30"
+              style={{ touchAction: "none" }}
+            />
+          )}
           <FilePanel
             cwd={cwd}
             fileTabs={fileTabs}
