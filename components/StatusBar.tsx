@@ -57,7 +57,7 @@ interface Props {
   isStreaming: boolean;
   model: { provider: string; modelId: string } | null;
   modelNames?: Record<string, string>;
-  modelList?: { id: string; name: string; provider: string }[];
+  modelList?: { id: string; name: string; provider: string; input?: string[] }[];
   onModelChange: (provider: string, modelId: string) => void;
   thinkingLevel: ThinkingLevel;
   availableThinkingLevels: readonly string[] | null;

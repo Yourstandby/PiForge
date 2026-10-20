@@ -37,6 +37,10 @@ async function resolveAuthorizedPath(
 const TEXT_PREVIEW_MAX_BYTES = 256 * 1024;
 const TEXT_WRITE_MAX_BYTES = 512 * 1024;
 const IMAGE_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
+/** Binary uploads (PDF/Excel/images) via POST multipart/form-data. */
+const UPLOAD_MAX_BYTES = 32 * 1024 * 1024;
+/** `type=raw` streams the file as-is so non-text attachments can be fetched. */
+const RAW_DOWNLOAD_MIME = "application/octet-stream";
 
 function filePathFromSegments(segments: string[]): string {
   const joined = segments.join("/");
@@ -154,6 +158,14 @@ export async function GET(
       return jsonError(request, 403, "Symlinks are not accessible");
     }
 
+    if (type === "raw") {
+      if (!stat.isFile()) {
+        return jsonError(request, 400, "Not a file");
+      }
+      const mime = getImageMime(realPath) ?? getAudioMime(realPath) ?? RAW_DOWNLOAD_MIME;
+      return streamFile(realPath, stat, mime, request.headers.get("range"));
+    }
+
     if (type === "read") {
       if (!stat.isFile()) {
         return jsonError(request, 400, "Not a file");
@@ -262,6 +274,88 @@ export async function GET(
     return NextResponse.json({ entries, path: realPath, truncated });
   } catch (error) {
     logApiError({ route: "/api/files/[...path]", method: "GET", requestId, error });
+    return jsonError(request, 500, errorMessage(error));
+  }
+}
+
+/**
+ * POST /api/files/<path> — multipart/form-data upload (single `file` field).
+ *
+ * Creates the target file inside an allowed root (the parent directory must
+ * already exist) so dropped/pasted non-text attachments land on disk before
+ * the agent or a later parser reads them. Existing symlinks are rejected so an
+ * upload cannot be redirected outside the root.
+ */
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> }
+) {
+  const requestId = getRequestId(request);
+  try {
+    const { path: segments } = await params;
+    const filePath = filePathFromSegments(segments);
+
+    const contentType = request.headers.get("content-type") ?? "";
+    if (!contentType.toLowerCase().includes("multipart/form-data")) {
+      return jsonError(request, 415, "multipart/form-data required");
+    }
+
+    const allowedRoots = await getAllowedRoots();
+    let realParent: string;
+    try {
+      realParent = await resolveAuthorizedPath(path.dirname(filePath), allowedRoots);
+    } catch {
+      return jsonError(request, 403, "Access denied");
+    }
+
+    const targetPath = path.join(realParent, path.basename(filePath));
+    const writeError = validateWritablePath(targetPath);
+    if (writeError) {
+      return jsonError(request, 403, writeError);
+    }
+
+    try {
+      const existing = await fs.promises.lstat(targetPath);
+      if (existing.isSymbolicLink()) {
+        return jsonError(request, 403, "Symlink targets are not writable");
+      }
+      if (existing.isDirectory()) {
+        return jsonError(request, 400, "Target is a directory");
+      }
+    } catch {
+      // New file: the parent was authorized above.
+    }
+
+    let form: FormData;
+    try {
+      form = await request.formData();
+    } catch {
+      return jsonError(request, 400, "Invalid multipart body");
+    }
+    const file = form.get("file");
+    if (!(file instanceof File)) {
+      return jsonError(request, 400, "file field required");
+    }
+    if (file.size > UPLOAD_MAX_BYTES) {
+      return jsonError(
+        request,
+        413,
+        `File too large (>${UPLOAD_MAX_BYTES / (1024 * 1024)}MB)`
+      );
+    }
+
+    const bytes = Buffer.from(await file.arrayBuffer());
+    await fs.promises.writeFile(targetPath, bytes);
+
+    return NextResponse.json({
+      success: true,
+      path: targetPath,
+      name: path.basename(targetPath),
+      size: bytes.length,
+      mimeType: file.type || RAW_DOWNLOAD_MIME,
+    });
+  } catch (error) {
+    logApiError({ route: "/api/files/[...path]", method: "POST", requestId, error });
     return jsonError(request, 500, errorMessage(error));
   }
 }

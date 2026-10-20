@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   const nameMap = new Map<string, string>();
-  let modelList: { id: string; name: string; provider: string }[] = [];
+  let modelList: { id: string; name: string; provider: string; input?: string[] }[] = [];
   let defaultModel: { provider: string; modelId: string } | null = null;
   const thinkingLevels: Record<string, string[]> = {};
   const thinkingLevelMaps: Record<string, Record<string, string | null>> = {};
@@ -18,10 +18,11 @@ export async function GET() {
     const agentDir = getAgentDir();
     const { registry } = await createPiRuntime();
     const available = registry.getAvailable();
-    modelList = available.map((m: { id: string; name: string; provider: string }) => ({
+    modelList = available.map((m: { id: string; name: string; provider: string; input?: string[] }) => ({
       id: m.id,
       name: m.name,
       provider: m.provider,
+      input: m.input,
     }));
     for (const m of available) {
       const key = `${m.provider}:${m.id}`;

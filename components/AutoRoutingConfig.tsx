@@ -8,6 +8,7 @@ interface ModelListItem {
   id: string;
   name: string;
   provider: string;
+  input?: string[];
 }
 
 interface Selection {
