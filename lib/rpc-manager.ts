@@ -23,6 +23,7 @@ import {
 import { readDesktopSettings } from "./desktop-settings.ts";
 import { desktopRuntimeTools } from "./desktop-runtime-tools.ts";
 import { desktopProcessInlineExtension } from "./desktop-process-extension.ts";
+import { desktopBrowserInlineExtension } from "./desktop-browser-extension.ts";
 import { loadDesktopMcpConfig } from "./mcp-config.ts";
 import { findLastAgentMode } from "./agent-mode-persistence.ts";
 import {
@@ -966,6 +967,7 @@ export async function startRpcSession(
         desktopApprovalInlineExtension(modeRef),
         desktopLtmInlineExtension({ getCwd: () => cwd }),
         desktopProcessInlineExtension({ getCwd: () => cwd }),
+        desktopBrowserInlineExtension(),
       ],
     });
     await resourceLoader.reload();

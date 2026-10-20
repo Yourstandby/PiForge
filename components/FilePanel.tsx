@@ -9,6 +9,7 @@ import {
   Terminal,
 } from "lucide-react";
 import { FileExplorer } from "./FileExplorer";
+import { BrowserPanel } from "./BrowserPanel";
 import { FloatingFileViewer, type FloatingFileTarget } from "./FloatingFileViewer";
 import { FloatingGitDiffViewer } from "./FloatingGitDiffViewer";
 import { ProcessPanel } from "./ProcessPanel";
@@ -67,6 +68,14 @@ export function FilePanel({
     if (openFile || gitDiffOpen) setTab("files");
   }, [openFile, gitDiffOpen]);
 
+  // The agent navigating the built-in browser should be visible, not hidden
+  // behind whichever tab the user is currently on.
+  useEffect(() => {
+    const revealBrowser = () => setTab("browser");
+    window.addEventListener("piforge:browser-open", revealBrowser);
+    return () => window.removeEventListener("piforge:browser-open", revealBrowser);
+  }, []);
+
   const handleOpenFile = useCallback(
     (filePath: string, fileName: string, line?: number) => {
       setTab("files");
@@ -82,6 +91,17 @@ export function FilePanel({
     },
     [onOpenDiff],
   );
+
+  // A screenshot needs the guest surface painted. When the agent asks for one
+  // from another tab, briefly switch to the Browser tab and restore afterwards.
+  const revealForCapture = useCallback(async (): Promise<(() => void) | undefined> => {
+    if (tab === "browser") return undefined;
+    const previous = tab;
+    setTab("browser");
+    // Give the webview a couple of frames to lay out and repaint.
+    await new Promise((resolve) => setTimeout(resolve, 260));
+    return () => setTab(previous);
+  }, [tab]);
 
   return (
     <aside className="flex h-full min-h-0 w-full shrink-0 flex-col border-l border-gray-200/60 bg-[#F5F5F7]">
@@ -151,15 +171,19 @@ export function FilePanel({
           </>
         )}
 
-        {tab === "browser" && (
-          <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
-            <Globe size={22} strokeWidth={1.4} className="text-ink-faint" aria-hidden="true" />
-            <p className="text-[12px] text-ink-muted">内置浏览器预留位置</p>
-            <p className="text-[11px] leading-5 text-ink-faint">
-              后续可在此接入 Electron WebContentsView，不影响中间聊天区。
-            </p>
-          </div>
-        )}
+        {/*
+          The browser panel stays mounted while other tabs are active: the
+          `<webview>` guest keeps running and keeps answering the `web_preview`
+          bridge, so the agent can read the page even while the user is on the
+          Files tab. It is hidden until the Browser tab (or a screenshot) asks
+          for it.
+        */}
+        <div className={tab === "browser" ? "h-full" : "hidden"}>
+          <BrowserPanel
+            active={tab === "browser"}
+            onBeforeCapture={revealForCapture}
+          />
+        </div>
 
         {tab === "processes" && (
           <div className="h-full overflow-y-auto py-1">

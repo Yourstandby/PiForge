@@ -12,6 +12,8 @@ export interface ElectronApi {
   openWindow?: (path: string) => Promise<{ ok: boolean } | undefined>;
   /** Resolves a drag-dropped File to its absolute filesystem path. */
   getPathForFile?: (file: File) => string;
+  /** PNG screenshot of a `<webview>` guest (main-process capture). */
+  captureWebview?: (webContentsId: number) => Promise<{ data: string; mimeType: string } | null>;
   setTheme?: (theme: "light" | "dark" | "glacier") => void;
 }
 

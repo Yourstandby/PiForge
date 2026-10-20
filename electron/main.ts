@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell, utilityProcess } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, session, shell, utilityProcess, webContents } from "electron";
 import type { UpdateInfo } from "electron-updater";
 import path from "path";
 import { appendFileSync, existsSync, mkdirSync } from "fs";
@@ -345,6 +345,9 @@ function createWindow(options: { initialPath?: string; showStartup?: boolean } =
       // preload 只用 contextBridge + ipcRenderer.{on,off,invoke,send}，
       // 这些 API 在 sandbox 模式下都可用，不会破坏功能。
       sandbox: true,
+      // 右侧面板的内置浏览器用 <webview> 渲染（见 installWebviewSecurity：
+      // 强制独立 session 分区、无 preload、无 node），否则该标签不可用。
+      webviewTag: true,
     },
   });
 
@@ -356,6 +359,7 @@ function createWindow(options: { initialPath?: string; showStartup?: boolean } =
   lastFocusedWindow = window;
 
   installNavigationGuards(window);
+  installWebviewSecurity(window);
   installCrashRecovery(window);
 
   // Inject a Content-Security-Policy header into every response loaded in the
@@ -593,6 +597,96 @@ function installNavigationGuards(window: BrowserWindow) {
 }
 
 // ---------------------------------------------------------------------------
+// Built-in browser (right panel <webview>)
+// ---------------------------------------------------------------------------
+/** Dedicated partition: previewed pages must not share the app session/CSP. */
+const BROWSER_PARTITION = "persist:piforge-browser";
+const BROWSER_PREVIEW_PROTOCOLS = ["http:", "https:"];
+let browserPermissionHandlerInstalled = false;
+
+function isAllowedPreviewUrl(rawUrl: string | undefined): boolean {
+  if (!rawUrl) return false;
+  if (rawUrl === "about:blank") return true;
+  try {
+    return BROWSER_PREVIEW_PROTOCOLS.includes(new URL(rawUrl).protocol);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Harden every webview the renderer attaches, and give guests their own
+ * session partition. Without the partition switch the app's injected CSP would
+ * apply to every previewed site and break it.
+ */
+function installWebviewSecurity(window: BrowserWindow) {
+  window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
+    delete webPreferences.preload;
+    webPreferences.nodeIntegration = false;
+    webPreferences.contextIsolation = true;
+    webPreferences.sandbox = true;
+    webPreferences.webSecurity = true;
+    webPreferences.allowRunningInsecureContent = false;
+    params.partition = BROWSER_PARTITION;
+    if (!isAllowedPreviewUrl(params.src)) {
+      event.preventDefault();
+      logError("Blocked webview attach", { src: params.src });
+    }
+  });
+
+  if (!browserPermissionHandlerInstalled) {
+    browserPermissionHandlerInstalled = true;
+    session.fromPartition(BROWSER_PARTITION).setPermissionRequestHandler((_contents, permission, callback) => {
+      // Camera/mic/geolocation/notifications are not needed for a preview pane.
+      logInfo("Denied browser preview permission", { permission });
+      callback(false);
+    });
+  }
+}
+
+/** Guest pages open links in place instead of spawning unmanaged windows. */
+function installWebviewGuests() {
+  app.on("web-contents-created", (_event, contents) => {
+    if (contents.getType() !== "webview") return;
+
+    contents.setWindowOpenHandler(({ url }) => {
+      if (isAllowedPreviewUrl(url)) {
+        void contents.loadURL(url).catch((error) => logError("Failed to open preview URL", error));
+      } else {
+        logError("Blocked preview window open", { url });
+      }
+      return { action: "deny" };
+    });
+
+    contents.on("will-navigate", (event, url) => {
+      if (!isAllowedPreviewUrl(url)) {
+        event.preventDefault();
+        logError("Blocked preview navigation", { url });
+      }
+    });
+  });
+
+  // Local dev servers commonly use self-signed HTTPS. Only loopback hosts are
+  // exempted, so the app itself never accepts an invalid certificate.
+  app.on("certificate-error", (event, _contents, url, error, _certificate, callback) => {
+    let host = "";
+    try {
+      host = new URL(url).hostname;
+    } catch {
+      callback(false);
+      return;
+    }
+    if (["localhost", "127.0.0.1", "::1", "[::1]"].includes(host)) {
+      logInfo("Allowing self-signed certificate for local preview", { url, error });
+      event.preventDefault();
+      callback(true);
+      return;
+    }
+    callback(false);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // IPC handlers
 // ---------------------------------------------------------------------------
 function registerIpcHandlers() {
@@ -611,6 +705,26 @@ function registerIpcHandlers() {
   ipcMain.handle("new-window", async (_event, requestedPath: unknown) => {
     openNewWindow(normalizeWindowPath(requestedPath));
     return { ok: true };
+  });
+
+  // Screenshot for the agent's `web_preview` tool. The guest lives in the
+  // renderer, so capture runs here (main holds the only reliable capturePage).
+  ipcMain.handle("capture-webview", async (_event, contentsId: unknown) => {
+    if (typeof contentsId !== "number" || !Number.isFinite(contentsId)) return null;
+    const guest = webContents.fromId(contentsId);
+    if (!guest || guest.isDestroyed() || guest.getType() !== "webview") return null;
+    // Only ever capture guests hosted by one of our own windows.
+    const host = guest.hostWebContents;
+    const hostWindow = host ? BrowserWindow.fromWebContents(host) : null;
+    if (!hostWindow || !appWindows.has(hostWindow)) return null;
+    try {
+      const image = await guest.capturePage();
+      if (image.isEmpty()) return null;
+      return { data: image.toPNG().toString("base64"), mimeType: "image/png" };
+    } catch (error) {
+      logError("Failed to capture webview", error);
+      return null;
+    }
   });
 
   ipcMain.handle("quit-and-install", async () => {
@@ -672,6 +786,7 @@ app.whenReady().then(async () => {
   startupStartedAt = Date.now();
   logStartupTiming("app ready");
   registerIpcHandlers();
+  installWebviewGuests();
 
   try {
     const port = await choosePort({ startPort: DEFAULT_PORT, reservePort });
