@@ -23,6 +23,8 @@ interface Props {
   onSessionForked?: (newSessionId: string) => void;
   /** Auto title / rename landed; ask the sidebar to refetch. */
   onSessionRenamed?: () => void;
+  /** Open a file reference from the transcript in the file viewer. */
+  onOpenFile?: (filePath: string, fileName: string, line?: number) => void;
 }
 
 /**
@@ -49,6 +51,7 @@ function ChatSession({
   onSessionCreated,
   onSessionForked,
   onSessionRenamed,
+  onOpenFile,
   onReload,
 }: Props & { onReload: () => void }) {
   const { soundEnabled, onSoundToggle, playDoneSound } = useAudio();
@@ -320,6 +323,8 @@ function ChatSession({
                   entryIds={chat.entryIds}
                   onFork={chat.agentRunning ? undefined : chat.handleFork}
                   forkingEntryId={chat.forkingEntryId}
+                  cwd={session?.cwd ?? newSessionCwd}
+                  onOpenFile={onOpenFile}
                 />
               )}
 

@@ -101,3 +101,36 @@ test("read/write round-trip preserves nested ltm", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("Auto routing model selections merge, validate and clear", () => {
+  const merged = mergeDesktopSettings({
+    autoRoutingFast: { provider: "deepseek", modelId: "deepseek-flash" },
+    autoRoutingStrong: { provider: "deepseek", modelId: "deepseek-v4-pro" },
+  });
+  assert.deepEqual(merged.autoRoutingFast, {
+    provider: "deepseek",
+    modelId: "deepseek-flash",
+  });
+  assert.deepEqual(merged.autoRoutingStrong, {
+    provider: "deepseek",
+    modelId: "deepseek-v4-pro",
+  });
+
+  assert.equal(
+    validateDesktopSettingsBody({
+      autoRoutingFast: { provider: "p", modelId: "m" },
+      autoRoutingStrong: null,
+    }),
+    null,
+  );
+  assert.match(
+    validateDesktopSettingsBody({ autoRoutingFast: { provider: "", modelId: "m" } })!,
+    /autoRoutingFast\.provider/,
+  );
+
+  const cleared = mergeDesktopSettings({
+    ...merged,
+    autoRoutingFast: null,
+  });
+  assert.equal(cleared.autoRoutingFast, undefined);
+});

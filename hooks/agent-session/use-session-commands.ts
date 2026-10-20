@@ -49,7 +49,10 @@ export type UseSessionCommandsOptions = {
   resolveAutoModelForPrompt: (
     message: string,
     hasImages: boolean,
+    contextChars?: number,
   ) => { provider: string; modelId: string } | null;
+  /** Characters already in the transcript, used for the Auto complexity tier. */
+  contextChars: number;
   toolPreset: "none" | "default" | "full";
   agentMode: AgentMode;
   setAgentMode: (mode: AgentMode) => void;
@@ -89,6 +92,7 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
     isCompacting,
     autoRouting,
     resolveAutoModelForPrompt,
+    contextChars,
     toolPreset,
     agentMode,
     setAgentMode,
@@ -232,7 +236,7 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
 
       // Auto routing: classify this prompt and pick fast/strong before dispatch.
       const routedModel = autoRouting
-        ? resolveAutoModelForPrompt(message, Boolean(images?.length))
+        ? resolveAutoModelForPrompt(message, Boolean(images?.length), contextChars)
         : null;
 
       const clientMessageId = globalThis.crypto.randomUUID();
@@ -358,6 +362,7 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
       agentRunning,
       autoRouting,
       resolveAutoModelForPrompt,
+      contextChars,
       connectEvents,
       onSessionCreated,
       pendingScrollToUserRef,

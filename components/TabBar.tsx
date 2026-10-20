@@ -10,6 +10,8 @@ export interface Tab {
   filePath: string;
   /** "diff" tabs render the Git working-tree diff for the same file. */
   mode?: "file" | "diff";
+  /** Optional 1-based line to reveal when the tab is opened from a file link. */
+  line?: number;
 }
 
 interface Props {

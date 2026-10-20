@@ -15,6 +15,7 @@ import { ModelsConfig } from "./ModelsConfig";
 import { SessionExportModal } from "./SessionExportModal";
 import { SessionSidebar } from "./SessionSidebar";
 import { ExtensionsConfigModal } from "./ExtensionsConfigModal";
+import { AutoRoutingConfig } from "./AutoRoutingConfig";
 import { SkillsConfig } from "./SkillsConfig";
 import { TabBar } from "./TabBar";
 import { TitleBar } from "./TitleBar";
@@ -23,7 +24,7 @@ function byModifiedDesc(a: SessionInfo, b: SessionInfo): number {
   return new Date(b.modified).getTime() - new Date(a.modified).getTime();
 }
 
-type SettingsModal = "skills" | "models" | "extensions" | null;
+type SettingsModal = "skills" | "models" | "extensions" | "auto" | null;
 
 export function Workbench() {
   const [selected, setSelected] = useState<SessionInfo | null>(null);
@@ -307,6 +308,7 @@ export function Workbench() {
               <div className="material-popover absolute bottom-full left-2 right-2 z-[60] mb-1 rounded-xl p-1.5">
                 {[
                   { label: "模型与登录", action: () => setSettingsModal("models") },
+                  { label: "Auto 路由", action: () => setSettingsModal("auto") },
                   { label: "扩展与集成", action: () => setSettingsModal("extensions") },
                   { label: "技能安装", action: () => setSettingsModal("skills") },
                   { label: "添加项目…", action: () => { void handleAddProject(); } },
@@ -338,6 +340,7 @@ export function Workbench() {
             onDraftChange={handleDraftChange}
             onSessionCreated={handleSessionCreated}
             onSessionRenamed={() => setSessionsVersion((version) => version + 1)}
+            onOpenFile={(filePath, fileName, line) => handleOpenFile(filePath, fileName, line)}
             onSessionForked={(newSessionId) => {
               void handleSessionForked(newSessionId);
             }}
@@ -358,6 +361,7 @@ export function Workbench() {
                   filePath={activeTab.filePath}
                   cwd={cwd ?? undefined}
                   gitDiff={activeTab.mode === "diff"}
+                  line={activeTab.line}
                 />
               </div>
             </div>
@@ -373,6 +377,14 @@ export function Workbench() {
 
       {settingsModal === "skills" && (
         <SkillsConfig cwd={cwd ?? ""} onClose={() => setSettingsModal(null)} />
+      )}
+      {settingsModal === "auto" && (
+        <AutoRoutingConfig
+          onClose={() => {
+            setSettingsModal(null);
+            setModelsVersion((version) => version + 1);
+          }}
+        />
       )}
       {settingsModal === "extensions" && (
         <ExtensionsConfigModal

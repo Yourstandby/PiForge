@@ -308,6 +308,22 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     () => calculateSessionStats(messages),
     [messages],
   );
+  const contextChars = useMemo(
+    () =>
+      messages.reduce((total, message) => {
+        const content = (message as { content?: unknown }).content;
+        if (typeof content === "string") return total + content.length;
+        if (!Array.isArray(content)) return total;
+        return (
+          total +
+          content.reduce((sum, block) => {
+            const text = (block as { text?: unknown }).text;
+            return sum + (typeof text === "string" ? text.length : 0);
+          }, 0)
+        );
+      }, 0),
+    [messages],
+  );
   const sessionStats = authoritativeSessionStats ?? calculatedSessionStats;
 
   const loadSession = useCallback(
@@ -549,6 +565,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     isCompacting,
     autoRouting,
     resolveAutoModelForPrompt,
+    contextChars,
     toolPreset,
     agentMode,
     setAgentMode,

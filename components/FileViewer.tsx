@@ -15,6 +15,8 @@ interface Props {
   cwd?: string;
   /** Render the Git working-tree diff instead of the file contents. */
   gitDiff?: boolean;
+  /** Optional 1-based line to reveal (file links like `src/a.ts:42`). */
+  line?: number;
 }
 
 interface FileData {
@@ -535,10 +537,12 @@ function PlainTextViewer({
   content,
   wrapLines,
   showLargeFileNotice,
+  targetLine,
 }: {
   content: string;
   wrapLines: boolean;
   showLargeFileNotice?: boolean;
+  targetLine?: number;
 }) {
   const { t } = useI18n();
   const lines = useMemo(() => content.split("\n"), [content]);
@@ -559,6 +563,14 @@ function PlainTextViewer({
     observer.observe(scroller);
     return () => observer.disconnect();
   }, []);
+
+  useEffect(() => {
+    if (!targetLine) return;
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    const top = (targetLine - 1) * VIRTUAL_ROW_HEIGHT - scroller.clientHeight / 2;
+    scroller.scrollTop = Math.max(0, top);
+  }, [targetLine, content]);
 
   const shouldVirtualize = showLargeFileNotice && !wrapLines;
   const visibleWindow = useMemo(
@@ -612,6 +624,7 @@ function PlainTextViewer({
               display: "flex",
               alignItems: "stretch",
               minHeight: VIRTUAL_ROW_HEIGHT,
+              background: targetLine === index + 1 ? "#FFF6D8" : undefined,
             }}
           >
             <span
@@ -722,7 +735,7 @@ function GitDiffViewer({ filePath, cwd }: Props) {
   );
 }
 
-export function FileViewer({ filePath, cwd, gitDiff }: Props) {
+export function FileViewer({ filePath, cwd, gitDiff, line }: Props) {
   if (gitDiff) {
     return <GitDiffViewer filePath={filePath} cwd={cwd} />;
   }
@@ -732,10 +745,10 @@ export function FileViewer({ filePath, cwd, gitDiff }: Props) {
   if (isAudioPath(filePath)) {
     return <AudioViewer filePath={filePath} cwd={cwd} />;
   }
-  return <TextFileViewer filePath={filePath} cwd={cwd} />;
+  return <TextFileViewer filePath={filePath} cwd={cwd} line={line} />;
 }
 
-function TextFileViewer({ filePath, cwd }: Props) {
+function TextFileViewer({ filePath, cwd, line }: Props) {
   const { t } = useI18n();
   const theme = "light" as const;
   const [data, setData] = useState<FileData | null>(null);
@@ -751,6 +764,7 @@ function TextFileViewer({ filePath, cwd }: Props) {
   const [editContent, setEditContent] = useState("");
   const [saving, setSaving] = useState(false);
   const esRef = useRef<EventSource | null>(null);
+  const sourceScrollRef = useRef<HTMLDivElement | null>(null);
 
   const fetchContent = useCallback((filePath: string, isRefresh = false) => {
     const encoded = encodeFilePathForApi(filePath);
@@ -839,7 +853,8 @@ function TextFileViewer({ filePath, cwd }: Props) {
     }
 
     fetchContent(filePath).then((d) => {
-      if (d?.language === "markdown") setPreviewMode(true);
+      // A line-targeted link must land in source view, not the rendered preview.
+      if (d?.language === "markdown" && !line) setPreviewMode(true);
     }).finally(() => setLoading(false));
 
     // Set up SSE watch
@@ -867,7 +882,7 @@ function TextFileViewer({ filePath, cwd }: Props) {
       es.close();
       esRef.current = null;
     };
-  }, [filePath, fetchContent]);
+  }, [filePath, fetchContent, line]);
 
   const content = data?.content ?? "";
   const lines = useMemo(() => content.split("\n"), [content]);
@@ -884,6 +899,19 @@ function TextFileViewer({ filePath, cwd }: Props) {
     [content.length, data, lines.length, previewMode, viewMode]
   );
   const hasDiff = prevContent !== null && prevContent !== content;
+
+  // Reveal the requested line once the highlighted source is on screen.
+  useEffect(() => {
+    if (!line || !data || viewMode !== "source" || previewMode || isLargeSource) return;
+    const target = Math.max(1, Math.min(line, lines.length));
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => {
+        const element = sourceScrollRef.current?.querySelector<HTMLElement>(`[data-line="${target}"]`);
+        element?.scrollIntoView({ block: "center" });
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [line, data, viewMode, previewMode, isLargeSource, lines.length]);
 
   if (loading) {
     return (
@@ -1132,7 +1160,7 @@ function TextFileViewer({ filePath, cwd }: Props) {
           />
         </div>
       ) : (
-      <div style={{ flex: 1, overflow: isLargeSource ? "hidden" : "auto", background: "var(--bg)" }}>
+      <div ref={sourceScrollRef} style={{ flex: 1, overflow: isLargeSource ? "hidden" : "auto", background: "var(--bg)" }}>
         {viewMode === "diff" && hasDiff ? (
           <DiffView oldContent={prevContent!} newContent={data.content} language={data.language} />
         ) : isHtml && previewMode ? (
@@ -1150,12 +1178,17 @@ function TextFileViewer({ filePath, cwd }: Props) {
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{data.content}</ReactMarkdown>
           </div>
         ) : isLargeSource ? (
-          <PlainTextViewer content={content} wrapLines={wrapLines} showLargeFileNotice />
+          <PlainTextViewer content={content} wrapLines={wrapLines} showLargeFileNotice targetLine={line} />
         ) : (
           <SyntaxHighlighter
             language={data.language === "text" ? "plaintext" : data.language}
             style={syntaxThemeFor(theme)}
             showLineNumbers
+            wrapLines
+            lineProps={(lineNumber: number) => ({
+              "data-line": lineNumber,
+              style: lineNumber === line ? { background: "#FFF6D8" } : undefined,
+            })}
             lineNumberStyle={{
               color: "var(--text-dim)",
               fontStyle: "normal",

@@ -25,11 +25,14 @@ export function useFileTabs(onTabOpened?: () => void, onAllTabsClosed?: () => vo
   const [activeFileTabId, setActiveFileTabId] = useState<string | null>(null);
 
   const handleOpenFile = useCallback(
-    (filePath: string, fileName: string) => {
+    (filePath: string, fileName: string, line?: number) => {
       const tabId = `file:${filePath}`;
       setFileTabs((prev) => {
-        if (prev.find((t) => t.id === tabId)) return prev;
-        return [...prev, { id: tabId, label: fileName, filePath, mode: "file" }];
+        const existing = prev.find((t) => t.id === tabId);
+        if (existing) {
+          return prev.map((t) => (t.id === tabId ? { ...t, line } : t));
+        }
+        return [...prev, { id: tabId, label: fileName, filePath, mode: "file", line }];
       });
       setActiveFileTabId(tabId);
       onTabOpened?.();

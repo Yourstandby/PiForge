@@ -117,8 +117,8 @@ export function useSessionModelTools(opts: UseSessionModelToolsOptions) {
 
   /** Pick fast/strong for one prompt (used by handleSend when Auto is active). */
   const resolveAutoModelForPrompt = useCallback(
-    (message: string, hasImages: boolean) => {
-      const tier = classifyPromptComplexity(message, hasImages);
+    (message: string, hasImages: boolean, contextChars = 0) => {
+      const tier = classifyPromptComplexity(message, hasImages, contextChars);
       return resolveAutoModel(autoTargets, tier);
     },
     [autoTargets],

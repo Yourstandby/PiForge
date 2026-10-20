@@ -142,9 +142,13 @@ const COMPLEX_PATTERNS = [
 export function classifyPromptComplexity(
   message: string,
   hasImages = false,
+  contextChars = 0,
 ): AutoTier {
   const text = message.trim();
   if (hasImages) return "strong";
+  // A long conversation benefits from the stronger model even when the new
+  // prompt itself is short (the model still has to reason over all of it).
+  if (contextChars > 40_000) return "strong";
   if (text.length > 420) return "strong";
   if (/```/.test(text)) return "strong";
   if ((text.match(/\?/g) ?? []).length >= 3) return "strong";

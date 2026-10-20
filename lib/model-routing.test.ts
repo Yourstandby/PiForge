@@ -30,6 +30,8 @@ test("classifyPromptComplexity routes design/debug work and images to strong", (
   assert.equal(classifyPromptComplexity("look", true), "strong");
   assert.equal(classifyPromptComplexity("```ts\nconst a = 1;\n```"), "strong");
   assert.equal(classifyPromptComplexity("x".repeat(500)), "strong");
+  assert.equal(classifyPromptComplexity("ok", false, 50_000), "strong");
+  assert.equal(classifyPromptComplexity("ok", false, 1_000), "fast");
 });
 
 test("resolveAutoModel falls back to the other tier when one is missing", () => {

@@ -22,10 +22,18 @@ export interface DesktopLtmSettings {
   observePreCompact?: boolean;
 }
 
+export interface AutoRoutingModelSelection {
+  provider: string;
+  modelId: string;
+}
+
 export interface DesktopSettings {
   defaultAgentMode: AgentMode;
   defaultToolPreset: ToolPreset;
   codemodeEnabled?: boolean;
+  /** User-picked fast/strong models for the "Auto" routing mode. */
+  autoRoutingFast?: AutoRoutingModelSelection;
+  autoRoutingStrong?: AutoRoutingModelSelection;
   /** Optional LTM config; omitted when unset. Merged by getLtmConfig. */
   ltm?: DesktopLtmSettings;
 }
@@ -42,6 +50,14 @@ export function defaultDesktopSettings(): DesktopSettings {
 
 function desktopSettingsPath(agentDir: string): string {
   return join(agentDir, DESKTOP_SETTINGS_FILENAME);
+}
+
+function parseAutoRoutingSelection(raw: unknown): AutoRoutingModelSelection | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.provider !== "string" || !obj.provider.trim()) return undefined;
+  if (typeof obj.modelId !== "string" || !obj.modelId.trim()) return undefined;
+  return { provider: obj.provider.trim(), modelId: obj.modelId.trim() };
 }
 
 function mergeDesktopLtmSettings(raw: unknown): DesktopLtmSettings | undefined {
@@ -68,6 +84,10 @@ export function mergeDesktopSettings(raw: unknown): DesktopSettings {
   };
   if (ltm) result.ltm = ltm;
   result.codemodeEnabled = typeof obj.codemodeEnabled === "boolean" ? obj.codemodeEnabled : false;
+  const fast = parseAutoRoutingSelection(obj.autoRoutingFast);
+  const strong = parseAutoRoutingSelection(obj.autoRoutingStrong);
+  if (fast) result.autoRoutingFast = fast;
+  if (strong) result.autoRoutingStrong = strong;
   return result;
 }
 
@@ -104,6 +124,20 @@ export function validateDesktopSettingsBody(body: unknown): string | null {
   }
   if (obj.defaultToolPreset !== undefined && !isToolPreset(obj.defaultToolPreset)) {
     return "defaultToolPreset must be none | default | full";
+  }
+  for (const key of ["autoRoutingFast", "autoRoutingStrong"] as const) {
+    const value = obj[key];
+    if (value === undefined || value === null) continue;
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return `${key} must be an object or null`;
+    }
+    const selection = value as Record<string, unknown>;
+    if (typeof selection.provider !== "string" || !selection.provider.trim()) {
+      return `${key}.provider must be a non-empty string`;
+    }
+    if (typeof selection.modelId !== "string" || !selection.modelId.trim()) {
+      return `${key}.modelId must be a non-empty string`;
+    }
   }
   if (obj.ltm !== undefined) {
     if (!obj.ltm || typeof obj.ltm !== "object" || Array.isArray(obj.ltm)) {

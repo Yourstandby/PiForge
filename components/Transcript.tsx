@@ -1,12 +1,101 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { Children, useEffect, useId, useMemo, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { Check, ChevronDown, Copy, GitFork, X } from "lucide-react";
 import type { AgentMessage, ToolResultMessage } from "@/lib/types";
+import { getFileName } from "@/lib/file-paths";
+import {
+  findFileReferences,
+  parseFileReference,
+  resolveFileReferencePath,
+  resolveHrefFileReference,
+  type FileReference,
+} from "@/lib/file-links";
+
+type OpenFileHandler = (filePath: string, fileName: string, line?: number) => void;
+
+function FilePathButton({
+  reference,
+  cwd,
+  onOpenFile,
+  children,
+}: {
+  reference: FileReference;
+  cwd?: string | null;
+  onOpenFile?: OpenFileHandler;
+  children: React.ReactNode;
+}) {
+  const resolved = resolveFileReferencePath(reference, cwd);
+  if (!resolved || !onOpenFile) return <code className="rounded bg-[#EDF3FD] px-1 py-0.5 font-mono text-[0.92em] text-ink">{children}</code>;
+  const line = reference.line;
+  return (
+    <button
+      type="button"
+      onClick={() => onOpenFile(resolved, getFileName(resolved), line)}
+      title={`打开 ${resolved}${line ? `:${line}` : ""}`}
+      className="inline cursor-pointer rounded bg-[#EDF3FD] px-1 py-0.5 font-mono text-[0.92em] text-accent-strong underline decoration-accent/30 underline-offset-2 transition-colors hover:bg-[#E8EFFB] hover:decoration-accent"
+    >
+      {children}
+    </button>
+  );
+}
+
+function FileLinkText({
+  text,
+  cwd,
+  onOpenFile,
+}: {
+  text: string;
+  cwd?: string | null;
+  onOpenFile?: OpenFileHandler;
+}) {
+  if (!onOpenFile) return <>{text}</>;
+  const segments = findFileReferences(text);
+  return (
+    <>
+      {segments.map((segment, index) =>
+        segment.type === "file" && segment.reference ? (
+          <FilePathButton
+            key={index}
+            reference={segment.reference}
+            cwd={cwd}
+            onOpenFile={onOpenFile}
+          >
+            {segment.value}
+          </FilePathButton>
+        ) : (
+          <span key={index}>{segment.value}</span>
+        ),
+      )}
+    </>
+  );
+}
+
+function LinkifiedChildren({
+  children,
+  cwd,
+  onOpenFile,
+}: {
+  children: React.ReactNode;
+  cwd?: string | null;
+  onOpenFile?: OpenFileHandler;
+}) {
+  return (
+    <>
+      {Children.map(children, (child) =>
+        typeof child === "string" ? (
+          <FileLinkText text={child} cwd={cwd} onOpenFile={onOpenFile} />
+        ) : (
+          child
+        ),
+      )}
+    </>
+  );
+}
 
 const MARKDOWN_PLUGINS = { remarkPlugins: [remarkGfm, remarkMath], rehypePlugins: [rehypeKatex] };
 
@@ -82,34 +171,65 @@ function MermaidBlock({ code }: { code: string }) {
   );
 }
 
-const markdownComponents: Components = {
-  p: ({ children }) => <p className="mb-3 last:mb-0">{children}</p>,
+function createMarkdownComponents(
+  cwd?: string | null,
+  onOpenFile?: OpenFileHandler,
+): Components {
+  const linkify = (children: React.ReactNode) => (
+    <LinkifiedChildren cwd={cwd} onOpenFile={onOpenFile}>{children}</LinkifiedChildren>
+  );
+  return {
+  p: ({ children }) => <p className="mb-3 last:mb-0">{linkify(children)}</p>,
   h1: ({ children }) => <h1 className="mb-3 mt-5 text-[17px] font-semibold first:mt-0">{children}</h1>,
   h2: ({ children }) => <h2 className="mb-2.5 mt-5 text-[15.5px] font-semibold first:mt-0">{children}</h2>,
   h3: ({ children }) => <h3 className="mb-2 mt-4 text-[14.5px] font-semibold first:mt-0">{children}</h3>,
   ul: ({ children }) => <ul className="mb-3 list-disc pl-5">{children}</ul>,
   ol: ({ children }) => <ol className="mb-3 list-decimal pl-5">{children}</ol>,
-  li: ({ children }) => <li className="mb-1">{children}</li>,
+  li: ({ children }) => <li className="mb-1">{linkify(children)}</li>,
   blockquote: ({ children }) => (
     <blockquote className="mb-3 border-l-2 border-[#DCE6F8] pl-3 text-ink-muted">
-      {children}
+      {linkify(children)}
     </blockquote>
   ),
-  a: ({ href, children }) => (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      className="text-accent-strong underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
-    >
-      {children}
-    </a>
-  ),
+  a: ({ href, children }) => {
+    const target = resolveHrefFileReference(href, cwd);
+    if (target && onOpenFile) {
+      return (
+        <button
+          type="button"
+          onClick={() => onOpenFile(target.path, getFileName(target.path), target.line)}
+          title={`打开 ${target.path}${target.line ? `:${target.line}` : ""}`}
+          className="inline cursor-pointer font-mono text-accent-strong underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
+        >
+          {children}
+        </button>
+      );
+    }
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        className="text-accent-strong underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
+      >
+        {children}
+      </a>
+    );
+  },
   pre: ({ children }) => <>{children}</>,
   code: ({ className, children }) => {
     const lang = /language-([\w-]+)/.exec(className ?? "")?.[1]?.toLowerCase() ?? "";
     if (lang || String(children).includes("\n")) {
       return <CodeBlock code={String(children).replace(/\n$/, "")} lang={lang} />;
+    }
+    const raw = String(children);
+    const reference = parseFileReference(raw);
+    if (reference && onOpenFile) {
+      return (
+        <FilePathButton reference={reference} cwd={cwd} onOpenFile={onOpenFile}>
+          {children}
+        </FilePathButton>
+      );
     }
     return (
       <code className="rounded bg-[#EDF3FD] px-1 py-0.5 font-mono text-[0.9em] text-ink">{children}</code>
@@ -124,8 +244,9 @@ const markdownComponents: Components = {
   th: ({ children }) => (
     <th className="border border-[#E3E8F2] px-2 py-1 text-left font-medium">{children}</th>
   ),
-  td: ({ children }) => <td className="border border-[#E3E8F2] px-2 py-1">{children}</td>,
-};
+  td: ({ children }) => <td className="border border-[#E3E8F2] px-2 py-1">{linkify(children)}</td>,
+  };
+}
 
 function userText(message: AgentMessage): string {
   const content = (message as { content?: unknown }).content;
@@ -462,14 +583,23 @@ export function Transcript({
   entryIds,
   onFork,
   forkingEntryId,
+  cwd,
+  onOpenFile,
 }: {
   messages: AgentMessage[];
   /** 1:1 with `messages`; the session entry id used by `fork`/`navigate_tree`. */
   entryIds?: Array<string | undefined>;
   onFork?: (entryId: string) => void;
   forkingEntryId?: string | null;
+  /** Project root for resolving relative file references. */
+  cwd?: string | null;
+  onOpenFile?: OpenFileHandler;
 }) {
   const results = toolResultsById(messages);
+  const markdownComponents = useMemo(
+    () => createMarkdownComponents(cwd, onOpenFile),
+    [cwd, onOpenFile],
+  );
   const [copiedTurn, setCopiedTurn] = useState<number | null>(null);
 
   const copyTurn = (index: number, text: string) => {
@@ -576,7 +706,7 @@ export function Transcript({
 
           {turn.role === "user" ? (
             <div className="whitespace-pre-wrap break-words rounded-xl border border-[#E7E9EE] bg-white px-4 py-3 text-[14px] leading-7 text-ink shadow-[0_1px_2px_rgba(17,17,17,0.03)]">
-              {turn.text && <span>{turn.text}</span>}
+              {turn.text && <FileLinkText text={turn.text} cwd={cwd} onOpenFile={onOpenFile} />}
               {turn.images.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-2">
                   {turn.images.map((src, imageIndex) => (
