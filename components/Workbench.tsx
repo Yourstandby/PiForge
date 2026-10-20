@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SessionInfo } from "@/lib/types";
-import { PanelRightOpen, Plug, Settings, Sparkles } from "lucide-react";
+import { PanelLeftOpen, PanelRightOpen, Plug, Settings, Sparkles } from "lucide-react";
 import { getElectronApi } from "@/lib/electron-api";
 import { resolveForkedSession } from "@/lib/fork-session-wait";
 import { buildProjectWindowPath, resolveInitialView } from "@/lib/project-window";
@@ -48,6 +48,7 @@ export function Workbench() {
   // Sidebar refetch trigger (fork / delete / new session).
   const [sessionsVersion, setSessionsVersion] = useState(0);
   const [settingsModal, setSettingsModal] = useState<SettingsModal>(null);
+  const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
   const [rightPanelWidth, setRightPanelWidth] = useState(560);
   const [rightPanelResizing, setRightPanelResizing] = useState(false);
@@ -329,7 +330,13 @@ export function Workbench() {
       <TitleBar />
 
       <div className="flex min-h-0 flex-1">
-        <div className="flex w-[260px] shrink-0 flex-col overflow-hidden border-r border-black/[0.06] bg-white/70 backdrop-blur-md">
+        <div
+          className={`shrink-0 overflow-hidden transition-all duration-300 ${
+            leftSidebarOpen ? "w-[260px]" : "w-0"
+          }`}
+          aria-hidden={!leftSidebarOpen}
+        >
+          <div className="flex h-full w-[260px] flex-col overflow-hidden border-r border-black/[0.06] bg-white/70 backdrop-blur-md">
           <div className="flex min-h-0 flex-1 flex-col">
           <SessionSidebar
             selectedSessionId={selected?.id ?? null}
@@ -350,6 +357,7 @@ export function Workbench() {
             selectedCwd={cwd}
             onCwdChange={(nextCwd) => setCwd(nextCwd)}
             onOpenFile={(filePath, fileName) => handleOpenFile(filePath, fileName)}
+            onCollapse={() => setLeftSidebarOpen(false)}
             onAtMention={(relativePath) => {
               setDraft((value) => `${value}${value && !value.endsWith(" ") ? " " : ""}@${relativePath} `);
             }}
@@ -416,6 +424,7 @@ export function Workbench() {
               </div>
             )}
           </div>
+          </div>
         </div>
 
         <div className="relative flex min-w-0 flex-1">
@@ -437,6 +446,17 @@ export function Workbench() {
               void handleSessionForked(newSessionId);
             }}
           />
+          {!leftSidebarOpen && (
+            <button
+              type="button"
+              onClick={() => setLeftSidebarOpen(true)}
+              aria-label="展开左侧边栏"
+              title="展开左侧边栏"
+              className="absolute left-2 top-2 z-20 flex h-7 w-7 items-center justify-center rounded-md border border-gray-200/70 bg-white/90 text-gray-500 shadow-[0_2px_8px_rgba(0,0,0,0.06)] backdrop-blur transition-colors hover:text-gray-800"
+            >
+              <PanelLeftOpen size={16} strokeWidth={1.75} className="h-4 w-4" aria-hidden="true" />
+            </button>
+          )}
           {!rightPanelOpen && (
             <button
               type="button"

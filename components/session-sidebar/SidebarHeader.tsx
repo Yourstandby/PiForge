@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef } from "react";
+import { PanelLeftClose } from "lucide-react";
 import { pickDirectoryFromHost } from "./helpers";
 import { SidebarIcon } from "./SidebarIcon";
 import { ProjectSortMenu } from "./ProjectSortMenu";
@@ -18,9 +19,10 @@ interface SidebarHeaderProps {
   onSearchQueryChange: (query: string) => void;
   sortMode: ProjectSortMode;
   onSortModeChange: (mode: ProjectSortMode, animate: boolean) => void;
+  onCollapse?: () => void;
 }
 
-export function SidebarHeader({ selectedCwd, onNewSession, onAddProject, loadSessions, sessionRefreshDone, searchQuery, onSearchQueryChange, sortMode, onSortModeChange }: SidebarHeaderProps) {
+export function SidebarHeader({ selectedCwd, onNewSession, onAddProject, loadSessions, sessionRefreshDone, searchQuery, onSearchQueryChange, sortMode, onSortModeChange, onCollapse }: SidebarHeaderProps) {
   const { t } = useI18n();
   const [menuOpen, setMenuOpen] = useState(false);
   const [picking, setPicking] = useState(false);
@@ -63,14 +65,25 @@ export function SidebarHeader({ selectedCwd, onNewSession, onAddProject, loadSes
   return (
     <header className="sidebar-header">
       <div className="sidebar-title-row">
+        <div className="flex min-w-0 flex-1">
+          <button
+            className="sidebar-new-session-button"
+            onClick={() => selectedCwd && onNewSession(selectedCwd)}
+            disabled={!selectedCwd}
+            title={selectedCwd ? t("sidebar.newSessionIn", { path: selectedCwd }) : t("sidebar.selectProjectFirst")}
+          >
+            <SidebarIcon name="plus" size={14} />
+            {t("sidebar.newSession")}
+          </button>
+        </div>
         <button
-          className="sidebar-new-session-button"
-          onClick={() => selectedCwd && onNewSession(selectedCwd)}
-          disabled={!selectedCwd}
-          title={selectedCwd ? t("sidebar.newSessionIn", { path: selectedCwd }) : t("sidebar.selectProjectFirst")}
+          type="button"
+          onClick={onCollapse}
+          aria-label="折叠左侧边栏"
+          title="折叠左侧边栏"
+          className="flex h-8 w-8 shrink-0 items-center justify-center text-gray-500 transition-colors duration-150 hover:text-gray-800"
         >
-          <SidebarIcon name="plus" size={14} />
-          {t("sidebar.newSession")}
+          <PanelLeftClose size={16} strokeWidth={1.75} className="h-4 w-4" aria-hidden="true" />
         </button>
       </div>
       <div className="sidebar-search">
