@@ -1,7 +1,7 @@
 {
   "name": "piforge",
   "version": "0.3.0",
-  "description": "PiForge — desktop client for the pi coding agent",
+  "description": "PiForge — multi-session desktop workbench for the Pi coding agent: built-in browser, terminal, Git panel and plan mode.",
   "license": "MIT",
   "author": "PiForge",
   "repository": {
