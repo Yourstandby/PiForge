@@ -203,6 +203,30 @@ export function Workbench() {
     setActiveKey(key);
   }, []);
 
+  /** Ctrl+Tab / Ctrl+Shift+Tab: cycle through the open session tabs. */
+  const cycleTab = useCallback(
+    (direction: 1 | -1) => {
+      const list = tabsRef.current;
+      if (list.length < 2) return;
+      const current = list.findIndex((tab) => tab.key === activeKeyRef.current);
+      if (current === -1) return;
+      const next = list[(current + direction + list.length) % list.length];
+      if (next) activateTab(next.key);
+    },
+    [activateTab],
+  );
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+      if (event.key !== "Tab") return;
+      event.preventDefault();
+      cycleTab(event.shiftKey ? -1 : 1);
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [cycleTab]);
+
   const rememberDraft = useCallback((draftKey: string, value: string) => {
     try {
       if (value) window.localStorage.setItem(`piforge.draft:${draftKey}`, value);

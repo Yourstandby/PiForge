@@ -5,6 +5,7 @@ import { AlertCircle, CheckCircle2, ListTodo } from "lucide-react";
 import type { AgentMessage, SessionInfo, SessionTreeNode } from "@/lib/types";
 import { useAgentSession } from "@/hooks/useAgentSession";
 import { useAudio } from "@/hooks/useAudio";
+import { conversationToMarkdown } from "@/lib/conversation-markdown";
 import { BranchCloneModal, type BranchCloneMode } from "./BranchCloneModal";
 import { BranchNavigator } from "./BranchNavigator";
 import { Composer } from "./Composer";
@@ -147,6 +148,48 @@ function ChatSession({
   }, [compactToast]);
 
   const canCompact = Boolean(session?.id) && !chat.agentRunning && !chat.isCompacting;
+
+  /** Ctrl/Cmd+Shift+C: whole conversation as Markdown on the clipboard. */
+  const copyConversation = useCallback(async () => {
+    const markdown = conversationToMarkdown(chat.messages);
+    try {
+      await navigator.clipboard.writeText(markdown);
+      setCompactToast({ ok: true, text: "对话已复制" });
+    } catch {
+      setCompactToast({ ok: false, text: "复制失败：剪贴板不可用" });
+    }
+  }, [chat.messages]);
+
+  /** Ctrl/Cmd+K: same reset as the /clear slash command. */
+  const clearConversation = useCallback(() => {
+    if (chat.agentRunning) {
+      setCompactToast({ ok: false, text: "正在生成，先按 Esc 中断" });
+      return;
+    }
+    void chat.handleSend("/clear");
+    setCompactToast({ ok: true, text: "已清空当前对话视图" });
+  }, [chat]);
+
+  // Global (active-tab only) shortcuts. Capture phase so a focused textarea
+  // cannot swallow them. Dialogs keep the keyboard to themselves.
+  useEffect(() => {
+    if (!active) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+      if (document.querySelector('[role="dialog"], [aria-modal="true"]')) return;
+      if (event.shiftKey && event.key.toLowerCase() === "c") {
+        event.preventDefault();
+        void copyConversation();
+        return;
+      }
+      if (!event.shiftKey && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        clearConversation();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [active, copyConversation, clearConversation]);
 
   const runCompact = useCallback(async () => {
     setCompactConfirmOpen(false);

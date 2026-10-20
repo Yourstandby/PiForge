@@ -8,6 +8,12 @@ import { buildReferenceInsertion, isImageFileLike } from "@/lib/composer-files";
 import { getElectronApi } from "@/lib/electron-api";
 import { getRelativeFilePath } from "@/lib/file-paths";
 import {
+  pushPromptHistory,
+  readPromptHistory,
+  stepHistory,
+  writePromptHistory,
+} from "@/lib/prompt-history";
+import {
   buildSlashCommandItems,
   getSlashTriggerQuery,
   type SlashCommandItem,
@@ -125,6 +131,35 @@ export function Composer({
   // dragenter/leave fire for every child element; count them instead of
   // toggling so the highlight does not flicker.
   const dragDepth = useRef(0);
+
+  // Terminal-style prompt history (↑ / ↓), newest first.
+  const [history, setHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState<number | null>(null);
+  // Text the user had typed before starting to browse history.
+  const historyDraftRef = useRef("");
+
+  useEffect(() => {
+    setHistory(readPromptHistory());
+  }, []);
+
+  const rememberPrompt = useCallback((prompt: string) => {
+    setHistory((current) => {
+      const next = pushPromptHistory(current, prompt);
+      writePromptHistory(next);
+      return next;
+    });
+  }, []);
+
+  const focusCaretAtEnd = useCallback(() => {
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      const position = el.value.length;
+      el.setSelectionRange(position, position);
+      setCaret(position);
+    });
+  }, []);
 
   const [mention, setMention] = useState<MentionToken | null>(null);
   const [suggestions, setSuggestions] = useState<FileSuggestion[]>([]);
@@ -365,6 +400,8 @@ export function Composer({
     onValueChange("");
     setImages([]);
     setMention(null);
+    setHistoryIndex(null);
+    historyDraftRef.current = "";
     textareaRef.current?.focus();
   };
 
@@ -374,6 +411,7 @@ export function Composer({
     if (!canSend) return;
     const text = value.trim();
     const attached = images.length > 0 ? images : undefined;
+    if (text) rememberPrompt(text);
     if (busy) {
       if (mode === "follow-up") {
         if (!onFollowUp) return;
@@ -614,6 +652,8 @@ export function Composer({
           onChange={(e) => {
             onValueChange(e.target.value);
             setSlashDismissedValue(null);
+            // Typing leaves history browsing; the edited text becomes the draft.
+            setHistoryIndex(null);
             const position = e.target.selectionStart ?? e.target.value.length;
             setCaret(position);
             setMention(detectMention(e.target.value, position));
@@ -671,6 +711,28 @@ export function Composer({
               if (e.key === "Escape") {
                 e.preventDefault();
                 setMention(null);
+                return;
+              }
+            }
+            // ↑ / ↓ walk previously sent prompts when the composer is empty.
+            // With text already in the box, ↑ keeps its native caret behavior.
+            if ((e.key === "ArrowUp" || e.key === "ArrowDown") && history.length > 0) {
+              const browsing = historyIndex !== null;
+              if (e.key === "ArrowUp" && (value.length === 0 || browsing)) {
+                e.preventDefault();
+                if (!browsing) historyDraftRef.current = value;
+                const next = stepHistory(historyIndex, "older", history.length);
+                setHistoryIndex(next.index);
+                onValueChange(history[next.index ?? 0] ?? "");
+                focusCaretAtEnd();
+                return;
+              }
+              if (e.key === "ArrowDown" && browsing) {
+                e.preventDefault();
+                const next = stepHistory(historyIndex, "newer", history.length);
+                setHistoryIndex(next.index);
+                onValueChange(next.restoreDraft ? historyDraftRef.current : (history[next.index ?? 0] ?? ""));
+                focusCaretAtEnd();
                 return;
               }
             }
