@@ -305,6 +305,32 @@ export interface AgentHostMethods {
   };
 
   // ---- session branches (tree already exists in the JSONL) ----
+  // ---- Host-owned workspace / Git worktree clone ----
+  "workspace.cloneSession": {
+    params: {
+      sessionId: string;
+      sessionFile: string;
+      sourceCwd: string;
+      targetCwd: string;
+      branchName?: string;
+      name?: string;
+    };
+    result: {
+      success: true;
+      sessionId: string;
+      sessionFile: string;
+      workspace: { mode: "worktree"; cwd: string; branchName: string };
+      worktree: {
+        repoRoot: string;
+        gitDir: string;
+        head: string;
+        branchOwnerToken: string;
+        ownerMarkerPath?: string;
+        ownerToken?: string;
+      };
+    };
+  };
+
   "sessions.getBranches": {
     params: { sessionId: string; filePath?: string };
     result: SessionBranches;
@@ -468,6 +494,7 @@ export const IMPLEMENTED_HOST_METHODS = [
   "toolOutput.read",
   "sessions.getBranches",
   "sessions.switchBranch",
+  "workspace.cloneSession",
   "sessions.locate",
   "sessions.state",
   "sessions.rename",

@@ -11,6 +11,8 @@ type CloneWorkspaceMode = "directory" | "worktree";
 const CLONE_ERROR_TRANSLATIONS: Partial<Record<string, TranslationKey>> = {
   INVALID_CLONE_PAYLOAD: "branch.invalidClonePayload",
   INVALID_TARGET_CWD: "branch.invalidTargetDirectory",
+  TARGET_DIRECTORY_REQUIRED: "branch.targetDirectoryRequired",
+  ACCESS_DENIED: "branch.accessDenied",
   INVALID_CLONE_NAME: "branch.invalidCloneName",
   INVALID_WORKSPACE_MODE: "branch.invalidWorkspaceMode",
   INVALID_BRANCH_NAME: "branch.invalidBranchName",
@@ -93,6 +95,10 @@ export function BranchCloneModal({
     e.preventDefault();
     if (mode === "branch" && !targetEntryId) {
       setError(t("branch.required"));
+      return;
+    }
+    if (mode === "clone" && workspaceMode === "worktree" && !targetCwd.trim()) {
+      setError(t("branch.targetDirectoryRequired"));
       return;
     }
 

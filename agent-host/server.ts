@@ -44,6 +44,7 @@ import {
   type StreamEvent,
 } from "./session-events.ts";
 import { deleteSession, renameSession } from "./session-admin.ts";
+import { cloneSessionToWorktree, GitWorktreeError } from "./workspace-clone.ts";
 import { getSessionOnlyTrustMap } from "./trust-store.ts";
 import {
   AccessDeniedError,
@@ -1220,6 +1221,43 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
         })
           .then((report) => result(state, frame.id, report))
           .catch((error: unknown) => failAux(state, frame.id, error));
+        return;
+      }
+
+      // ---------------------------------------------------------------------
+      // Host-owned Git worktree clone
+      // ---------------------------------------------------------------------
+      case "workspace.cloneSession": {
+        const sessionId = readString(params, "sessionId");
+        const sessionFile = readString(params, "sessionFile");
+        const sourceCwd = readString(params, "sourceCwd");
+        const targetCwd = readString(params, "targetCwd");
+        if (!sessionId || !sessionFile || !sourceCwd || !targetCwd) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "sessionId, sessionFile, sourceCwd and targetCwd are required");
+          return;
+        }
+        const branchName = readOptionalString(params, "branchName");
+        const name = readOptionalString(params, "name");
+        void cloneSessionToWorktree({
+          sessionId,
+          sessionFile,
+          sourceCwd,
+          targetCwd,
+          ...(branchName ? { branchName } : {}),
+          ...(name ? { name } : {}),
+        })
+          .then((cloned) => result(state, frame.id, cloned))
+          .catch((error: unknown) => {
+            if (error instanceof GitWorktreeError) {
+              fail(state, frame.id, error.code, error.message);
+              return;
+            }
+            if (error instanceof AccessDeniedError) {
+              fail(state, frame.id, "ACCESS_DENIED", error.message);
+              return;
+            }
+            fail(state, frame.id, "INTERNAL", errorText(error));
+          });
         return;
       }
 
