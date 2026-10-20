@@ -73,6 +73,9 @@ interface Props {
   sessionStats: SessionStats | null;
   contextUsage: ContextUsage | null;
   currentProvider?: string | null;
+  /** Agent Host transport state; rendered as a minimal engine dot. */
+  hostState?: "unknown" | "ready" | "reconnecting" | "offline";
+  hostTitle?: string;
 }
 
 /** One-click plan-mode switch; remembers the mode to restore on toggle-off. */
@@ -278,10 +281,41 @@ export function StatusBar({
   sessionStats,
   contextUsage,
   currentProvider,
+  hostState = "unknown",
+  hostTitle,
 }: Props) {
+  const hostColor =
+    hostState === "ready"
+      ? "#22C55E"
+      : hostState === "reconnecting"
+        ? "#F59E0B"
+        : hostState === "offline"
+          ? "#EF4444"
+          : "#9CA3AF";
+  const hostLabel =
+    hostState === "ready"
+      ? "引擎正常"
+      : hostState === "reconnecting"
+        ? "引擎重连中"
+        : hostState === "offline"
+          ? "引擎离线"
+          : "引擎状态未知";
   return (
     <div className="flex min-h-8 w-full items-center justify-between gap-3 px-0.5 py-1">
       <div className="flex min-w-0 items-center gap-0.5">
+        <span
+          role="status"
+          aria-label={hostLabel}
+          title={hostTitle ?? hostLabel}
+          className="mr-1 flex shrink-0 items-center gap-1 rounded-md px-1 py-0.5 text-[10px] text-ink-muted"
+        >
+          <span
+            aria-hidden="true"
+            className="h-[6px] w-[6px] rounded-full"
+            style={{ backgroundColor: hostColor }}
+          />
+          引擎
+        </span>
         <ModelSelector
           isStreaming={isStreaming}
           model={model}

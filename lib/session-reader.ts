@@ -22,14 +22,14 @@ export { getAgentDir };
 // Positive + short-TTL negative cache (see session-path-cache.ts)
 // ============================================================================
 declare global {
-  var __piSessionPathCacheState: SessionPathCacheState | undefined;
+  var __piforgeSessionPathCacheState: SessionPathCacheState | undefined;
 }
 
 function getPathCacheState(): SessionPathCacheState {
-  if (!globalThis.__piSessionPathCacheState) {
-    globalThis.__piSessionPathCacheState = createSessionPathCacheState();
+  if (!globalThis.__piforgeSessionPathCacheState) {
+    globalThis.__piforgeSessionPathCacheState = createSessionPathCacheState();
   }
-  return globalThis.__piSessionPathCacheState;
+  return globalThis.__piforgeSessionPathCacheState;
 }
 
 function getPathCache(): Map<string, string> {

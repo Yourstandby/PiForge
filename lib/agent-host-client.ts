@@ -664,14 +664,14 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
 }
 
 declare global {
-  var __piAgentHostClient: PipeAgentHostClient | undefined;
+  var __piforgeAgentHostClient: PipeAgentHostClient | undefined;
 }
 
 export function getAgentHostClient(): AgentHostClient {
-  if (!globalThis.__piAgentHostClient) {
-    globalThis.__piAgentHostClient = new PipeAgentHostClient();
+  if (!globalThis.__piforgeAgentHostClient) {
+    globalThis.__piforgeAgentHostClient = new PipeAgentHostClient();
   }
-  return globalThis.__piAgentHostClient;
+  return globalThis.__piforgeAgentHostClient;
 }
 
 /** Health probe used by `/api/health`; never throws. */

@@ -143,18 +143,20 @@ function ChatSession({
   const [compactToast, setCompactToast] = useState<{ ok: boolean; text: string } | null>(null);
 
   // Engine liveness: reuse the existing transient toast so the UI layout is
-  // unchanged, but a crashed/restarting host is visible instead of silent.
+  // unchanged, and disable sending while the host is not ready so a message
+  // cannot silently disappear during a reconnect.
   const hostHealth = useHostHealth();
   const hostWasDown = useRef(false);
   useEffect(() => {
-    if (hostHealth === "down" && !hostWasDown.current) {
+    const down = hostHealth.state === "reconnecting" || hostHealth.state === "offline";
+    if (down && !hostWasDown.current) {
       hostWasDown.current = true;
-      setCompactToast({ ok: false, text: "后台引擎断开，正在重连…" });
-    } else if (hostHealth === "ok" && hostWasDown.current) {
+      setCompactToast({ ok: false, text: hostHealth.message });
+    } else if (hostHealth.state === "ready" && hostWasDown.current) {
       hostWasDown.current = false;
       setCompactToast({ ok: true, text: "后台引擎已恢复" });
     }
-  }, [hostHealth]);
+  }, [hostHealth.state, hostHealth.message]);
 
   useEffect(() => {
     if (!compactToast) return;
@@ -348,6 +350,7 @@ function ChatSession({
         value={draft}
         onValueChange={onDraftChange}
         busy={chat.agentRunning}
+        disabled={hostHealth.state !== "ready"}
         onStop={() => {
           void chat.handleAbort();
         }}
@@ -399,6 +402,12 @@ function ChatSession({
       sessionStats={chat.sessionStats}
       contextUsage={chat.contextUsage}
       currentProvider={currentModel?.provider ?? null}
+      hostState={hostHealth.state}
+      hostTitle={
+        hostHealth.state === "ready" && hostHealth.detail
+          ? `后台引擎正常 · pid ${hostHealth.detail.pid} · uptime ${Math.round(hostHealth.detail.uptimeMs / 1000)}s`
+          : hostHealth.message
+      }
     />
   );
 

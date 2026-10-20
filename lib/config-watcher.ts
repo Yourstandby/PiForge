@@ -27,7 +27,7 @@ export interface ConfigChange {
 type Listener = (change: ConfigChange) => void;
 
 declare global {
-  var __piConfigWatcher: {
+  var __piforgeConfigWatcher: {
     version: number;
     listeners: Set<Listener>;
     watcher: FSWatcher | null;
@@ -42,8 +42,8 @@ const POLL_INTERVAL_MS = 5000;
 const DEBOUNCE_MS = 250;
 
 function state() {
-  if (!globalThis.__piConfigWatcher) {
-    globalThis.__piConfigWatcher = {
+  if (!globalThis.__piforgeConfigWatcher) {
+    globalThis.__piforgeConfigWatcher = {
       version: 0,
       listeners: new Set(),
       watcher: null,
@@ -53,7 +53,7 @@ function state() {
       started: false,
     };
   }
-  return globalThis.__piConfigWatcher;
+  return globalThis.__piforgeConfigWatcher;
 }
 
 async function snapshot(agentDir: string): Promise<string> {

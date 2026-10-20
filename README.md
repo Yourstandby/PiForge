@@ -15,12 +15,25 @@ Windows-first · Local-first · Electron + Next.js · MIT
 
 PiForge 把 Pi Coding Agent 的会话、工具调用与项目文件收进一个安静的三栏工作台：左侧管理会话，中间用浏览器式多会话标签并行对话，右侧常驻文件树、内置浏览器、终端与 Git 面板。界面采用 **霜蓝 × 米白** 的浅色体系，强调留白、克制和可读性。
 
-底层直接复用官方 [`@earendil-works/pi-coding-agent`](https://github.com/earendil-works/pi-coding-agent) SDK，不引入额外代理层或外部服务；会话、SSE 流式回复、工具执行与文件读写都在本地完成。
+底层直接复用官方 [`@earendil-works/pi-coding-agent`](https://github.com/earendil-works/pi-coding-agent) SDK，不引入额外代理层或外部服务；会话、SSE 流式回复、工具执行与文件读写都在本地完成。v0.4.0 起采用 **Electron Main + Agent Host + Next/Renderer 三进程隔离**：即使 Next 重启，正在运行的 Agent 也不会中断。
 
-> 当前版本：`v0.3.0`（Agent Automation & Speed）
+> 当前版本：`v0.4.0`（Agent Host Isolation）
+
+## 🧱 进程架构
+
+```text
+Electron Main ──spawn──▶ Next.js server ──HTTP/SSE──▶ Renderer / webview
+      │                        │
+      └──utilityProcess──▶ Agent Host（Pi SDK · tools · LTM · processes）
+                               ▲
+                               └── named pipe（无 TCP 端口）
+```
+
+Agent Host 关闭时会先排空会话 JSONL、终止所有受管进程树；Next 侧不持有任何 Agent 会话状态。
 
 ## ✦ 核心特性
 
+- **三进程隔离（v0.4.0 核心）** — Main 只负责窗口 / 托盘 / 更新；Agent Host 独立承载 Pi SDK、AgentSession、工具执行、LTM 与受管进程；Next.js 只做页面、HTTP 与 SSE。Host 崩溃会自动重启并恢复订阅，Next 重启不会杀掉正在流式输出的 Agent。Host 与 Next 只通过命名管道 / Unix Socket 通信，零内部 TCP 端口。
 - **多会话并行标签** — 中栏顶部是浏览器式标签条，标签名带 VS Code 风格面包屑（项目名 › 会话标题）；多开互不干扰，草稿、流式输出与滚动位置各自独立。
 - **多模态输入** — 把图片或代码文件直接拖进输入框，`Ctrl+V` 粘贴截图（自动转 base64 缩略图）随消息发给视觉模型；代码文件自动转成 `@` 文件引用。
 - **Plan 模式** — 输入框下方一键开启：Agent 只读分析并先输出修改计划，界面提供「批准并执行 / 拒绝」，批准后自动进入执行模式。
@@ -90,7 +103,7 @@ npx electron-builder --dir      # → release/win-unpacked
 把目录压成可直接分发的压缩包：
 
 ```powershell
-Compress-Archive -Path 'release\win-unpacked\*' -DestinationPath 'release\PiForge-0.3.0-win-x64.zip' -CompressionLevel Optimal
+Compress-Archive -Path 'release\win-unpacked\*' -DestinationPath 'release\PiForge-0.4.0-win-x64.zip' -CompressionLevel Optimal
 ```
 
 > 国内网络环境可在安装依赖前设置 Electron 镜像，例如

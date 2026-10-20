@@ -23,10 +23,10 @@ export type ObserveFromCwdInput = Omit<ObserveInput, "projectId">;
 export type ForgetFromCwdInput = Omit<ForgetInput, "projectId">;
 
 type LtmServiceGlobal = {
-  __piLtmService?: MemoryService;
-  __piLtmServiceKey?: string;
-  __piLtmServiceError?: unknown;
-  __piLtmServiceErrorAt?: number;
+  __piforgeLtmService?: MemoryService;
+  __piforgeLtmServiceKey?: string;
+  __piforgeLtmServiceError?: unknown;
+  __piforgeLtmServiceErrorAt?: number;
 };
 
 function ltmGlobal(): LtmServiceGlobal {
@@ -192,8 +192,8 @@ export function getMemoryService(agentDir?: string): MemoryService {
   const key = serviceKey(config);
   const g = ltmGlobal();
 
-  if (g.__piLtmService && g.__piLtmServiceKey === key) {
-    return g.__piLtmService;
+  if (g.__piforgeLtmService && g.__piforgeLtmServiceKey === key) {
+    return g.__piforgeLtmService;
   }
   // A previous construction attempt for this exact config failed: throw the
   // cached failure instead of rebuilding (and re-logging) on every hook/tool
@@ -201,25 +201,25 @@ export function getMemoryService(agentDir?: string): MemoryService {
   // The cache only lives for LTM_FAILURE_RETRY_MS — a transient root cause
   // (disk full, AV lock, directory in use) must not disable LTM for the rest
   // of the session.
-  if (g.__piLtmServiceKey === key && g.__piLtmServiceError !== undefined) {
-    const errorAt = g.__piLtmServiceErrorAt ?? 0;
+  if (g.__piforgeLtmServiceKey === key && g.__piforgeLtmServiceError !== undefined) {
+    const errorAt = g.__piforgeLtmServiceErrorAt ?? 0;
     if (Date.now() - errorAt < LTM_FAILURE_RETRY_MS) {
-      throw g.__piLtmServiceError;
+      throw g.__piforgeLtmServiceError;
     }
     // TTL expired: drop the cached failure so the next construction retries once.
-    g.__piLtmServiceError = undefined;
-    g.__piLtmServiceErrorAt = undefined;
+    g.__piforgeLtmServiceError = undefined;
+    g.__piforgeLtmServiceErrorAt = undefined;
   }
 
-  const previous = g.__piLtmService;
+  const previous = g.__piforgeLtmService;
   let next: MemoryService;
   try {
     next = MemoryService.create(config);
   } catch (err) {
-    g.__piLtmService = undefined;
-    g.__piLtmServiceKey = key;
-    g.__piLtmServiceError = err;
-    g.__piLtmServiceErrorAt = Date.now();
+    g.__piforgeLtmService = undefined;
+    g.__piforgeLtmServiceKey = key;
+    g.__piforgeLtmServiceError = err;
+    g.__piforgeLtmServiceErrorAt = Date.now();
     // Best-effort close of the instance we are replacing — otherwise a
     // failed config migration leaks the old DatabaseSync handle (Windows
     // keeps the WAL file open).
@@ -228,10 +228,10 @@ export function getMemoryService(agentDir?: string): MemoryService {
     }
     throw err;
   }
-  g.__piLtmService = next;
-  g.__piLtmServiceKey = key;
-  g.__piLtmServiceError = undefined;
-  g.__piLtmServiceErrorAt = undefined;
+  g.__piforgeLtmService = next;
+  g.__piforgeLtmServiceKey = key;
+  g.__piforgeLtmServiceError = undefined;
+  g.__piforgeLtmServiceErrorAt = undefined;
 
   // Best-effort close of previous instance (different dbPath / config).
   if (previous) {
@@ -244,11 +244,11 @@ export function getMemoryService(agentDir?: string): MemoryService {
 /** Test helper: clear the process singleton. */
 export function resetMemoryServiceForTests(): void {
   const g = ltmGlobal();
-  const prev = g.__piLtmService;
-  g.__piLtmService = undefined;
-  g.__piLtmServiceKey = undefined;
-  g.__piLtmServiceError = undefined;
-  g.__piLtmServiceErrorAt = undefined;
+  const prev = g.__piforgeLtmService;
+  g.__piforgeLtmService = undefined;
+  g.__piforgeLtmServiceKey = undefined;
+  g.__piforgeLtmServiceError = undefined;
+  g.__piforgeLtmServiceErrorAt = undefined;
   if (prev) {
     void prev.close().catch(() => {});
   }

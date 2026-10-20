@@ -1,7 +1,7 @@
 import path from "node:path";
 
 declare global {
-  var __piWriteLocks: Map<string, Promise<unknown>> | undefined;
+  var __piforgeWriteLocks: Map<string, Promise<unknown>> | undefined;
 }
 
 /**
@@ -19,7 +19,7 @@ export async function withFileLock<T>(
   fn: () => Promise<T>,
 ): Promise<T> {
   const key = path.resolve(filePath);
-  const locks = (globalThis.__piWriteLocks ??= new Map<string, Promise<unknown>>());
+  const locks = (globalThis.__piforgeWriteLocks ??= new Map<string, Promise<unknown>>());
 
   const prev = locks.get(key) ?? Promise.resolve();
   let release!: () => void;

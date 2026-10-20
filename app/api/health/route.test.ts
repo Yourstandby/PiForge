@@ -11,7 +11,14 @@ test("health route reports host status", async () => {
   try {
     const response = await GET();
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { ok: true, host: "down" });
+    const body = (await response.json()) as {
+      ok: boolean;
+      host: "ok" | "down";
+      hostState?: "ready" | "reconnecting" | "offline";
+    };
+    assert.equal(body.ok, true);
+    assert.equal(body.host, "down");
+    assert.ok(body.hostState === "reconnecting" || body.hostState === "offline");
   } finally {
     if (previousEndpoint === undefined) delete process.env.PIFORGE_AGENT_ENDPOINT;
     else process.env.PIFORGE_AGENT_ENDPOINT = previousEndpoint;

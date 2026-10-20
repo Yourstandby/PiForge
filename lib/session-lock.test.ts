@@ -4,11 +4,11 @@ import path from "node:path";
 import { withFileLock } from "./session-lock.ts";
 
 declare global {
-  var __piWriteLocks: Map<string, Promise<unknown>> | undefined;
+  var __piforgeWriteLocks: Map<string, Promise<unknown>> | undefined;
 }
 
 beforeEach(() => {
-  globalThis.__piWriteLocks = undefined;
+  globalThis.__piforgeWriteLocks = undefined;
 });
 
 test("serializes 100 concurrent calls on same path", async () => {
@@ -62,7 +62,7 @@ test("cleans up map entry after release", async () => {
   const target = path.resolve("/tmp/lock-test-E");
   await withFileLock(target, async () => {});
   assert.equal(
-    globalThis.__piWriteLocks?.has(target),
+    globalThis.__piforgeWriteLocks?.has(target),
     false,
     "map should not contain entry after release",
   );
