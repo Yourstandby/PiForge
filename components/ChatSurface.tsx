@@ -25,6 +25,11 @@ interface Props {
   onSessionRenamed?: () => void;
   /** Open a file reference from the transcript in the file viewer. */
   onOpenFile?: (filePath: string, fileName: string, line?: number) => void;
+  /**
+   * False while this pane sits in a background session tab. Global shortcuts
+   * (Esc = abort) must only fire for the tab the user is looking at.
+   */
+  active?: boolean;
   /** `/new` slash command: start a fresh session in the current project. */
   onNewSession?: () => void;
   /** Insert a rendered Markdown code block into the composer. */
@@ -61,6 +66,7 @@ function ChatSession({
   onNewSession,
   onInsertCode,
   onOpenGitDiff,
+  active = true,
   onReload,
 }: Props & { onReload: () => void }) {
   const { soundEnabled, onSoundToggle, playDoneSound } = useAudio();
@@ -114,8 +120,10 @@ function ChatSession({
 
   // Esc = hard interrupt while the agent is generating. Menus/dialogs consume
   // Escape first via preventDefault, so this only fires when nothing else did.
+  // Background session tabs stay mounted, so gate on `active` to keep one
+  // keystroke from aborting every running tab.
   useEffect(() => {
-    if (!escAgentRunning) return;
+    if (!escAgentRunning || !active) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented || event.isComposing) return;
       if (escExtensionUi || escTrustPrompt) return;
@@ -124,7 +132,7 @@ function ChatSession({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [escAgentRunning, escExtensionUi, escTrustPrompt, handleEscAbort]);
+  }, [escAgentRunning, escExtensionUi, escTrustPrompt, handleEscAbort, active]);
 
   // --- Manual context compaction -------------------------------------------
   // The summarising itself is pi's own `compact` command (POST → rpc-manager):

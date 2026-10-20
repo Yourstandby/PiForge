@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SessionInfo } from "@/lib/types";
 import { PanelLeftOpen, PanelRightOpen, Plug, Settings, Sparkles } from "lucide-react";
 import { getElectronApi } from "@/lib/electron-api";
@@ -12,6 +12,7 @@ import { FilePanel } from "./FilePanel";
 import { ModelsConfig } from "./ModelsConfig";
 import { SessionExportModal } from "./SessionExportModal";
 import { SessionSidebar } from "./SessionSidebar";
+import { SessionTabBar } from "./SessionTabBar";
 import { ExtensionsConfigModal } from "./ExtensionsConfigModal";
 import { AutoRoutingConfig } from "./AutoRoutingConfig";
 import { McpSettingsModal } from "./McpSettingsModal";
@@ -33,17 +34,68 @@ function clampRightPanelWidth(width: number): number {
   return Math.min(MAX_RIGHT_PANEL_WIDTH, Math.max(MIN_RIGHT_PANEL_WIDTH, Math.round(width)));
 }
 
+/**
+ * One open chat tab. `key` is stable for the tab's lifetime (even when a
+ * not-yet-created session adopts a real session id), so the mounted
+ * ChatSurface never remounts and streaming state is preserved.
+ */
+interface ChatTab {
+  key: string;
+  title: string;
+  session: SessionInfo | null;
+  newSessionCwd: string | null;
+  /** localStorage bucket for the composer draft. */
+  draftKey: string;
+}
+
+let tabSeq = 0;
+
+function tabTitle(session: SessionInfo | null): string {
+  if (!session) return "新会话";
+  const name = session.name?.trim();
+  if (name) return name;
+  const first = session.firstMessage?.replace(/\s+/g, " ").trim();
+  if (first) return first.length > 48 ? `${first.slice(0, 47)}…` : first;
+  return "未命名会话";
+}
+
+function draftKeyFor(session: SessionInfo | null, newSessionCwd: string | null): string {
+  return session ? `session:${session.id}` : `new:${newSessionCwd ?? ""}`;
+}
+
+function readStoredDraft(draftKey: string): string {
+  if (typeof window === "undefined") return "";
+  try {
+    return window.localStorage.getItem(`piforge.draft:${draftKey}`) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function makeTab(session: SessionInfo | null, newSessionCwd: string | null): ChatTab {
+  tabSeq += 1;
+  return {
+    key: `tab-${tabSeq}`,
+    title: tabTitle(session),
+    session,
+    newSessionCwd,
+    draftKey: draftKeyFor(session, newSessionCwd),
+  };
+}
+
+/** Memoized so typing in one tab never re-renders the others. */
+const ChatPane = memo(ChatSurface);
+
 export function Workbench() {
-  const [selected, setSelected] = useState<SessionInfo | null>(null);
-  const [newSessionCwd, setNewSessionCwd] = useState<string | null>(null);
+  const [tabs, setTabs] = useState<ChatTab[]>([]);
+  const [activeKey, setActiveKey] = useState<string | null>(null);
+  // Composer drafts per tab key; persisted to localStorage by draftKey.
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const tabsRef = useRef<ChatTab[]>([]);
+  const activeKeyRef = useRef<string | null>(null);
   const [cwd, setCwd] = useState<string | null>(null);
-  const [draft, setDraft] = useState("");
   const [openFile, setOpenFile] = useState<FloatingFileTarget | null>(null);
   const [gitDiffOpen, setGitDiffOpen] = useState(false);
-  const draftKeyRef = useRef<string>("");
-  // Mirrors AppShell's sessionKey: remount the chat surface so all
-  // session-scoped hook state starts clean on every switch.
-  const [chatKey, setChatKey] = useState(0);
   // Bumped when the models modal closes so a freshly added provider shows up
   // in the model picker without remounting the session.
   const [modelsVersion, setModelsVersion] = useState(0);
@@ -127,32 +179,69 @@ export function Workbench() {
   const [projectError, setProjectError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
 
-  // Drafts survive session switches and app restarts, one bucket per session
-  // (or per project for a not-yet-created session).
-  const draftKey = selected?.id
-    ? `session:${selected.id}`
-    : `new:${newSessionCwd ?? cwd ?? ""}`;
-  useEffect(() => {
-    draftKeyRef.current = draftKey;
-    let stored = "";
-    try {
-      stored = window.localStorage.getItem(`piforge.draft:${draftKey}`) ?? "";
-    } catch {
-      // storage disabled
-    }
-    setDraft(stored);
-  }, [draftKey]);
+  // ------------------------------------------------------------------ tabs
+  const activeTab = useMemo(
+    () => tabs.find((tab) => tab.key === activeKey) ?? null,
+    [tabs, activeKey],
+  );
+  const activeCwd = activeTab?.session?.cwd ?? activeTab?.newSessionCwd ?? cwd;
 
-  const handleDraftChange = useCallback((next: string) => {
-    setDraft(next);
+  const commitTabs = useCallback((next: ChatTab[]) => {
+    tabsRef.current = next;
+    setTabs(next);
+  }, []);
+
+  const activateTab = useCallback((key: string) => {
+    activeKeyRef.current = key;
+    setActiveKey(key);
+  }, []);
+
+  const rememberDraft = useCallback((draftKey: string, value: string) => {
     try {
-      if (next) window.localStorage.setItem(`piforge.draft:${draftKeyRef.current}`, next);
-      else window.localStorage.removeItem(`piforge.draft:${draftKeyRef.current}`);
+      if (value) window.localStorage.setItem(`piforge.draft:${draftKey}`, value);
+      else window.localStorage.removeItem(`piforge.draft:${draftKey}`);
     } catch {
       // storage disabled: draft still works for this mount
     }
   }, []);
 
+  const setDraftForTab = useCallback((key: string, value: string) => {
+    setDrafts((prev) => (prev[key] === value ? prev : { ...prev, [key]: value }));
+    const tab = tabsRef.current.find((item) => item.key === key);
+    if (tab) rememberDraft(tab.draftKey, value);
+  }, [rememberDraft]);
+
+  const openTab = useCallback((tab: ChatTab) => {
+    commitTabs([...tabsRef.current, tab]);
+    setDrafts((prev) => ({ ...prev, [tab.key]: readStoredDraft(tab.draftKey) }));
+    activateTab(tab.key);
+  }, [commitTabs, activateTab]);
+
+  const closeTab = useCallback(
+    (key: string) => {
+      const prev = tabsRef.current;
+      const index = prev.findIndex((tab) => tab.key === key);
+      if (index < 0) return;
+      const next = prev.filter((tab) => tab.key !== key);
+
+      if (next.length === 0) {
+        // Closing the last tab lands on a fresh session tab, like a browser.
+        const fresh = makeTab(null, cwd);
+        commitTabs([fresh]);
+        setDrafts((drafts) => ({ ...drafts, [fresh.key]: readStoredDraft(fresh.draftKey) }));
+        activateTab(fresh.key);
+        return;
+      }
+
+      commitTabs(next);
+      if (activeKeyRef.current === key) {
+        activateTab(next[Math.min(index, next.length - 1)].key);
+      }
+    },
+    [commitTabs, activateTab, cwd],
+  );
+
+  // ------------------------------------------------------------------ files
   const handleOpenFile = useCallback(
     (filePath: string, fileName: string, line?: number) => {
       setGitDiffOpen(false);
@@ -175,23 +264,23 @@ export function Workbench() {
   const handleCloseFile = useCallback(() => setOpenFile(null), []);
 
   const handleInsertCode = useCallback((code: string, language?: string) => {
+    const key = activeKeyRef.current;
+    if (!key) return;
     const fenced = `\`\`\`${language ?? ""}
 ${code}
 \`\`\``;
-    setDraft((current) => {
+    setDrafts((prev) => {
+      const current = prev[key] ?? "";
       const next = current.trim()
         ? `${current.replace(/\s+$/, "")}
 
 ${fenced}`
         : fenced;
-      try {
-        window.localStorage.setItem(`piforge.draft:${draftKeyRef.current}`, next);
-      } catch {
-        // storage disabled
-      }
-      return next;
+      const tab = tabsRef.current.find((item) => item.key === key);
+      if (tab) rememberDraft(tab.draftKey, next);
+      return { ...prev, [key]: next };
     });
-  }, []);
+  }, [rememberDraft]);
 
   const loadSessions = useCallback(async (): Promise<SessionInfo[]> => {
     try {
@@ -207,59 +296,89 @@ ${fenced}`
 
   useEffect(() => {
     let cancelled = false;
-    void loadSessions().then((sorted) => {
-      if (cancelled) return;
+    const initialize = async (sorted: SessionInfo[]) => {
+      // Strict-mode double mount / hot reload must not open duplicate tabs.
+      if (tabsRef.current.length > 0) return;
 
       const view = resolveInitialView(window.location.search, sorted);
       if (view.kind === "project") {
         // Electron opens `/?cwd=<project>` for a new project window: start a
         // blank session in that folder, not the newest on-disk session.
         setCwd(view.cwd);
-        setNewSessionCwd(view.cwd);
+        openTab(makeTab(null, view.cwd));
         return;
       }
       if (view.kind === "session") {
-        setSelected(view.session);
         setCwd(view.session.cwd);
+        openTab(makeTab(view.session, null));
         return;
       }
       // Nothing selected: the hero composer is a brand-new session in the
       // most recent project, so the first message can be sent immediately.
       setCwd((current) => current ?? view.cwd);
-      setNewSessionCwd((current) => current ?? view.cwd);
+      if (view.cwd) {
+        openTab(makeTab(null, view.cwd));
+        return;
+      }
+      // No project at all: ask the server for a default so the first prompt
+      // still has somewhere to run.
+      let fallback: string | null = null;
+      try {
+        const res = await fetch("/api/default-cwd", { method: "POST" });
+        if (res.ok) fallback = ((await res.json()) as { cwd?: string }).cwd ?? null;
+      } catch {
+        // Keep the empty-project hero; the server will reject the first send.
+      }
+      if (cancelled) return;
+      if (fallback) setCwd(fallback);
+      openTab(makeTab(null, fallback));
+    };
+
+    void loadSessions().then((sorted) => {
+      if (cancelled) return;
+      void initialize(sorted);
     });
     return () => {
       cancelled = true;
     };
-  }, [loadSessions]);
+  }, [loadSessions, openTab]);
 
-  const handleSelect = (session: SessionInfo) => {
-    setSelected(session);
-    setNewSessionCwd(null);
-    setCwd(session.cwd);
-    setChatKey((key) => key + 1);
-  };
+  /**
+   * Sidebar click: open the session in its own tab. Clicking an already-open
+   * session just focuses that tab, and the current chat is never replaced.
+   */
+  const handleSelect = useCallback(
+    (session: SessionInfo) => {
+      const existing = tabsRef.current.find((tab) => tab.session?.id === session.id);
+      if (existing) {
+        activateTab(existing.key);
+        if (session.cwd) setCwd(session.cwd);
+        return;
+      }
+      openTab(makeTab(session, null));
+      if (session.cwd) setCwd(session.cwd);
+    },
+    [activateTab, openTab],
+  );
 
-  const handleNewSession = async (targetCwd?: string) => {
-    let target = targetCwd ?? cwd;
+  const handleNewSession = useCallback(async (targetCwd?: string) => {
+    let target = targetCwd ?? activeCwd;
     if (!target) {
       try {
         const res = await fetch("/api/default-cwd", { method: "POST" });
         if (res.ok) {
           const data = (await res.json()) as { cwd?: string };
           target = data.cwd ?? null;
-          if (target) setCwd(target);
         }
       } catch {
         // Without a project folder there is nothing to create a session in.
       }
     }
-    if (!target) return;
-
-    setSelected(null);
-    setNewSessionCwd(target);
-    setChatKey((key) => key + 1);
-  };
+    // A brand-new session tab can live without a project; the server picks
+    // the default cwd when the first message is sent.
+    if (target) setCwd(target);
+    openTab(makeTab(null, target ?? null));
+  }, [activeCwd, openTab]);
 
   /**
    * Picks a local folder and opens it as its own project window. In Electron
@@ -302,24 +421,56 @@ ${fenced}`
     window.open(path, "_blank", "noopener");
   }, []);
 
-  const handleSessionCreated = (created: SessionInfo) => {
-    setSelected(created);
-    setNewSessionCwd(null);
-    if (created.cwd) setCwd(created.cwd);
-    void loadSessions();
-    setSessionsVersion((version) => version + 1);
-    // The background auto-title finishes a few seconds into the first turn.
-    // If its SSE event raced the sidebar's first refresh (or the stream was
-    // reconnected), this one-shot refetch still picks the name up.
-    window.setTimeout(() => {
-      void loadSessions();
+  /**
+   * A prompt created a real session for a "新会话" tab: adopt its identity
+   * without remounting the pane (streaming state stays intact).
+   */
+  const handleSessionCreated = useCallback(
+    (key: string, created: SessionInfo) => {
+      const tab = tabsRef.current.find((item) => item.key === key);
+      if (!tab) return;
+      const nextDraftKey = draftKeyFor(created, null);
+      if (tab.draftKey !== nextDraftKey) {
+        const stored = readStoredDraft(tab.draftKey);
+        if (stored) rememberDraft(nextDraftKey, stored);
+        rememberDraft(tab.draftKey, "");
+      }
+      commitTabs(
+        tabsRef.current.map((item) =>
+          item.key === key
+            ? { ...item, session: created, newSessionCwd: null, title: tabTitle(created), draftKey: nextDraftKey }
+            : item,
+        ),
+      );
+      if (created.cwd) setCwd(created.cwd);
       setSessionsVersion((version) => version + 1);
-    }, 6000);
-  };
+      // The background auto-title finishes a few seconds into the first turn.
+      // If its SSE event raced the sidebar's first refresh (or the stream was
+      // reconnected), this one-shot refetch still picks the name up.
+      window.setTimeout(() => {
+        void loadSessions();
+        setSessionsVersion((version) => version + 1);
+      }, 6000);
+    },
+    [commitTabs, loadSessions, rememberDraft],
+  );
+
+  /** Keep tab titles in sync with auto-title / rename events. */
+  const handleSessionRenamed = useCallback(async () => {
+    setSessionsVersion((version) => version + 1);
+    const sorted = await loadSessions();
+    const byId = new Map(sorted.map((item) => [item.id, item]));
+    commitTabs(
+      tabsRef.current.map((tab) => {
+        const fresh = tab.session ? byId.get(tab.session.id) : null;
+        return fresh ? { ...tab, title: tabTitle(fresh) } : tab;
+      }),
+    );
+  }, [commitTabs, loadSessions]);
 
   /**
    * A fork / branch-clone writes a new `.jsonl` server-side; the sidebar may not
-   * see it for a moment, so resolve it with retries and then jump to it.
+   * see it for a moment, so resolve it with retries and then open it as a tab.
    */
   const handleSessionForked = useCallback(
     async (newSessionId: string) => {
@@ -350,13 +501,61 @@ ${fenced}`
       setSessionsVersion((version) => version + 1);
       const target = found ?? sorted.find((item) => item.id === newSessionId) ?? null;
       if (!target) return;
-      setSelected(target);
-      setNewSessionCwd(null);
-      if (target.cwd) setCwd(target.cwd);
-      setChatKey((key) => key + 1);
+      handleSelect(target);
     },
-    [loadSessions],
+    [handleSelect, loadSessions],
   );
+
+  /** A deleted session closes its tab(s); the chat area falls back to another. */
+  const handleSessionDeleted = useCallback(
+    (sessionId: string) => {
+      const affected = tabsRef.current.filter((tab) => tab.session?.id === sessionId);
+      if (affected.length > 0) {
+        affected.forEach((tab) => closeTab(tab.key));
+      }
+      void loadSessions();
+    },
+    [closeTab, loadSessions],
+  );
+
+  /** File links in any transcript always land in the right panel. */
+  const handleOpenChatFile = useCallback(
+    (filePath: string, fileName: string, line?: number) => {
+      setRightPanelOpen(true);
+      handleOpenFile(filePath, fileName, line);
+    },
+    [handleOpenFile],
+  );
+
+  // Per-tab callbacks are cached by tab key so ChatPane's memo() holds: typing
+  // in one tab only re-renders that tab.
+  const paneActionsRef = useRef({ setDraftForTab, handleSessionCreated, handleNewSession });
+  useEffect(() => {
+    paneActionsRef.current = { setDraftForTab, handleSessionCreated, handleNewSession };
+  }, [setDraftForTab, handleSessionCreated, handleNewSession]);
+
+  const paneHandlers = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        onDraftChange: (value: string) => void;
+        onSessionCreated: (session: SessionInfo) => void;
+        onNewSession: () => void;
+      }
+    >();
+    for (const tab of tabs) {
+      const key = tab.key;
+      const projectCwd = tab.session?.cwd ?? tab.newSessionCwd ?? null;
+      map.set(key, {
+        onDraftChange: (value) => paneActionsRef.current.setDraftForTab(key, value),
+        onSessionCreated: (session) => paneActionsRef.current.handleSessionCreated(key, session),
+        onNewSession: () => {
+          void paneActionsRef.current.handleNewSession(projectCwd ?? undefined);
+        },
+      });
+    }
+    return map;
+  }, [tabs]);
 
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden bg-white">
@@ -372,27 +571,35 @@ ${fenced}`
           <div className="flex h-full w-[260px] flex-col overflow-hidden border-r border-black/[0.06] bg-white/70 backdrop-blur-md">
           <div className="flex min-h-0 flex-1 flex-col">
           <SessionSidebar
-            selectedSessionId={selected?.id ?? null}
-            onSelectSession={(session) => handleSelect(session)}
+            selectedSessionId={activeTab?.session?.id ?? null}
+            onSelectSession={handleSelect}
             onNewSession={(_sessionId, targetCwd) => {
               void handleNewSession(targetCwd);
             }}
             refreshKey={sessionsVersion}
-            onSessionDeleted={(sessionId) => {
-              if (selected?.id === sessionId) {
-                setSelected(null);
-                setNewSessionCwd(cwd);
-                setChatKey((key) => key + 1);
-              }
-              void loadSessions();
-            }}
+            onSessionDeleted={handleSessionDeleted}
             onExportSession={(session) => setExportSessionId(session.id)}
-            selectedCwd={cwd}
-            onCwdChange={(nextCwd) => setCwd(nextCwd)}
+            selectedCwd={activeCwd}
+            onCwdChange={(nextCwd) => {
+              setCwd(nextCwd);
+              // A not-yet-created tab follows the project the user picked.
+              const key = activeKeyRef.current;
+              if (!key) return;
+              commitTabs(
+                tabsRef.current.map((tab) =>
+                  tab.key === key && !tab.session
+                    ? { ...tab, newSessionCwd: nextCwd, draftKey: draftKeyFor(null, nextCwd) }
+                    : tab,
+                ),
+              );
+            }}
             onOpenFile={(filePath, fileName) => handleOpenFile(filePath, fileName)}
             onCollapse={() => setLeftSidebarOpen(false)}
             onAtMention={(relativePath) => {
-              setDraft((value) => `${value}${value && !value.endsWith(" ") ? " " : ""}@${relativePath} `);
+              const key = activeKeyRef.current;
+              if (!key) return;
+              const current = drafts[key] ?? "";
+              setDraftForTab(key, `${current}${current && !current.endsWith(" ") ? " " : ""}@${relativePath} `);
             }}
           />
           </div>
@@ -460,52 +667,70 @@ ${fenced}`
           </div>
         </div>
 
-        <div className="relative flex min-w-0 flex-1">
-          <ChatSurface
-            key={chatKey}
-            session={selected}
-            newSessionCwd={newSessionCwd}
-            draft={draft}
-            modelsRefreshKey={modelsVersion}
-            onDraftChange={handleDraftChange}
-            onSessionCreated={handleSessionCreated}
-            onSessionRenamed={() => setSessionsVersion((version) => version + 1)}
-            onNewSession={() => {
+        <div className="relative flex min-w-0 flex-1 flex-col">
+          <SessionTabBar
+            tabs={tabs.map((tab) => ({ key: tab.key, title: tab.title, sessionId: tab.session?.id ?? null }))}
+            activeKey={activeKey}
+            onSelect={activateTab}
+            onClose={closeTab}
+            onNew={() => {
               void handleNewSession();
             }}
-            onInsertCode={handleInsertCode}
-            onOpenGitDiff={handleOpenGitDiff}
-            onOpenFile={(filePath, fileName, line) => {
-              // Chat file links must land in the right panel, never over chat.
-              setRightPanelOpen(true);
-              handleOpenFile(filePath, fileName, line);
-            }}
-            onSessionForked={(newSessionId) => {
-              void handleSessionForked(newSessionId);
-            }}
           />
-          {!leftSidebarOpen && (
-            <button
-              type="button"
-              onClick={() => setLeftSidebarOpen(true)}
-              aria-label="展开左侧边栏"
-              title="展开左侧边栏"
-              className="absolute left-2 top-2 z-20 flex h-7 w-7 items-center justify-center rounded-md border border-gray-200/70 bg-white/90 text-gray-500 shadow-[0_2px_8px_rgba(0,0,0,0.06)] backdrop-blur transition-colors hover:text-gray-800"
-            >
-              <PanelLeftOpen size={16} strokeWidth={1.75} className="h-4 w-4" aria-hidden="true" />
-            </button>
-          )}
-          {!rightPanelOpen && (
-            <button
-              type="button"
-              onClick={() => setRightPanelOpen(true)}
-              aria-label="展开右侧面板"
-              title="展开右侧面板"
-              className="absolute right-2 top-2 z-20 flex h-7 w-7 items-center justify-center rounded-md border border-gray-200/70 bg-white/90 text-ink-muted shadow-[0_2px_8px_rgba(0,0,0,0.06)] backdrop-blur transition-colors hover:bg-[#ECECEF] hover:text-ink"
-            >
-              <PanelRightOpen size={14} strokeWidth={1.75} aria-hidden="true" />
-            </button>
-          )}
+
+          <div className="relative flex min-h-0 min-w-0 flex-1">
+            {/* Every open tab stays mounted: streaming, scroll position and
+                draft survive switching. Inactive panes are just hidden. */}
+            {tabs.map((tab) => {
+              const handlers = paneHandlers.get(tab.key);
+              if (!handlers) return null;
+              return (
+                <div
+                  key={tab.key}
+                  className={tab.key === activeKey ? "flex min-h-0 min-w-0 flex-1" : "hidden"}
+                >
+                  <ChatPane
+                    session={tab.session}
+                    newSessionCwd={tab.newSessionCwd}
+                    draft={drafts[tab.key] ?? ""}
+                    active={tab.key === activeKey}
+                    modelsRefreshKey={modelsVersion}
+                    onDraftChange={handlers.onDraftChange}
+                    onSessionCreated={handlers.onSessionCreated}
+                    onSessionRenamed={handleSessionRenamed}
+                    onNewSession={handlers.onNewSession}
+                    onInsertCode={handleInsertCode}
+                    onOpenGitDiff={handleOpenGitDiff}
+                    onOpenFile={handleOpenChatFile}
+                    onSessionForked={handleSessionForked}
+                  />
+                </div>
+              );
+            })}
+
+            {!leftSidebarOpen && (
+              <button
+                type="button"
+                onClick={() => setLeftSidebarOpen(true)}
+                aria-label="展开左侧边栏"
+                title="展开左侧边栏"
+                className="absolute left-2 top-2 z-20 flex h-7 w-7 items-center justify-center rounded-md border border-gray-200/70 bg-white/90 text-gray-500 shadow-[0_2px_8px_rgba(0,0,0,0.06)] backdrop-blur transition-colors hover:text-gray-800"
+              >
+                <PanelLeftOpen size={16} strokeWidth={1.75} className="h-4 w-4" aria-hidden="true" />
+              </button>
+            )}
+            {!rightPanelOpen && (
+              <button
+                type="button"
+                onClick={() => setRightPanelOpen(true)}
+                aria-label="展开右侧面板"
+                title="展开右侧面板"
+                className="absolute right-2 top-2 z-20 flex h-7 w-7 items-center justify-center rounded-md border border-gray-200/70 bg-white/90 text-ink-muted shadow-[0_2px_8px_rgba(0,0,0,0.06)] backdrop-blur transition-colors hover:bg-[#ECECEF] hover:text-ink"
+              >
+                <PanelRightOpen size={14} strokeWidth={1.75} aria-hidden="true" />
+              </button>
+            )}
+          </div>
         </div>
 
         <div
@@ -532,7 +757,7 @@ ${fenced}`
             />
           )}
           <FilePanel
-            cwd={cwd}
+            cwd={activeCwd}
             openFile={openFile}
             gitDiffOpen={gitDiffOpen}
             onOpenFile={handleOpenFile}
@@ -545,10 +770,10 @@ ${fenced}`
       </div>
 
       {settingsModal === "skills" && (
-        <SkillsConfig cwd={cwd ?? ""} onClose={() => setSettingsModal(null)} />
+        <SkillsConfig cwd={activeCwd ?? ""} onClose={() => setSettingsModal(null)} />
       )}
       {settingsModal === "mcp" && (
-        <McpSettingsModal cwd={cwd ?? ""} onClose={() => setSettingsModal(null)} />
+        <McpSettingsModal cwd={activeCwd ?? ""} onClose={() => setSettingsModal(null)} />
       )}
       {settingsModal === "auto" && (
         <AutoRoutingConfig

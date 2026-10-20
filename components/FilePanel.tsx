@@ -13,6 +13,7 @@ import { BrowserPanel } from "./BrowserPanel";
 import { FloatingFileViewer, type FloatingFileTarget } from "./FloatingFileViewer";
 import { FloatingGitDiffViewer } from "./FloatingGitDiffViewer";
 import { ProcessPanel } from "./ProcessPanel";
+import { TerminalPanel } from "./TerminalPanel";
 
 /**
  * FileExplorer renders its rows with inline styles that read the legacy theme
@@ -192,12 +193,8 @@ export function FilePanel({
         )}
 
         {tab === "terminal" && (
-          <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
-            <SquareTerminal size={22} strokeWidth={1.4} className="text-ink-faint" aria-hidden="true" />
-            <p className="text-[12px] text-ink-muted">终端预留位置</p>
-            <p className="text-[11px] leading-5 text-ink-faint">
-              后续可在此接入终端会话，保持右侧独立工作区。
-            </p>
+          <div className="h-full">
+            <TerminalPanel />
           </div>
         )}
       </div>
