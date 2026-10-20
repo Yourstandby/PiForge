@@ -9,6 +9,7 @@ import {
   PanelRightClose,
   SquareTerminal,
   Terminal,
+  Users,
 } from "lucide-react";
 import { FileExplorer } from "./FileExplorer";
 import { BrowserPanel } from "./BrowserPanel";
@@ -17,6 +18,7 @@ import { GitPanel } from "./GitPanel";
 import { ProcessPanel } from "./ProcessPanel";
 import { TerminalPanel } from "./TerminalPanel";
 import { SubagentPanel } from "./SubagentPanel";
+import { HerdrPanel } from "./HerdrPanel";
 
 /**
  * FileExplorer renders its rows with inline styles that read the legacy theme
@@ -36,7 +38,7 @@ const explorerTokens = {
   "--font-mono": "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
 } as CSSProperties;
 
-type PanelTab = "files" | "git" | "browser" | "processes" | "terminal" | "agents";
+type PanelTab = "files" | "git" | "browser" | "processes" | "terminal" | "agents" | "fleet";
 
 const PANEL_TABS = [
   { id: "files" as const, label: "文件", Icon: FileCode },
@@ -45,6 +47,7 @@ const PANEL_TABS = [
   { id: "processes" as const, label: "进程", Icon: Terminal },
   { id: "terminal" as const, label: "终端", Icon: SquareTerminal },
   { id: "agents" as const, label: "Agents", Icon: Bot },
+  { id: "fleet" as const, label: "舰队", Icon: Users },
 ];
 
 export function FilePanel({
@@ -197,11 +200,9 @@ export function FilePanel({
         </div>
 
         {/*
-          The browser panel stays mounted while other tabs are active: the
-          `<webview>` guest keeps running and keeps answering the `web_preview`
-          bridge, so the agent can read the page even while the user is on the
-          Files tab. It is hidden until the Browser tab (or a screenshot) asks
-          for it.
+          The browser panel stays mounted so Main can position its
+          WebContentsView from the placeholder rect; visibility is switched by
+          the active tab, and the view itself lives in Electron Main.
         */}
         <div className={tab === "browser" ? "h-full" : "hidden"}>
           <BrowserPanel
@@ -219,6 +220,12 @@ export function FilePanel({
         {tab === "agents" && (
           <div className="h-full overflow-y-auto py-1">
             <SubagentPanel />
+          </div>
+        )}
+
+        {tab === "fleet" && (
+          <div className="h-full overflow-y-auto py-1">
+            <HerdrPanel />
           </div>
         )}
 

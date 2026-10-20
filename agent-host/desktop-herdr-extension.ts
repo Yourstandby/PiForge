@@ -1,0 +1,171 @@
+/**
+ * Inline pi extension: Herdr fleet tools.
+ *
+ * All fleet sessions live in the Agent Host with in-memory SessionManagers;
+ * the UI only reads their state. Results carry the sub-agent verification
+ * guardrail (verified: false when no test/build evidence exists).
+ */
+import { Type } from "typebox";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { ExtensionAPI, ExtensionFactory, InlineExtension } from "@earendil-works/pi-coding-agent";
+import type { Model } from "@earendil-works/pi-ai";
+import {
+  getHerdrAgent,
+  listHerdrAgents,
+  sendHerdrMessage,
+  spawnHerdrAgent,
+} from "./herdr-manager.ts";
+
+export const HERDR_SPAWN_TOOL_NAME = "herdr_spawn";
+export const HERDR_STATUS_TOOL_NAME = "herdr_status";
+export const HERDR_MESSAGE_TOOL_NAME = "herdr_message";
+
+const SpawnParams = Type.Object({
+  name: Type.String({ description: "Fleet agent name shown in the Fleet panel." }),
+  taskPrompt: Type.String({
+    description: "Standalone first task. The fleet agent keeps context and can receive follow-up messages.",
+  }),
+});
+
+const StatusParams = Type.Object({
+  id: Type.Optional(Type.String({ description: "Fleet agent id; omit to list the whole fleet." })),
+});
+
+const MessageParams = Type.Object({
+  id: Type.String({ description: "Fleet agent id returned by herdr_spawn." }),
+  message: Type.String({ description: "Follow-up instruction for this fleet agent." }),
+});
+
+function textResult(text: string, details: Record<string, unknown> = {}, isError = false) {
+  return {
+    content: [{ type: "text" as const, text }],
+    details,
+    ...(isError ? { isError: true } : {}),
+  };
+}
+
+function verificationLine(verified: boolean, reason: string): string {
+  return verified ? `Verification: verified (${reason}).` : `Verification: UNVERIFIED — ${reason}.`;
+}
+
+function statusLine(agent: ReturnType<typeof getHerdrAgent>): string {
+  if (!agent) return "";
+  return [
+    `- ${agent.name} (${agent.id}): ${agent.status} / ${agent.activity}`,
+    `  turns: ${agent.turns} · duration: ${Math.round(agent.durationMs / 1000)}s · verified: ${agent.verification.verified ? "yes" : "no"}`,
+    `  startedAt: ${new Date(agent.startedAt).toISOString()} · finishedAt: ${agent.finishedAt ? new Date(agent.finishedAt).toISOString() : "running"}`,
+    agent.error ? `  error: ${agent.error}` : "",
+  ].filter(Boolean).join("\n");
+}
+
+export function createDesktopHerdrFactory(): ExtensionFactory {
+  return (pi: ExtensionAPI) => {
+    pi.registerTool({
+      name: HERDR_SPAWN_TOOL_NAME,
+      label: "Herdr Spawn",
+      description:
+        "Spawn a persistent, isolated fleet agent (in-memory session, read-only tools). " +
+        "It keeps context between messages; use herdr_status and herdr_message to work with it. " +
+        "Results are checked for test evidence and marked verified:false when none exists.",
+      promptSnippet: "Spawn a persistent fleet agent",
+      promptGuidelines: [
+        "Use herdr_spawn for long-running parallel investigations; use subagents for one-shot tasks.",
+        "Poll herdr_status instead of spawning duplicate agents.",
+      ],
+      parameters: SpawnParams,
+      defaultActive: false,
+      async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+        try {
+          const agent = spawnHerdrAgent({
+            name: params.name,
+            task: params.taskPrompt,
+            cwd: ctx.cwd,
+            parentSessionId: ctx.sessionManager.getSessionId(),
+            ...(ctx.model ? { model: ctx.model as Model<string> } : {}),
+            ...(ctx.thinkingLevel ? { thinkingLevel: ctx.thinkingLevel as ThinkingLevel } : {}),
+          });
+          return textResult(
+            [
+              `Spawned fleet agent "${agent.name}" (id: ${agent.id}).`,
+              `status: ${agent.status} · activity: ${agent.activity}`,
+              `Use herdr_status with id: ${agent.id} to follow it, or herdr_message to send follow-ups.`,
+              verificationLine(agent.verification.verified, agent.verification.reason),
+            ].join("\n"),
+            { kind: "herdr", id: agent.id, name: agent.name, status: agent.status, verified: agent.verification.verified },
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return textResult(`Could not spawn fleet agent: ${message}`, { kind: "herdr", ok: false, error: message }, true);
+        }
+      },
+    });
+
+    pi.registerTool({
+      name: HERDR_STATUS_TOOL_NAME,
+      label: "Herdr Status",
+      description: "Read the status/output of one fleet agent, or list the whole fleet. Read-only.",
+      promptSnippet: "Inspect the Herdr fleet",
+      parameters: StatusParams,
+      defaultActive: false,
+      async execute(_toolCallId, params) {
+        if (params.id?.trim()) {
+          const agent = getHerdrAgent(params.id.trim());
+          if (!agent) return textResult(`No fleet agent with id "${params.id}".`, { kind: "herdr", ok: false }, true);
+          return textResult(
+            [
+              statusLine(agent),
+              verificationLine(agent.verification.verified, agent.verification.reason),
+              "--- output ---",
+              agent.output || "(no output yet)",
+            ].join("\n"),
+            { kind: "herdr", ok: true, agent },
+          );
+        }
+        const agents = listHerdrAgents();
+        return textResult(
+          agents.length > 0 ? agents.map(statusLine).join("\n\n") : "The fleet is empty.",
+          { kind: "herdr", ok: true, agents },
+        );
+      },
+    });
+
+    pi.registerTool({
+      name: HERDR_MESSAGE_TOOL_NAME,
+      label: "Herdr Message",
+      description: "Send a follow-up message to a fleet agent and wait for its response.",
+      promptSnippet: "Message a fleet agent",
+      promptGuidelines: ["Keep messages self-contained; the fleet agent keeps its own context."],
+      parameters: MessageParams,
+      defaultActive: false,
+      async execute(_toolCallId, params) {
+        try {
+          const result = await sendHerdrMessage(params.id, params.message);
+          return textResult(
+            [
+              `Fleet agent "${result.agent.name}" replied (${result.agent.status} / ${result.agent.activity}).`,
+              verificationLine(result.agent.verification.verified, result.agent.verification.reason),
+              "--- reply ---",
+              result.text,
+            ].join("\n"),
+            {
+              kind: "herdr",
+              ok: result.ok,
+              id: result.agent.id,
+              status: result.agent.status,
+              verified: result.agent.verification.verified,
+              finishedAt: result.agent.finishedAt,
+              ...(result.error ? { error: result.error } : {}),
+            },
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return textResult(`Herdr message failed: ${message}`, { kind: "herdr", ok: false, error: message }, true);
+        }
+      },
+    });
+  };
+}
+
+export function desktopHerdrInlineExtension(): InlineExtension {
+  return { name: "desktop-herdr", factory: createDesktopHerdrFactory() };
+}

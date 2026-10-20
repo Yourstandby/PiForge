@@ -46,7 +46,13 @@ function pushUnique(target: string[], value: string): void {
 
 export interface SubagentVerificationInput {
   output: string;
-  toolCalls: Array<Pick<SubagentToolCallView, "name" | "detail">>;
+  toolCalls: Array<Pick<SubagentToolCallView, "name" | "detail" | "status">>;
+}
+
+const EVIDENCE_TOOLS = new Set(["read", "grep", "find", "ls"]);
+
+function hasSuccessfulReadOnlyCall(toolCalls: SubagentVerificationInput["toolCalls"]): boolean {
+  return toolCalls.some((call) => call.status === "ok" && EVIDENCE_TOOLS.has(call.name));
 }
 
 export function checkSubagentVerification(
@@ -101,10 +107,18 @@ export function checkSubagentVerification(
     };
   }
   if (success > 0) {
+    if (!hasSuccessfulReadOnlyCall(input.toolCalls)) {
+      return {
+        verified: false,
+        checkedAt: now,
+        reason: "报告只有文本自述，没有实际工具调用证据",
+        evidence,
+      };
+    }
     return {
       verified: true,
       checkedAt: now,
-      reason: `找到 ${success} 条测试/构建通过证据`,
+      reason: `找到 ${success} 条测试/构建通过证据，且有实际只读工具调用`,
       evidence,
     };
   }

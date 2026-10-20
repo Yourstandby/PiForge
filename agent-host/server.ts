@@ -44,6 +44,7 @@ import {
   type StreamEvent,
 } from "./session-events.ts";
 import { deleteSession, renameSession } from "./session-admin.ts";
+import { cloneSessionToWorktree, GitWorktreeError } from "./workspace-clone.ts";
 import { getSessionOnlyTrustMap } from "./trust-store.ts";
 import {
   AccessDeniedError,
@@ -120,6 +121,7 @@ import {
   stopSubagent,
 } from "./subagents.ts";
 import type { SubagentLifecycleEvent } from "../contract/domains/subagents.ts";
+import { listHerdrAgents, stopAllHerdrAgents, stopHerdrAgent } from "./herdr-manager.ts";
 import { applyCodeToFile, FileApplyError } from "./file-apply.ts";
 import {
   getSessionBranches,
@@ -254,8 +256,13 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
   const offProcessesChange = onManagedProcessesChange(() => scheduleBroadcast("processes"));
   const offTerminalChange = onTerminalLogChange(() => scheduleBroadcast("terminal"));
   let lastSubagentEvent: SubagentLifecycleEvent | undefined;
+  let pendingSubagentEvents: SubagentLifecycleEvent[] = [];
   const offSubagentsChange = onSubagentsChange((event) => {
-    lastSubagentEvent = event;
+    if (event) {
+      lastSubagentEvent = event;
+      pendingSubagentEvents.push(event);
+      if (pendingSubagentEvents.length > 100) pendingSubagentEvents.shift();
+    }
     scheduleBroadcast("subagents");
   });
 
@@ -418,7 +425,9 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       const payload: HostEventPayloads["subagents.changed"] = {
         agents: listSubagents(),
         ...(lastSubagentEvent ? { event: lastSubagentEvent } : {}),
+        ...(pendingSubagentEvents.length > 0 ? { events: [...pendingSubagentEvents] } : {}),
       };
+      pendingSubagentEvents = [];
       for (const subscription of targets) sendEvent(subscription, topic, payload);
       return;
     }
@@ -1185,6 +1194,21 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
         result(state, frame.id, { ok: stopSubagent(id) });
         return;
       }
+      case "herdr.list": {
+        result(state, frame.id, { agents: listHerdrAgents() });
+        return;
+      }
+      case "herdr.stop": {
+        const id = readString(params, "id");
+        if (!id) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "id is required");
+          return;
+        }
+        void stopHerdrAgent(id)
+          .then((ok) => result(state, frame.id, { ok }))
+          .catch((error: unknown) => fail(state, frame.id, "INTERNAL", errorText(error)));
+        return;
+      }
       case "env.probe": {
         if (params.refresh !== undefined && typeof params.refresh !== "boolean") {
           fail(state, frame.id, "E_INVALID_PARAMS", "refresh must be a boolean");
@@ -1220,6 +1244,43 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
         })
           .then((report) => result(state, frame.id, report))
           .catch((error: unknown) => failAux(state, frame.id, error));
+        return;
+      }
+
+      // ---------------------------------------------------------------------
+      // Host-owned Git worktree clone
+      // ---------------------------------------------------------------------
+      case "workspace.cloneSession": {
+        const sessionId = readString(params, "sessionId");
+        const sessionFile = readString(params, "sessionFile");
+        const sourceCwd = readString(params, "sourceCwd");
+        const targetCwd = readString(params, "targetCwd");
+        if (!sessionId || !sessionFile || !sourceCwd || !targetCwd) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "sessionId, sessionFile, sourceCwd and targetCwd are required");
+          return;
+        }
+        const branchName = readOptionalString(params, "branchName");
+        const name = readOptionalString(params, "name");
+        void cloneSessionToWorktree({
+          sessionId,
+          sessionFile,
+          sourceCwd,
+          targetCwd,
+          ...(branchName ? { branchName } : {}),
+          ...(name ? { name } : {}),
+        })
+          .then((cloned) => result(state, frame.id, cloned))
+          .catch((error: unknown) => {
+            if (error instanceof GitWorktreeError) {
+              fail(state, frame.id, error.code, error.message);
+              return;
+            }
+            if (error instanceof AccessDeniedError) {
+              fail(state, frame.id, "ACCESS_DENIED", error.message);
+              return;
+            }
+            fail(state, frame.id, "INTERNAL", errorText(error));
+          });
         return;
       }
 
@@ -1685,6 +1746,11 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
         await stopAllSubagents();
       } catch (error) {
         log(`failed to stop sub-agents: ${errorText(error)}`);
+      }
+      try {
+        await stopAllHerdrAgents();
+      } catch (error) {
+        log(`failed to stop fleet agents: ${errorText(error)}`);
       }
 
       try {

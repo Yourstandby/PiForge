@@ -10,10 +10,7 @@ import {
   invalidateSessionPathCache,
 } from "../../../../../lib/session-reader.ts";
 import { validateClonePayload } from "../../../../../lib/session-branch-clone.ts";
-import {
-  GitWorktreeError,
-  withGitWorktree,
-} from "../../../../../lib/git-worktree.ts";
+import { AgentHostError, getAgentHostClient } from "../../../../../lib/agent-host-client.ts";
 import { errorMessage, getRequestId, logApiError } from "../../../../../lib/api-error.ts";
 
 export const dynamic = "force-dynamic";
@@ -23,6 +20,16 @@ type CloneWorkspace = {
   cwd: string;
   branchName?: string;
 };
+
+const GIT_WORKTREE_ERROR_CODES = new Set([
+  "GIT_UNAVAILABLE",
+  "NOT_GIT_REPOSITORY",
+  "INVALID_BRANCH",
+  "TARGET_INSIDE_REPOSITORY",
+  "TARGET_EXISTS",
+  "WORKTREE_CREATE_FAILED",
+  "WORKTREE_CLEANUP_FAILED",
+]);
 
 class CloneCreateError extends Error {
   readonly code = "CLONE_CREATE_FAILED" as const;
@@ -163,29 +170,27 @@ export async function POST(
     };
 
     if (validation.data.workspaceMode === "worktree") {
-      return await withGitWorktree(
-        {
-          sourceCwd,
-          targetCwd: validation.data.targetCwd,
-          branchName: validation.data.branchName,
-        },
-        (worktree) =>
-          cloneSession(worktree.cwd, {
-            mode: "worktree",
-            cwd: worktree.cwd,
-            branchName: worktree.branchName,
-          }),
-        {
-          onCleanupError: (cleanupError, target) =>
-            logApiError({
-              route: `/api/sessions/${id}/clone`,
-              method: "POST",
-              requestId,
-              error: cleanupError,
-              params: { worktreeCwd: target.worktree.cwd },
-            }),
-        }
-      );
+      const targetCwd = validation.data.targetCwd;
+      if (!targetCwd) {
+        return NextResponse.json(
+          {
+            error: "targetCwd is required for a worktree clone",
+            errorCode: "INVALID_TARGET_CWD",
+          },
+          { status: 400, headers: { "x-request-id": requestId } }
+        );
+      }
+      // Git worktree creation, ownership markers and authorization live in the
+      // Agent Host. Next only forwards the request over RPC.
+      const cloned = await getAgentHostClient().call("workspace.cloneSession", {
+        sessionId: id,
+        sessionFile,
+        sourceCwd,
+        targetCwd,
+        ...(validation.data.branchName ? { branchName: validation.data.branchName } : {}),
+        ...(validation.data.name ? { name: validation.data.name } : {}),
+      });
+      return NextResponse.json(cloned, { headers: { "x-request-id": requestId } });
     }
 
     return cloneSession(targetCwd, directoryWorkspace);
@@ -207,17 +212,25 @@ export async function POST(
       }
     }
     logApiError({ route: `/api/sessions/${id}/clone`, method: "POST", requestId, error });
+    const hostCode = error instanceof AgentHostError ? error.code : null;
+    const gitError = hostCode !== null && GIT_WORKTREE_ERROR_CODES.has(hostCode);
     const status =
-      error instanceof GitWorktreeError && error.code !== "GIT_UNAVAILABLE" ? 400 : 500;
+      gitError || hostCode === "ACCESS_DENIED"
+        ? 400
+        : hostCode === "E_HOST_UNAVAILABLE" || hostCode === "E_TIMEOUT"
+          ? 503
+          : 500;
     return NextResponse.json(
       {
         error: errorMessage(error),
         errorCode:
-          error instanceof GitWorktreeError
-            ? error.code
-            : error instanceof CloneCreateError
-              ? error.code
-              : "CLONE_OPERATION_FAILED",
+          gitError
+            ? hostCode
+            : hostCode === "ACCESS_DENIED"
+              ? "ACCESS_DENIED"
+              : error instanceof CloneCreateError
+                ? error.code
+                : "CLONE_OPERATION_FAILED",
       },
       { status, headers: { "x-request-id": requestId } }
     );

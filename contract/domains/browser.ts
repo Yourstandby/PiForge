@@ -1,15 +1,19 @@
 /**
- * Bridge between the renderer's built-in browser panel and the agent tool
- * `web_preview`. The command queue now lives in the Agent Host.
+ * Browser commands exchanged between the Agent Host and Electron Main.
+ *
+ * The WebContentsView is Main-owned; Host queues commands over the named pipe
+ * and Main executes them. Renderer only owns the placeholder/address-bar UI.
  */
 
-export type BrowserCommandKind = "read" | "screenshot" | "open";
+export type BrowserCommandKind = "read" | "screenshot" | "open" | "back" | "forward" | "reload";
 
 export interface BrowserCommand {
   id: string;
   kind: BrowserCommandKind;
   /** Only for `open`: absolute http(s) URL. */
   url?: string;
+  windowId?: string;
+  ownerId?: string;
 }
 
 export interface BrowserPageSnapshot {
@@ -23,6 +27,10 @@ export interface BrowserPageSnapshot {
   webContentsId?: number | null;
   viewport?: { width: number; height: number } | null;
   scrollY?: number;
+  ready?: boolean;
+  boundsGeneration?: number;
+  windowId?: string;
+  ownerId?: string;
   updatedAt: number;
 }
 
@@ -35,4 +43,7 @@ export interface BrowserCommandResult {
   /** PNG payload for `screenshot` commands (base64, no data: prefix). */
   image?: { data: string; mimeType: string };
   error?: string;
+  code?: string;
+  ready?: boolean;
+  boundsGeneration?: number;
 }

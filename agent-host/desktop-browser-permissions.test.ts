@@ -47,10 +47,11 @@ async function callTool(
   handlers: Map<string, Handler>,
   ctx: unknown,
   input: Record<string, unknown>,
+  toolName = BROWSER_PREVIEW_TOOL_NAME,
 ) {
   const handler = handlers.get("tool_call");
   assert.ok(handler, "tool_call handler must be registered");
-  return handler({ type: "tool_call", toolName: BROWSER_PREVIEW_TOOL_NAME, toolCallId: "call-1", input }, ctx);
+  return handler({ type: "tool_call", toolName, toolCallId: "call-1", input }, ctx);
 }
 
 test("requestedBrowserPermissions maps actions to capabilities", () => {
@@ -111,6 +112,51 @@ test("an approved confirmation grants the capability for that session only", asy
     const blocked = (await callTool(other.handlers, other.ctx, { action: "read" })) as { block?: boolean };
     assert.equal(blocked?.block, true);
     assert.equal(other.confirmations.length, 1);
+  } finally {
+    clearAllBrowserSessionGrants();
+    if (previous === undefined) delete process.env[AGENT_DIR_ENV];
+    else process.env[AGENT_DIR_ENV] = previous;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("browser_read and browser_interact keep separate permission granularity", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-browser-hook-lanes-"));
+  const previous = process.env[AGENT_DIR_ENV];
+  process.env[AGENT_DIR_ENV] = dir;
+  clearAllBrowserSessionGrants();
+  try {
+    writeDesktopSettings(dir, {
+      defaultAgentMode: "full",
+      defaultToolPreset: "default",
+      browserReadEnabled: true,
+      browserInteractEnabled: false,
+    });
+    const { handlers, confirmations, ctx } = setup({ confirm: () => false });
+
+    // Read-only lane is already enabled globally: no prompt.
+    assert.equal(await callTool(handlers, ctx, { action: "read" }, "browser_read"), undefined);
+    assert.equal(confirmations.length, 0);
+
+    // Interaction is a different capability and is still denied.
+    const blocked = (await callTool(
+      handlers,
+      ctx,
+      { action: "open", url: "http://localhost:3000" },
+      "browser_interact",
+    )) as { block?: boolean } | undefined;
+    assert.equal(confirmations.length, 1);
+    assert.equal(blocked?.block, true);
+
+    // Reading a URL needs interaction too, so it prompts independently.
+    const readWithUrl = (await callTool(
+      handlers,
+      ctx,
+      { action: "read", url: "http://localhost:3000" },
+      "browser_read",
+    )) as { block?: boolean } | undefined;
+    assert.equal(confirmations.length, 2);
+    assert.equal(readWithUrl?.block, true);
   } finally {
     clearAllBrowserSessionGrants();
     if (previous === undefined) delete process.env[AGENT_DIR_ENV];

@@ -100,7 +100,15 @@ PiForge/
 - **会话韧性**：标题只在首条用户消息后后台生成，`shouldAutoNameSession` 保证手动命名优先；搜索覆盖标题/首条消息/id；项目内按本地日历日期分组；`session-loader-api.ts` 提供 15s deadline + 单次重试（超时/网络/5xx）。
 - **Extension UI Bridge**：Host 持有 UUID + Deferred Promise，Renderer 通过 preload 回传；`smoke-extension-ui-bridge.mjs` 在 packaged smoke 中触发真实 confirm，验证 Host 不挂起且响应能恢复扩展。
 
-## 7. 与对标项目的取舍
+## 7. 阶段九：高级工作流与生态集成的三大架构豁免
+
+> 以下三条是 v0.6.0 的**硬边界**，不是建议。违反其中任何一条，相关 PR 不得合并。
+
+- **浏览器边界（WebContentsView 归 Main）**：共享浏览器实例只能由 **Electron Main** 创建和持有；Next/Renderer 只提供 UI 占位、导航意图与只读状态展示，**绝对禁止**在 Next 或 Renderer 内实例化 `WebContentsView`、`BrowserWindow`、`webview` 之外的浏览器内核。渲染与权限仍由 Main ↔ Host 的既有 IPC/RPC 契约驱动，不新增 localhost TCP。
+- **Git 边界（worktree 归 Host）**：所有 `git worktree add/remove/list`、分支身份、ownership marker 与目标路径授权都必须封装在 **Agent Host** 的 `workspace-clone.ts`；Next 只发 RPC 并渲染结果，不得直接调用 `git`、不得直接读写 `.git` 或 worktree 目录。
+- **Herdr 边界（舰队归受管进程状态机）**：Agent 舰队的 spawn、停止、重启、readiness、日志与清理必须复用 `agent-host/managed-processes.ts` 的受管进程状态机；UI 只读展示。禁止绕过状态机直接 `spawn` 长驻进程，禁止在 Next/Renderer 侧维护进程表。
+
+## 8. 与对标项目的取舍
 
 | 项目 | 学 | 不学 | 原因 |
 |---|---|---|---|
@@ -109,6 +117,6 @@ PiForge/
 
 **原则**：学设计、重实现，不搬运代码（上游 Apache-2.0/MIT，与本项目许可证不同）。尤其不要照搬 Chasen 的 `app/api/` REST 路由形态。
 
-## 8. 给新会话的一句话
+## 9. 给新会话的一句话
 
 读 `AGENTS.md` 确认铁律，读本文档确认边界，然后从当前未完成阶段继续，每步单独 commit 后停下汇报。不要读聊天历史，不要 grep 全仓库，不要凭记忆写 Next.js 代码。

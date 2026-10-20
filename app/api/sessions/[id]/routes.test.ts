@@ -3,23 +3,54 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { cacheSessionPath } from "../../../../lib/session-reader.ts";
 import { POST as branchSession } from "./branch/route.ts";
 import { POST as cloneSession } from "./clone/route.ts";
 import { GET as exportSession } from "./export/route.ts";
+import { AccessDeniedError, addAllowedRoot } from "../../../../agent-host/allowed-roots.ts";
+import { cloneSessionToWorktree, GitWorktreeError } from "../../../../agent-host/workspace-clone.ts";
+import { AgentHostError } from "../../../../lib/agent-host-client.ts";
 
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
 const testAgentDir = mkdtempSync(join(tmpdir(), "pi-routes-agent-"));
+
+let previousHostClient: unknown;
 
 before(() => {
   // SessionManager.forkFrom() uses the default agent directory when cloning.
   // Keep route tests out of the developer's real ~/.pi session store.
   process.env.PI_CODING_AGENT_DIR = testAgentDir;
+  // The clone route now delegates worktree Git work to the Host over RPC.
+  // Run the real Host module in-process, and authorize the temp target parent
+  // the same way a user-selected project root would be.
+  previousHostClient = (globalThis as { __piforgeAgentHostClient?: unknown }).__piforgeAgentHostClient;
+  (globalThis as { __piforgeAgentHostClient?: unknown }).__piforgeAgentHostClient = {
+    call: async (method: string, params: unknown) => {
+      if (method !== "workspace.cloneSession") {
+        throw new Error(`unexpected Host RPC in route test: ${method}`);
+      }
+      const input = params as { targetCwd: string };
+      addAllowedRoot(dirname(input.targetCwd));
+      try {
+        return await cloneSessionToWorktree(params as never);
+      } catch (error) {
+        // Mirror the Host RPC error mapping used in production.
+        if (error instanceof GitWorktreeError) {
+          throw new AgentHostError({ code: error.code, message: error.message });
+        }
+        if (error instanceof AccessDeniedError) {
+          throw new AgentHostError({ code: "ACCESS_DENIED", message: error.message });
+        }
+        throw new AgentHostError({ code: "INTERNAL", message: error instanceof Error ? error.message : String(error) });
+      }
+    },
+  };
 });
 
 after(() => {
+  (globalThis as { __piforgeAgentHostClient?: unknown }).__piforgeAgentHostClient = previousHostClient;
   if (originalAgentDir === undefined) {
     delete process.env.PI_CODING_AGENT_DIR;
   } else {
@@ -173,7 +204,11 @@ test("POST /api/sessions/[id]/clone rejects a missing worktree source", async ()
     const req = new Request(`http://localhost/api/sessions/${id}/clone`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ workspaceMode: "worktree", branchName: "pi-agent/missing-source" }),
+      body: JSON.stringify({
+        workspaceMode: "worktree",
+        targetCwd: join(dir, "missing-source-worktree"),
+        branchName: "pi-agent/missing-source",
+      }),
     });
     const res = await cloneSession(req, { params: Promise.resolve({ id }) });
     assert.equal(res.status, 400);

@@ -65,4 +65,6 @@ export interface SubagentSnapshot {
   agents: SubagentView[];
   /** Most recent lifecycle event; absent on the initial snapshot. */
   event?: SubagentLifecycleEvent;
+  /** Coalesced lifecycle delta since the previous broadcast (ordered). */
+  events?: SubagentLifecycleEvent[];
 }

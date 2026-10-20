@@ -91,7 +91,7 @@ test("spawnSubagent runs an isolated child and returns its final answer", { time
   }
 });
 
-test("spawnSubagent marks explicit test evidence as verified", { timeout: 30000 }, async () => {
+test("spawnSubagent keeps text-only test claims unverified", { timeout: 30000 }, async () => {
   const env = setupEnv();
   try {
     const faux = await registerFaux("subagent-fixture-verified", [
@@ -105,9 +105,9 @@ test("spawnSubagent marks explicit test evidence as verified", { timeout: 30000 
       model: faux.getModel(),
     });
     assert.equal(result.ok, true, result.error);
-    assert.equal(result.agent.verification?.verified, true);
-    assert.match(result.agent.verification?.reason ?? "", /通过证据/);
-    assert.match(result.text, /Verification: test\/build evidence found/);
+    assert.equal(result.agent.verification?.verified, false);
+    assert.match(result.agent.verification?.reason ?? "", /只有文本自述/);
+    assert.match(result.text, /UNVERIFIED/);
   } finally {
     await env.cleanup();
   }
