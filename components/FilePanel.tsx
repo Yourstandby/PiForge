@@ -49,6 +49,7 @@ export function FilePanel({
   openFile,
   gitOpenSignal = 0,
   explorerRefreshKey = 0,
+  viewerRefreshKey = 0,
   onOpenFile,
   onOpenDiff,
   onCloseFile,
@@ -60,6 +61,8 @@ export function FilePanel({
   gitOpenSignal?: number;
   /** Bumped on every active-tab change so the file tree re-reads its cwd. */
   explorerRefreshKey?: number;
+  /** Bumped after an external write so the floating viewer refetches. */
+  viewerRefreshKey?: number;
   onOpenFile?: (filePath: string, fileName: string, line?: number) => void;
   onOpenDiff?: (filePath: string, fileName: string) => void;
   onCloseFile?: () => void;
@@ -171,6 +174,7 @@ export function FilePanel({
               <FloatingFileViewer
                 target={openFile}
                 cwd={cwd}
+                refreshKey={viewerRefreshKey}
                 onClose={() => onCloseFile?.()}
               />
             ) : null}

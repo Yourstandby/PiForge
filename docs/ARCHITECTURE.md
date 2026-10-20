@@ -634,6 +634,7 @@ components/models-config/     模型配置弹窗的子组件
 | `app/api/home/route.ts` | GET | 用户主目录路径 |
 | `app/api/default-cwd/route.ts` | POST | 创建并返回默认项目目录 |
 | `app/api/select-directory/route.ts` | POST | 原生 Windows 文件夹选择器（仅桌面端） |
+| `app/api/files/apply/route.ts` | POST | 将 Markdown 代码块应用（覆盖 / 追加）到项目文件：经 Host `files.applyCode` 走可写路径校验 + 原子写入 |
 
 ### 模型配置（3 条）
 

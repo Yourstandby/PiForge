@@ -5,7 +5,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
-import { Check, ChevronDown, Copy, GitFork, X } from "lucide-react";
+import { Check, ChevronDown, Copy, CornerDownLeft, GitFork, X } from "lucide-react";
 import type { AgentMessage, ToolResultMessage } from "@/lib/types";
 import { diffStats } from "@/lib/diff-lines";
 import { isEditToolName, toolDiffPath, toolDiffRows } from "@/lib/tool-diff";
@@ -108,10 +108,14 @@ function CodeBlock({
   code,
   lang,
   onInsertCode,
+  onApply,
+  applyTargetName,
 }: {
   code: string;
   lang: string;
   onInsertCode?: InsertCodeHandler;
+  onApply?: (code: string, language?: string) => void;
+  applyTargetName?: string | null;
 }) {
   const [copied, setCopied] = useState(false);
   if (lang === "mermaid") return <MermaidBlock code={code} />;
@@ -130,15 +134,29 @@ function CodeBlock({
         <span className="font-mono text-[10px] uppercase tracking-wider text-ink-faint">
           {lang || "text"}
         </span>
-        <button
-          type="button"
-          onClick={() => void copy()}
-          aria-label={copied ? "已复制代码" : "复制代码"}
-          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-ink-faint transition-colors hover:bg-[#E8EFFB] hover:text-accent-strong"
-        >
-          {copied ? <Check size={11} strokeWidth={2.4} /> : <Copy size={11} strokeWidth={1.9} />}
-          {copied ? "已复制" : "复制"}
-        </button>
+        <span className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => void copy()}
+            aria-label={copied ? "已复制代码" : "复制代码"}
+            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-ink-faint transition-colors hover:bg-[#E8EFFB] hover:text-accent-strong"
+          >
+            {copied ? <Check size={11} strokeWidth={2.4} /> : <Copy size={11} strokeWidth={1.9} />}
+            {copied ? "已复制" : "复制"}
+          </button>
+          {onApply && (
+            <button
+              type="button"
+              onClick={() => onApply(code, lang || undefined)}
+              aria-label={applyTargetName ? `将代码应用到 ${applyTargetName}` : "应用代码"}
+              title={applyTargetName ? `将代码应用到 ${applyTargetName}` : "应用代码到右侧打开的文件"}
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-ink-faint transition-colors hover:bg-[#E8EFFB] hover:text-accent-strong"
+            >
+              <CornerDownLeft size={11} strokeWidth={1.9} />
+              应用
+            </button>
+          )}
+        </span>
       </div>
       <pre className="overflow-x-auto p-3 text-[12.5px] leading-6">
         <code className="font-mono">{code}</code>
@@ -199,6 +217,8 @@ function createMarkdownComponents(
   cwd?: string | null,
   onOpenFile?: OpenFileHandler,
   onInsertCode?: InsertCodeHandler,
+  onApplyCode?: (code: string, language?: string) => void,
+  applyTargetName?: string | null,
 ): Components {
   const linkify = (children: React.ReactNode) => (
     <LinkifiedChildren cwd={cwd} onOpenFile={onOpenFile}>{children}</LinkifiedChildren>
@@ -263,6 +283,8 @@ function createMarkdownComponents(
           code={String(children).replace(/\n$/, "")}
           lang={lang}
           onInsertCode={onInsertCode}
+          onApply={onApplyCode}
+          applyTargetName={applyTargetName}
         />
       );
     }
@@ -1012,6 +1034,8 @@ export function Transcript({
   cwd,
   onOpenFile,
   onInsertCode,
+  onApplyCode,
+  applyTargetName,
   nestedExecutions,
 }: {
   messages: AgentMessage[];
@@ -1023,13 +1047,17 @@ export function Transcript({
   cwd?: string | null;
   onOpenFile?: OpenFileHandler;
   onInsertCode?: InsertCodeHandler;
+  /** Write a code block to the file currently open in the right panel. */
+  onApplyCode?: (code: string, language?: string) => void;
+  /** File name shown on the Apply button / confirmation dialog. */
+  applyTargetName?: string | null;
   /** Live nested tool results captured from SSE (not persisted by pi). */
   nestedExecutions?: Record<string, NestedExecutionView>;
 }) {
   const results = toolResultsById(messages);
   const markdownComponents = useMemo(
-    () => createMarkdownComponents(cwd, onOpenFile, onInsertCode),
-    [cwd, onOpenFile, onInsertCode],
+    () => createMarkdownComponents(cwd, onOpenFile, onInsertCode, onApplyCode, applyTargetName),
+    [cwd, onOpenFile, onInsertCode, onApplyCode, applyTargetName],
   );
   const [copiedTurn, setCopiedTurn] = useState<number | null>(null);
 

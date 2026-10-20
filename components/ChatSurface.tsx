@@ -37,6 +37,10 @@ interface Props {
   onNewSession?: () => void;
   /** Insert a rendered Markdown code block into the composer. */
   onInsertCode?: (code: string, language?: string) => void;
+  /** File currently open in the right panel; empty when nothing is open. */
+  applyTargetName?: string | null;
+  /** Ask the workbench to apply a code block to that file (shows a confirm dialog). */
+  onApplyCode?: (code: string, language?: string) => void;
   /** Open the repository Git Diff pane in the right panel. */
   onOpenGitDiff?: () => void;
 }
@@ -68,6 +72,8 @@ function ChatSession({
   onOpenFile,
   onNewSession,
   onInsertCode,
+  applyTargetName,
+  onApplyCode,
   onOpenGitDiff,
   active = true,
   onReload,
@@ -166,6 +172,17 @@ function ChatSession({
   }, [compactToast]);
 
   const canCompact = Boolean(session?.id) && !chat.agentRunning && !chat.isCompacting;
+
+  const handleApplyCode = useCallback(
+    (code: string, language?: string) => {
+      if (!applyTargetName) {
+        setCompactToast({ ok: false, text: "右侧没有打开的文件，请先在文件树中打开一个文件" });
+        return;
+      }
+      onApplyCode?.(code, language);
+    },
+    [applyTargetName, onApplyCode],
+  );
 
   /** Ctrl/Cmd+Shift+C: whole conversation as Markdown on the clipboard. */
   const copyConversation = useCallback(async () => {
@@ -495,6 +512,8 @@ function ChatSession({
                   cwd={session?.cwd ?? newSessionCwd}
                   onOpenFile={onOpenFile}
                   onInsertCode={onInsertCode}
+                  onApplyCode={onApplyCode ? handleApplyCode : undefined}
+                  applyTargetName={applyTargetName}
                   nestedExecutions={chat.nestedToolExecutions}
                 />
               )}

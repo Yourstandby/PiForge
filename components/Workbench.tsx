@@ -16,6 +16,7 @@ import { SessionTabBar } from "./SessionTabBar";
 import { ExtensionsConfigModal } from "./ExtensionsConfigModal";
 import { AutoRoutingConfig } from "./AutoRoutingConfig";
 import { AuxModelsConfig } from "./AuxModelsConfig";
+import { ApplyCodeModal } from "./ApplyCodeModal";
 import { DevEnvironmentConfig } from "./DevEnvironmentConfig";
 import { McpSettingsModal } from "./McpSettingsModal";
 import type { FloatingFileTarget } from "./FloatingFileViewer";
@@ -97,6 +98,13 @@ export function Workbench() {
   const activeKeyRef = useRef<string | null>(null);
   const [cwd, setCwd] = useState<string | null>(null);
   const [openFile, setOpenFile] = useState<FloatingFileTarget | null>(null);
+  // Bumped after an applied code block so the floating viewer refetches.
+  const [fileViewerRefreshKey, setFileViewerRefreshKey] = useState(0);
+  const [applyRequest, setApplyRequest] = useState<{
+    code: string;
+    language?: string;
+    target: FloatingFileTarget;
+  } | null>(null);
   const [gitTabSignal, setGitTabSignal] = useState(0);
   // Bumped when the models modal closes so a freshly added provider shows up
   // in the model picker without remounting the session.
@@ -293,6 +301,12 @@ export function Workbench() {
   }, []);
 
   const handleCloseFile = useCallback(() => setOpenFile(null), []);
+
+  /** Apply a Markdown code block to the file open in the right panel. */
+  const handleApplyCode = useCallback((code: string, language?: string) => {
+    if (!openFile || openFile.diff) return;
+    setApplyRequest({ code, language, target: openFile });
+  }, [openFile]);
 
   const handleInsertCode = useCallback((code: string, language?: string) => {
     const key = activeKeyRef.current;
@@ -738,6 +752,8 @@ ${fenced}`
                     onSessionRenamed={handleSessionRenamed}
                     onNewSession={handlers.onNewSession}
                     onInsertCode={handleInsertCode}
+                    applyTargetName={openFile && !openFile.diff ? openFile.fileName : null}
+                    onApplyCode={handleApplyCode}
                     onOpenGitDiff={handleOpenGitDiff}
                     onOpenFile={handleOpenChatFile}
                     onSessionForked={handleSessionForked}
@@ -797,6 +813,7 @@ ${fenced}`
           <FilePanel
             cwd={activeCwd}
             explorerRefreshKey={explorerRefreshKey}
+            viewerRefreshKey={fileViewerRefreshKey}
             openFile={openFile}
             gitOpenSignal={gitTabSignal}
             onOpenFile={handleOpenFile}
@@ -826,6 +843,19 @@ ${fenced}`
       )}
       {settingsModal === "dev" && (
         <DevEnvironmentConfig onClose={() => setSettingsModal(null)} />
+      )}
+      {applyRequest && (
+        <ApplyCodeModal
+          target={applyRequest.target}
+          code={applyRequest.code}
+          language={applyRequest.language}
+          cwd={activeCwd}
+          onClose={() => setApplyRequest(null)}
+          onApplied={() => {
+            setExplorerRefreshKey((key) => key + 1);
+            setFileViewerRefreshKey((key) => key + 1);
+          }}
+        />
       )}
       {settingsModal === "extensions" && (
         <ExtensionsConfigModal

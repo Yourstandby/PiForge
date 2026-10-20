@@ -313,6 +313,10 @@ export interface AgentHostMethods {
     params: { path: string; op: "read" | "write" | "list" };
     result: { realPath: string };
   };
+  "files.applyCode": {
+    params: { path: string; content: string; mode: "overwrite" | "append" };
+    result: { path: string; mode: "overwrite" | "append"; bytes: number };
+  };
 
   // ---- browser bridge ----
   "browser.poll": {
@@ -433,6 +437,7 @@ export const IMPLEMENTED_HOST_METHODS = [
   "sessions.delete",
   "files.allowedRoots",
   "files.authorize",
+  "files.applyCode",
   "browser.poll",
   "browser.pushSnapshot",
   "browser.resolveCommand",

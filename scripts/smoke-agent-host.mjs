@@ -416,6 +416,27 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     assert.equal(toolOutputDenied.ok, false);
     assert.equal(toolOutputDenied.error.code, "ACCESS_DENIED");
 
+    // ---- code-block apply (writes stay behind the host file policy) ----
+    client.send({
+      kind: "req",
+      id: 27,
+      method: "files.applyCode",
+      params: { path: path.join(sandbox, "outside-apply.ts"), content: "x", mode: "overwrite" },
+    });
+    const applyDenied = await client.waitFor((frame) => frame.kind === "res" && frame.id === 27);
+    assert.equal(applyDenied.ok, false);
+    assert.equal(applyDenied.error.code, "ACCESS_DENIED");
+
+    client.send({
+      kind: "req",
+      id: 28,
+      method: "files.applyCode",
+      params: { path: path.join(repoRoot, "AGENTS.md"), content: "x", mode: "replace" },
+    });
+    const applyInvalid = await client.waitFor((frame) => frame.kind === "res" && frame.id === 28);
+    assert.equal(applyInvalid.ok, false);
+    assert.equal(applyInvalid.error.code, "E_INVALID_PARAMS");
+
     // ---- cascade cleanup on host shutdown ----
     client.send({
       kind: "req",

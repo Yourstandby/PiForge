@@ -5,6 +5,7 @@ import { ArrowUp, ChevronDown, ChevronUp, File, Folder, GripVertical, ImagePlus,
 import type { AttachedImage } from "./chat-input/types";
 import { AttachmentPreview } from "./chat-input/AttachmentPreview";
 import { buildReferenceInsertion, isImageFileLike } from "@/lib/composer-files";
+import { FILE_DRAG_MIME } from "@/lib/file-drag";
 import { getElectronApi } from "@/lib/electron-api";
 import { getRelativeFilePath } from "@/lib/file-paths";
 import {
@@ -67,6 +68,15 @@ function fileToAttachment(file: File): Promise<AttachedImage> {
 /** Drag payload carries files (not a reorder drag of the follow-up queue). */
 function hasFilePayload(dataTransfer: DataTransfer | null): boolean {
   return Boolean(dataTransfer && Array.from(dataTransfer.types).includes("Files"));
+}
+
+/** A file-tree row dragged from the right panel. */
+function hasPathPayload(dataTransfer: DataTransfer | null): boolean {
+  return Boolean(dataTransfer && Array.from(dataTransfer.types).includes(FILE_DRAG_MIME));
+}
+
+function hasDragPayload(dataTransfer: DataTransfer | null): boolean {
+  return hasFilePayload(dataTransfer) || hasPathPayload(dataTransfer);
 }
 
 /**
@@ -459,6 +469,30 @@ export function Composer({
     applySlashItem(item);
   };
 
+  /** Insert `@relative/path` at the caret for a file dragged from the tree. */
+  const insertPathReference = useCallback(
+    (filePath: string) => {
+      const relative = cwd ? getRelativeFilePath(filePath, cwd) : filePath;
+      const el = textareaRef.current;
+      const caret = el?.selectionStart ?? value.length;
+      const before = value.slice(0, caret);
+      const after = value.slice(caret);
+      const prefix = before.length > 0 && !/\s$/.test(before) ? " " : "";
+      const insertion = `${prefix}@${relative} `;
+      onValueChange(`${before}${insertion}${after}`);
+      setMention(null);
+      setCaret(caret + insertion.length);
+      requestAnimationFrame(() => {
+        const area = textareaRef.current;
+        if (!area) return;
+        const next = caret + insertion.length;
+        area.focus();
+        area.setSelectionRange(next, next);
+      });
+    },
+    [cwd, onValueChange, value],
+  );
+
   const dropQueueItem = (targetId: string) => {
     if (!draggingQueueId || !onReorderFollowUps || queueBusy) return;
     if (draggingQueueId === targetId) return;
@@ -473,21 +507,29 @@ export function Composer({
   return (
     <div
       onDragEnter={(event) => {
-        if (!hasFilePayload(event.dataTransfer)) return;
+        if (!hasDragPayload(event.dataTransfer)) return;
         dragDepth.current += 1;
         setDragActive(true);
       }}
       onDragOver={(event) => {
-        if (!hasFilePayload(event.dataTransfer)) return;
+        if (!hasDragPayload(event.dataTransfer)) return;
         event.preventDefault();
         event.dataTransfer.dropEffect = "copy";
       }}
       onDragLeave={(event) => {
-        if (!hasFilePayload(event.dataTransfer)) return;
+        if (!hasDragPayload(event.dataTransfer)) return;
         dragDepth.current = Math.max(0, dragDepth.current - 1);
         if (dragDepth.current === 0) setDragActive(false);
       }}
       onDrop={(event) => {
+        const draggedPath = event.dataTransfer.getData(FILE_DRAG_MIME);
+        if (draggedPath) {
+          event.preventDefault();
+          dragDepth.current = 0;
+          setDragActive(false);
+          insertPathReference(draggedPath);
+          return;
+        }
         if (!hasFilePayload(event.dataTransfer)) return;
         event.preventDefault();
         dragDepth.current = 0;
@@ -502,7 +544,7 @@ export function Composer({
     >
       {dragActive && (
         <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl border-2 border-dashed border-accent/40 bg-white/85 text-[12px] font-medium text-accent-strong">
-          松开以添加图片或文件引用
+          松开以添加图片、文件引用或路径
         </div>
       )}
       <input

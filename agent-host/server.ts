@@ -105,6 +105,7 @@ import {
   refreshMcpAuth,
 } from "./mcp-service.ts";
 import { probeDevEnvironment } from "./dev-tools.ts";
+import { applyCodeToFile, FileApplyError } from "./file-apply.ts";
 import {
   HISTORY_DEFAULT_LIMIT,
   HISTORY_MAX_LIMIT,
@@ -1224,6 +1225,29 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
         void getAllowedRoots()
           .then((roots) => result(state, frame.id, { roots: [...roots] }))
           .catch((error: unknown) => fail(state, frame.id, "INTERNAL", errorText(error)));
+        return;
+      }
+      case "files.applyCode": {
+        const filePath = readString(params, "path");
+        const content = typeof params.content === "string" ? params.content : null;
+        const mode = params.mode;
+        if (!filePath || content === null || (mode !== "overwrite" && mode !== "append")) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "path, content and mode ('overwrite'|'append') are required");
+          return;
+        }
+        void applyCodeToFile({ path: filePath, content, mode })
+          .then((applied) => result(state, frame.id, applied))
+          .catch((error: unknown) => {
+            if (error instanceof AccessDeniedError) {
+              fail(state, frame.id, "ACCESS_DENIED", error.message);
+              return;
+            }
+            if (error instanceof FileApplyError) {
+              fail(state, frame.id, error.code, error.message);
+              return;
+            }
+            fail(state, frame.id, "INTERNAL", errorText(error));
+          });
         return;
       }
       case "files.authorize": {
