@@ -257,8 +257,9 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       method: "processes.start",
       params: {
         cwd: repoRoot,
-        command: "node -e \"console.log('smoke-process-ready'); setInterval(() => {}, 1000)\"",
+        command: "node -e \"console.log('ready in 1ms (smoke-process-ready)'); setInterval(() => {}, 1000)\"",
         name: "smoke-process",
+        owner: "agent",
       },
     });
     const started = await client.waitFor((frame) => frame.kind === "res" && frame.id === 7);
@@ -267,21 +268,66 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     const processPid = started.result.process.pid;
     assert.ok(processId);
     assert.ok(processPid);
+    assert.equal(started.result.process.owner, "agent");
+    assert.ok(["starting", "running"].includes(started.result.process.status));
 
     const processEvent = await client.waitFor(
       (frame) =>
         frame.kind === "evt" &&
         frame.topic === "processes.changed" &&
-        frame.payload.processes?.some((entry) => entry.id === processId && entry.logs.includes("smoke-process-ready")),
+        frame.payload.processes?.some(
+          (entry) => entry.id === processId && entry.logs.some((line) => line.includes("smoke-process-ready")),
+        ),
     );
     const tracked = processEvent.payload.processes.find((entry) => entry.id === processId);
     assert.equal(tracked.status, "running");
+    assert.equal(tracked.owner, "agent");
+    assert.equal(tracked.readiness, "ready");
+    assert.equal(tracked.cleanup, null);
+    assert.equal(typeof tracked.durationMs, "number");
 
     client.send({ kind: "req", id: 8, method: "processes.stop", params: { id: processId } });
     const stopped = await client.waitFor((frame) => frame.kind === "res" && frame.id === 8);
     assert.equal(stopped.ok, true);
     assert.equal(stopped.result.ok, true);
+    const stoppedEvent = await client.waitFor(
+      (frame) =>
+        frame.kind === "evt" &&
+        frame.topic === "processes.changed" &&
+        frame.payload.processes?.some(
+          (entry) => entry.id === processId && entry.status === "stopped",
+        ),
+    );
+    const stoppedView = stoppedEvent.payload.processes.find((entry) => entry.id === processId);
+    assert.equal(stoppedView.exitReason, "stopped");
+    assert.equal(stoppedView.cleanup?.ok, true);
     assert.ok(await waitForPidExit(processPid), "stopped process should no longer be alive");
+
+    // force-stop is a separate RPC and must report the same lifecycle fields
+    client.send({
+      kind: "req",
+      id: 34,
+      method: "processes.start",
+      params: {
+        cwd: repoRoot,
+        command: "node -e \"setInterval(() => {}, 1000)\"",
+        name: "smoke-force-stop",
+        owner: "agent",
+      },
+    });
+    const forceStarted = await client.waitFor((frame) => frame.kind === "res" && frame.id === 34);
+    assert.equal(forceStarted.ok, true, JSON.stringify(forceStarted.error));
+    const forceId = forceStarted.result.process.id;
+    await client.waitFor(
+      (frame) =>
+        frame.kind === "evt" &&
+        frame.topic === "processes.changed" &&
+        frame.payload.processes?.some((entry) => entry.id === forceId && entry.status === "running"),
+    );
+    client.send({ kind: "req", id: 35, method: "processes.forceStop", params: { id: forceId } });
+    const forceStopped = await client.waitFor((frame) => frame.kind === "res" && frame.id === 35);
+    assert.equal(forceStopped.ok, true, JSON.stringify(forceStopped.error));
+    assert.equal(forceStopped.result.ok, true);
 
     // ---- MCP management (connections stay in the host) ----
     client.send({ kind: "req", id: 11, method: "mcp.probe", params: { serverId: "smoke", cwd: repoRoot } });

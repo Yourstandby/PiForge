@@ -611,6 +611,47 @@ components/models-config/     模型配置弹窗的子组件
 
 > `agent-host/subagents.ts` 管理子 Agent：每个子 Agent 用 `SessionManager.inMemory(cwd)` + 独立 `AgentSession`，不加载用户扩展/MCP（`noExtensions`），只开放只读内置工具，继承父级 model/thinkingLevel；最多 4 个并行，完成后返回最终报告。主 Agent 通过 `agent-host/desktop-subagent-extension.ts` 的 `spawn_agent` 工具调用；主轮中断会 abort 所有子会话，Host 关闭时统一 `stopAllSubagents()`。子 Agent 的工具输出只进内存与事件流，主会话 JSONL 只在主 Agent 的 tool_result 落盘时追加一条记录。
 
+### 受管进程生命周期（v0.5.0 stage 8）
+
+> **范围声明**：这是生命周期控制，不是安全沙箱。它能可靠地回收自己启动的进程树，但无法阻止双 fork/setsid/服务管理器等方式完全脱离的进程。
+
+#### 状态机（`agent-host/process-state.ts`）
+
+| from \ to | starting | running | stopping | stopped | crashed | exited |
+| --- | --- | --- | --- | --- | --- | --- |
+| starting | — | ✅ spawn | ✅ stop 先到 | ✅ | ✅ spawn 失败 | ✅ |
+| running | ❌ | — | ✅ stop | ❌ | ✅ 非零/信号 | ✅ code 0 |
+| stopping | ❌ | ❌ | — | ✅ 清理完成 | ✅ 清理异常 | ❌ |
+| stopped / crashed / exited | ❌ | ❌ | ❌ | — | — | — |
+
+- 非法迁移由 `assertTransition()` 抛 `ProcessStateError`；`restart()` 是唯一从终态回到 `starting` 的显式边。
+- `owner`：`run_bg` 为 `agent`，面板/API 手动启动默认 `user`。
+- `readiness`：`pending → ready`（loopback URL 或 ready/listening 日志）或 `failed`（未就绪即终止）。
+- 退出语义：`stopping` 期间的退出一律记为 `stopped`（不触发完成通知）；自然退出 `code 0 / 无信号` → `exited/natural`，其他 → `crashed/crashed`。
+- `stop` 语义：优雅 SIGTERM → 升级 SIGKILL；`force-stop` 跳过优雅阶段。清理失败时状态仍为 `stopped`，但 `exitReason = cleanup-failed`、`cleanup.ok = false`，UI 显示并可「重试清理」。
+- `restart` 仅允许从终态发起：保留 processId 与日志，`restartCount++`，重跑状态机。
+
+#### 有界清理（`agent-host/process-killer.ts`）
+
+- POSIX：`detached: true` 让子进程成为 process group leader；清理用 `kill(-pgid)`，SIGTERM 等待 2.5s → SIGKILL 最多 2 次、每次 2.5s，并校验 group 消失。
+- Windows：`taskkill /PID … /T /F`（带超时与 2 次重试）+ `tasklist` 校验，最后回退 Node `SIGKILL`；不保证 Job 语义。
+- 失败不会静默：写入 `cleanup {ok:false,error,attempts,strategy}`、日志追加 `[cleanup] failed…`，UI 红条提示。
+- 可替换接口：`ProcessTerminator` / `ProcessIdentityVerifier` + `setProcessTerminator()`；未来 Windows Job Object 或 Rust helper 直接替换实现，状态机与调用方不变。
+
+#### Owner 校验与 Crash Reaper（`process-instance-store.ts` / `crash-reaper.ts`）
+
+- 每个 Host 进程写 `<agent-dir>/process-state/<instanceId>.json`：hostPid、startedAt、10s heartbeat、运行中的 `ManagedProcessRecord`；进程变更即落盘，干净关闭时删除本实例文件。
+- Host 启动时：注册自身实例 → 扫描历史实例。**owner pid 仍存活则一律不碰**（即使 heartbeat 过期，fail-closed）。
+- 死实例：仅处理 `owner === "agent"` 的记录；先用 `ProcessIdentityVerifier` 校验（POSIX：`ps` 读 pgid + 命令行首 token；Windows：PowerShell CIM 读 CommandLine），校验失败 → 跳过并上报，绝不按 PID 盲杀。
+- 处理结果写入 `process-state/orphaned/<instanceId>.json` 存档后移除活动状态文件，避免每次启动重复处理。
+- 已知残余风险：PID 复用、身份工具不可用、权限不足、已完全脱离进程树的守护进程；均按 fail-closed 处理。
+
+#### 日志与 readiness
+
+- 入库即脱敏（`sanitizeLogLine`）：常见 Token/API key/Bearer、`C:\Users\<user>`、`/home/<user>`、`/Users/<user>` → `~`；单行上限 4000 字符。
+- 内存环形日志上限 400 行 / 128KB，保留绝对游标（`logsBaseIndex` / `logLineCount`）；`readManagedProcessLogs(id, {cursor, limit})` 支持慢启动服务从上次游标继续等待。
+- 与大工具输出落盘的边界：`run_bg` 的结果只是短摘要，进程日志存放在进程注册表里，**不会重复写入 `tool-outputs/`**。未来的 `process_read` 应在此分页；只有当单页输出本身超过上下文阈值时，才复用工具输出落盘。
+
 ### 会话分支切换（1 条）
 
 | 路由 | 方法 | 用途 |

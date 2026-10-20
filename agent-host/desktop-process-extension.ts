@@ -46,8 +46,9 @@ export function createDesktopProcessFactory(
       name: RUN_BG_TOOL_NAME,
       label: "Run Background",
       description:
-        "Start a long-running command (dev server, watcher) in the project directory. " +
-        "The process keeps running after this tool returns; the user can stop or restart it from the Processes tab.",
+        "Start a long-running command (dev server, watcher) in the project directory as a managed process. " +
+        "It keeps running after this tool returns; the user can stop, force-stop or restart it from the Processes tab. " +
+        "This is lifecycle control, not a sandbox: the host tracks the process tree it started and cleans it up.",
       promptSnippet: "Start a background dev server / long-running command",
       parameters: RunBgParams,
       async execute(_toolCallId, params) {

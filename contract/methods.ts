@@ -96,10 +96,20 @@ export interface AgentHostMethods {
     result: { processes: ManagedProcessView[] };
   };
   "processes.start": {
-    params: { cwd: string; command: string; name?: string };
+    params: {
+      cwd: string;
+      command: string;
+      name?: string;
+      /** Who started it; crash-reaper only touches "agent" processes. */
+      owner?: "agent" | "user";
+    };
     result: { process: ManagedProcessView };
   };
   "processes.stop": {
+    params: { id: string };
+    result: { ok: boolean };
+  };
+  "processes.forceStop": {
     params: { id: string };
     result: { ok: boolean };
   };
@@ -419,6 +429,7 @@ export const IMPLEMENTED_HOST_METHODS = [
   "processes.list",
   "processes.start",
   "processes.stop",
+  "processes.forceStop",
   "processes.restart",
   "processes.remove",
   "processes.stdin",

@@ -68,7 +68,7 @@ Agent Host 关闭时会先排空会话 JSONL、终止所有受管进程树；Nex
 - **输入效率** — `@` 文件补全、`/` 斜杠命令（`/clear`、`/new`、`/compact` 等）、`Enter` 发送 / `Esc` 中断。
 - **执行树与工具结果** — 工具调用卡片展开后展示嵌套子调用链、状态、耗时与结果；普通 Bash 保持简洁。
 - **Git 感知** — 文件树显示 `M` / `U` / `A` / `D` / `R` 标记，状态栏一键跳转到右侧 Git 面板。
-- **轻量受管进程** — Agent 通过 `run_bg` 启动 `npm run dev` 等长任务，右侧「进程」Tab 实时查看脱敏日志、停止或重启；输出同时汇入「终端」Tab。
+- **受管进程生命周期** — `run_bg` 启动的每个后台任务都由 Agent Host 托管：`starting → running → stopping → stopped/crashed/exited` 状态机、owner（Agent / 用户）、readiness（等待/就绪/失败）、loopback endpoint、退出原因与耗时一目了然。支持优雅停止、强制停止（POSIX 进程组 / Windows `taskkill /T`，带超时与重试）、保留 processId 的重启；清理失败会显式上报并可重试。Host 崩溃后由 crash reaper 依据 owner 与进程身份校验回收遗留进程树（校验失败 fail-closed，绝不乱杀）。这是生命周期控制，不是安全沙箱。输出同时汇入「终端」Tab，日志自动脱敏并隐藏用户主目录路径。
 - **本地优先** — 配置、会话 `.jsonl`、长期记忆与进程状态都在本机；不依赖 PiForge 自己的云端。
 
 ## 🚀 从源码运行

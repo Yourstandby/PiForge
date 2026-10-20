@@ -71,6 +71,8 @@ import {
 import {
   listManagedProcesses,
   onManagedProcessesChange,
+  forceStopManagedProcess,
+  hasFailedProcessCleanup,
   removeManagedProcessEntry,
   restartManagedProcess,
   sendManagedProcessInput,
@@ -78,6 +80,12 @@ import {
   stopAllManagedProcesses,
   stopManagedProcess,
 } from "./managed-processes.ts";
+import {
+  ensureProcessInstanceState,
+  getProcessInstanceId,
+  shutdownProcessInstanceState,
+} from "./process-instance-store.ts";
+import { reapOrphanedProcesses } from "./crash-reaper.ts";
 import {
   clearAllBrowserSessionGrants,
   forgetSessionBrowserPermissions,
@@ -622,11 +630,18 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
           fail(state, frame.id, "E_INVALID_PARAMS", "cwd and command are required");
           return;
         }
+        const owner = params.owner;
+        if (owner !== undefined && owner !== "agent" && owner !== "user") {
+          fail(state, frame.id, "E_INVALID_PARAMS", "owner must be 'agent' or 'user'");
+          return;
+        }
+        const name = readOptionalString(params, "name");
         try {
           const process = startManagedProcess({
             cwd,
             command,
-            name: readOptionalString(params, "name"),
+            ...(name ? { name } : {}),
+            ...(owner ? { owner } : {}),
           });
           result(state, frame.id, { process });
         } catch (error) {
@@ -641,6 +656,15 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
           return;
         }
         respond(state, frame.id, stopManagedProcess(id), (ok) => ({ ok }));
+        return;
+      }
+      case "processes.forceStop": {
+        const id = readString(params, "id");
+        if (!id) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "id is required");
+          return;
+        }
+        respond(state, frame.id, forceStopManagedProcess(id), (ok) => ({ ok }));
         return;
       }
       case "processes.restart": {
@@ -1669,6 +1693,9 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       } catch (error) {
         log(`failed to stop managed processes: ${error instanceof Error ? error.message : String(error)}`);
       }
+      // Clean shutdown: remove this host's process-state file so the next
+      // start has nothing to reap.
+      shutdownProcessInstanceState({ keepForReaper: hasFailedProcessCleanup() });
 
       await new Promise<void>((resolve) => {
         if (!server) {
@@ -1715,6 +1742,21 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       log(`server error: ${error.message}`);
       options.onFatal?.(error);
     });
+
+    // Crash recovery: register this host instance, then reap process trees
+    // left by a previous host that is no longer heartbeating. Runs async so a
+    // slow identity check (PowerShell/ps) never delays readiness.
+    ensureProcessInstanceState();
+    void reapOrphanedProcesses({ ownInstanceId: getProcessInstanceId(), log })
+      .then((report) => {
+        if (report.reaped.length > 0) {
+          log(`crash reaper: terminated ${report.reaped.length} orphaned process tree(s)`);
+        }
+        if (report.failed.length > 0) {
+          log(`crash reaper: ${report.failed.length} record(s) left running (fail-closed)`);
+        }
+      })
+      .catch((error: unknown) => log(`crash reaper failed: ${errorText(error)}`));
 
     options.onReady?.(options.endpoint);
   }
