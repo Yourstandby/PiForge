@@ -15,23 +15,36 @@ Windows-first · Local-first · Electron + Next.js · MIT
 
 PiForge 把 Pi Coding Agent 的会话、工具调用与项目文件收进一个安静的三栏工作台：左侧管理会话，中间用浏览器式多会话标签并行对话，右侧常驻文件树、内置浏览器、终端与 Git 面板。界面采用 **霜蓝 × 米白** 的浅色体系，强调留白、克制和可读性。
 
-底层直接复用官方 [`@earendil-works/pi-coding-agent`](https://github.com/earendil-works/pi-coding-agent) SDK，不引入额外代理层或外部服务；会话、SSE 流式回复、工具执行与文件读写都在本地完成。v0.4.0 起采用 **Electron Main + Agent Host + Next/Renderer 三进程隔离**：即使 Next 重启，正在运行的 Agent 也不会中断。v0.5.0 在同一套隔离之上补齐了 **多智能体工作台**：MCP 全生命周期、辅助模型、浏览器分权、工具输出持久化、分支对话与子 Agent 并行协作全部由 Agent Host 承载。
+底层直接复用官方 [`@earendil-works/pi-coding-agent`](https://github.com/earendil-works/pi-coding-agent) SDK，不引入额外代理层或外部服务；会话、SSE 流式回复、工具执行与文件读写都在本地完成。v0.4.0 起采用 **Electron Main + Agent Host + Next/Renderer 三进程隔离**：即使 Next 重启，正在运行的 Agent 也不会中断。v0.5.0 在同一套隔离之上补齐了 **多智能体工作台**：MCP 全生命周期、辅助模型、浏览器分权、工具输出持久化、分支对话与子 Agent 并行协作全部由 Agent Host 承载。v0.6.0 把工作台推进到 **多会话 / 多工作区**：会话可以克隆到独立 Git worktree，内置浏览器搬迁为 Electron Main 持有的 `WebContentsView`，并新增可反复追问的常驻 Agent「舰队」，最后用三组 packaged smoke 对打包产物闭环验证。
 
-> 当前版本：`v0.5.0`（Multi-Agent Workspace · 阶段八收尾）
+> 当前版本：`v0.6.0`（Multi-Session Workspace · 阶段九 + 阶段十收尾）
 
 ## 🧱 进程架构
 
 ```text
-Electron Main ──spawn──▶ Next.js server ──HTTP/SSE──▶ Renderer / webview
+Electron Main ──spawn──▶ Next.js server ──HTTP/SSE──▶ Renderer（仅 UI + DOM 占位）
       │                        │
-      └──utilityProcess──▶ Agent Host（Pi SDK · tools · LTM · processes）
+      │                        └──bounds 上报──▶ Main 持有的 WebContentsView（内置浏览器）
+      └──utilityProcess──▶ Agent Host（Pi SDK · tools · LTM · processes · 舰队）
                                ▲
                                └── named pipe（无 TCP 端口）
 ```
 
-Agent Host 关闭时会先排空会话 JSONL、终止所有受管进程树；Next 侧不持有任何 Agent 会话状态。
+Agent Host 关闭时会先排空会话 JSONL、终止所有受管进程树；Next 侧不持有任何 Agent 会话状态。Git worktree 创建、浏览器命令执行与舰队生命周期同样留在 Host / Main，Renderer 只做展示与回传。
 
 ## ✦ 核心特性
+
+### v0.6.0 三大新能力
+
+1. **会话克隆到 Git Worktree** — 会话的「克隆 / 复刻」对话框新增工作区模式：选「目录克隆」沿用原来的整段复制，选「Worktree 克隆」则在新分支上创建隔离工作目录（目录与分支名留空自动生成，默认落在仓库同级），后续 Agent 的改动只落在这份 worktree 里。Git 操作、目标路径授权与分支 ownership 标记全部在 Agent Host 内完成，Next 只发一次 RPC 并拿到元数据。
+2. **内置浏览器迁入 Electron Main** — 浏览器从 Renderer 的 `webview` 改为 Main 持有的 `WebContentsView`：Renderer 只留一个 DOM 占位并上报 bounds，Host 下发的 `open` / `read` / `screenshot` 命令经命名管道交给 Main 执行，返回快照带 `windowId` / `ownerId` / `boundsGeneration`。窗口尺寸变化、视图挂载与 Host 重启后都会重新对齐，页面仍然只有一份。
+3. **Herdr 常驻舰队** — 与一次性 sub-agent 不同，`herdr_spawn` 启动的是常驻 Agent：独立 inMemory 会话、只读工具集与父级模型，可用 `herdr_message` 反复追问、`herdr_status` 轮询状态，最多 4 个并发、保留 20 条记录。生命周期状态机复用 managed process 枚举（`starting → running → stopping → stopped/crashed/exited`），右侧「舰队」Tab 只读展示状态、耗时、工具调用与未验证徽章，启停始终由 Host 决定。
+
+### v0.6.0 阶段十：闭环加固
+
+- **packaged smoke 三件套** — `smoke-packaged-events.mjs` 验证 Host → Next 的 `subagent_started / output / finished` 代理链路；`smoke-packaged-browser.mjs` 用命名管道 fake Host 驱动真实 `BrowserManager`（open / read / screenshot）；`smoke-packaged-fleet-ui.mjs` 真实最小化 / 恢复窗口，校验舰队面板刷新时间戳前进且保持只读。
+- **增量事件数组** — `subagents.changed` 广播额外携带有序 `events[]`，Next 直接按序转发，不在侧边维护事件队列。
+- **全量验证** — `npx tsc --noEmit`、`npm run lint`、`npm run build:agent-host`、`npm run build:electron`、`npm test`（885 pass / 0 fail / 3 skipped）与 `npm run pack` 全部通过，检查清单见 [`docs/releases/STAGE10-SMOKE.md`](./docs/releases/STAGE10-SMOKE.md)。
 
 ### v0.5.0 七大核心特性
 
@@ -58,7 +71,7 @@ Agent Host 关闭时会先排空会话 JSONL、终止所有受管进程树；Nex
 - **Plan 模式** — 输入框下方一键开启：Agent 只读分析并先输出修改计划，界面提供「批准并执行 / 拒绝」，批准后自动进入执行模式。
 - **内联代码 Diff** — `edit` / `write` 工具调用卡片里直接渲染绿加红代码 Diff（复用 `lib/diff-lines.ts` 的双行号渲染器），不用切到 Git 面板就能看清 AI 改了哪几行。
 - **极速快捷键** — `Ctrl+K` 清空对话、`Ctrl+Shift+C` 导出 Markdown、`Ctrl+Tab` 切换标签、`↑` / `↓` 回溯历史提示词，全部原生键盘事件实现。
-- **内置浏览器与终端** — 右侧面板拥有原生 Electron `webview` 浏览器（Agent 可通过 `web_preview` 读取页面文本 / 截图，自动跟随 `run_bg` 启动的本地服务）与零依赖 ANSI 终端日志流（bash 与后台进程输出合并展示）。
+- **内置浏览器与终端** — 右侧面板拥有 Main 持有的 `WebContentsView` 浏览器（Renderer 只负责占位与 bounds，Agent 通过 `web_preview` 读取页面文本 / 截图，自动跟随 `run_bg` 启动的本地服务）与零依赖 ANSI 终端日志流（bash 与后台进程输出合并展示）。
 - **独立 Git 面板** — 按目录分组的工作区改动、双行号可视化 Diff、底部填写提交信息一键 `git add -A` + commit。
 - **MCP 高级管理** — 设置面板内完成 MCP 生命周期管理：OAuth 登录 / 取消登录 / 退出登录、凭据刷新、连接测试；服务端提供 Resources 或 Resource Templates 时可直接浏览并预览内容。连接、OAuth 与资源读取全部在 Agent Host 内执行（凭据复用 Pi 的 `mcp-auth.json`），Next 只走 RPC 代理。默认采用「工具搜索」暴露方式，模型按需通过 `tool_search` 发现并激活 MCP 工具，避免把所有工具一次性塞给大模型。
 - **生图与决策模型** — 设置 → 辅助模型分别为生图与结构化决策选择 Provider / Model。输入框工具栏、`/imagine` 斜杠命令都能触发 `generate_image`：图片直接渲染在对话的工具卡片里（URL 或 Base64 Markdown 图片也支持）。`classify_decision` 用决策模型做分类 / 打分 / 是否判断，工具卡片以小徽章 + JSON 展示结果。两条通道的 API 调用全部在 Agent Host 内完成，未配置时不会向模型声明工具，不占提示词。
@@ -114,6 +127,10 @@ npm run dev:electron
 | `npm run smoke:agent-host` | Host RPC / 受管进程 / 会话冒烟 |
 | `npm run smoke:extension-ui` | Extension UI Bridge confirm 往返冒烟 |
 | `npm run smoke:host-reconnect` | Next 断线重连与事件重放冒烟 |
+| `npm run smoke:agent-isolation` | 客户端断连后 Host 继续流式输出、重连续传冒烟 |
+| `node scripts/smoke-packaged-events.mjs` | packaged 产物：Host → Next 子 Agent 事件代理 |
+| `node scripts/smoke-packaged-browser.mjs` | packaged 产物：Main BrowserManager + 命名管道 bridge |
+| `node scripts/smoke-packaged-fleet-ui.mjs` | packaged 产物：最小化 / 恢复后的舰队面板刷新与只读 |
 
 ## 📦 自行打包
 
@@ -136,7 +153,7 @@ npx electron-builder --dir      # → release/win-unpacked
 把目录压成可直接分发的压缩包：
 
 ```powershell
-Compress-Archive -Path 'release\win-unpacked\*' -DestinationPath 'release\PiForge-0.5.0-win-x64.zip' -CompressionLevel Optimal
+Compress-Archive -Path 'release\win-unpacked\*' -DestinationPath 'release\PiForge-0.6.0-win-x64.zip' -CompressionLevel Optimal
 ```
 
 > 国内网络环境可在安装依赖前设置 Electron 镜像，例如
@@ -163,19 +180,23 @@ Compress-Archive -Path 'release\win-unpacked\*' -DestinationPath 'release\PiForg
 | 右侧 Git Tab | 改动列表 → 点文件看双行号 Diff → 底部填写信息直接提交 |
 | 右侧 浏览器 / 终端 | 输入 `localhost:端口` 预览本地服务；终端实时显示 bash 与后台进程输出 |
 | 右侧文件树 | 点击文件 → 悬浮预览 / 编辑；拖动左边缘调整宽度（280–800px） |
+| 会话行「克隆」 | 选「Worktree 克隆」把当前会话复制到新分支的独立工作目录 |
+| 右侧 舰队 Tab | 查看 `herdr_spawn` 启动的常驻 Agent：状态、耗时、工具调用与未验证徽章 |
 
 ## 🏗 架构与目录
 
 ```text
-app/           Next.js 页面与 API 路由（sessions / agent / files / git / processes）
-components/    三栏工作台、悬浮文件窗、Markdown、输入框、配置面板
+agent-host/    Agent Host 进程：Pi SDK 会话、工具执行、LTM、受管进程、Git worktree 克隆、舰队
+contract/      宿主与 Next / Renderer 之间的 RPC 方法与域类型（单一事实来源）
+app/           Next.js 页面与 API 路由（sessions / agent / herdr / files / git / processes）
+components/    三栏工作台、悬浮文件窗、Markdown、输入框、配置面板、舰队面板
 hooks/         Agent 会话、事件流、草稿、面板与配置热重载
-lib/           RPC 管理、会话读写、模型路由、Git、受管进程、LTM
-electron/      主进程、preload、托盘、标题栏与更新逻辑
-scripts/       构建、图标生成、standalone 冒烟测试
+lib/           RPC 客户端、会话读写、模型路由、Git、受管进程、LTM（不持有会话状态）
+electron/      主进程、preload、托盘、标题栏、更新逻辑与 Main BrowserManager
+scripts/       构建、图标生成、standalone / packaged 冒烟测试
 ```
 
-PiForge 复用了上游的进程内 AgentSession + SSE 架构：服务端直接持有 SDK 会话，浏览器与 Electron 共用同一套 UI。详细约定见 [`AGENTS.md`](./AGENTS.md) 与 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)。
+PiForge 复用上游的进程内 AgentSession + SSE 架构，但会话本身只存在于 Agent Host：Next 通过命名管道 RPC 代理，Renderer 通过 HTTP/SSE 消费事件，Main 只管窗口、更新与浏览器视图。详细约定见 [`AGENTS.md`](./AGENTS.md) 与 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)。
 
 ## 🤝 参与贡献
 
