@@ -32,6 +32,12 @@ import {
 import { BrowserManager } from "./browser-manager";
 import { BrowserHostBridge } from "./browser-host-bridge";
 
+// Packaged browser smoke runs Electron without a visible window; software
+// rendering avoids capturePage's UnknownVizError on headless CI.
+if (process.env.SMOKE_BROWSER === "1") {
+  app.disableHardwareAcceleration();
+}
+
 // ---------------------------------------------------------------------------
 // Single Instance Lock
 // ---------------------------------------------------------------------------
@@ -1113,6 +1119,11 @@ app.on("activate", () => {
 });
 
 app.whenReady().then(async () => {
+  if (process.env.SMOKE_BROWSER === "1") {
+    const { runBrowserSmoke } = await import("./browser-smoke");
+    await runBrowserSmoke();
+    return;
+  }
   startupStartedAt = Date.now();
   logStartupTiming("app ready");
   registerIpcHandlers();
@@ -1144,6 +1155,12 @@ app.whenReady().then(async () => {
     logStartupTiming("next server ready");
     logInfo("Next.js server is ready");
     await showApp(port);
+
+    if (process.env.SMOKE_FLEET === "1" && mainWindow) {
+      const { runFleetSmoke } = await import("./fleet-smoke");
+      await runFleetSmoke(mainWindow);
+      return;
+    }
 
     // Auto-update check (production only, delayed 30s). Without an update feed
     // electron-builder emits no app-update.yml; skip the check instead of

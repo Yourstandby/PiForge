@@ -15,6 +15,10 @@ export interface HerdrAgentView {
   startedAt: number;
   endedAt: number | null;
   durationMs: number;
+  /** Convenience alias of endedAt; null while the agent is still alive. */
+  finishedAt: number | null;
+  /** Aggregate of verification.verified for quick fleet display. */
+  verified: boolean;
   turns: number;
   output: string;
   toolCalls: SubagentToolCallView[];

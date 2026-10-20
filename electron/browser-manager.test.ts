@@ -11,7 +11,12 @@ class FakeContents implements BrowserPageContents {
   actions: string[] = [];
   listeners = new Map<string, Array<(...args: unknown[]) => void>>();
 
-  async loadURL(url: string): Promise<void> { this.url = url; this.loaded.push(url); }
+  async loadURL(url: string): Promise<void> {
+    this.url = url;
+    this.loaded.push(url);
+    this.emit("did-start-loading");
+    this.emit("did-finish-load");
+  }
   getURL(): string { return this.url; }
   getTitle(): string { return this.title; }
   canGoBack(): boolean { return this.back; }
@@ -29,6 +34,9 @@ class FakeContents implements BrowserPageContents {
   }
   removeListener(event: string, listener: (...args: unknown[]) => void): void {
     this.listeners.set(event, (this.listeners.get(event) ?? []).filter((item) => item !== listener));
+  }
+  emit(event: string): void {
+    for (const listener of this.listeners.get(event) ?? []) listener();
   }
 }
 
@@ -60,6 +68,7 @@ test("Main browser manager owns navigation, bounds and visibility", async () => 
 
 test("Main browser manager executes Host commands", async () => {
   const { manager, contents } = setup();
+  manager.setBounds({ x: 0, y: 0, width: 800, height: 600 }, true);
   const open = await manager.executeCommand({ id: "1", kind: "open", url: "http://localhost:5173" });
   assert.equal(open.ok, true);
   assert.equal(open.url, "http://localhost:5173");
@@ -78,6 +87,38 @@ test("Main browser manager executes Host commands", async () => {
   assert.deepEqual(contents.actions, ["back", "forward", "reload"]);
 });
 
+test("Main browser manager refuses reads and screenshots before load", async () => {
+  const { manager } = setup();
+  const read = await manager.executeCommand({ id: "r", kind: "read" });
+  assert.equal(read.ok, false);
+  assert.equal(read.code, "BROWSER_NOT_READY");
+  const shot = await manager.executeCommand({ id: "s", kind: "screenshot" });
+  assert.equal(shot.ok, false);
+  assert.equal(shot.code, "BROWSER_NOT_READY");
+});
+
+test("bounds generation and loading readiness are independent", async () => {
+  const { manager, contents } = setup();
+  manager.setBounds({ x: 0, y: 0, width: 800, height: 600 }, true);
+  const generation = manager.getState().boundsGeneration;
+  assert.equal(generation, 1);
+  await manager.navigate("http://localhost:3000");
+  contents.emit("did-start-loading");
+  assert.equal(manager.getState().ready, false);
+  assert.equal(manager.getState().boundsGeneration, generation);
+  manager.setBounds({ x: 0, y: 0, width: 0, height: 0 }, true);
+  assert.equal(manager.getState().boundsGeneration, generation, "invalid bounds must not bump generation");
+});
+
+test("hidden views cannot be captured", async () => {
+  const { manager } = setup();
+  manager.setBounds({ x: 0, y: 0, width: 800, height: 600 }, false);
+  await manager.navigate("http://localhost:3000");
+  const shot = await manager.executeCommand({ id: "hidden", kind: "screenshot" });
+  assert.equal(shot.ok, false);
+  assert.equal(shot.code, "BROWSER_NOT_READY");
+});
+
 test("Main browser manager rejects non-http navigation", async () => {
   const { manager } = setup();
   await assert.rejects(() => manager.navigate("file:///etc/passwd"), /Only http/);
@@ -87,6 +128,7 @@ test("Main browser manager rejects non-http navigation", async () => {
 
 test("Main browser manager can stop loading", async () => {
   const { manager, contents } = setup();
+  manager.setBounds({ x: 0, y: 0, width: 800, height: 600 }, true);
   await manager.navigate("http://localhost:3000");
   manager.stop();
   assert.deepEqual(contents.actions, ["stop"]);

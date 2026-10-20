@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import {
+  assertHerdrMessageAllowed,
   getHerdrAgent,
   listHerdrAgents,
   resetHerdrForTest,
@@ -99,12 +100,18 @@ test("Herdr message keeps context and applies the verification guardrail", { tim
     const result = await sendHerdrMessage(spawned.id, "Run the test suite and report.");
     assert.equal(result.ok, true, result.error);
     assert.equal(result.agent.turns, 2);
-    assert.equal(result.agent.verification.verified, true);
-    assert.match(result.agent.verification.reason, /通过证据/);
-    assert.match(result.text, /5 passed/);
+    assert.equal(result.agent.verification.verified, false);
+    assert.match(result.agent.verification.reason, /只有文本自述/);
   } finally {
     await env.cleanup();
   }
+});
+
+test("Herdr rejects messages in stopping or terminal states", () => {
+  assert.throws(() => assertHerdrMessageAllowed("stopping"), /stopping/);
+  assert.throws(() => assertHerdrMessageAllowed("stopped"), /stopped/);
+  assert.throws(() => assertHerdrMessageAllowed("crashed"), /crashed/);
+  assert.doesNotThrow(() => assertHerdrMessageAllowed("running"));
 });
 
 test("Herdr stop follows stopping → stopped and cannot be stopped twice", { timeout: 30000 }, async () => {

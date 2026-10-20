@@ -53,6 +53,7 @@ function statusLine(agent: ReturnType<typeof getHerdrAgent>): string {
   return [
     `- ${agent.name} (${agent.id}): ${agent.status} / ${agent.activity}`,
     `  turns: ${agent.turns} · duration: ${Math.round(agent.durationMs / 1000)}s · verified: ${agent.verification.verified ? "yes" : "no"}`,
+    `  startedAt: ${new Date(agent.startedAt).toISOString()} · finishedAt: ${agent.finishedAt ? new Date(agent.finishedAt).toISOString() : "running"}`,
     agent.error ? `  error: ${agent.error}` : "",
   ].filter(Boolean).join("\n");
 }
@@ -152,6 +153,7 @@ export function createDesktopHerdrFactory(): ExtensionFactory {
               id: result.agent.id,
               status: result.agent.status,
               verified: result.agent.verification.verified,
+              finishedAt: result.agent.finishedAt,
               ...(result.error ? { error: result.error } : {}),
             },
           );

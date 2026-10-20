@@ -22,6 +22,11 @@ export interface BrowserHostBridgeOptions {
   connect: (endpoint: string) => BridgeSocket;
   getManager: () => BrowserManager | null;
   onAgentOpen?: (url: string) => void;
+  /** Smoke hook; production callers omit it. */
+  onCommandResult?: (command: BrowserCommand, result: BrowserCommandResult) => void;
+  /** Reserved for future multi-window sharing; passed through, not implemented. */
+  windowId?: string;
+  ownerId?: string;
   pollMs?: number;
   snapshotMs?: number;
 }
@@ -194,9 +199,15 @@ export class BrowserHostBridge {
       await this.postResult({ id: command.id, ok: false, error: "Browser view is not attached" });
       return;
     }
-    if (command.kind === "open" && command.url) this.options.onAgentOpen?.(command.url);
-    const result = await manager.executeCommand(command);
+    const enriched = {
+      ...command,
+      ...(this.options.windowId ? { windowId: this.options.windowId } : {}),
+      ...(this.options.ownerId ? { ownerId: this.options.ownerId } : {}),
+    };
+    if (enriched.kind === "open" && enriched.url) this.options.onAgentOpen?.(enriched.url);
+    const result = await manager.executeCommand(enriched);
     await this.postResult(result);
+    this.options.onCommandResult?.(enriched, result);
     await this.pushSnapshot();
   }
 
@@ -213,8 +224,13 @@ export class BrowserHostBridge {
     if (!manager || !this.socket) return;
     const snapshot = await manager.snapshot();
     if (!snapshot) return;
+    const owned = {
+      ...snapshot,
+      ...(this.options.windowId ? { windowId: this.options.windowId } : {}),
+      ...(this.options.ownerId ? { ownerId: this.options.ownerId } : {}),
+    };
     try {
-      await this.call("browser.pushSnapshot", { snapshot });
+      await this.call("browser.pushSnapshot", { snapshot: owned });
     } catch {
       // Best effort; the next tick retries.
     }

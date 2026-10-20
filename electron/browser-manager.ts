@@ -8,7 +8,13 @@
 // Keep the Electron project self-contained: importing contract/ would break
 // the electron tsconfig rootDir. These shapes mirror contract/domains/browser.
 export type BrowserCommandKind = "read" | "screenshot" | "open" | "back" | "forward" | "reload";
-export interface BrowserCommand { id: string; kind: BrowserCommandKind; url?: string }
+export interface BrowserCommand {
+  id: string;
+  kind: BrowserCommandKind;
+  url?: string;
+  windowId?: string;
+  ownerId?: string;
+}
 export interface BrowserCommandResult {
   id: string;
   ok: boolean;
@@ -17,6 +23,9 @@ export interface BrowserCommandResult {
   title?: string;
   image?: { data: string; mimeType: string };
   error?: string;
+  code?: string;
+  ready?: boolean;
+  boundsGeneration?: number;
 }
 export interface BrowserPageSnapshot {
   url: string;
@@ -27,6 +36,10 @@ export interface BrowserPageSnapshot {
   webContentsId?: number | null;
   viewport?: { width: number; height: number } | null;
   scrollY?: number;
+  ready?: boolean;
+  boundsGeneration?: number;
+  windowId?: string;
+  ownerId?: string;
   updatedAt: number;
 }
 
@@ -70,6 +83,8 @@ export interface BrowserState {
   canGoBack: boolean;
   canGoForward: boolean;
   visible: boolean;
+  ready: boolean;
+  boundsGeneration: number;
 }
 
 export interface BrowserManagerOptions {
@@ -106,6 +121,8 @@ export class BrowserManager {
   private surface: BrowserSurface | null = null;
   private visible = false;
   private loading = false;
+  private ready = false;
+  private boundsGeneration = 0;
   private bounds: BrowserBounds = { x: 0, y: 0, width: 0, height: 0 };
   private listeners = new Set<(state: BrowserState) => void>();
   private readonly isAllowedUrl: (url: string) => boolean;
@@ -127,6 +144,11 @@ export class BrowserManager {
     const emit = () => this.emitState();
     contents.on("did-start-loading", () => {
       this.loading = true;
+      this.ready = false;
+      this.emitState();
+    });
+    contents.on("did-finish-load", () => {
+      this.ready = true;
       this.emitState();
     });
     contents.on("did-stop-loading", () => {
@@ -174,17 +196,40 @@ export class BrowserManager {
       canGoBack: contents?.canGoBack() ?? false,
       canGoForward: contents?.canGoForward() ?? false,
       visible: this.visible,
+      ready: this.ready,
+      boundsGeneration: this.boundsGeneration,
     };
   }
 
   setBounds(bounds: BrowserBounds, visible = this.visible): void {
-    this.bounds = normalizeBounds(bounds);
+    const next = normalizeBounds(bounds);
+    const valid = next.width > 0 && next.height > 0;
+    const changed = valid && (
+      next.x !== this.bounds.x || next.y !== this.bounds.y ||
+      next.width !== this.bounds.width || next.height !== this.bounds.height
+    );
+    this.bounds = next;
     this.visible = visible;
-    if (this.visible && this.bounds.width > 0 && this.bounds.height > 0) {
-      this.ensureSurface().setBounds(this.bounds);
-    }
+    if (changed) this.boundsGeneration += 1;
+    if (this.visible && valid) this.ensureSurface().setBounds(this.bounds);
     this.surface?.setVisible(this.visible);
     this.emitState();
+  }
+
+  private isReady(): boolean {
+    return this.ready && this.visible && this.boundsGeneration > 0 &&
+      this.bounds.width > 0 && this.bounds.height > 0;
+  }
+
+  private notReadyResult(id: string): BrowserCommandResult {
+    return {
+      id,
+      ok: false,
+      error: "Browser is not ready (loading or no valid bounds)",
+      code: "BROWSER_NOT_READY",
+      ready: this.ready,
+      boundsGeneration: this.boundsGeneration,
+    };
   }
 
   setVisible(visible: boolean): void {
@@ -202,6 +247,7 @@ export class BrowserManager {
     if (!this.isAllowedUrl(url)) throw new Error("Only http(s) pages can be previewed");
     // Visibility is owned by the renderer placeholder: an agent-driven open
     // must not paint the view over whatever tab the user is currently on.
+    this.ready = false;
     const surface = this.ensureSurface();
     await surface.webContents.loadURL(url);
     this.emitState();
@@ -222,6 +268,7 @@ export class BrowserManager {
           };
         }
         case "read": {
+          if (!this.isReady()) return this.notReadyResult(command.id);
           const raw = (await contents.executeJavaScript(SNAPSHOT_SCRIPT)) as {
             text?: string;
             url?: string;
@@ -236,6 +283,7 @@ export class BrowserManager {
           };
         }
         case "screenshot": {
+          if (!this.isReady()) return this.notReadyResult(command.id);
           if (contents.isDestroyed?.()) return { id: command.id, ok: false, error: "browser destroyed" };
           const image = await contents.capturePage();
           if (image.isEmpty?.()) return { id: command.id, ok: false, error: "empty screenshot" };
@@ -245,6 +293,8 @@ export class BrowserManager {
             image: { data: Buffer.from(image.toPNG()).toString("base64"), mimeType: "image/png" },
             url: contents.getURL(),
             title: contents.getTitle(),
+            ready: true,
+            boundsGeneration: this.boundsGeneration,
           };
         }
         case "back":
@@ -271,6 +321,21 @@ export class BrowserManager {
   async snapshot(): Promise<BrowserPageSnapshot | null> {
     const contents = this.surface?.webContents;
     if (!contents) return null;
+    if (!this.ready) {
+      return {
+        url: contents.getURL(),
+        title: contents.getTitle(),
+        text: "",
+        truncated: false,
+        native: true,
+        webContentsId: null,
+        viewport: null,
+        scrollY: 0,
+        ready: false,
+        boundsGeneration: this.boundsGeneration,
+        updatedAt: Date.now(),
+      };
+    }
     try {
       const raw = (await contents.executeJavaScript(SNAPSHOT_SCRIPT)) as {
         text?: string;
@@ -290,6 +355,8 @@ export class BrowserManager {
         webContentsId: null,
         viewport: { width: raw.width ?? 0, height: raw.height ?? 0 },
         scrollY: raw.scrollY ?? 0,
+        ready: this.ready,
+        boundsGeneration: this.boundsGeneration,
         updatedAt: Date.now(),
       };
     } catch {
@@ -302,6 +369,8 @@ export class BrowserManager {
         webContentsId: null,
         viewport: null,
         scrollY: 0,
+        ready: this.ready,
+        boundsGeneration: this.boundsGeneration,
         updatedAt: Date.now(),
       };
     }

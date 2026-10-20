@@ -52,7 +52,12 @@ export async function GET(req: Request) {
 
       try {
         subscription = await client.subscribe("subagents", (payload) => {
-          encode({ type: "subagents", agents: payload.agents, event: payload.event });
+          encode({
+            type: "subagents",
+            agents: payload.agents,
+            event: payload.event,
+            events: payload.events,
+          });
         });
       } catch {
         cleanup();

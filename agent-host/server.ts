@@ -256,8 +256,13 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
   const offProcessesChange = onManagedProcessesChange(() => scheduleBroadcast("processes"));
   const offTerminalChange = onTerminalLogChange(() => scheduleBroadcast("terminal"));
   let lastSubagentEvent: SubagentLifecycleEvent | undefined;
+  let pendingSubagentEvents: SubagentLifecycleEvent[] = [];
   const offSubagentsChange = onSubagentsChange((event) => {
-    lastSubagentEvent = event;
+    if (event) {
+      lastSubagentEvent = event;
+      pendingSubagentEvents.push(event);
+      if (pendingSubagentEvents.length > 100) pendingSubagentEvents.shift();
+    }
     scheduleBroadcast("subagents");
   });
 
@@ -420,7 +425,9 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       const payload: HostEventPayloads["subagents.changed"] = {
         agents: listSubagents(),
         ...(lastSubagentEvent ? { event: lastSubagentEvent } : {}),
+        ...(pendingSubagentEvents.length > 0 ? { events: [...pendingSubagentEvents] } : {}),
       };
+      pendingSubagentEvents = [];
       for (const subscription of targets) sendEvent(subscription, topic, payload);
       return;
     }

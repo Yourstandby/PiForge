@@ -12,6 +12,8 @@ export interface BrowserCommand {
   kind: BrowserCommandKind;
   /** Only for `open`: absolute http(s) URL. */
   url?: string;
+  windowId?: string;
+  ownerId?: string;
 }
 
 export interface BrowserPageSnapshot {
@@ -25,6 +27,10 @@ export interface BrowserPageSnapshot {
   webContentsId?: number | null;
   viewport?: { width: number; height: number } | null;
   scrollY?: number;
+  ready?: boolean;
+  boundsGeneration?: number;
+  windowId?: string;
+  ownerId?: string;
   updatedAt: number;
 }
 
@@ -37,4 +43,7 @@ export interface BrowserCommandResult {
   /** PNG payload for `screenshot` commands (base64, no data: prefix). */
   image?: { data: string; mimeType: string };
   error?: string;
+  code?: string;
+  ready?: boolean;
+  boundsGeneration?: number;
 }

@@ -24,6 +24,8 @@ export function HerdrPanel() {
   const [agents, setAgents] = useState<HerdrAgentView[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [stopping, setStopping] = useState<string | null>(null);
+  const [lastLoadedAt, setLastLoadedAt] = useState(() => Date.now());
+  const [refreshCount, setRefreshCount] = useState(0);
 
   const load = useCallback(async () => {
     try {
@@ -32,6 +34,8 @@ export function HerdrPanel() {
       if (!res.ok || data.error) throw new Error(data.error ?? `HTTP ${res.status}`);
       setAgents(data.agents ?? []);
       setError(null);
+      setLastLoadedAt(Date.now());
+      setRefreshCount((value) => value + 1);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -40,7 +44,21 @@ export function HerdrPanel() {
   useEffect(() => {
     void load();
     const id = window.setInterval(() => void load(), 2_000);
-    return () => window.clearInterval(id);
+    // Chromium throttles timers in hidden/minimized windows. Refresh as soon
+    // as the window becomes visible/focused again instead of waiting.
+    const refresh = () => void load();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", refresh);
+    window.addEventListener("pageshow", refresh);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("pageshow", refresh);
+    };
   }, [load]);
 
   const stop = async (id: string) => {
@@ -60,7 +78,12 @@ export function HerdrPanel() {
   };
 
   return (
-    <div className="flex flex-col gap-1 px-1.5 py-1">
+    <div
+      className="flex flex-col gap-1 px-1.5 py-1"
+      data-testid="herdr-panel"
+      data-last-loaded-at={lastLoadedAt}
+      data-refresh-count={refreshCount}
+    >
       {error && <p className="px-1.5 text-[11px] text-danger">{error}</p>}
       {agents.length === 0 ? (
         <p className="px-1.5 py-2 text-[11px] leading-5 text-ink-faint">
@@ -73,8 +96,12 @@ export function HerdrPanel() {
             <div className="flex items-center gap-1.5">
               <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: STATUS_COLOR[agent.status] ?? "#9CA3AF" }} />
               <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-ink" title={agent.task}>{agent.name}</span>
-              {!agent.verification.verified && agent.status === "running" && agent.activity === "idle" && (
-                <span title={agent.verification.reason} className="rounded-full border border-[#F0E0C2] bg-[#FFF9EE] px-1.5 py-0.5 text-[9.5px] font-medium text-[#9A6B1F]">未验证</span>
+              {(agent.status === "stopped" || agent.status === "crashed" || agent.activity === "idle") && (
+                agent.verification.verified ? (
+                  <span title={agent.verification.reason} className="rounded-full border border-[#CBE6D5] bg-[#F2FBF5] px-1.5 py-0.5 text-[9.5px] font-medium text-[#2F7A55]">已验证</span>
+                ) : (
+                  <span title={agent.verification.reason} className="rounded-full border border-[#F0E0C2] bg-[#FFF9EE] px-1.5 py-0.5 text-[9.5px] font-medium text-[#9A6B1F]">未验证</span>
+                )
               )}
               <span className="shrink-0 text-[10px] text-ink-faint">{agent.status} / {agent.activity}</span>
               <span className="shrink-0 text-[10px] tabular-nums text-ink-faint">{duration(agent)}</span>
@@ -85,7 +112,9 @@ export function HerdrPanel() {
               )}
             </div>
             <p className="mt-1 line-clamp-2 text-[10.5px] leading-4 text-ink-faint" title={agent.task}>{agent.task}</p>
-            <p className="mt-1 truncate font-mono text-[10px] text-ink-muted">{agent.turns} turns · {agent.toolCalls.length} tool calls</p>
+            <p className="mt-1 truncate font-mono text-[10px] text-ink-muted">
+              {agent.turns} turns · {agent.toolCalls.length} tool calls · {agent.verified ? "verified" : "unverified"}
+            </p>
           </div>
         ))
       )}

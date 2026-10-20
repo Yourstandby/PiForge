@@ -84,6 +84,30 @@ export function requestedBrowserPermissions(
   return url ? ["read", "interact"] : ["read"];
 }
 
+function browserNotReadyResult(): ReturnType<typeof textResult> {
+  const snapshot = getBrowserSnapshot();
+  const ready = snapshot?.ready === true;
+  const generation = snapshot?.boundsGeneration ?? 0;
+  return textResult(
+    `BROWSER_NOT_READY: the Main-owned browser is ${ready ? "still loading" : "not loaded"} or has no valid bounds (generation ${generation}). Retry after the page finishes loading.`,
+    {
+      code: "BROWSER_NOT_READY",
+      ok: false,
+      ready,
+      boundsGeneration: generation,
+      status: {
+        loading: getBrowserSnapshot() === null ? "no-snapshot" : ready ? "loading" : "not-ready",
+      },
+    },
+    true,
+  );
+}
+
+function browserReadyForRead(): boolean {
+  const snapshot = getBrowserSnapshot();
+  return Boolean(snapshot?.ready === true && (snapshot.boundsGeneration ?? 0) > 0);
+}
+
 function textResult(text: string, details: Record<string, unknown> = {}, isError = false) {
   return {
     content: [{ type: "text" as const, text }],
@@ -332,6 +356,7 @@ export function createDesktopBrowserFactory(): ExtensionFactory {
           const opened = await requestBrowserCommand({ kind: "open", url }, OPEN_TIMEOUT_MS);
           if (!opened.ok) return textResult(`Could not open ${url}: ${opened.error ?? "unknown error"}`, { error: opened.error }, true);
         }
+        if (!browserReadyForRead()) return browserNotReadyResult();
         if (action === "screenshot") {
           const shot = await requestBrowserCommand({ kind: "screenshot" }, SCREENSHOT_TIMEOUT_MS);
           if (!shot.ok || !shot.image?.data) return textResult(`Screenshot failed: ${shot.error ?? "no image returned"}`, { error: shot.error }, true);
@@ -344,7 +369,10 @@ export function createDesktopBrowserFactory(): ExtensionFactory {
           };
         }
         const read = await requestBrowserCommand({ kind: "read" }, READ_TIMEOUT_MS);
-        if (!read.ok) return textResult(`Could not read the page: ${read.error ?? "unknown error"}`, { error: read.error }, true);
+        if (!read.ok) {
+          if (read.code === "BROWSER_NOT_READY") return browserNotReadyResult();
+          return textResult(`Could not read the page: ${read.error ?? "unknown error"}`, { error: read.error }, true);
+        }
         const { text, truncated } = clip(read.text ?? "", maxChars);
         return textResult(
           pageHeader([
@@ -371,11 +399,15 @@ export function createDesktopBrowserFactory(): ExtensionFactory {
       async execute(_toolCallId, params) {
         const url = typeof params.url === "string" && params.url.trim() ? normalizeBrowserUrl(params.url) : undefined;
         if (params.action === "open" && !url) return textResult("`open` needs a `url` parameter.", { error: "missing url" }, true);
+        if (params.action !== "open" && !browserReadyForRead()) return browserNotReadyResult();
         const command = params.action === "open"
           ? { kind: "open" as const, url }
           : { kind: params.action };
         const result = await requestBrowserCommand(command, OPEN_TIMEOUT_MS);
-        if (!result.ok) return textResult(`Browser ${params.action} failed: ${result.error ?? "unknown error"}`, { error: result.error }, true);
+        if (!result.ok) {
+          if (result.code === "BROWSER_NOT_READY") return browserNotReadyResult();
+          return textResult(`Browser ${params.action} failed: ${result.error ?? "unknown error"}`, { error: result.error }, true);
+        }
         return textResult(
           pageHeader([`Browser ${params.action} complete.`, `URL: ${result.url ?? url ?? "unknown"}`, result.title ? `Title: ${result.title}` : ""]),
           { url: result.url ?? url ?? null, title: result.title ?? null, source: "main-webcontentsview" },

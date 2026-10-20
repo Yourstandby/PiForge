@@ -65,6 +65,8 @@ function snapshot(record: HerdrRecord): HerdrAgentView {
   return {
     ...record.view,
     durationMs: Math.max(0, (record.view.endedAt ?? Date.now()) - record.view.startedAt),
+    finishedAt: record.view.endedAt,
+    verified: record.view.verification.verified,
     toolCalls: record.view.toolCalls.map((call) => ({ ...call })),
     verification: { ...record.view.verification, evidence: [...record.view.verification.evidence] },
   };
@@ -264,6 +266,8 @@ export function spawnHerdrAgent(input: SpawnHerdrInput): HerdrAgentView {
       startedAt: Date.now(),
       endedAt: null,
       durationMs: 0,
+      finishedAt: null,
+      verified: false,
       turns: 0,
       output: "",
       toolCalls: [],
@@ -286,6 +290,13 @@ export function spawnHerdrAgent(input: SpawnHerdrInput): HerdrAgentView {
   return snapshot(record);
 }
 
+/** State-machine guard used by both the manager and its unit test. */
+export function assertHerdrMessageAllowed(status: ManagedProcessStatus): void {
+  if (status === "stopping" || isTerminalStatus(status)) {
+    throw new Error(`Fleet agent is ${status}; no messages accepted (status: ${status})`);
+  }
+}
+
 export interface HerdrMessageResult {
   ok: boolean;
   agent: HerdrAgentView;
@@ -296,7 +307,7 @@ export interface HerdrMessageResult {
 export async function sendHerdrMessage(id: string, message: string): Promise<HerdrMessageResult> {
   const record = records.get(id);
   if (!record) throw new Error(`No fleet agent with id "${id}"`);
-  if (isTerminalStatus(record.view.status)) throw new Error("Fleet agent is no longer running");
+  assertHerdrMessageAllowed(record.view.status);
   const trimmed = message?.trim();
   if (!trimmed) throw new Error("message is required");
   await record.tail;
