@@ -11,7 +11,7 @@ import type {
   ExtensionAPI,
   ExtensionFactory,
   InlineExtension,
-} from "@earendil-works/pi-coding-agent";
+} from "./sdk-adapter.ts";
 import {
   HISTORY_DEFAULT_LIMIT,
   HISTORY_MAX_LIMIT,

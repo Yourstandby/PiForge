@@ -16,9 +16,9 @@ import {
   SessionManager,
   createAgentSession,
   getAgentDir,
-} from "@earendil-works/pi-coding-agent";
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Model } from "@earendil-works/pi-ai";
+} from "./sdk-adapter.ts";
+import type { ThinkingLevel } from "./sdk-adapter.ts";
+import type { Model } from "./sdk-adapter.ts";
 import type {
   SubagentLifecycleEvent,
   SubagentToolCallView,

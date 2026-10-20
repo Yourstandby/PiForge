@@ -7,13 +7,13 @@
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { ThinkingLevel } from "./sdk-adapter.ts";
 import {
   DefaultResourceLoader,
   SessionManager,
   createAgentSession,
   getAgentDir,
-} from "@earendil-works/pi-coding-agent";
+} from "./sdk-adapter.ts";
 import type { SubagentToolCallView } from "../contract/domains/subagents.ts";
 import { getSharedAuxRuntime } from "./aux-models.ts";
 import type {

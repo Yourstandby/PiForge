@@ -12,7 +12,7 @@ import type {
   ExtensionAPI,
   ExtensionFactory,
   InlineExtension,
-} from "@earendil-works/pi-coding-agent";
+} from "./sdk-adapter.ts";
 import {
   BROWSER_PREVIEW_TOOL_NAME,
   getBrowserSnapshot,

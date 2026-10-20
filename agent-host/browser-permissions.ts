@@ -12,7 +12,7 @@
  * "allow once for this session" path, in this module's in-memory map keyed by
  * session id. All checks run in the Agent Host.
  */
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "./sdk-adapter.ts";
 import { readDesktopSettings } from "../lib/desktop-settings.ts";
 
 export type BrowserPermissionKind = "read" | "interact";

@@ -26,7 +26,7 @@ import {
 import { stripTypeScriptTypes } from "node:module";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import vm from "node:vm";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "./sdk-adapter.ts";
 import { writeFileAtomic } from "../lib/atomic-write.ts";
 import type {
   PluginPanelView,

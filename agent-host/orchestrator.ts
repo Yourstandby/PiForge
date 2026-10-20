@@ -16,7 +16,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "./sdk-adapter.ts";
 import type {
   OrchestratorSpawnInput,
   OrchestratorTaskView,

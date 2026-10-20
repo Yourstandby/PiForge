@@ -1,7 +1,7 @@
 /**
  * Inline pi extension: Ask-mode confirms for bash/write/edit.
  */
-import type { ExtensionAPI, ExtensionFactory, InlineExtension } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionFactory, InlineExtension } from "./sdk-adapter.ts";
 import {
   askBlockResult,
   needsAskConfirm,

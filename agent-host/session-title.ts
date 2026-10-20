@@ -1,5 +1,5 @@
-import type { AssistantMessage, Context, Model, Api } from "@earendil-works/pi-ai";
-import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { AssistantMessage, Context, Model, Api } from "./sdk-adapter.ts";
+import type { ModelRuntime } from "./sdk-adapter.ts";
 import { contentToText } from "./ltm/observe-hooks.ts";
 
 /**

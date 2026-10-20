@@ -1,7 +1,7 @@
 import { existsSync } from "fs";
 import { unlink } from "fs/promises";
 import { randomUUID } from "node:crypto";
-import { createAgentSession, createCodemodeExtension, createMcpExtension, createToolSearchExtension, SessionManager } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, createCodemodeExtension, createMcpExtension, createToolSearchExtension, SessionManager } from "./sdk-adapter.ts";
 import type { AgentSessionLike, ToolInfo } from "../lib/pi-types.ts";
 import {
   DEFAULT_AGENT_MODE,
@@ -617,7 +617,7 @@ export class AgentSessionWrapper {
         if (this.inner.isStreaming) throw new Error("Session is streaming");
         // pi's compact() does not guard against empty messagesToSummarize — use findCutPoint
         // to pre-check and throw a clean error instead of generating a useless empty summary.
-        const { findCutPoint, DEFAULT_COMPACTION_SETTINGS } = await import("@earendil-works/pi-coding-agent");
+        const { findCutPoint, DEFAULT_COMPACTION_SETTINGS } = await import("./sdk-adapter.ts");
         const pathEntries = this.inner.sessionManager.getBranch() as Array<{ type: string }>;
         const settings = { ...DEFAULT_COMPACTION_SETTINGS, ...this.inner.settingsManager.getCompactionSettings() };
         let prevCompactionIndex = -1;
@@ -905,7 +905,7 @@ export async function startRpcSession(
       SessionManager,
       getAgentDir,
       DefaultResourceLoader,
-    } = await import("@earendil-works/pi-coding-agent");
+    } = await import("./sdk-adapter.ts");
     const agentDir = getAgentDir();
     const desktop = readDesktopSettings(agentDir);
 

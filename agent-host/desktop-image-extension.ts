@@ -11,7 +11,7 @@ import type {
   ExtensionAPI,
   ExtensionFactory,
   InlineExtension,
-} from "@earendil-works/pi-coding-agent";
+} from "./sdk-adapter.ts";
 import type { ImageGenerationReport } from "../contract/domains/aux-models.ts";
 import { AuxModelError, generateImage } from "./aux-models.ts";
 import { GENERATE_IMAGE_TOOL_NAME } from "./aux-tool-names.ts";
