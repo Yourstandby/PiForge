@@ -140,6 +140,11 @@ mac:
 dmg:
   title: "PiForge ${version}"
 
-# PiForge does not publish an update feed yet. electron-builder therefore does
-# not emit app-update.yml, and electron/main.ts skips the update check when
-# that file is absent.
+# Update source is fixed at build time: electron-builder writes app-update.yml
+# with this GitHub Releases feed, and electron/main.ts never calls setFeedURL.
+# Changing the feed requires a new build, not an env var or runtime toggle.
+publish:
+  provider: github
+  owner: Yourstandby
+  repo: PiForge
+  releaseType: release
