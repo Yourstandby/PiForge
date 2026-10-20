@@ -3,7 +3,7 @@
 > 本文档是 PiForge 的**边界契约**，不是功能说明书。
 > 与 `AGENTS.md` 冲突时以 `AGENTS.md` 的铁律为准；本文档负责解释“为什么这样划边界”。
 > 项目：PiForge — Pi Coding Agent 的极简 Windows 桌面工作台
-> 当前版本：v0.5.0（已打包、已打 tag，未推送未发 Release）
+> 当前版本：v0.5.0（阶段八已完成：自动更新、发布管线、PowerShell、Sub-Agent 验证、会话韧性、Extension UI Bridge 冒烟）
 
 ---
 
@@ -91,6 +91,15 @@ PiForge/
 | 会话标题与搜索 | Host 生成 + Renderer 展示 | 后台生成、手动优先、搜索、按日期分组 |
 | 文档与测试 | 全仓 | packaged smoke 含 Extension UI Bridge confirm 用例 |
 
+### 6.1 阶段八完成后的固定契约
+
+- **更新源**：`electron-builder.yml` 的 `publish` 固定为 GitHub Releases；更新检查只在打包产物且存在 `app-update.yml` 时启动，`electron/main.ts` 从不调用 `setFeedURL`。用户确认后才下载；`autoInstallOnAppQuit` 保证任务结束后退出安装。
+- **发布产物**：`.github/workflows/desktop-packages.yml` 由 `v*` tag 或 `workflow_dispatch` 触发；Windows 必须同时产出 NSIS、ZIP、`latest.yml` 与 `SHA256SUMS.txt`，校验数量后再上传 Release。
+- **PowerShell**：Host `powershell.ts` 解析 `pwsh` → `powershell`，固定非交互参数与 UTF-8 编码；前台 `powershell` 工具由 SDK 执行，后台 `run_bg shell:"powershell"` 进入受管进程状态机（readiness/stop/restart/清理一致）。仍是生命周期控制，不是沙箱。
+- **Sub-Agent 验证**：Host `subagent-verification.ts` 只扫描完成报告与工具调用，不重跑测试（子 Agent 只读）；`verified:false` 仅在 UI 与工具结果中提示，默认不阻断。
+- **会话韧性**：标题只在首条用户消息后后台生成，`shouldAutoNameSession` 保证手动命名优先；搜索覆盖标题/首条消息/id；项目内按本地日历日期分组；`session-loader-api.ts` 提供 15s deadline + 单次重试（超时/网络/5xx）。
+- **Extension UI Bridge**：Host 持有 UUID + Deferred Promise，Renderer 通过 preload 回传；`smoke-extension-ui-bridge.mjs` 在 packaged smoke 中触发真实 confirm，验证 Host 不挂起且响应能恢复扩展。
+
 ## 7. 与对标项目的取舍
 
 | 项目 | 学 | 不学 | 原因 |
@@ -102,4 +111,4 @@ PiForge/
 
 ## 8. 给新会话的一句话
 
-读 `AGENTS.md` 确认铁律，读本文档确认边界，然后从阶段八第 1 步开始，每步单独 commit 后停下汇报。不要读聊天历史，不要 grep 全仓库，不要凭记忆写 Next.js 代码。
+读 `AGENTS.md` 确认铁律，读本文档确认边界，然后从当前未完成阶段继续，每步单独 commit 后停下汇报。不要读聊天历史，不要 grep 全仓库，不要凭记忆写 Next.js 代码。

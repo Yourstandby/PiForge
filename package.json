@@ -49,6 +49,7 @@
     "dist": "npm run build:standalone && npm run build:electron && npx electron-builder --publish never && node scripts/smoke-packaged-standalone.mjs",
     "dist:mac": "npm run build:standalone && npm run build:electron && npx electron-builder --mac --universal --publish never && node scripts/smoke-packaged-standalone.mjs",
     "smoke:agent-isolation": "node scripts/smoke-agent-isolation.mjs",
+    "smoke:extension-ui": "node scripts/smoke-extension-ui-bridge.mjs",
     "smoke:host-reconnect": "node scripts/smoke-host-reconnect.mjs"
   },
   "build": {

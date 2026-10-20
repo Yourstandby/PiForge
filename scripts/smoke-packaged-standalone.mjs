@@ -79,6 +79,27 @@ for (const [label, file] of [
 }
 console.log("smoke-packaged-standalone: agent-host runtime present");
 
+// Extension UI Bridge must survive packaging: confirm request -> response ->
+// extension resumes, without the Host hanging while waiting for the renderer.
+const uiBridge = spawnSync(
+  process.execPath,
+  [join(scriptsDir, "smoke-extension-ui-bridge.mjs")],
+  {
+    cwd: projectRoot,
+    stdio: "inherit",
+    env: { ...process.env, PIFORGE_HOST_ENTRY: hostEntry },
+    windowsHide: true,
+  },
+);
+if (uiBridge.error) {
+  console.error(`smoke-packaged-standalone: UI bridge smoke failed to start: ${uiBridge.error.message}`);
+  process.exit(1);
+}
+if (uiBridge.status !== 0) {
+  console.error("smoke-packaged-standalone: UI bridge smoke failed");
+  process.exit(uiBridge.status ?? 1);
+}
+
 const result = spawnSync(
   process.execPath,
   [

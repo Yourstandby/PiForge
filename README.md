@@ -17,7 +17,7 @@ PiForge 把 Pi Coding Agent 的会话、工具调用与项目文件收进一个�
 
 底层直接复用官方 [`@earendil-works/pi-coding-agent`](https://github.com/earendil-works/pi-coding-agent) SDK，不引入额外代理层或外部服务；会话、SSE 流式回复、工具执行与文件读写都在本地完成。v0.4.0 起采用 **Electron Main + Agent Host + Next/Renderer 三进程隔离**：即使 Next 重启，正在运行的 Agent 也不会中断。v0.5.0 在同一套隔离之上补齐了 **多智能体工作台**：MCP 全生命周期、辅助模型、浏览器分权、工具输出持久化、分支对话与子 Agent 并行协作全部由 Agent Host 承载。
 
-> 当前版本：`v0.5.0`（Multi-Agent Workspace）
+> 当前版本：`v0.5.0`（Multi-Agent Workspace · 阶段八收尾）
 
 ## 🧱 进程架构
 
@@ -42,6 +42,15 @@ Agent Host 关闭时会先排空会话 JSONL、终止所有受管进程树；Nex
 5. **大工具输出持久化** — 超过 10KB / 2000 行自动截断预览并落盘 `tool-outputs/`，`tool_history_get` 分页取回，上下文压缩后依然可查。
 6. **一键应用与树状分支** — 代码块「应用」到右侧打开的文件（覆盖 / 追加）；消息级「分支」+ `‹ 1/2 ›` 切换器，在平行对话间无损切换。
 7. **Sub-Agents 并行协作** — `spawn_agent` 派生独立上下文的只读子 Agent（最多 4 个并行），右侧 Agents Tab 实时查看状态、工具与流式输出。
+
+### v0.5.0 阶段八：发布基础设施与 Windows 原生体验
+
+8. **自动更新** — Electron Main 主导 `electron-updater`：更新源在构建时固定到本仓库 GitHub Releases（`app-update.yml`），运行时不可切换；发现版本后先询问用户再下载，下载完成可立即重启安装，正常退出时也会安装已下载更新。
+9. **发布管线** — GitHub Actions 由 `v*` tag 触发，也支持 `workflow_dispatch` 预演；Windows 产出 NSIS 安装包 + ZIP，并生成 `latest.yml` 与 `SHA256SUMS.txt`，Linux/macOS 产物一并上传 Release。
+10. **PowerShell 一等公民** — Agent Host 优先使用 `pwsh` 7、回退 Windows PowerShell 5.1，固定 `-NoProfile -NonInteractive -ExecutionPolicy Bypass` 并强制 UTF-8 控制台/管道编码；支持中文、多行与引号。`run_bg` 新增 `shell: "powershell"`，后台 PowerShell 任务复用同一受管进程状态机。
+11. **Sub-Agent 验证护栏** — Host 检查子 Agent 最终报告中的测试/构建证据；无证据标记 `verified: false`，Agents Tab 与 `spawn_agent` 卡片显示「未验证」徽章，默认只提示、不阻断主流程。
+12. **会话标题、搜索与韧性** — 首条用户消息后台生成 ≤15 字标题，手动命名始终优先；搜索覆盖标题、首条消息与 session id；项目内按今天/昨天/过去 7 天/过去 30 天/更早分组。运行中 `Enter` 立即 Steer、`Alt+Enter` 加入可拖拽重排的 Follow-up 队列；会话加载有 15s deadline + 单次重试。
+13. **Extension UI Bridge 回归** — confirm/select/input/editor 的 UUID + Deferred Promise 契约保持 Host 独占；packaged smoke 会真实触发一次 `confirm` 并回传结果，验证 Host 不挂起、Renderer 路径可用。
 
 - **三进程隔离（v0.4.0 核心）** — Main 只负责窗口 / 托盘 / 更新；Agent Host 独立承载 Pi SDK、AgentSession、工具执行、LTM 与受管进程；Next.js 只做页面、HTTP 与 SSE。Host 崩溃会自动重启并恢复订阅，Next 重启不会杀掉正在流式输出的 Agent。Host 与 Next 只通过命名管道 / Unix Socket 通信，零内部 TCP 端口。
 - **多会话并行标签** — 中栏顶部是浏览器式标签条，标签名带 VS Code 风格面包屑（项目名 › 会话标题）；多开互不干扰，草稿、流式输出与滚动位置各自独立。
@@ -102,6 +111,9 @@ npm run dev:electron
 | `npx tsc --noEmit` | TypeScript 类型检查 |
 | `npm run lint` | ESLint |
 | `npm test` | 单元 / 路由测试 |
+| `npm run smoke:agent-host` | Host RPC / 受管进程 / 会话冒烟 |
+| `npm run smoke:extension-ui` | Extension UI Bridge confirm 往返冒烟 |
+| `npm run smoke:host-reconnect` | Next 断线重连与事件重放冒烟 |
 
 ## 📦 自行打包
 
@@ -109,7 +121,9 @@ npm run dev:electron
 npm run dist
 ```
 
-会依次执行 Next.js standalone 构建、Electron 主进程编译、`electron-builder` 打包与产物冒烟测试，默认产出 NSIS 安装包。
+会依次执行 Next.js standalone 构建、Electron 主进程编译、`electron-builder` 打包与产物冒烟测试。Windows 产出 NSIS 安装包与 ZIP，electron-builder 同时生成 `latest.yml`（自动更新清单）；packaged smoke 会加载打包后的 Host，并跑一次 Extension UI Bridge confirm 往返。
+
+发布由 GitHub Actions 的 `Desktop packages` workflow 接管：推送 `v*` tag 自动构建三平台产物，上传 NSIS/ZIP/latest.yml 以及 `SHA256SUMS.txt`；也可手动 `workflow_dispatch` 只做构建预演。
 
 只想拿到免安装目录（不生成安装包）：
 
@@ -122,7 +136,7 @@ npx electron-builder --dir      # → release/win-unpacked
 把目录压成可直接分发的压缩包：
 
 ```powershell
-Compress-Archive -Path 'release\win-unpacked\*' -DestinationPath 'release\PiForge-0.4.0-win-x64.zip' -CompressionLevel Optimal
+Compress-Archive -Path 'release\win-unpacked\*' -DestinationPath 'release\PiForge-0.5.0-win-x64.zip' -CompressionLevel Optimal
 ```
 
 > 国内网络环境可在安装依赖前设置 Electron 镜像，例如
