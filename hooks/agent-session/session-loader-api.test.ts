@@ -74,6 +74,58 @@ describe("session-loader-api", () => {
     );
   });
 
+  test("fetchSession retries one network failure", async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      if (calls === 1) throw new TypeError("fetch failed");
+      return {
+        status: 200,
+        ok: true,
+        json: async () => ({ sessionId: "retried" }),
+      } as unknown as Response;
+    }) as typeof globalThis.fetch;
+
+    const result = await fetchSession("123");
+    assert.equal(calls, 2);
+    assert.equal(result?.sessionId, "retried");
+  });
+
+  test("fetchSession retries one 5xx but not a 4xx", async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return calls === 1
+        ? ({ status: 503, ok: false, json: async () => ({}) } as unknown as Response)
+        : ({ status: 200, ok: true, json: async () => ({ sessionId: "ok" }) } as unknown as Response);
+    }) as typeof globalThis.fetch;
+    await fetchSession("123");
+    assert.equal(calls, 2);
+
+    calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return { status: 401, ok: false, json: async () => ({}) } as unknown as Response;
+    }) as typeof globalThis.fetch;
+    await assert.rejects(() => fetchSession("123"), /HTTP 401/);
+    assert.equal(calls, 1);
+  });
+
+  test("fetchSession aborts at the deadline and retries once", async () => {
+    let calls = 0;
+    globalThis.fetch = ((_url: string, init?: RequestInit) => {
+      calls += 1;
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () =>
+          reject(new DOMException("Aborted", "AbortError")),
+        );
+      });
+    }) as typeof globalThis.fetch;
+
+    await assert.rejects(() => fetchSession("123", false, { timeoutMs: 10 }), /timed out after 10ms/);
+    assert.equal(calls, 2);
+  });
+
   test("fetchContext sends correct request without leafId", async () => {
     const dummyContext = { context: { messages: [], entryIds: [] } };
     mockResponse = {

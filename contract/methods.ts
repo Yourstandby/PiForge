@@ -16,6 +16,27 @@ import type {
   BrowserCommandResult,
   BrowserPageSnapshot,
 } from "./domains/browser.ts";
+import type { DevEnvironmentReport } from "./domains/dev-environment.ts";
+import type { SessionBranches, SessionBranchSwitchResult } from "./domains/sessions.ts";
+import type { SubagentView } from "./domains/subagents.ts";
+import type { ToolOutputPageDto } from "./domains/tool-outputs.ts";
+import type {
+  AuxModelCatalogue,
+  AuxModelConfig,
+  AuxModelSelection,
+  DecisionQuestion,
+  DecisionReport,
+  ImageGenerationReport,
+} from "./domains/aux-models.ts";
+import type {
+  McpAuthState,
+  McpConnectionConfig,
+  McpConnectionReport,
+  McpPendingLogin,
+  McpResourceReadResult,
+  McpScope,
+  McpServerRef,
+} from "./domains/mcp.ts";
 import type {
   MemoryHealth,
   MemoryStats,
@@ -75,10 +96,20 @@ export interface AgentHostMethods {
     result: { processes: ManagedProcessView[] };
   };
   "processes.start": {
-    params: { cwd: string; command: string; name?: string };
+    params: {
+      cwd: string;
+      command: string;
+      name?: string;
+      /** Who started it; crash-reaper only touches "agent" processes. */
+      owner?: "agent" | "user";
+    };
     result: { process: ManagedProcessView };
   };
   "processes.stop": {
+    params: { id: string };
+    result: { ok: boolean };
+  };
+  "processes.forceStop": {
     params: { id: string };
     result: { ok: boolean };
   };
@@ -175,6 +206,114 @@ export interface AgentHostMethods {
     result: { updated: number };
   };
 
+  // ---- MCP management (connections and OAuth live only in the host) ----
+  "mcp.probe": {
+    params: {
+      cwd?: string;
+      serverId?: string;
+      scope?: McpScope;
+      connection?: McpConnectionConfig;
+    };
+    result: McpConnectionReport;
+  };
+  "mcp.resources": {
+    params: McpServerRef;
+    result: {
+      toolsCount: number;
+      resources: McpConnectionReport["resources"];
+      resourceTemplates: McpConnectionReport["resourceTemplates"];
+    };
+  };
+  "mcp.readResource": {
+    params: McpServerRef & { uri: string };
+    result: McpResourceReadResult;
+  };
+  "mcp.authStatus": {
+    params: McpServerRef;
+    result: McpAuthState;
+  };
+  "mcp.login": {
+    params: McpServerRef;
+    result: { loginId: string; authorizationUrl: string };
+  };
+  "mcp.cancelLogin": {
+    params: { loginId: string };
+    result: { ok: boolean };
+  };
+  "mcp.logout": {
+    params: McpServerRef;
+    result: { ok: boolean };
+  };
+  "mcp.refreshAuth": {
+    params: McpServerRef;
+    result: McpAuthState;
+  };
+  "mcp.loginStatus": {
+    params: { loginId: string };
+    result: { login: McpPendingLogin | null };
+  };
+
+  // ---- auxiliary models (image generation / structured decisions) ----
+  "models.auxCatalogue": {
+    params: Record<string, never>;
+    result: AuxModelCatalogue;
+  };
+  "models.auxConfig": {
+    params: Record<string, never>;
+    result: AuxModelConfig;
+  };
+  "models.setAuxConfig": {
+    params: {
+      image?: AuxModelSelection | null;
+      decision?: AuxModelSelection | null;
+    };
+    result: AuxModelConfig;
+  };
+  "image.generate": {
+    params: { prompt: string; model?: AuxModelSelection };
+    result: ImageGenerationReport;
+  };
+  "decision.classify": {
+    params: {
+      state: Record<string, unknown>;
+      questions: DecisionQuestion[];
+      model?: AuxModelSelection;
+    };
+    result: DecisionReport;
+  };
+
+  // ---- sub-agents ----
+  "subagents.list": {
+    params: Record<string, never>;
+    result: { agents: SubagentView[] };
+  };
+  "subagents.stop": {
+    params: { id: string };
+    result: { ok: boolean };
+  };
+
+  // ---- development environment probes ----
+  "env.probe": {
+    params: { refresh?: boolean };
+    result: DevEnvironmentReport;
+  };
+
+  // ---- persisted large tool outputs (files owned by the host) ----
+  "toolOutput.read": {
+    params: { file: string; offset?: number; limit?: number };
+    result: ToolOutputPageDto;
+  };
+
+  // ---- session branches (tree already exists in the JSONL) ----
+  "sessions.getBranches": {
+    params: { sessionId: string; filePath?: string };
+    result: SessionBranches;
+  };
+  "sessions.switchBranch": {
+    params: { sessionId: string; filePath?: string; leafId: string | null };
+    result: SessionBranchSwitchResult;
+  };
+
   // ---- session metadata / mutation ----
   "sessions.locate": {
     params: { sessionId: string };
@@ -205,6 +344,10 @@ export interface AgentHostMethods {
   "files.authorize": {
     params: { path: string; op: "read" | "write" | "list" };
     result: { realPath: string };
+  };
+  "files.applyCode": {
+    params: { path: string; content: string; mode: "overwrite" | "append" };
+    result: { path: string; mode: "overwrite" | "append"; bytes: number };
   };
 
   // ---- browser bridge ----
@@ -286,6 +429,7 @@ export const IMPLEMENTED_HOST_METHODS = [
   "processes.list",
   "processes.start",
   "processes.stop",
+  "processes.forceStop",
   "processes.restart",
   "processes.remove",
   "processes.stdin",
@@ -304,12 +448,33 @@ export const IMPLEMENTED_HOST_METHODS = [
   "agent.unsubscribe",
   "agent.reloadResources",
   "agent.updateCodemode",
+  "mcp.probe",
+  "mcp.resources",
+  "mcp.readResource",
+  "mcp.authStatus",
+  "mcp.login",
+  "mcp.cancelLogin",
+  "mcp.logout",
+  "mcp.refreshAuth",
+  "mcp.loginStatus",
+  "models.auxCatalogue",
+  "models.auxConfig",
+  "models.setAuxConfig",
+  "image.generate",
+  "decision.classify",
+  "subagents.list",
+  "subagents.stop",
+  "env.probe",
+  "toolOutput.read",
+  "sessions.getBranches",
+  "sessions.switchBranch",
   "sessions.locate",
   "sessions.state",
   "sessions.rename",
   "sessions.delete",
   "files.allowedRoots",
   "files.authorize",
+  "files.applyCode",
   "browser.poll",
   "browser.pushSnapshot",
   "browser.resolveCommand",

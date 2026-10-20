@@ -8,7 +8,7 @@ export interface SlashSkill {
   };
 }
 
-export type SlashCommandKind = "command" | "skill";
+export type SlashCommandKind = "command" | "skill" | "insert";
 
 export interface SlashCommandItem {
   id: string;
@@ -26,6 +26,7 @@ export const BUILTIN_SLASH_COMMANDS: SlashCommandItem[] = [
   { id: "tools", label: "/tools", insertText: "/tools ", description: "选择工具预设", kind: "command" },
   { id: "skills", label: "/skills", insertText: "/skills ", description: "查看或调用可用 skills", kind: "command" },
   { id: "statusline", label: "/statusline", insertText: "/statusline", description: "切换底部状态栏（窗口 + 会话 + git）", kind: "command" },
+  { id: "imagine", label: "/imagine", insertText: "/imagine ", description: "用生图模型生成图片（需在设置中配置生图模型）", kind: "insert" },
 ];
 
 export function getSlashTriggerQuery(value: string, caretIndex: number): string | null {

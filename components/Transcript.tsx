@@ -1,13 +1,14 @@
 "use client";
 
-import { Children, useEffect, useId, useMemo, useState } from "react";
+import { Children, useCallback, useEffect, useId, useMemo, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
-import { Check, ChevronDown, Copy, GitFork, X } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Copy, CornerDownLeft, GitBranch, GitFork, X } from "lucide-react";
 import type { AgentMessage, ToolResultMessage } from "@/lib/types";
 import { diffStats } from "@/lib/diff-lines";
+import type { BranchSwitchInfo } from "@/lib/session-branches-view";
 import { isEditToolName, toolDiffPath, toolDiffRows } from "@/lib/tool-diff";
 import { DiffRows } from "./DiffRows";
 import { getFileName } from "@/lib/file-paths";
@@ -108,10 +109,14 @@ function CodeBlock({
   code,
   lang,
   onInsertCode,
+  onApply,
+  applyTargetName,
 }: {
   code: string;
   lang: string;
   onInsertCode?: InsertCodeHandler;
+  onApply?: (code: string, language?: string) => void;
+  applyTargetName?: string | null;
 }) {
   const [copied, setCopied] = useState(false);
   if (lang === "mermaid") return <MermaidBlock code={code} />;
@@ -130,15 +135,29 @@ function CodeBlock({
         <span className="font-mono text-[10px] uppercase tracking-wider text-ink-faint">
           {lang || "text"}
         </span>
-        <button
-          type="button"
-          onClick={() => void copy()}
-          aria-label={copied ? "已复制代码" : "复制代码"}
-          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-ink-faint transition-colors hover:bg-[#E8EFFB] hover:text-accent-strong"
-        >
-          {copied ? <Check size={11} strokeWidth={2.4} /> : <Copy size={11} strokeWidth={1.9} />}
-          {copied ? "已复制" : "复制"}
-        </button>
+        <span className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => void copy()}
+            aria-label={copied ? "已复制代码" : "复制代码"}
+            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-ink-faint transition-colors hover:bg-[#E8EFFB] hover:text-accent-strong"
+          >
+            {copied ? <Check size={11} strokeWidth={2.4} /> : <Copy size={11} strokeWidth={1.9} />}
+            {copied ? "已复制" : "复制"}
+          </button>
+          {onApply && (
+            <button
+              type="button"
+              onClick={() => onApply(code, lang || undefined)}
+              aria-label={applyTargetName ? `将代码应用到 ${applyTargetName}` : "应用代码"}
+              title={applyTargetName ? `将代码应用到 ${applyTargetName}` : "应用代码到右侧打开的文件"}
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-ink-faint transition-colors hover:bg-[#E8EFFB] hover:text-accent-strong"
+            >
+              <CornerDownLeft size={11} strokeWidth={1.9} />
+              应用
+            </button>
+          )}
+        </span>
       </div>
       <pre className="overflow-x-auto p-3 text-[12.5px] leading-6">
         <code className="font-mono">{code}</code>
@@ -199,6 +218,8 @@ function createMarkdownComponents(
   cwd?: string | null,
   onOpenFile?: OpenFileHandler,
   onInsertCode?: InsertCodeHandler,
+  onApplyCode?: (code: string, language?: string) => void,
+  applyTargetName?: string | null,
 ): Components {
   const linkify = (children: React.ReactNode) => (
     <LinkifiedChildren cwd={cwd} onOpenFile={onOpenFile}>{children}</LinkifiedChildren>
@@ -242,6 +263,19 @@ function createMarkdownComponents(
     );
   },
   pre: ({ children }) => <>{children}</>,
+  img: ({ src, alt }) => {
+    const url = typeof src === "string" ? src : undefined;
+    if (!url) return null;
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={url}
+        alt={alt ?? ""}
+        loading="lazy"
+        className="my-2 max-h-80 rounded-lg border border-[#E3E8F2] bg-white object-contain"
+      />
+    );
+  },
   code: ({ className, children }) => {
     const lang = /language-([\w-]+)/.exec(className ?? "")?.[1]?.toLowerCase() ?? "";
     if (lang || String(children).includes("\n")) {
@@ -250,6 +284,8 @@ function createMarkdownComponents(
           code={String(children).replace(/\n$/, "")}
           lang={lang}
           onInsertCode={onInsertCode}
+          onApply={onApplyCode}
+          applyTargetName={applyTargetName}
         />
       );
     }
@@ -316,6 +352,309 @@ function contentImages(content: unknown): string[] {
     .filter((block): block is Record<string, unknown> => Boolean(block) && typeof block === "object" && (block as { type?: unknown }).type === "image")
     .map((block) => imageSrc(block))
     .filter((src): src is string => Boolean(src));
+}
+
+interface DecisionAnswerView {
+  kind: string;
+  choice?: string;
+  score?: number;
+  probability?: number;
+  confidence?: number;
+  probabilities?: Record<string, number>;
+}
+
+interface DecisionDetailsView {
+  kind: "decision";
+  ok: boolean;
+  mode: string;
+  provider?: string;
+  model?: string;
+  answers: Record<string, DecisionAnswerView>;
+  elapsedMs?: number;
+  error?: string;
+}
+
+interface ImageDetailsView {
+  kind: "image-generation";
+  ok: boolean;
+  provider?: string;
+  model?: string;
+  prompt?: string;
+  count?: number;
+  error?: string;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function readDecisionDetails(details: unknown): DecisionDetailsView | null {
+  const record = asRecord(details);
+  if (!record || record.kind !== "decision") return null;
+  const answers = asRecord(record.answers) ?? {};
+  return {
+    kind: "decision",
+    ok: record.ok !== false,
+    mode: typeof record.mode === "string" ? record.mode : "choice",
+    ...(typeof record.provider === "string" ? { provider: record.provider } : {}),
+    ...(typeof record.model === "string" ? { model: record.model } : {}),
+    answers: answers as Record<string, DecisionAnswerView>,
+    ...(typeof record.elapsedMs === "number" ? { elapsedMs: record.elapsedMs } : {}),
+    ...(typeof record.error === "string" ? { error: record.error } : {}),
+  };
+}
+
+function readImageDetails(details: unknown): ImageDetailsView | null {
+  const record = asRecord(details);
+  if (!record || record.kind !== "image-generation") return null;
+  return {
+    kind: "image-generation",
+    ok: record.ok !== false,
+    ...(typeof record.provider === "string" ? { provider: record.provider } : {}),
+    ...(typeof record.model === "string" ? { model: record.model } : {}),
+    ...(typeof record.prompt === "string" ? { prompt: record.prompt } : {}),
+    ...(typeof record.count === "number" ? { count: record.count } : {}),
+    ...(typeof record.error === "string" ? { error: record.error } : {}),
+  };
+}
+
+function percent(value: number | undefined): string | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const normalized = value > 1 ? value : value * 100;
+  return `${Math.round(normalized)}%`;
+}
+
+interface PersistedOutputView {
+  toolCallId: string;
+  file: string;
+  bytes: number;
+  lines: number;
+  previewLines: number;
+  omittedLines: number;
+}
+
+function readPersistedOutput(details: unknown): PersistedOutputView | null {
+  const record = asRecord(details);
+  const marker = record ? asRecord(record.toolOutput) : null;
+  if (!marker || marker.kind !== "tool-output" || typeof marker.file !== "string") return null;
+  return {
+    toolCallId: typeof marker.toolCallId === "string" ? marker.toolCallId : "",
+    file: marker.file,
+    bytes: typeof marker.bytes === "number" ? marker.bytes : 0,
+    lines: typeof marker.lines === "number" ? marker.lines : 0,
+    previewLines: typeof marker.previewLines === "number" ? marker.previewLines : 0,
+    omittedLines: typeof marker.omittedLines === "number" ? marker.omittedLines : 0,
+  };
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+const TOOL_OUTPUT_PAGE_SIZE = 200;
+
+interface ToolOutputPageView {
+  text: string;
+  offset: number;
+  limit: number;
+  totalLines: number;
+  hasMore: boolean;
+}
+
+/** "查看完整输出" footer with in-card pagination over the persisted log. */
+function PersistedOutputPanel({ output }: { output: PersistedOutputView }) {
+  const [open, setOpen] = useState(false);
+  const [page, setPage] = useState<ToolOutputPageView | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(
+    async (offset: number) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetch("/api/tool-outputs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ file: output.file, offset, limit: TOOL_OUTPUT_PAGE_SIZE }),
+        });
+        const data = (await res.json()) as ToolOutputPageView & { error?: string };
+        if (!res.ok || data.error) throw new Error(data.error ?? `HTTP ${res.status}`);
+        setPage(data);
+      } catch (e: unknown) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [output.file],
+  );
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (next && !page) void load(0);
+  };
+
+  const lineCount = page?.text ? page.text.split("\n").length : 0;
+
+  return (
+    <div className="border-t border-[#EDF1F7] bg-[#FBFCFE] px-3 py-1.5">
+      <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+        <span className="rounded bg-[#FFF3E0] px-1.5 py-0.5 text-[10px] font-medium text-[#9A5B13]">
+          已截断
+        </span>
+        <span className="text-ink-muted">
+          完整输出已保存 · {output.lines} 行 / {formatBytes(output.bytes)}
+        </span>
+        <span className="hidden font-mono text-[10px] text-ink-faint sm:inline">tool_history_get</span>
+        <button
+          type="button"
+          onClick={toggle}
+          aria-expanded={open}
+          className="ml-auto shrink-0 rounded-md border border-border bg-white px-2 py-1 text-[11px] text-ink-muted transition-colors hover:bg-[#ECECEF] hover:text-ink"
+        >
+          {open ? "收起完整输出" : "查看完整输出"}
+        </button>
+      </div>
+      {open && (
+        <div className="mt-1.5 overflow-hidden rounded-md border border-[#E3E8F2] bg-white">
+          {loading && !page ? (
+            <p className="px-2 py-2 text-[11px] text-ink-faint">加载中…</p>
+          ) : error ? (
+            <p className="px-2 py-2 text-[11px] text-[#B0443C]">{error}</p>
+          ) : page ? (
+            <>
+              <div className="flex items-center justify-between gap-2 border-b border-[#EDF1F7] px-2 py-1 text-[10.5px] text-ink-faint">
+                <span className="tabular-nums">
+                  第 {page.offset + 1}–{page.offset + lineCount} 行 / 共 {page.totalLines} 行
+                </span>
+                <span className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => void load(Math.max(0, page.offset - TOOL_OUTPUT_PAGE_SIZE))}
+                    disabled={loading || page.offset <= 0}
+                    className="rounded border border-border px-1.5 py-0.5 text-[10.5px] text-ink-muted transition-colors hover:bg-[#ECECEF] hover:text-ink disabled:opacity-40"
+                  >
+                    上一页
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void load(page.offset + TOOL_OUTPUT_PAGE_SIZE)}
+                    disabled={loading || !page.hasMore}
+                    className="rounded border border-border px-1.5 py-0.5 text-[10.5px] text-ink-muted transition-colors hover:bg-[#ECECEF] hover:text-ink disabled:opacity-40"
+                  >
+                    下一页
+                  </button>
+                </span>
+              </div>
+              <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all px-2 py-1.5 font-mono text-[10.5px] leading-4 text-ink-soft">
+                {page.text || "（空）"}
+              </pre>
+            </>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface SubagentDetailsView {
+  kind: "subagent";
+  ok: boolean;
+  name?: string;
+  status?: string;
+  durationMs?: number;
+  toolCalls?: number;
+  verified?: boolean;
+  verificationReason?: string;
+  error?: string;
+}
+
+function readSubagentDetails(details: unknown): SubagentDetailsView | null {
+  const record = asRecord(details);
+  if (!record || record.kind !== "subagent") return null;
+  return {
+    kind: "subagent",
+    ok: record.ok !== false,
+    ...(typeof record.name === "string" ? { name: record.name } : {}),
+    ...(typeof record.status === "string" ? { status: record.status } : {}),
+    ...(typeof record.durationMs === "number" ? { durationMs: record.durationMs } : {}),
+    ...(typeof record.toolCalls === "number" ? { toolCalls: record.toolCalls } : {}),
+    ...(typeof record.verified === "boolean" ? { verified: record.verified } : {}),
+    ...(typeof record.verificationReason === "string" ? { verificationReason: record.verificationReason } : {}),
+    ...(typeof record.error === "string" ? { error: record.error } : {}),
+  };
+}
+
+const SUBAGENT_STATUS_LABEL: Record<string, string> = {
+  running: "执行中",
+  completed: "已完成",
+  failed: "失败",
+  cancelled: "已取消",
+};
+
+/** Compact badges for `classify_decision` results (choice / score / bool). */
+function DecisionBadges({ details }: { details: DecisionDetailsView }) {
+  const entries = Object.entries(details.answers);
+  const modelLabel = [details.provider, details.model].filter(Boolean).join("/");
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 border-t border-[#EDF1F7] bg-[#F7FAFF] px-3 py-1.5">
+      <span className="rounded bg-[#EDF3FD] px-1.5 py-0.5 text-[10px] font-medium text-accent-strong">
+        决策
+      </span>
+      {!details.ok && (
+        <span className="rounded-full border border-[#F5D3D3] bg-white px-2 py-0.5 text-[11px] text-[#B0443C]">
+          {details.error ?? "决策失败"}
+        </span>
+      )}
+      {entries.map(([key, answer]) => {
+        const confidence = percent(answer.confidence);
+        if (answer.kind === "choice") {
+          return (
+            <span
+              key={key}
+              className="inline-flex items-center gap-1 rounded-full border border-[#D9E5FB] bg-white px-2 py-0.5 text-[11px] text-ink"
+              title={answer.probabilities ? JSON.stringify(answer.probabilities) : undefined}
+            >
+              <span className="font-medium">{answer.choice ?? "—"}</span>
+              {confidence && <span className="text-ink-faint">{confidence}</span>}
+            </span>
+          );
+        }
+        if (answer.kind === "score") {
+          return (
+            <span
+              key={key}
+              className="inline-flex items-center gap-1 rounded-full border border-[#D9E5FB] bg-white px-2 py-0.5 text-[11px] text-ink"
+            >
+              <span>
+                评分 <span className="font-medium">{answer.score ?? "—"}</span>
+              </span>
+              {confidence && <span className="text-ink-faint">{confidence}</span>}
+            </span>
+          );
+        }
+        const probability = percent(answer.probability);
+        return (
+          <span
+            key={key}
+            className="inline-flex items-center gap-1 rounded-full border border-[#D9E5FB] bg-white px-2 py-0.5 text-[11px] text-ink"
+          >
+            概率 <span className="font-medium">{probability ?? "—"}</span>
+          </span>
+        );
+      })}
+      {modelLabel && (
+        <span className="ml-auto truncate font-mono text-[10px] text-ink-faint">{modelLabel}</span>
+      )}
+    </div>
+  );
 }
 
 const SUMMARY_KEYS = [
@@ -495,11 +834,13 @@ function ToolCallCard({
   name,
   input,
   result,
+  details,
   nestedExecutions,
 }: {
   name: string;
   input: Record<string, unknown>;
   result?: ToolResultMessage;
+  details?: unknown;
   nestedExecutions?: Record<string, NestedExecutionView>;
 }) {
   const [open, setOpen] = useState(false);
@@ -511,6 +852,12 @@ function ToolCallCard({
   const tree = nested?.calls.length ? buildNestedTree(nested.calls) : null;
   const output = result ? resultText(result).trim() : "";
   const resultImages = result ? contentImages(result.content) : [];
+  const decision = useMemo(() => readDecisionDetails(details), [details]);
+  const generatedImage = useMemo(() => readImageDetails(details), [details]);
+  const persistedOutput = useMemo(() => readPersistedOutput(details), [details]);
+  const subagent = useMemo(() => readSubagentDetails(details), [details]);
+  const spawnPending = name === "spawn_agent" && !result;
+  const spawnName = typeof input.name === "string" && input.name.trim() ? input.name.trim() : "agent";
   // Successful edit/write calls show what changed, right in the card: users
   // should not have to open the Git panel to see the AI's own edit.
   const codeDiff = useMemo(
@@ -533,6 +880,21 @@ function ToolCallCard({
         <span className="shrink-0 rounded bg-[#EDF3FD] px-1.5 py-0.5 text-[10px] font-medium text-accent-strong">
           工具
         </span>
+        {generatedImage && (
+          <span className="shrink-0 rounded bg-[#F1ECFE] px-1.5 py-0.5 text-[10px] font-medium text-[#6D56C1]">
+            生图
+          </span>
+        )}
+        {name === "spawn_agent" && (
+          <span className="shrink-0 rounded bg-[#E8F3FF] px-1.5 py-0.5 text-[10px] font-medium text-accent-strong">
+            子 Agent
+          </span>
+        )}
+        {decision && (
+          <span className="shrink-0 rounded bg-[#EAF7F0] px-1.5 py-0.5 text-[10px] font-medium text-[#2F7A55]">
+            决策
+          </span>
+        )}
         <span className="shrink-0 font-mono text-[11px] text-ink-muted">· {name}</span>
         <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-ink-soft">
           {summary || "（无参数）"}
@@ -561,6 +923,84 @@ function ToolCallCard({
           />
         )}
       </button>
+      {name === "spawn_agent" && (
+        <div className="border-t border-[#EDF1F7] bg-[#F7FBFF] px-3 py-1.5 text-[11px]">
+          {spawnPending ? (
+            <span className="flex items-center gap-1.5 text-accent-strong">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" aria-hidden="true" />
+              已启动子 Agent：{spawnName}，正在后台执行…
+            </span>
+          ) : (
+            <span className="flex flex-wrap items-center gap-1.5 text-ink-muted">
+              <span className="truncate">
+                子 Agent：{subagent?.name ?? spawnName}
+              </span>
+              <span
+                className={`rounded-full border px-1.5 py-0.5 text-[9.5px] font-medium ${
+                  subagent?.status === "failed"
+                    ? "border-[#F0D5D2] bg-[#FDF6F5] text-[#B0443C]"
+                    : subagent?.status === "cancelled"
+                      ? "border-[#E3E8F2] bg-white text-ink-faint"
+                      : "border-[#D9E5FB] bg-white text-accent-strong"
+                }`}
+              >
+                {SUBAGENT_STATUS_LABEL[subagent?.status ?? ""] ?? (subagent?.ok === false ? "失败" : "已完成")}
+              </span>
+              {subagent?.status === "completed" && subagent.verified === false && (
+                <span
+                  title={subagent.verificationReason}
+                  className="rounded-full border border-[#F0E0C2] bg-[#FFF9EE] px-1.5 py-0.5 text-[9.5px] font-medium text-[#9A6B1F]"
+                >
+                  未验证
+                </span>
+              )}
+              {subagent?.durationMs !== undefined && (
+                <span className="tabular-nums text-ink-faint">{formatDuration(subagent.durationMs)}</span>
+              )}
+              {subagent?.toolCalls !== undefined && (
+                <span className="text-ink-faint">{subagent.toolCalls} 次工具调用</span>
+              )}
+              {subagent?.error && <span className="truncate text-[#B0443C]">{subagent.error}</span>}
+              <button
+                type="button"
+                onClick={() => window.dispatchEvent(new Event("piforge:agents-open"))}
+                className="ml-auto shrink-0 rounded border border-border bg-white px-1.5 py-0.5 text-[10px] text-ink-muted transition-colors hover:bg-[#ECECEF] hover:text-ink"
+              >
+                查看 Agents
+              </button>
+            </span>
+          )}
+        </div>
+      )}
+      {generatedImage && (generatedImage.ok || generatedImage.error) && (
+        <div className="flex flex-wrap items-center gap-1.5 border-t border-[#EDF1F7] bg-[#FBF9FF] px-3 py-1.5 text-[11px] text-ink-muted">
+          <span className="truncate">
+            {generatedImage.ok
+              ? `已生成 ${generatedImage.count ?? resultImages.length} 张图片`
+              : `生成失败：${generatedImage.error ?? "未知错误"}`}
+          </span>
+          <span className="ml-auto shrink-0 font-mono text-[10px] text-ink-faint">
+            {[generatedImage.provider, generatedImage.model].filter(Boolean).join("/")}
+          </span>
+        </div>
+      )}
+      {/* Generated images stay visible without expanding the card. */}
+      {resultImages.length > 0 && (
+        <div className="flex flex-wrap gap-2 border-t border-[#EDF1F7] bg-white p-2">
+          {resultImages.map((src, index) => (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              key={index}
+              src={src}
+              alt={`工具输出图片 ${index + 1}`}
+              loading="lazy"
+              className="max-h-72 rounded-md border border-[#E3E8F2] object-contain"
+            />
+          ))}
+        </div>
+      )}
+      {decision && <DecisionBadges details={decision} />}
+      {persistedOutput && <PersistedOutputPanel output={persistedOutput} />}
       {open && hasDetails && (
         <div className="border-t border-[#EDF1F7] bg-[#FBFCFE]">
           {tree && (
@@ -609,6 +1049,16 @@ function ToolCallCard({
               </div>
             </div>
           )}
+          {decision && Object.keys(decision.answers).length > 0 && (
+            <details className="border-b border-[#EDF1F7] last:border-b-0">
+              <summary className="cursor-pointer select-none px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-ink-faint">
+                决策结果（JSON）
+              </summary>
+              <pre className="max-h-64 overflow-auto px-3 pb-2 font-mono text-[11.5px] leading-5 text-ink-soft">
+                {JSON.stringify(decision.answers, null, 2)}
+              </pre>
+            </details>
+          )}
           {hasArgs && (
             <details className="border-b border-[#EDF1F7] last:border-b-0" open={!tree && !output}>
               <summary className="cursor-pointer select-none px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-ink-faint">
@@ -618,19 +1068,6 @@ function ToolCallCard({
                 {JSON.stringify(input, null, 2)}
               </pre>
             </details>
-          )}
-          {resultImages.length > 0 && (
-            <div className="flex flex-wrap gap-2 border-b border-[#EDF1F7] p-2">
-              {resultImages.map((src, index) => (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  key={index}
-                  src={src}
-                  alt={`工具输出图片 ${index + 1}`}
-                  className="max-h-72 rounded-md border border-[#E3E8F2] object-contain"
-                />
-              ))}
-            </div>
           )}
           {result && (
             <details className="border-b border-[#EDF1F7] last:border-b-0" open={!tree && !hasArgs}>
@@ -690,6 +1127,11 @@ export function Transcript({
   cwd,
   onOpenFile,
   onInsertCode,
+  onApplyCode,
+  applyTargetName,
+  onBranch,
+  branchSwitch,
+  onSwitchBranch,
   nestedExecutions,
 }: {
   messages: AgentMessage[];
@@ -701,13 +1143,22 @@ export function Transcript({
   cwd?: string | null;
   onOpenFile?: OpenFileHandler;
   onInsertCode?: InsertCodeHandler;
+  /** Write a code block to the file currently open in the right panel. */
+  onApplyCode?: (code: string, language?: string) => void;
+  /** File name shown on the Apply button / confirmation dialog. */
+  applyTargetName?: string | null;
+  /** In-session branch at this message (GitBranch button). */
+  onBranch?: (entryId: string) => void | Promise<void>;
+  /** Sibling switcher info per message entry id (`1/2` arrows). */
+  branchSwitch?: (entryId: string) => BranchSwitchInfo | null;
+  onSwitchBranch?: (leafId: string | null) => void;
   /** Live nested tool results captured from SSE (not persisted by pi). */
   nestedExecutions?: Record<string, NestedExecutionView>;
 }) {
   const results = toolResultsById(messages);
   const markdownComponents = useMemo(
-    () => createMarkdownComponents(cwd, onOpenFile, onInsertCode),
-    [cwd, onOpenFile, onInsertCode],
+    () => createMarkdownComponents(cwd, onOpenFile, onInsertCode, onApplyCode, applyTargetName),
+    [cwd, onOpenFile, onInsertCode, onApplyCode, applyTargetName],
   );
   const [copiedTurn, setCopiedTurn] = useState<number | null>(null);
 
@@ -763,13 +1214,48 @@ export function Transcript({
         // The very first message cannot be forked (nothing before it), and a
         // fork mid-stream would race the entry ids the SSE events don't carry.
         const canFork = Boolean(onFork && entryId) && turn.messageIndex > 0;
+        const canBranch = Boolean(onBranch && entryId);
         const forking = Boolean(entryId) && forkingEntryId === entryId;
+        const switcher = entryId && branchSwitch ? branchSwitch(entryId) : null;
         return (
         <article key={index} className="group mb-8 last:mb-0">
           <div className="mb-2 flex items-center justify-between gap-2">
-            <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-ink-faint">
-              {turn.role === "user" ? "你" : "PiForge"}
-            </span>
+            <div className="flex min-w-0 items-center gap-2">
+              {switcher && switcher.total > 1 && (
+                <span
+                  className="flex shrink-0 items-center gap-0.5 rounded-full border border-[#E3E8F2] bg-white px-1 py-0.5 text-[10.5px] text-ink-muted shadow-[0_1px_2px_rgba(17,17,17,0.03)]"
+                  aria-label={`分支 ${switcher.index + 1}/${switcher.total}`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => onSwitchBranch?.(switcher.targets[switcher.index - 1]?.leafId ?? null)}
+                    disabled={switcher.index <= 0}
+                    aria-label="上一个分支"
+                    title="上一个分支"
+                    className="flex h-4 w-4 items-center justify-center rounded-full transition-colors hover:bg-[#ECECEF] hover:text-ink disabled:cursor-default disabled:opacity-30"
+                  >
+                    <ChevronLeft size={11} strokeWidth={2.2} aria-hidden="true" />
+                  </button>
+                  <span className="tabular-nums px-0.5">
+                    {switcher.index + 1}/{switcher.total}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => onSwitchBranch?.(switcher.targets[switcher.index + 1]?.leafId ?? null)}
+                    disabled={switcher.index >= switcher.total - 1}
+                    aria-label="下一个分支"
+                    title="下一个分支"
+                    className="flex h-4 w-4 items-center justify-center rounded-full transition-colors hover:bg-[#ECECEF] hover:text-ink disabled:cursor-default disabled:opacity-30"
+                  >
+                    <ChevronRight size={11} strokeWidth={2.2} aria-hidden="true" />
+                  </button>
+                </span>
+              )}
+              <span className="truncate text-[11px] font-medium uppercase tracking-[0.08em] text-ink-faint">
+                {turn.role === "user" ? "你" : "PiForge"}
+              </span>
+            </div>
+            <div className="flex shrink-0 items-center gap-1">
             <button
               type="button"
               onClick={() =>
@@ -794,6 +1280,18 @@ export function Transcript({
               )}
               {copiedTurn === index ? "已复制" : "复制"}
             </button>
+            {canBranch && (
+              <button
+                type="button"
+                onClick={() => void onBranch!(entryId!)}
+                title="从此消息开启新分支"
+                aria-label="从此消息开启新分支"
+                className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-ink-faint opacity-0 transition-colors duration-150 hover:bg-[#ECECEF] hover:text-accent-strong focus:opacity-100 group-hover:opacity-100"
+              >
+                <GitBranch size={11} strokeWidth={1.9} aria-hidden="true" />
+                分支
+              </button>
+            )}
             {canFork && (
               <button
                 type="button"
@@ -811,6 +1309,7 @@ export function Transcript({
                 {forking ? "创建中…" : "派生"}
               </button>
             )}
+            </div>
           </div>
 
           {turn.role === "user" ? (
@@ -862,6 +1361,7 @@ export function Transcript({
                       name={block.name}
                       input={block.input}
                       result={block.result}
+                      details={block.result?.details}
                       nestedExecutions={nestedExecutions}
                     />
                   ),

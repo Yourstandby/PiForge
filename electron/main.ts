@@ -1041,6 +1041,9 @@ app.whenReady().then(async () => {
           // 不自动下载：让用户决定是否下载（避免流量敏感环境静默下载大文件，
           // 也避免渲染进程 XSS 触发 quitAndInstall 路径）。
           autoUpdater.autoDownload = false;
+          // Downloaded updates install when the app quits normally (the task is
+          // over); "Restart Now" in the downloaded dialog is the immediate path.
+          autoUpdater.autoInstallOnAppQuit = true;
           logInfo("Checking for updates");
 
           // Forward update events to renderer
@@ -1139,7 +1142,12 @@ app.whenReady().then(async () => {
             logError("autoUpdater error", err);
           });
 
-          autoUpdater.checkForUpdates();
+          void autoUpdater.checkForUpdates().catch((err: unknown) => {
+            logError(
+              "autoUpdater checkForUpdates failed",
+              err instanceof Error ? err : new Error(String(err))
+            );
+          });
         } catch (err) {
           logError("Auto-update check failed:", err);
         }

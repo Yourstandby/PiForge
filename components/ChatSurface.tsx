@@ -1,12 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, CheckCircle2, ListTodo } from "lucide-react";
 import type { AgentMessage, SessionInfo, SessionTreeNode } from "@/lib/types";
 import { useAgentSession } from "@/hooks/useAgentSession";
 import { useAudio } from "@/hooks/useAudio";
 import { useHostHealth } from "@/hooks/useHostHealth";
 import { conversationToMarkdown } from "@/lib/conversation-markdown";
+import { buildBranchSwitchMap } from "@/lib/session-branches-view";
+import { buildImagineMessage } from "@/lib/imagine-command";
 import { BranchCloneModal, type BranchCloneMode } from "./BranchCloneModal";
 import { BranchNavigator } from "./BranchNavigator";
 import { Composer } from "./Composer";
@@ -36,6 +38,10 @@ interface Props {
   onNewSession?: () => void;
   /** Insert a rendered Markdown code block into the composer. */
   onInsertCode?: (code: string, language?: string) => void;
+  /** File currently open in the right panel; empty when nothing is open. */
+  applyTargetName?: string | null;
+  /** Ask the workbench to apply a code block to that file (shows a confirm dialog). */
+  onApplyCode?: (code: string, language?: string) => void;
   /** Open the repository Git Diff pane in the right panel. */
   onOpenGitDiff?: () => void;
 }
@@ -67,6 +73,8 @@ function ChatSession({
   onOpenFile,
   onNewSession,
   onInsertCode,
+  applyTargetName,
+  onApplyCode,
   onOpenGitDiff,
   active = true,
   onReload,
@@ -166,6 +174,17 @@ function ChatSession({
 
   const canCompact = Boolean(session?.id) && !chat.agentRunning && !chat.isCompacting;
 
+  const handleApplyCode = useCallback(
+    (code: string, language?: string) => {
+      if (!applyTargetName) {
+        setCompactToast({ ok: false, text: "右侧没有打开的文件，请先在文件树中打开一个文件" });
+        return;
+      }
+      onApplyCode?.(code, language);
+    },
+    [applyTargetName, onApplyCode],
+  );
+
   /** Ctrl/Cmd+Shift+C: whole conversation as Markdown on the clipboard. */
   const copyConversation = useCallback(async () => {
     const markdown = conversationToMarkdown(chat.messages);
@@ -230,6 +249,27 @@ function ChatSession({
   const availableThinkingLevels = currentModel
     ? (chat.modelThinkingLevels[`${currentModel.provider}:${currentModel.modelId}`] ?? null)
     : null;
+
+  const branchSwitchMap = useMemo(
+    () => buildBranchSwitchMap(chat.branches?.nodes ?? []),
+    [chat.branches],
+  );
+
+  const handleSwitchBranch = useCallback(
+    (leafId: string | null) => {
+      void chat.handleLeafChange(leafId);
+    },
+    [chat],
+  );
+
+  /** GitBranch button: fork at this message, prefilling the composer when pi returns text. */
+  const handleBranchAt = useCallback(
+    async (entryId: string) => {
+      const editorText = await chat.handleBranchAt(entryId);
+      if (editorText) onDraftChange(editorText);
+    },
+    [chat, onDraftChange],
+  );
 
   const streaming = chat.streamState.isStreaming ? chat.streamState.streamingMessage : null;
   const messages: AgentMessage[] = streaming
@@ -300,6 +340,31 @@ function ChatSession({
     </div>
   ) : null;
 
+  /**
+   * `/imagine <prompt>` becomes an instruction that names the generate_image
+   * tool. If no image model is configured the Agent cannot call the tool, so
+   * the composer explains that instead of sending a doomed prompt.
+   */
+  const prepareOutgoing = async (text: string): Promise<{ cancel: boolean; text: string }> => {
+    const message = buildImagineMessage(text);
+    if (message === null) return { cancel: false, text };
+    if (message === "") {
+      setCompactToast({ ok: false, text: "请在 /imagine 后输入图片描述" });
+      return { cancel: true, text };
+    }
+    try {
+      const res = await fetch("/api/desktop-settings");
+      const data = (await res.json()) as { imageModel?: unknown };
+      if (res.ok && !data.imageModel) {
+        setCompactToast({ ok: false, text: "请先在 设置 → 辅助模型 中选择生图模型" });
+        return { cancel: true, text };
+      }
+    } catch {
+      // Host unavailable: let the send fail through the normal error path.
+    }
+    return { cancel: false, text: message };
+  };
+
   const composer = (
     <div className="flex flex-col gap-2">
       {chat.canExecutePlan && chat.agentMode === "plan" && (
@@ -355,21 +420,29 @@ function ChatSession({
           void chat.handleAbort();
         }}
         onSubmit={(text, images) => {
-          void chat.handleSend(text, images);
+          void prepareOutgoing(text).then((outgoing) => {
+            if (!outgoing.cancel) void chat.handleSend(outgoing.text, images);
+          });
         }}
         onSteer={(text, images) => {
-          void chat.handleSteer(text, images).catch((error) => {
-            setCompactToast({
-              ok: false,
-              text: `打断失败：${error instanceof Error ? error.message : String(error)}`,
+          void prepareOutgoing(text).then((outgoing) => {
+            if (outgoing.cancel) return;
+            void chat.handleSteer(outgoing.text, images).catch((error) => {
+              setCompactToast({
+                ok: false,
+                text: `打断失败：${error instanceof Error ? error.message : String(error)}`,
+              });
             });
           });
         }}
         onFollowUp={(text, images) => {
-          void chat.handleFollowUp(text, images).catch((error) => {
-            setCompactToast({
-              ok: false,
-              text: `加入队列失败：${error instanceof Error ? error.message : String(error)}`,
+          void prepareOutgoing(text).then((outgoing) => {
+            if (outgoing.cancel) return;
+            void chat.handleFollowUp(outgoing.text, images).catch((error) => {
+              setCompactToast({
+                ok: false,
+                text: `加入队列失败：${error instanceof Error ? error.message : String(error)}`,
+              });
             });
           });
         }}
@@ -461,7 +534,12 @@ function ChatSession({
                   cwd={session?.cwd ?? newSessionCwd}
                   onOpenFile={onOpenFile}
                   onInsertCode={onInsertCode}
+                  onApplyCode={onApplyCode ? handleApplyCode : undefined}
+                  applyTargetName={applyTargetName}
                   nestedExecutions={chat.nestedToolExecutions}
+                  onBranch={handleBranchAt}
+                  branchSwitch={(entryId) => branchSwitchMap.get(entryId) ?? null}
+                  onSwitchBranch={handleSwitchBranch}
                 />
               )}
 

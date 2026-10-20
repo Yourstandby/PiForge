@@ -764,7 +764,7 @@ test("set_agent_mode plan forces read tools", async () => {
   // Plan is read-only: memory_recall stays, write/delete channels are dropped.
   assert.deepEqual(
     applied.at(-1)?.slice().sort(),
-    ["find", "grep", "ls", "memory_recall", "read"]
+    ["find", "grep", "ls", "memory_recall", "read", "tool_history_get"]
   );
 });
 

@@ -7,6 +7,7 @@ import { SessionTreeItem } from "./session-sidebar/SessionTree";
 import { ProjectGroup } from "./session-sidebar/ProjectGroup";
 import { SidebarIcon } from "./session-sidebar/SidebarIcon";
 import { groupProjects, projectKey, searchProjects, sortProjects } from "./session-sidebar/projects";
+import { groupSessionNodesByDate } from "./session-sidebar/date-groups";
 import { SortableProjects } from "./session-sidebar/SortableProjects";
 import { useSidebarPreferences } from "./session-sidebar/useSidebarPreferences";
 import { useI18n } from "./I18nProvider";
@@ -164,7 +165,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             setExpanded(project.key, expanded);
           }} onNewSession={() => newSession(project.cwd)}>
             {project.sessions.length === 0 && <button className="sidebar-empty-project" onClick={() => newSession(project.cwd)}>{t("sidebar.startFirstSession")}<SidebarIcon name="plus" size={13} /></button>}
-            {project.tree.map((node) => <SessionTreeItem key={node.session.id} node={node} selectedSessionId={selectedSessionId} onSelectSession={onSelectSession} onRenamed={loadSessions} onSessionDeleted={(id) => { onSessionDeleted?.(id); void loadSessions(); }} onBranchSession={onBranchSession} onCloneSession={onCloneSession} onExportSession={onExportSession} depth={0} searching={searching} />)}
+            {groupSessionNodesByDate(project.tree).map((group) => <div key={group.bucket} className="sidebar-date-group-wrap">
+              <div className="sidebar-date-group">{t(`sidebar.date.${group.bucket}`)}</div>
+              {group.nodes.map((node) => <SessionTreeItem key={node.session.id} node={node} selectedSessionId={selectedSessionId} onSelectSession={onSelectSession} onRenamed={loadSessions} onSessionDeleted={(id) => { onSessionDeleted?.(id); void loadSessions(); }} onBranchSession={onBranchSession} onCloneSession={onCloneSession} onExportSession={onExportSession} depth={0} searching={searching} />)}
+            </div>)}
           </ProjectGroup>
         )} />
       </nav>

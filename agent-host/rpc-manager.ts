@@ -22,10 +22,17 @@ import {
 import { readDesktopSettings } from "../lib/desktop-settings.ts";
 import { desktopRuntimeTools } from "./desktop-runtime-tools.ts";
 import { desktopProcessInlineExtension } from "./desktop-process-extension.ts";
+import { desktopPowerShellInlineExtension } from "./desktop-powershell-extension.ts";
 import { desktopBrowserInlineExtension } from "./desktop-browser-extension.ts";
 import { desktopTerminalInlineExtension } from "./desktop-terminal-extension.ts";
+import { desktopImageInlineExtension } from "./desktop-image-extension.ts";
+import { desktopDecisionInlineExtension } from "./desktop-decision-extension.ts";
+import { desktopToolOutputInlineExtension } from "./desktop-tool-output-extension.ts";
+import { desktopSubagentInlineExtension } from "./desktop-subagent-extension.ts";
+import { auxToolAvailability } from "./aux-models.ts";
 import { loadDesktopMcpConfig } from "../lib/mcp-config.ts";
 import { findLastAgentMode } from "./agent-mode-persistence.ts";
+import { applyPendingSessionLeaf } from "./session-branch-state.ts";
 import {
   branchEntriesToMessagesText,
   lastAssistantFromBranch,
@@ -39,6 +46,7 @@ import {
   countUserMessages,
   firstUserTextFromBranch,
   generateSessionTitle,
+  shouldAutoNameSession,
 } from "./session-title.ts";
 
 // ============================================================================
@@ -163,7 +171,7 @@ export class AgentSessionWrapper {
     this._agentMode = mode;
     this._modeRef.current = mode;
     this._modeRef.toolPreset = this._toolPreset;
-    const tools = desktopRuntimeTools(mode, this._toolPreset, this._modeRef.codemodeEnabled ?? false, this.inner.getAllTools(), this.inner.getActiveToolNames());
+    const tools = desktopRuntimeTools(mode, this._toolPreset, this._modeRef.codemodeEnabled ?? false, this.inner.getAllTools(), this.inner.getActiveToolNames(), auxToolAvailability());
     this.inner.setActiveToolsByName(tools);
   }
   setCodemodeEnabled(enabled: boolean): void {
@@ -323,7 +331,7 @@ export class AgentSessionWrapper {
         const branch = this.inner.sessionManager.getBranch() as unknown[];
         // Only the first user turn names a session; later turns must not
         // rewrite a title the user may have edited by hand.
-        if (countUserMessages(branch) !== 1) return;
+        if (!shouldAutoNameSession(this.inner.sessionName, countUserMessages(branch))) return;
         firstUserText = firstUserTextFromBranch(branch);
       }
       if (!firstUserText) return;
@@ -901,6 +909,9 @@ export async function startRpcSession(
     const sessionManager = sessionFile
       ? SessionManager.open(sessionFile, undefined)
       : SessionManager.create(cwd, undefined);
+    // A branch selected while the session was cold must be honored before the
+    // first prompt appends to the transcript.
+    applyPendingSessionLeaf(sessionId, sessionManager);
 
     const storedMode = findLastAgentMode(sessionManager.getEntries() as never);
     const agentMode: AgentMode = isAgentMode(opts.agentMode)
@@ -934,8 +945,13 @@ export async function startRpcSession(
         desktopApprovalInlineExtension(modeRef),
         desktopLtmInlineExtension({ getCwd: () => cwd }),
         desktopProcessInlineExtension({ getCwd: () => cwd }),
+        desktopPowerShellInlineExtension(() => cwd),
         desktopBrowserInlineExtension(),
         desktopTerminalInlineExtension({ getCwd: () => cwd }),
+        desktopImageInlineExtension(),
+        desktopDecisionInlineExtension(),
+        desktopToolOutputInlineExtension(),
+        desktopSubagentInlineExtension(),
       ],
     });
     await resourceLoader.reload();

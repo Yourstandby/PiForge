@@ -134,3 +134,72 @@ test("Auto routing model selections merge, validate and clear", () => {
   });
   assert.equal(cleared.autoRoutingFast, undefined);
 });
+
+test("auxiliary image/decision model selections merge, validate and clear", () => {
+  const merged = mergeDesktopSettings({
+    imageModel: { provider: "openrouter", modelId: "black-forest-labs/flux.2-pro" },
+    decisionModel: { provider: "openai", modelId: "gpt-6-luna" },
+  });
+  assert.deepEqual(merged.imageModel, {
+    provider: "openrouter",
+    modelId: "black-forest-labs/flux.2-pro",
+  });
+  assert.deepEqual(merged.decisionModel, { provider: "openai", modelId: "gpt-6-luna" });
+
+  assert.equal(
+    validateDesktopSettingsBody({
+      imageModel: { provider: "p", modelId: "m" },
+      decisionModel: null,
+    }),
+    null,
+  );
+  assert.match(
+    validateDesktopSettingsBody({ decisionModel: { provider: "", modelId: "m" } })!,
+    /decisionModel\.provider/,
+  );
+  assert.match(
+    validateDesktopSettingsBody({ imageModel: { provider: "p", modelId: "" } })!,
+    /imageModel\.modelId/,
+  );
+
+  const cleared = mergeDesktopSettings({ ...merged, imageModel: null });
+  assert.equal(cleared.imageModel, undefined);
+  assert.deepEqual(cleared.decisionModel, merged.decisionModel);
+});
+
+test("browser permissions default to off and persist booleans", () => {
+  const defaults = defaultDesktopSettings();
+  assert.equal(defaults.browserReadEnabled, false);
+  assert.equal(defaults.browserInteractEnabled, false);
+
+  const merged = mergeDesktopSettings({
+    browserReadEnabled: true,
+    browserInteractEnabled: "yes",
+  });
+  assert.equal(merged.browserReadEnabled, true);
+  // Invalid values fall back to the safe default (off).
+  assert.equal(merged.browserInteractEnabled, false);
+
+  assert.equal(
+    validateDesktopSettingsBody({ browserReadEnabled: true, browserInteractEnabled: false }),
+    null,
+  );
+  assert.match(
+    validateDesktopSettingsBody({ browserReadEnabled: "yes" })!,
+    /browserReadEnabled/,
+  );
+  assert.match(
+    validateDesktopSettingsBody({ browserInteractEnabled: 1 })!,
+    /browserInteractEnabled/,
+  );
+
+  const dir = mkdtempSync(join(tmpdir(), "pi-browser-permissions-"));
+  try {
+    writeDesktopSettings(dir, { ...defaults, browserReadEnabled: true });
+    const read = readDesktopSettings(dir);
+    assert.equal(read.browserReadEnabled, true);
+    assert.equal(read.browserInteractEnabled, false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

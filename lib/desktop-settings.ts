@@ -27,6 +27,9 @@ export interface AutoRoutingModelSelection {
   modelId: string;
 }
 
+/** Auxiliary (non-chat) model selection: image generation or decision/classifier. */
+export type AuxModelSelection = AutoRoutingModelSelection;
+
 export interface DesktopSettings {
   defaultAgentMode: AgentMode;
   defaultToolPreset: ToolPreset;
@@ -34,6 +37,14 @@ export interface DesktopSettings {
   /** User-picked fast/strong models for the "Auto" routing mode. */
   autoRoutingFast?: AutoRoutingModelSelection;
   autoRoutingStrong?: AutoRoutingModelSelection;
+  /** Image-generation model used by the `generate_image` tool. */
+  imageModel?: AuxModelSelection;
+  /** Classifier model used by the `classify_decision` tool. */
+  decisionModel?: AuxModelSelection;
+  /** Allow web_preview to read page text / screenshots (default off). */
+  browserReadEnabled?: boolean;
+  /** Allow web_preview to open / navigate the built-in browser (default off). */
+  browserInteractEnabled?: boolean;
   /** Optional LTM config; omitted when unset. Merged by getLtmConfig. */
   ltm?: DesktopLtmSettings;
 }
@@ -45,6 +56,9 @@ export function defaultDesktopSettings(): DesktopSettings {
     defaultAgentMode: DEFAULT_AGENT_MODE,
     defaultToolPreset: DEFAULT_TOOL_PRESET,
     codemodeEnabled: false,
+    // Browser capabilities are explicit opt-ins for the agent.
+    browserReadEnabled: false,
+    browserInteractEnabled: false,
   };
 }
 
@@ -84,10 +98,16 @@ export function mergeDesktopSettings(raw: unknown): DesktopSettings {
   };
   if (ltm) result.ltm = ltm;
   result.codemodeEnabled = typeof obj.codemodeEnabled === "boolean" ? obj.codemodeEnabled : false;
+  result.browserReadEnabled = obj.browserReadEnabled === true;
+  result.browserInteractEnabled = obj.browserInteractEnabled === true;
   const fast = parseAutoRoutingSelection(obj.autoRoutingFast);
   const strong = parseAutoRoutingSelection(obj.autoRoutingStrong);
   if (fast) result.autoRoutingFast = fast;
   if (strong) result.autoRoutingStrong = strong;
+  const imageModel = parseAutoRoutingSelection(obj.imageModel);
+  const decisionModel = parseAutoRoutingSelection(obj.decisionModel);
+  if (imageModel) result.imageModel = imageModel;
+  if (decisionModel) result.decisionModel = decisionModel;
   return result;
 }
 
@@ -119,13 +139,18 @@ export function validateDesktopSettingsBody(body: unknown): string | null {
   if (obj.codemodeEnabled !== undefined && typeof obj.codemodeEnabled !== "boolean") {
     return "codemodeEnabled must be a boolean";
   }
+  for (const key of ["browserReadEnabled", "browserInteractEnabled"] as const) {
+    if (obj[key] !== undefined && typeof obj[key] !== "boolean") {
+      return `${key} must be a boolean`;
+    }
+  }
   if (obj.defaultAgentMode !== undefined && !isAgentMode(obj.defaultAgentMode)) {
     return "defaultAgentMode must be plan | ask | full";
   }
   if (obj.defaultToolPreset !== undefined && !isToolPreset(obj.defaultToolPreset)) {
     return "defaultToolPreset must be none | default | full";
   }
-  for (const key of ["autoRoutingFast", "autoRoutingStrong"] as const) {
+  for (const key of ["autoRoutingFast", "autoRoutingStrong", "imageModel", "decisionModel"] as const) {
     const value = obj[key];
     if (value === undefined || value === null) continue;
     if (!value || typeof value !== "object" || Array.isArray(value)) {

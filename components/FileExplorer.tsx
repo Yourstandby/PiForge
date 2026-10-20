@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { AtSign, ChevronRight, Loader2 } from "lucide-react";
+import { FILE_DRAG_MIME } from "@/lib/file-drag";
 import { getFileIcon, FolderIcon } from "./FileIcons";
 import { encodeFilePathForApi, getRelativeFilePath, joinFilePath } from "@/lib/file-paths";
 import { useI18n } from "./I18nProvider";
@@ -156,6 +157,13 @@ function TreeNode({
     <div>
       <div
         onClick={handleClick}
+        draggable={!node.isDir}
+        onDragStart={(event) => {
+          if (node.isDir) return;
+          event.dataTransfer.setData(FILE_DRAG_MIME, node.fullPath);
+          event.dataTransfer.setData("text/plain", `@${getRelativeFilePath(node.fullPath, cwd)}`);
+          event.dataTransfer.effectAllowed = "copy";
+        }}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
         style={{

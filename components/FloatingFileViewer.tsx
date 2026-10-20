@@ -59,10 +59,13 @@ function formatSize(bytes: number): string {
 export function FloatingFileViewer({
   target,
   cwd,
+  refreshKey = 0,
   onClose,
 }: {
   target: FloatingFileTarget;
   cwd?: string | null;
+  /** Bumped after an external write (e.g. applying a code block) to refetch. */
+  refreshKey?: number;
   onClose: () => void;
 }) {
   const [data, setData] = useState<FileData | null>(null);
@@ -136,7 +139,7 @@ export function FloatingFileViewer({
     };
     // kind derives from target.fileName, covered by filePath changes in practice.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target.filePath, target.diff, cwd]);
+  }, [target.filePath, target.diff, cwd, refreshKey]);
 
   const lines = useMemo(() => (data?.content ?? "").split("\n"), [data?.content]);
 

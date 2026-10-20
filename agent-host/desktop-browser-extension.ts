@@ -19,6 +19,13 @@ import {
   isBrowserPanelConnected,
   requestBrowserCommand,
 } from "./browser-bridge.ts";
+import {
+  browserDeniedReason,
+  browserPermissionPrompt,
+  grantSessionBrowserPermissions,
+  missingBrowserPermissions,
+  type BrowserPermissionKind,
+} from "./browser-permissions.ts";
 
 /** Chars of page text handed to the model by default. */
 const DEFAULT_MAX_CHARS = 12_000;
@@ -44,6 +51,17 @@ const WebPreviewParams = Type.Object({
     Type.Number({ description: `Max characters of page text to return (default ${DEFAULT_MAX_CHARS}).` }),
   ),
 });
+
+/** Capabilities a tool call needs. Navigation counts as interaction. */
+export function requestedBrowserPermissions(
+  action: string,
+  url: string | undefined,
+): BrowserPermissionKind[] {
+  if (action === "open") return ["interact"];
+  if (action !== "read" && action !== "screenshot") return [];
+  // read/screenshot also navigate when a URL is supplied.
+  return url ? ["read", "interact"] : ["read"];
+}
 
 function textResult(text: string, details: Record<string, unknown> = {}, isError = false) {
   return {
@@ -140,6 +158,25 @@ function notConnectedResult(url: string | undefined) {
 
 export function createDesktopBrowserFactory(): ExtensionFactory {
   return (pi: ExtensionAPI) => {
+    // Enforce the browser capability policy before the tool runs. This also
+    // covers codemode scripts, which go through the same tool pipeline.
+    pi.on("tool_call", async (event, ctx) => {
+      if (event.toolName !== BROWSER_PREVIEW_TOOL_NAME) return;
+      const input = (event.input ?? {}) as Record<string, unknown>;
+      const kinds = requestedBrowserPermissions(
+        typeof input.action === "string" ? input.action : "",
+        typeof input.url === "string" && input.url.trim() ? input.url : undefined,
+      );
+      if (kinds.length === 0) return;
+      const sessionId = ctx.sessionManager.getSessionId();
+      const missing = missingBrowserPermissions(sessionId, kinds);
+      if (missing.length === 0) return;
+      const allowed = await ctx.ui.confirm("浏览器操作权限", browserPermissionPrompt(missing));
+      if (!allowed) return { block: true, reason: browserDeniedReason(missing) };
+      // Temporary grant: only this session, never persisted.
+      grantSessionBrowserPermissions(sessionId, missing);
+    });
+
     pi.registerTool({
       name: BROWSER_PREVIEW_TOOL_NAME,
       label: "Web Preview",

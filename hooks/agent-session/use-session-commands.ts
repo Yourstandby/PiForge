@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import type { AgentMessage, SessionInfo, CustomMessage, Skill, UserMessage } from "@/lib/types";
 import { sendAgentCommand } from "@/lib/agent-client";
+import { switchBranchApi } from "./session-loader-api.ts";
 import { PRESET_NONE, PRESET_DEFAULT, PRESET_FULL } from "@/lib/tool-presets";
 import type { FollowUpQueueSnapshot } from "@/lib/follow-up-queue";
 import type { StreamAction } from "./stream-state";
@@ -59,6 +60,8 @@ export type UseSessionCommandsOptions = {
   thinkingLevel: ThinkingLevelOption;
   newSessionModel: { provider: string; modelId: string } | null;
   sessionIdRef: MutableRefObject<string | null>;
+  /** Canonical session file, used when branch switching hits a cold session. */
+  sessionFilePath?: string | null;
   pendingScrollToUserRef: MutableRefObject<boolean>;
   setMessages: Dispatch<SetStateAction<AgentMessage[]>>;
   setEntryIds: Dispatch<SetStateAction<Array<string | undefined>>>;
@@ -73,7 +76,7 @@ export type UseSessionCommandsOptions = {
   setCanExecutePlan: (v: boolean) => void;
   promptTrust: (payload: NeedsTrustPayload) => Promise<string | null>;
   loadSession: (sid: string, showLoading?: boolean, includeState?: boolean) => Promise<unknown>;
-  loadContext: (sid: string, leafId: string) => Promise<unknown>;
+  loadContext: (sid: string, leafId: string | null) => Promise<unknown>;
   connectEvents: (sid: string) => void;
   onSessionCreated?: (session: SessionInfo) => void;
   onSessionForked?: (newSessionId: string) => void;
@@ -101,6 +104,7 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
     thinkingLevel,
     newSessionModel,
     sessionIdRef,
+    sessionFilePath = null,
     pendingScrollToUserRef,
     setMessages,
     setEntryIds,
@@ -491,39 +495,50 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
     [onSessionForked, sessionIdRef, setForkingEntryId]
   );
 
+  /**
+   * Move the active leaf. The Host switches the live AgentSession (pi's
+   * navigateTree semantics: a user message moves to its parent and returns the
+   * text for the composer); cold sessions remember the leaf for their next
+   * start. Only the transcript is reloaded — drafts and streaming state stay.
+   */
   const navigateToLeaf = useCallback(
-    async (leafId: string | null) => {
-      if (!leafId) {
-        setActiveLeafId(null);
-        return;
-      }
+    async (leafId: string | null): Promise<{ editorText?: string } | null> => {
       const sid = sessionIdRef.current;
-      if (!sid) return;
+      if (!sid) return null;
       try {
-        const result = await sendAgentCommand<{ cancelled?: boolean }>(sid, {
-          type: "navigate_tree",
-          targetId: leafId,
-        });
-        if (result?.cancelled) {
-          console.warn("navigate_tree cancelled:", leafId);
-          return;
-        }
-        setActiveLeafId(leafId);
-        await loadContext(sid, leafId);
+        const result = await switchBranchApi(sid, leafId, sessionFilePath);
+        if (result.cancelled) return null;
+        setActiveLeafId(result.leafId);
+        await loadContext(sid, result.leafId);
+        return result.editorText ? { editorText: result.editorText } : {};
       } catch (e) {
-        console.error("navigate_tree failed:", e);
+        console.error("switch branch failed:", e);
+        return null;
       }
     },
-    [loadContext, setActiveLeafId, sessionIdRef]
+    [loadContext, sessionIdRef, sessionFilePath, setActiveLeafId]
   );
 
   const handleNavigate = useCallback(
-    (entryId: string) => navigateToLeaf(entryId),
+    (entryId: string) => {
+      void navigateToLeaf(entryId);
+    },
     [navigateToLeaf]
   );
 
   const handleLeafChange = useCallback(
-    (leafId: string | null) => navigateToLeaf(leafId),
+    (leafId: string | null) => {
+      void navigateToLeaf(leafId);
+    },
+    [navigateToLeaf]
+  );
+
+  /** Fork button: switch to the message, returning the composer text pi hands back. */
+  const handleBranchAt = useCallback(
+    async (entryId: string): Promise<string | null> => {
+      const result = await navigateToLeaf(entryId);
+      return result?.editorText ?? null;
+    },
     [navigateToLeaf]
   );
 
@@ -607,6 +622,7 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
     handleSend,
     handleAbort,
     handleFork,
+    handleBranchAt,
     handleNavigate,
     handleLeafChange,
     handleCompact,

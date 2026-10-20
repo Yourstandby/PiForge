@@ -6,9 +6,10 @@
 export type AgentMode = "plan" | "ask" | "full";
 export type ToolPreset = "none" | "default" | "full";
 
-export const PLAN_TOOLS: readonly string[] = ["read", "grep", "find", "ls"];
+export const PLAN_TOOLS: readonly string[] = ["read", "grep", "find", "ls", "tool_history_get"];
 export const ASK_CONFIRM_TOOLS: readonly string[] = [
   "bash",
+  "powershell",
   "write",
   "edit",
   // LTM write/delete channels mutate durable project memory; keep them behind
@@ -85,9 +86,9 @@ export function summarizeToolCall(toolName: string, input: unknown): string {
     return `${toolName}(${JSON.stringify(input ?? {})})`;
   }
   const obj = input as Record<string, unknown>;
-  if (toolName === "bash" && typeof obj.command === "string") {
+  if ((toolName === "bash" || toolName === "powershell") && typeof obj.command === "string") {
     const cmd = obj.command.length > 200 ? `${obj.command.slice(0, 200)}…` : obj.command;
-    return `bash: ${cmd}`;
+    return `${toolName}: ${cmd}`;
   }
   if ((toolName === "write" || toolName === "edit") && typeof obj.path === "string") {
     return `${toolName}: ${obj.path}`;

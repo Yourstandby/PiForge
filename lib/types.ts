@@ -95,6 +95,8 @@ export interface ToolResultMessage {
   content: (TextContent | ImageContent)[];
   isError?: boolean;
   timestamp?: number;
+  /** Structured details the tool returned (image/decision cards render these). */
+  details?: unknown;
   /** Milliseconds the tool ran (pi records this on newer sessions). */
   durationMs?: number;
   /** Child tool calls made through `ctx.executeTool()` (kept on the result). */

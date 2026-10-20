@@ -1,34 +1,72 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ChevronDown, Copy, Download, ExternalLink, RotateCw, Send, Square, Terminal, Trash2 } from "lucide-react";
+import {
+  ChevronDown,
+  Copy,
+  Download,
+  ExternalLink,
+  RotateCw,
+  Send,
+  ShieldAlert,
+  Square,
+  Terminal,
+  Timer,
+  Trash2,
+  Zap,
+} from "lucide-react";
+import type {
+  ManagedProcessExitReason,
+  ManagedProcessStatus,
+  ManagedProcessView,
+} from "@contract/domains/processes";
 
-interface ManagedProcessView {
-  id: string;
-  name: string;
-  command: string;
-  cwd: string;
-  status: "running" | "exited" | "failed";
-  pid: number | null;
-  startedAt: number;
-  endedAt: number | null;
-  exitCode: number | null;
-  url: string | null;
-  ready: boolean;
-  logs: string[];
+const STATUS_DOT: Record<ManagedProcessStatus, string> = {
+  starting: "#B7791F",
+  running: "#3E8A63",
+  stopping: "#2563EB",
+  stopped: "#9CA3AF",
+  exited: "#6B7280",
+  crashed: "#C2554E",
+};
+
+const STATUS_LABEL: Record<ManagedProcessStatus, string> = {
+  starting: "启动中",
+  running: "运行中",
+  stopping: "停止中",
+  stopped: "已停止",
+  exited: "已退出",
+  crashed: "崩溃",
+};
+
+const STATUS_STYLE: Record<ManagedProcessStatus, string> = {
+  starting: "border-[#F3E3C3] bg-[#FCF7EC] text-[#9A5B13]",
+  running: "border-[#CBE6D5] bg-[#F2FBF5] text-[#2F7A55]",
+  stopping: "border-[#D9E5FB] bg-[#F5F9FF] text-accent-strong",
+  stopped: "border-[#E3E8F2] bg-white text-ink-faint",
+  exited: "border-[#E3E8F2] bg-white text-ink-muted",
+  crashed: "border-[#F0D5D2] bg-[#FDF6F5] text-[#B0443C]",
+};
+
+const EXIT_REASON_LABEL: Record<ManagedProcessExitReason, string> = {
+  natural: "自然退出",
+  stopped: "被停止",
+  crashed: "异常崩溃",
+  "cleanup-failed": "清理失败",
+};
+
+const RUNNING_STATUSES: ManagedProcessStatus[] = ["starting", "running", "stopping"];
+
+function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "0s";
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
-const STATUS_DOT: Record<ManagedProcessView["status"], string> = {
-  running: "#3E8A63",
-  exited: "#9CA3AF",
-  failed: "#C2554E",
-};
-
-const STATUS_LABEL: Record<ManagedProcessView["status"], string> = {
-  running: "运行中",
-  exited: "已退出",
-  failed: "失败",
-};
+type Action = "stop" | "force-stop" | "restart" | "remove";
 
 function ProcessCard({
   process,
@@ -38,7 +76,7 @@ function ProcessCard({
 }: {
   process: ManagedProcessView;
   busy: boolean;
-  onAction: (action: "stop" | "restart" | "remove", id: string) => void;
+  onAction: (action: Action, id: string) => void;
   onStdin: (id: string, input: string) => Promise<boolean>;
 }) {
   const [logsOpen, setLogsOpen] = useState(process.status === "running" && process.logs.length > 0);
@@ -69,58 +107,114 @@ function ProcessCard({
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
+  const active = RUNNING_STATUSES.includes(process.status);
+  const retryCleanup = process.cleanup?.ok === false;
+  const readiness =
+    process.readiness === "ready" ? "就绪" : process.readiness === "failed" ? "未就绪" : "等待就绪";
+
   return (
     <div className="mx-1.5 mb-1.5 rounded-lg border border-[#E7E9EE] bg-white px-2.5 py-2 shadow-[0_1px_2px_rgba(17,17,17,0.03)]">
       <div className="flex items-center gap-1.5">
         <span
-          className="h-1.5 w-1.5 shrink-0 rounded-full"
+          className={`h-1.5 w-1.5 shrink-0 rounded-full ${active ? "animate-pulse" : ""}`}
           style={{ background: STATUS_DOT[process.status] }}
           aria-hidden="true"
         />
         <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-ink" title={process.command}>
           {process.name}
         </span>
-        <span className="shrink-0 text-[10px] text-ink-faint">
-          {process.status === "running"
-            ? process.ready
-              ? "就绪"
-              : "启动中"
-            : STATUS_LABEL[process.status]}
+        <span className="shrink-0 rounded border border-[#E3E8F2] bg-[#F7F8FA] px-1 py-0.5 text-[9px] text-ink-faint">
+          {process.owner === "agent" ? "Agent" : "用户"}
         </span>
+        <span
+          className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[9.5px] font-medium ${STATUS_STYLE[process.status]}`}
+        >
+          {STATUS_LABEL[process.status]}
+        </span>
+        {active && (
+          <span className="shrink-0 text-[9.5px] text-ink-faint" title={`readiness: ${process.readiness}`}>
+            {readiness}
+          </span>
+        )}
       </div>
       <p className="mt-0.5 truncate font-mono text-[10.5px] text-ink-faint" title={process.command}>
         {process.command}
       </p>
-      <div className="mt-1.5 flex items-center gap-1">
-        {process.pid !== null && (
-          <span className="text-[10px] text-ink-faint">PID {process.pid}</span>
+
+      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-ink-faint">
+        <span className="flex items-center gap-0.5">
+          <Timer size={9} strokeWidth={2} aria-hidden="true" />
+          {formatDuration(process.durationMs)}
+        </span>
+        {process.pid !== null && <span>PID {process.pid}</span>}
+        {process.restartCount > 0 && <span>已重启 {process.restartCount} 次</span>}
+        {process.exitReason && (
+          <span
+            className={
+              process.exitReason === "crashed" || process.exitReason === "cleanup-failed"
+                ? "text-[#B0443C]"
+                : undefined
+            }
+          >
+            {EXIT_REASON_LABEL[process.exitReason]}
+            {process.exitCode !== null && process.exitReason !== "stopped"
+              ? ` · code ${process.exitCode}`
+              : ""}
+          </span>
         )}
-        {process.url && (
+        {process.endpoint && (
           <a
-            href={process.url}
+            href={process.endpoint.url}
             target="_blank"
             rel="noreferrer"
-            className="flex min-w-0 items-center gap-0.5 truncate text-[10px] text-accent-strong hover:underline"
-            title={process.url}
+            className="flex min-w-0 items-center gap-0.5 truncate text-accent-strong hover:underline"
+            title={process.endpoint.url}
           >
-            <ExternalLink size={10} strokeWidth={2} aria-hidden="true" />
-            {process.url.replace(/^https?:\/\//, "")}
+            <ExternalLink size={9} strokeWidth={2} aria-hidden="true" />
+            {process.endpoint.url.replace(/^https?:\/\//, "")}
+            {process.endpoint.port ? ` · :${process.endpoint.port}` : ""}
           </a>
         )}
-        <span className="flex-1" />
-        {process.status === "running" ? (
+      </div>
+
+      {process.cleanup && !process.cleanup.ok && (
+        <p className="mt-1 flex items-start gap-1 rounded bg-[#FDF6F5] px-1.5 py-1 text-[10px] text-[#B0443C]">
+          <ShieldAlert size={10} strokeWidth={2} className="mt-0.5 shrink-0" aria-hidden="true" />
+          <span className="min-w-0">
+            清理失败（{process.cleanup.strategy} · {process.cleanup.attempts} 次）：
+            {process.cleanup.error ?? "进程树可能仍在运行"}
+          </span>
+        </p>
+      )}
+
+      <div className="mt-1.5 flex flex-wrap items-center gap-1">
+        {active && (
           <button
             type="button"
             onClick={() => onAction("stop", process.id)}
-            disabled={busy}
-            title="停止进程"
+            disabled={busy || process.status === "stopping"}
+            title="优雅停止（SIGTERM，超时后升级）"
             aria-label={`停止 ${process.name}`}
             className="flex h-6 items-center gap-1 rounded-md px-1.5 text-[10.5px] text-ink-muted transition-colors hover:bg-[#FBEDEC] hover:text-[#B0443C] disabled:opacity-40"
           >
             <Square size={9} strokeWidth={1.5} fill="currentColor" aria-hidden="true" />
             停止
           </button>
-        ) : (
+        )}
+        {(active || retryCleanup) && (
+          <button
+            type="button"
+            onClick={() => onAction("force-stop", process.id)}
+            disabled={busy}
+            title={retryCleanup && !active ? "上次清理失败，重试终止进程树" : "强制停止进程树（SIGKILL / taskkill）"}
+            aria-label={`强制停止 ${process.name}`}
+            className="flex h-6 items-center gap-1 rounded-md px-1.5 text-[10.5px] text-ink-muted transition-colors hover:bg-[#FBEDEC] hover:text-[#B0443C] disabled:opacity-40"
+          >
+            <Zap size={10} strokeWidth={2} aria-hidden="true" />
+            {retryCleanup && !active ? "重试清理" : "强制停止"}
+          </button>
+        )}
+        {!active && !retryCleanup && (
           <button
             type="button"
             onClick={() => onAction("remove", process.id)}
@@ -135,8 +229,8 @@ function ProcessCard({
         <button
           type="button"
           onClick={() => onAction("restart", process.id)}
-          disabled={busy}
-          title="重启进程"
+          disabled={busy || process.status === "stopping"}
+          title="重启进程（保留 processId 与日志）"
           aria-label={`重启 ${process.name}`}
           className="flex h-6 items-center gap-1 rounded-md px-1.5 text-[10.5px] text-ink-muted transition-colors hover:bg-[#ECECEF] hover:text-ink disabled:opacity-40"
         >
@@ -144,6 +238,7 @@ function ProcessCard({
           重启
         </button>
       </div>
+
       {process.logs.length > 0 && (
         <div className="mt-1.5">
           <div className="flex items-center gap-1">
@@ -159,7 +254,7 @@ function ProcessCard({
                 aria-hidden="true"
                 className={logsOpen ? "rotate-180" : ""}
               />
-              输出（最近 {Math.min(process.logs.length, 80)} 行）
+              输出（共 {process.logLineCount} 行，显示最近 {Math.min(process.logs.length, 80)} 行）
             </button>
             <span className="flex-1" />
             <button
@@ -277,7 +372,7 @@ export function ProcessPanel() {
   }, [load]);
 
   const handleAction = useCallback(
-    async (action: "stop" | "restart" | "remove", id: string) => {
+    async (action: Action, id: string) => {
       setBusyId(id);
       try {
         await fetch("/api/processes", {
@@ -309,7 +404,7 @@ export function ProcessPanel() {
           </p>
           <p className="mt-1 leading-5">
             让 Agent 用 <code className="font-mono text-[10.5px]">run_bg</code> 启动 dev
-            server，进程会显示在这里，可随时停止或重启。
+            server。受管进程会显示 owner、状态、readiness 与退出原因，可随时停止、强制停止或重启。
           </p>
         </div>
       ) : (

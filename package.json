@@ -1,6 +1,6 @@
 {
   "name": "piforge",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "PiForge — multi-session desktop workbench for the Pi coding agent: built-in browser, terminal, Git panel and plan mode.",
   "license": "MIT",
   "author": "PiForge",
@@ -49,6 +49,7 @@
     "dist": "npm run build:standalone && npm run build:electron && npx electron-builder --publish never && node scripts/smoke-packaged-standalone.mjs",
     "dist:mac": "npm run build:standalone && npm run build:electron && npx electron-builder --mac --universal --publish never && node scripts/smoke-packaged-standalone.mjs",
     "smoke:agent-isolation": "node scripts/smoke-agent-isolation.mjs",
+    "smoke:extension-ui": "node scripts/smoke-extension-ui-bridge.mjs",
     "smoke:host-reconnect": "node scripts/smoke-host-reconnect.mjs"
   },
   "build": {

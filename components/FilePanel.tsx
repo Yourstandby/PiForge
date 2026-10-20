@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import {
+  Bot,
   FileCode,
   GitBranch,
   Globe,
@@ -15,6 +16,7 @@ import { FloatingFileViewer, type FloatingFileTarget } from "./FloatingFileViewe
 import { GitPanel } from "./GitPanel";
 import { ProcessPanel } from "./ProcessPanel";
 import { TerminalPanel } from "./TerminalPanel";
+import { SubagentPanel } from "./SubagentPanel";
 
 /**
  * FileExplorer renders its rows with inline styles that read the legacy theme
@@ -34,7 +36,7 @@ const explorerTokens = {
   "--font-mono": "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
 } as CSSProperties;
 
-type PanelTab = "files" | "git" | "browser" | "processes" | "terminal";
+type PanelTab = "files" | "git" | "browser" | "processes" | "terminal" | "agents";
 
 const PANEL_TABS = [
   { id: "files" as const, label: "文件", Icon: FileCode },
@@ -42,6 +44,7 @@ const PANEL_TABS = [
   { id: "browser" as const, label: "浏览器", Icon: Globe },
   { id: "processes" as const, label: "进程", Icon: Terminal },
   { id: "terminal" as const, label: "终端", Icon: SquareTerminal },
+  { id: "agents" as const, label: "Agents", Icon: Bot },
 ];
 
 export function FilePanel({
@@ -49,6 +52,7 @@ export function FilePanel({
   openFile,
   gitOpenSignal = 0,
   explorerRefreshKey = 0,
+  viewerRefreshKey = 0,
   onOpenFile,
   onOpenDiff,
   onCloseFile,
@@ -60,6 +64,8 @@ export function FilePanel({
   gitOpenSignal?: number;
   /** Bumped on every active-tab change so the file tree re-reads its cwd. */
   explorerRefreshKey?: number;
+  /** Bumped after an external write so the floating viewer refetches. */
+  viewerRefreshKey?: number;
   onOpenFile?: (filePath: string, fileName: string, line?: number) => void;
   onOpenDiff?: (filePath: string, fileName: string) => void;
   onCloseFile?: () => void;
@@ -84,6 +90,13 @@ export function FilePanel({
     const revealBrowser = () => setTab("browser");
     window.addEventListener("piforge:browser-open", revealBrowser);
     return () => window.removeEventListener("piforge:browser-open", revealBrowser);
+  }, []);
+
+  // The spawn_agent tool card links here.
+  useEffect(() => {
+    const revealAgents = () => setTab("agents");
+    window.addEventListener("piforge:agents-open", revealAgents);
+    return () => window.removeEventListener("piforge:agents-open", revealAgents);
   }, []);
 
   const handleOpenFile = useCallback(
@@ -171,6 +184,7 @@ export function FilePanel({
               <FloatingFileViewer
                 target={openFile}
                 cwd={cwd}
+                refreshKey={viewerRefreshKey}
                 onClose={() => onCloseFile?.()}
               />
             ) : null}
@@ -199,6 +213,12 @@ export function FilePanel({
         {tab === "processes" && (
           <div className="h-full overflow-y-auto py-1">
             <ProcessPanel />
+          </div>
+        )}
+
+        {tab === "agents" && (
+          <div className="h-full overflow-y-auto py-1">
+            <SubagentPanel />
           </div>
         )}
 

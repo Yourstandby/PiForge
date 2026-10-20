@@ -66,6 +66,15 @@ jobs:
       - name: Build installer
         run: npm run ${{ matrix.dist_script }}
 
+      - name: Verify Windows artifacts and write SHA-256
+        if: matrix.pack_id == 'windows'
+        shell: bash
+        run: |
+          test -f release/latest.yml
+          ls -l release/PiForge-Setup-*.exe release/PiForge-*-win-*.zip
+          node scripts/write-sha256.mjs release
+          cat release/SHA256SUMS.txt
+
       - name: Verify Linux deb
         if: matrix.pack_id == 'linux'
         run: dpkg-deb -I release/*.deb
@@ -89,7 +98,9 @@ jobs:
           path: |
             release/PiForge-Setup-*.exe
             release/PiForge-Setup-*.exe.blockmap
+            release/PiForge-*-win-*.zip
             release/latest.yml
+            release/SHA256SUMS.txt
 
       - name: Upload Linux artifacts
         if: matrix.pack_id == 'linux'
@@ -151,8 +162,10 @@ jobs:
             dist-artifacts/PiForge-*-mac-universal.zip
             dist-artifacts/PiForge-*-mac-universal.zip.blockmap
             dist-artifacts/latest-mac.yml
+            dist-artifacts/PiForge-*-win-*.zip
+            dist-artifacts/SHA256SUMS.txt
           )
-          if [ "${#assets[@]}" -ne 10 ]; then
+          if [ "${#assets[@]}" -ne 12 ]; then
             echo "expected 10 release assets, found ${#assets[@]}:"
             printf '%s\n' "${assets[@]}"
             ls -la dist-artifacts

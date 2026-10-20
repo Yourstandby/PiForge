@@ -386,6 +386,15 @@ span.linenumber { color: var(--text-dim) !important; font-style: normal !importa
   color: #2563eb;
   opacity: 0.75;
 }
+.sidebar-date-group {
+  padding: 6px 10px 2px 22px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: #9ca3af;
+  user-select: none;
+}
+
 .sidebar-project-name {
   flex: 1;
   min-width: 0;

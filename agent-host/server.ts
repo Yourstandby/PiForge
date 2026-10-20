@@ -21,6 +21,8 @@ import {
 } from "../contract/events.ts";
 import { parseClientFrame } from "../contract/guards.ts";
 import type { HostHealth } from "../contract/methods.ts";
+import type { McpConnectionConfig } from "../contract/domains/mcp.ts";
+import type { DecisionQuestion } from "../contract/domains/aux-models.ts";
 import { validateAgentCommand } from "../lib/agent-commands.ts";
 import { isAgentMode, isToolPreset } from "../lib/approval-policy.ts";
 import {
@@ -69,6 +71,8 @@ import {
 import {
   listManagedProcesses,
   onManagedProcessesChange,
+  forceStopManagedProcess,
+  hasFailedProcessCleanup,
   removeManagedProcessEntry,
   restartManagedProcess,
   sendManagedProcessInput,
@@ -77,6 +81,16 @@ import {
   stopManagedProcess,
 } from "./managed-processes.ts";
 import {
+  ensureProcessInstanceState,
+  getProcessInstanceId,
+  shutdownProcessInstanceState,
+} from "./process-instance-store.ts";
+import { reapOrphanedProcesses } from "./crash-reaper.ts";
+import {
+  clearAllBrowserSessionGrants,
+  forgetSessionBrowserPermissions,
+} from "./browser-permissions.ts";
+import {
   clearTerminalLog,
   finishShellBlock,
   listTerminalBlocks,
@@ -84,6 +98,50 @@ import {
   setShellOutput,
   startShellBlock,
 } from "./terminal-log.ts";
+import {
+  cancelMcpLogin,
+  closeAllMcpClients,
+  getLoginStatus,
+  isMcpAuthRequiredError,
+  listMcpResources,
+  loginMcpServer,
+  logoutMcpServer,
+  McpServiceError,
+  mcpAuthStatus,
+  probeMcpServer,
+  readMcpResource,
+  refreshMcpAuth,
+} from "./mcp-service.ts";
+import { probeDevEnvironment } from "./dev-tools.ts";
+import {
+  listSubagents,
+  onSubagentsChange,
+  stopAllSubagents,
+  stopSubagent,
+} from "./subagents.ts";
+import type { SubagentLifecycleEvent } from "../contract/domains/subagents.ts";
+import { applyCodeToFile, FileApplyError } from "./file-apply.ts";
+import {
+  getSessionBranches,
+  SessionBranchError,
+  switchSessionBranch,
+} from "./session-branches.ts";
+import { clearPendingSessionLeaves, forgetPendingSessionLeaf } from "./session-branch-state.ts";
+import {
+  HISTORY_DEFAULT_LIMIT,
+  HISTORY_MAX_LIMIT,
+  isToolOutputPath,
+  readToolOutputPage,
+} from "./tool-outputs.ts";
+import {
+  AuxModelError,
+  classifyDecision,
+  generateImage,
+  getAuxCatalogue,
+  invalidateAuxRuntime,
+  readAuxConfig,
+  setAuxConfig,
+} from "./aux-models.ts";
 
 export interface AgentHostServerOptions {
   /** Named pipe path (Windows) or Unix domain socket path. */
@@ -134,7 +192,7 @@ const DEFAULT_LOG = (message: string) => {
 /** Coalesce chatty process/terminal output into at most ~4 events/second. */
 const BROADCAST_INTERVAL_MS = 250;
 
-const GLOBAL_TOPICS: readonly GlobalTopic[] = ["processes", "terminal"];
+const GLOBAL_TOPICS: readonly GlobalTopic[] = ["processes", "terminal", "subagents"];
 
 function tokensMatch(actual: string, expected: string): boolean {
   const actualBytes = Buffer.from(actual, "utf8");
@@ -195,6 +253,11 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
 
   const offProcessesChange = onManagedProcessesChange(() => scheduleBroadcast("processes"));
   const offTerminalChange = onTerminalLogChange(() => scheduleBroadcast("terminal"));
+  let lastSubagentEvent: SubagentLifecycleEvent | undefined;
+  const offSubagentsChange = onSubagentsChange((event) => {
+    lastSubagentEvent = event;
+    scheduleBroadcast("subagents");
+  });
 
   function writeFrame(state: ConnectionState, frame: HostFrame): boolean {
     if (state.closed || state.socket.destroyed || !state.socket.writable) return false;
@@ -278,6 +341,68 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
     fail(state, id, "INTERNAL", errorText(error));
   }
 
+  function failMcp(state: ConnectionState, id: number, error: unknown): void {
+    if (error instanceof McpServiceError) {
+      fail(state, id, error.code, error.message);
+      return;
+    }
+    if (isMcpAuthRequiredError(error)) {
+      fail(state, id, "MCP_AUTH_REQUIRED", errorText(error));
+      return;
+    }
+    fail(state, id, "INTERNAL", errorText(error));
+  }
+
+  function failBranch(state: ConnectionState, id: number, error: unknown): void {
+    if (error instanceof SessionBranchError) {
+      fail(state, id, error.code, error.message);
+      return;
+    }
+    fail(state, id, "INTERNAL", errorText(error));
+  }
+
+  function failAux(state: ConnectionState, id: number, error: unknown): void {
+    if (error instanceof AuxModelError) {
+      fail(state, id, error.code, error.message);
+      return;
+    }
+    fail(state, id, "AUX_MODEL_FAILED", errorText(error));
+  }
+
+  /** `undefined` = not provided, `null` = clear, otherwise a validated selection. */
+  function readAuxSelection(
+    params: Record<string, unknown>,
+    key: string,
+  ): { provider: string; modelId: string } | null | undefined {
+    const value = params[key];
+    if (value === undefined) return undefined;
+    if (value === null) return null;
+    if (typeof value !== "object" || Array.isArray(value)) {
+      throw new AuxModelError("E_INVALID_PARAMS", `${key} must be an object or null`);
+    }
+    const record = value as Record<string, unknown>;
+    if (typeof record.provider !== "string" || !record.provider.trim()) {
+      throw new AuxModelError("E_INVALID_PARAMS", `${key}.provider must be a non-empty string`);
+    }
+    if (typeof record.modelId !== "string" || !record.modelId.trim()) {
+      throw new AuxModelError("E_INVALID_PARAMS", `${key}.modelId must be a non-empty string`);
+    }
+    return { provider: record.provider, modelId: record.modelId };
+  }
+
+  function readMcpRef(params: Record<string, unknown>): { cwd?: string; serverId: string; scope?: "global" | "project" } | null {
+    const serverId = readString(params, "serverId");
+    if (!serverId) return null;
+    const scope = params.scope;
+    if (scope !== undefined && scope !== "global" && scope !== "project") return null;
+    const cwd = readOptionalString(params, "cwd");
+    return {
+      serverId,
+      ...(cwd ? { cwd } : {}),
+      ...(scope ? { scope } : {}),
+    };
+  }
+
   function emitTopicSnapshot(topic: GlobalTopic): void {
     const targets = subscribersFor(topic);
     if (targets.length === 0) return;
@@ -285,6 +410,14 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
     if (topic === "processes") {
       const payload: HostEventPayloads["processes.changed"] = {
         processes: listManagedProcesses(),
+      };
+      for (const subscription of targets) sendEvent(subscription, topic, payload);
+      return;
+    }
+    if (topic === "subagents") {
+      const payload: HostEventPayloads["subagents.changed"] = {
+        agents: listSubagents(),
+        ...(lastSubagentEvent ? { event: lastSubagentEvent } : {}),
       };
       for (const subscription of targets) sendEvent(subscription, topic, payload);
       return;
@@ -438,6 +571,13 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       sendEvent(subscription, topic, { processes: listManagedProcesses() });
       return;
     }
+    if (topic === "subagents") {
+      sendEvent(subscription, topic, {
+        agents: listSubagents(),
+        ...(lastSubagentEvent ? { event: lastSubagentEvent } : {}),
+      });
+      return;
+    }
     sendEvent(subscription, topic, { blocks: listTerminalBlocks() });
   }
 
@@ -490,11 +630,18 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
           fail(state, frame.id, "E_INVALID_PARAMS", "cwd and command are required");
           return;
         }
+        const owner = params.owner;
+        if (owner !== undefined && owner !== "agent" && owner !== "user") {
+          fail(state, frame.id, "E_INVALID_PARAMS", "owner must be 'agent' or 'user'");
+          return;
+        }
+        const name = readOptionalString(params, "name");
         try {
           const process = startManagedProcess({
             cwd,
             command,
-            name: readOptionalString(params, "name"),
+            ...(name ? { name } : {}),
+            ...(owner ? { owner } : {}),
           });
           result(state, frame.id, { process });
         } catch (error) {
@@ -509,6 +656,15 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
           return;
         }
         respond(state, frame.id, stopManagedProcess(id), (ok) => ({ ok }));
+        return;
+      }
+      case "processes.forceStop": {
+        const id = readString(params, "id");
+        if (!id) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "id is required");
+          return;
+        }
+        respond(state, frame.id, forceStopManagedProcess(id), (ok) => ({ ok }));
         return;
       }
       case "processes.restart": {
@@ -738,7 +894,10 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
           return;
         }
         void (getRpcSession(sessionId)?.destroy() ?? Promise.resolve())
-          .then(() => result(state, frame.id, { ok: true }))
+          .then(() => {
+            forgetSessionBrowserPermissions(sessionId);
+            result(state, frame.id, { ok: true });
+          })
           .catch((error: unknown) => fail(state, frame.id, "INTERNAL", errorText(error)));
         return;
       }
@@ -804,6 +963,300 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
         }
         updateSessionCodemode(params.enabled);
         result(state, frame.id, { updated: listRpcSessions().length });
+        return;
+      }
+
+      // ---------------------------------------------------------------------
+      // MCP management: all connections and OAuth stay in this process.
+      // ---------------------------------------------------------------------
+      case "mcp.probe": {
+        const serverId = readOptionalString(params, "serverId");
+        const connection = params.connection;
+        if (serverId !== undefined && (typeof serverId !== "string" || !serverId.trim())) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "serverId must be a non-empty string");
+          return;
+        }
+        if (!serverId && (!connection || typeof connection !== "object" || Array.isArray(connection))) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "serverId or connection is required");
+          return;
+        }
+        const scope = params.scope;
+        if (scope !== undefined && scope !== "global" && scope !== "project") {
+          fail(state, frame.id, "E_INVALID_PARAMS", "scope must be 'global' or 'project'");
+          return;
+        }
+        void probeMcpServer({
+          ...(readOptionalString(params, "cwd") ? { cwd: readOptionalString(params, "cwd") } : {}),
+          ...(serverId ? { serverId, scope } : {}),
+          ...(connection ? { connection: connection as McpConnectionConfig } : {}),
+        })
+          .then((report) => result(state, frame.id, report))
+          .catch((error: unknown) => failMcp(state, frame.id, error));
+        return;
+      }
+      case "mcp.resources": {
+        const ref = readMcpRef(params);
+        if (!ref) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "serverId is required");
+          return;
+        }
+        void listMcpResources(ref)
+          .then((resources) => result(state, frame.id, resources))
+          .catch((error: unknown) => failMcp(state, frame.id, error));
+        return;
+      }
+      case "mcp.readResource": {
+        const ref = readMcpRef(params);
+        const uri = readString(params, "uri");
+        if (!ref || !uri) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "serverId and uri are required");
+          return;
+        }
+        void readMcpResource({ ...ref, uri })
+          .then((resource) => result(state, frame.id, resource))
+          .catch((error: unknown) => failMcp(state, frame.id, error));
+        return;
+      }
+      case "mcp.authStatus": {
+        const ref = readMcpRef(params);
+        if (!ref) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "serverId is required");
+          return;
+        }
+        void Promise.resolve()
+          .then(() => mcpAuthStatus(ref))
+          .then((auth) => result(state, frame.id, auth))
+          .catch((error: unknown) => failMcp(state, frame.id, error));
+        return;
+      }
+      case "mcp.login": {
+        const ref = readMcpRef(params);
+        if (!ref) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "serverId is required");
+          return;
+        }
+        void loginMcpServer(ref)
+          .then((login) => result(state, frame.id, login))
+          .catch((error: unknown) => failMcp(state, frame.id, error));
+        return;
+      }
+      case "mcp.cancelLogin": {
+        const loginId = readString(params, "loginId");
+        if (!loginId) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "loginId is required");
+          return;
+        }
+        void cancelMcpLogin(loginId)
+          .then((ok) => result(state, frame.id, { ok }))
+          .catch((error: unknown) => failMcp(state, frame.id, error));
+        return;
+      }
+      case "mcp.loginStatus": {
+        const loginId = readString(params, "loginId");
+        if (!loginId) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "loginId is required");
+          return;
+        }
+        result(state, frame.id, { login: getLoginStatus(loginId) });
+        return;
+      }
+      case "mcp.logout": {
+        const ref = readMcpRef(params);
+        if (!ref) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "serverId is required");
+          return;
+        }
+        void logoutMcpServer(ref)
+          .then((ok) => result(state, frame.id, { ok }))
+          .catch((error: unknown) => failMcp(state, frame.id, error));
+        return;
+      }
+      case "mcp.refreshAuth": {
+        const ref = readMcpRef(params);
+        if (!ref) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "serverId is required");
+          return;
+        }
+        void refreshMcpAuth(ref)
+          .then((auth) => result(state, frame.id, auth))
+          .catch((error: unknown) => failMcp(state, frame.id, error));
+        return;
+      }
+
+      // ---------------------------------------------------------------------
+      // Auxiliary models: image generation and structured decisions.
+      // ---------------------------------------------------------------------
+      case "models.auxCatalogue": {
+        void getAuxCatalogue()
+          .then((catalogue) => result(state, frame.id, catalogue))
+          .catch((error: unknown) => failAux(state, frame.id, error));
+        return;
+      }
+      case "models.auxConfig": {
+        void Promise.resolve()
+          .then(() => readAuxConfig())
+          .then((config) => result(state, frame.id, config))
+          .catch((error: unknown) => failAux(state, frame.id, error));
+        return;
+      }
+      case "models.setAuxConfig": {
+        let image: { provider: string; modelId: string } | null | undefined;
+        let decision: { provider: string; modelId: string } | null | undefined;
+        try {
+          image = readAuxSelection(params, "image");
+          decision = readAuxSelection(params, "decision");
+        } catch (error) {
+          failAux(state, frame.id, error);
+          return;
+        }
+        if (image === undefined && decision === undefined) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "image or decision is required");
+          return;
+        }
+        void setAuxConfig({ image, decision })
+          .then((config) => {
+            // Running sessions pick the new tools up on their next prompt.
+            requestSessionResourceReload();
+            result(state, frame.id, config);
+          })
+          .catch((error: unknown) => failAux(state, frame.id, error));
+        return;
+      }
+      case "image.generate": {
+        const prompt = readString(params, "prompt");
+        if (!prompt) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "prompt is required");
+          return;
+        }
+        let model: { provider: string; modelId: string } | null | undefined;
+        try {
+          model = readAuxSelection(params, "model");
+        } catch (error) {
+          failAux(state, frame.id, error);
+          return;
+        }
+        void generateImage(prompt, model)
+          .then((report) => result(state, frame.id, report))
+          .catch((error: unknown) => failAux(state, frame.id, error));
+        return;
+      }
+      case "toolOutput.read": {
+        const file = readString(params, "file");
+        if (!file) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "file is required");
+          return;
+        }
+        if (!isToolOutputPath(file)) {
+          fail(state, frame.id, "ACCESS_DENIED", "Not a persisted tool output path");
+          return;
+        }
+        const offset = params.offset;
+        const limit = params.limit;
+        if (offset !== undefined && (typeof offset !== "number" || !Number.isFinite(offset) || offset < 0)) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "offset must be a non-negative number");
+          return;
+        }
+        if (
+          limit !== undefined &&
+          (typeof limit !== "number" || !Number.isFinite(limit) || limit < 1 || limit > HISTORY_MAX_LIMIT)
+        ) {
+          fail(state, frame.id, "E_INVALID_PARAMS", `limit must be between 1 and ${HISTORY_MAX_LIMIT}`);
+          return;
+        }
+        void readToolOutputPage(
+          file,
+          offset === undefined ? 0 : Math.floor(offset),
+          limit === undefined ? HISTORY_DEFAULT_LIMIT : Math.floor(limit),
+        )
+          .then((page) => result(state, frame.id, page))
+          .catch((error: unknown) => fail(state, frame.id, "INTERNAL", errorText(error)));
+        return;
+      }
+      case "subagents.list": {
+        result(state, frame.id, { agents: listSubagents() });
+        return;
+      }
+      case "subagents.stop": {
+        const id = readString(params, "id");
+        if (!id) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "id is required");
+          return;
+        }
+        result(state, frame.id, { ok: stopSubagent(id) });
+        return;
+      }
+      case "env.probe": {
+        if (params.refresh !== undefined && typeof params.refresh !== "boolean") {
+          fail(state, frame.id, "E_INVALID_PARAMS", "refresh must be a boolean");
+          return;
+        }
+        void probeDevEnvironment({ refresh: params.refresh === true })
+          .then((report) => result(state, frame.id, report))
+          .catch((error: unknown) => fail(state, frame.id, "INTERNAL", errorText(error)));
+        return;
+      }
+      case "decision.classify": {
+        const state0 = params.state;
+        if (!state0 || typeof state0 !== "object" || Array.isArray(state0)) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "state must be an object");
+          return;
+        }
+        const questions = params.questions;
+        if (!Array.isArray(questions) || questions.length === 0) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "questions must be a non-empty array");
+          return;
+        }
+        let model: { provider: string; modelId: string } | null | undefined;
+        try {
+          model = readAuxSelection(params, "model");
+        } catch (error) {
+          failAux(state, frame.id, error);
+          return;
+        }
+        void classifyDecision({
+          state: state0 as Record<string, unknown>,
+          questions: questions as DecisionQuestion[],
+          model,
+        })
+          .then((report) => result(state, frame.id, report))
+          .catch((error: unknown) => failAux(state, frame.id, error));
+        return;
+      }
+
+      // ---------------------------------------------------------------------
+      // Session branches
+      // ---------------------------------------------------------------------
+      case "sessions.getBranches": {
+        const sessionId = readString(params, "sessionId");
+        if (!sessionId) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "sessionId is required");
+          return;
+        }
+        const filePath = readOptionalString(params, "filePath");
+        void getSessionBranches({ sessionId, ...(filePath ? { filePath } : {}) })
+          .then((branches) => result(state, frame.id, branches))
+          .catch((error: unknown) => failBranch(state, frame.id, error));
+        return;
+      }
+      case "sessions.switchBranch": {
+        const sessionId = readString(params, "sessionId");
+        if (!sessionId) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "sessionId is required");
+          return;
+        }
+        const leafId = params.leafId;
+        if (leafId !== null && typeof leafId !== "string") {
+          fail(state, frame.id, "E_INVALID_PARAMS", "leafId must be a string or null");
+          return;
+        }
+        const filePath = readOptionalString(params, "filePath");
+        void switchSessionBranch({
+          sessionId,
+          leafId,
+          ...(filePath ? { filePath } : {}),
+        })
+          .then((switched) => result(state, frame.id, switched))
+          .catch((error: unknown) => failBranch(state, frame.id, error));
         return;
       }
 
@@ -875,7 +1328,10 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
           return;
         }
         void deleteSession(sessionId, filePath)
-          .then(() => result(state, frame.id, { ok: true }))
+          .then(() => {
+            forgetPendingSessionLeaf(sessionId);
+            result(state, frame.id, { ok: true });
+          })
           .catch((error: unknown) => fail(state, frame.id, "INTERNAL", errorText(error)));
         return;
       }
@@ -887,6 +1343,29 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
         void getAllowedRoots()
           .then((roots) => result(state, frame.id, { roots: [...roots] }))
           .catch((error: unknown) => fail(state, frame.id, "INTERNAL", errorText(error)));
+        return;
+      }
+      case "files.applyCode": {
+        const filePath = readString(params, "path");
+        const content = typeof params.content === "string" ? params.content : null;
+        const mode = params.mode;
+        if (!filePath || content === null || (mode !== "overwrite" && mode !== "append")) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "path, content and mode ('overwrite'|'append') are required");
+          return;
+        }
+        void applyCodeToFile({ path: filePath, content, mode })
+          .then((applied) => result(state, frame.id, applied))
+          .catch((error: unknown) => {
+            if (error instanceof AccessDeniedError) {
+              fail(state, frame.id, "ACCESS_DENIED", error.message);
+              return;
+            }
+            if (error instanceof FileApplyError) {
+              fail(state, frame.id, error.code, error.message);
+              return;
+            }
+            fail(state, frame.id, "INTERNAL", errorText(error));
+          });
         return;
       }
       case "files.authorize": {
@@ -1048,6 +1527,9 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       }
 
       case "models.refresh": {
+        // Credentials or models.json changed: drop cached auxiliary runtime
+        // state so image/decision calls resolve fresh auth.
+        invalidateAuxRuntime();
         requestSessionResourceReload();
         result(state, frame.id, { sessions: listRpcSessions().length });
         return;
@@ -1164,6 +1646,7 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       listenersDetached = true;
       offProcessesChange();
       offTerminalChange();
+      offSubagentsChange();
       clearBroadcastTimers();
       for (const state of [...sockets]) {
         try {
@@ -1191,11 +1674,28 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       // Cascade cleanup: every shell wrapper/dev server spawned by this host
       // is killed as a process tree before the host exits.
       try {
+        await closeAllMcpClients();
+      } catch (error) {
+        log(`failed to close MCP management connections: ${errorText(error)}`);
+      }
+      clearAllBrowserSessionGrants();
+      clearPendingSessionLeaves();
+
+      try {
+        await stopAllSubagents();
+      } catch (error) {
+        log(`failed to stop sub-agents: ${errorText(error)}`);
+      }
+
+      try {
         const stopped = await stopAllManagedProcesses();
         if (stopped > 0) log(`stopped ${stopped} managed process(es)`);
       } catch (error) {
         log(`failed to stop managed processes: ${error instanceof Error ? error.message : String(error)}`);
       }
+      // Clean shutdown: remove this host's process-state file so the next
+      // start has nothing to reap.
+      shutdownProcessInstanceState({ keepForReaper: hasFailedProcessCleanup() });
 
       await new Promise<void>((resolve) => {
         if (!server) {
@@ -1242,6 +1742,21 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       log(`server error: ${error.message}`);
       options.onFatal?.(error);
     });
+
+    // Crash recovery: register this host instance, then reap process trees
+    // left by a previous host that is no longer heartbeating. Runs async so a
+    // slow identity check (PowerShell/ps) never delays readiness.
+    ensureProcessInstanceState();
+    void reapOrphanedProcesses({ ownInstanceId: getProcessInstanceId(), log })
+      .then((report) => {
+        if (report.reaped.length > 0) {
+          log(`crash reaper: terminated ${report.reaped.length} orphaned process tree(s)`);
+        }
+        if (report.failed.length > 0) {
+          log(`crash reaper: ${report.failed.length} record(s) left running (fail-closed)`);
+        }
+      })
+      .catch((error: unknown) => log(`crash reaper failed: ${errorText(error)}`));
 
     options.onReady?.(options.endpoint);
   }

@@ -27,6 +27,19 @@ const ALLOWED_ROOTS_TTL_MS = 5_000;
 let cachedRoots: { roots: Set<string>; expiresAt: number } | null = null;
 const extraRoots = new Set<string>();
 
+/**
+ * `realpath` removes symlinks and resolves macOS `/var` → `/private/var`.
+ * A root that does not exist yet (project added before first session) is kept
+ * as an absolute path; authorization will fail-closed until it exists.
+ */
+async function canonicalRoot(root: string): Promise<string> {
+  try {
+    return await realpath(root);
+  } catch {
+    return path.resolve(root);
+  }
+}
+
 /** Register a cwd immediately (new/live sessions may not be flushed yet). */
 export function addAllowedRoot(cwd: string): void {
   const trimmed = cwd.trim();
@@ -39,31 +52,38 @@ export async function getAllowedRoots(): Promise<Set<string>> {
   const now = Date.now();
   if (cachedRoots && cachedRoots.expiresAt > now) return cachedRoots.roots;
 
-  const roots = new Set<string>();
+  const rawRoots = new Set<string>();
   try {
     const sessions = await SessionManager.listAll();
     for (const session of sessions) {
       // Reject dangerous legacy/tampered headers; allow home so an existing
       // session rooted there stays browsable.
       if (session.cwd && !validateAgentCwd(session.cwd, { allowHome: true })) {
-        roots.add(session.cwd);
+        rawRoots.add(session.cwd);
       }
     }
   } catch {
     // Unreadable session store: fall back to explicit roots only.
   }
 
-  for (const root of extraRoots) roots.add(root);
+  for (const root of extraRoots) rawRoots.add(root);
 
   try {
     const home = homedir();
     const names = await readdir(home);
     for (const name of names) {
-      if (/^pi-cwd-\d{8}$/.test(name)) roots.add(path.join(home, name));
+      if (/^pi-cwd-\d{8}$/.test(name)) rawRoots.add(path.join(home, name));
     }
   } catch {
     // ignore unreadable home
   }
+
+  // Canonicalize roots before caching: on macOS `/var/...` and
+  // `/private/var/...` are the same location, and a target's realpath would
+  // otherwise never match the raw root. This is the root-cause fix for the
+  // cross-platform AccessDeniedError; no path-prefix bypass is needed.
+  const roots = new Set<string>();
+  for (const root of rawRoots) roots.add(await canonicalRoot(root));
 
   cachedRoots = { roots, expiresAt: now + ALLOWED_ROOTS_TTL_MS };
   return roots;

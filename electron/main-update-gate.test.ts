@@ -35,6 +35,14 @@ test("main process quit-and-install is gated on update download state", () => {
   }
 });
 
+test("update feed is fixed at build time and never overridden at runtime", () => {
+  assert.match(source, /app-update\.yml/);
+  assert.doesNotMatch(source, /setFeedURL/);
+  assert.match(source, /autoUpdater\.autoDownload = false/);
+  assert.match(source, /autoUpdater\.autoInstallOnAppQuit = true/);
+  assert.match(source, /checkForUpdates\(\)\.catch/);
+});
+
 test("packaged readiness requires HTTP health", () => {
   assert.match(source, /requireHttpHealth:\s*app\.isPackaged/);
   assert.match(source, /waitForNextServerReady\(port, nextProcess, \{\s*requireHttpHealth:\s*app\.isPackaged\s*\}\)/);
