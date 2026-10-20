@@ -6,7 +6,7 @@
 export type AgentMode = "plan" | "ask" | "full";
 export type ToolPreset = "none" | "default" | "full";
 
-export const PLAN_TOOLS: readonly string[] = ["read", "grep", "find", "ls"];
+export const PLAN_TOOLS: readonly string[] = ["read", "grep", "find", "ls", "tool_history_get"];
 export const ASK_CONFIRM_TOOLS: readonly string[] = [
   "bash",
   "write",

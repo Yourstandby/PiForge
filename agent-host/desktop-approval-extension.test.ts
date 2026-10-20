@@ -44,7 +44,7 @@ test("plan mode appends the plan prompt and keeps only read tools", async () => 
   assert.equal(result, undefined, "no forced prompt: pi keeps rendering its own sections");
   assert.equal(event.systemPromptOptions.appendSystemPrompt, PLAN_MODE_SYSTEM_PROMPT);
   // memory_recall is appended by withMemoryTools for plan mode.
-  assert.deepEqual(activeTools[0].slice().sort(), ["find", "grep", "ls", "memory_recall", "read"]);
+  assert.deepEqual(activeTools[0].slice().sort(), ["find", "grep", "ls", "memory_recall", "read", "tool_history_get"]);
 });
 
 test("plan mode appends after an existing append prompt", async () => {

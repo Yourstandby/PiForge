@@ -384,6 +384,38 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     assert.equal(nodeProbe.found, true);
     assert.match(nodeProbe.version ?? "", /\d+\.\d+/);
 
+    // ---- persisted tool outputs (host-owned log files) ----
+    const toolOutputDir = path.join(agentDir, "sessions", "tool-outputs", "smoke-session");
+    mkdirSync(toolOutputDir, { recursive: true });
+    const toolOutputFile = path.join(toolOutputDir, "call-1.log");
+    writeFileSync(
+      toolOutputFile,
+      Array.from({ length: 300 }, (_, index) => `smoke line ${index + 1}`).join("\n"),
+    );
+
+    client.send({
+      kind: "req",
+      id: 25,
+      method: "toolOutput.read",
+      params: { file: toolOutputFile, offset: 200, limit: 200 },
+    });
+    const toolOutputPage = await client.waitFor((frame) => frame.kind === "res" && frame.id === 25);
+    assert.equal(toolOutputPage.ok, true, JSON.stringify(toolOutputPage.error));
+    assert.equal(toolOutputPage.result.totalLines, 300);
+    assert.equal(toolOutputPage.result.hasMore, false);
+    assert.match(toolOutputPage.result.text, /smoke line 201/);
+    assert.match(toolOutputPage.result.text, /smoke line 300/);
+
+    client.send({
+      kind: "req",
+      id: 26,
+      method: "toolOutput.read",
+      params: { file: path.join(sandbox, "outside.log") },
+    });
+    const toolOutputDenied = await client.waitFor((frame) => frame.kind === "res" && frame.id === 26);
+    assert.equal(toolOutputDenied.ok, false);
+    assert.equal(toolOutputDenied.error.code, "ACCESS_DENIED");
+
     // ---- cascade cleanup on host shutdown ----
     client.send({
       kind: "req",

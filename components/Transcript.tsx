@@ -1,6 +1,6 @@
 "use client";
 
-import { Children, useEffect, useId, useMemo, useState } from "react";
+import { Children, useCallback, useEffect, useId, useMemo, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -403,6 +403,144 @@ function percent(value: number | undefined): string | null {
   return `${Math.round(normalized)}%`;
 }
 
+interface PersistedOutputView {
+  toolCallId: string;
+  file: string;
+  bytes: number;
+  lines: number;
+  previewLines: number;
+  omittedLines: number;
+}
+
+function readPersistedOutput(details: unknown): PersistedOutputView | null {
+  const record = asRecord(details);
+  const marker = record ? asRecord(record.toolOutput) : null;
+  if (!marker || marker.kind !== "tool-output" || typeof marker.file !== "string") return null;
+  return {
+    toolCallId: typeof marker.toolCallId === "string" ? marker.toolCallId : "",
+    file: marker.file,
+    bytes: typeof marker.bytes === "number" ? marker.bytes : 0,
+    lines: typeof marker.lines === "number" ? marker.lines : 0,
+    previewLines: typeof marker.previewLines === "number" ? marker.previewLines : 0,
+    omittedLines: typeof marker.omittedLines === "number" ? marker.omittedLines : 0,
+  };
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+const TOOL_OUTPUT_PAGE_SIZE = 200;
+
+interface ToolOutputPageView {
+  text: string;
+  offset: number;
+  limit: number;
+  totalLines: number;
+  hasMore: boolean;
+}
+
+/** "查看完整输出" footer with in-card pagination over the persisted log. */
+function PersistedOutputPanel({ output }: { output: PersistedOutputView }) {
+  const [open, setOpen] = useState(false);
+  const [page, setPage] = useState<ToolOutputPageView | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(
+    async (offset: number) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetch("/api/tool-outputs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ file: output.file, offset, limit: TOOL_OUTPUT_PAGE_SIZE }),
+        });
+        const data = (await res.json()) as ToolOutputPageView & { error?: string };
+        if (!res.ok || data.error) throw new Error(data.error ?? `HTTP ${res.status}`);
+        setPage(data);
+      } catch (e: unknown) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [output.file],
+  );
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (next && !page) void load(0);
+  };
+
+  const lineCount = page?.text ? page.text.split("\n").length : 0;
+
+  return (
+    <div className="border-t border-[#EDF1F7] bg-[#FBFCFE] px-3 py-1.5">
+      <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+        <span className="rounded bg-[#FFF3E0] px-1.5 py-0.5 text-[10px] font-medium text-[#9A5B13]">
+          已截断
+        </span>
+        <span className="text-ink-muted">
+          完整输出已保存 · {output.lines} 行 / {formatBytes(output.bytes)}
+        </span>
+        <span className="hidden font-mono text-[10px] text-ink-faint sm:inline">tool_history_get</span>
+        <button
+          type="button"
+          onClick={toggle}
+          aria-expanded={open}
+          className="ml-auto shrink-0 rounded-md border border-border bg-white px-2 py-1 text-[11px] text-ink-muted transition-colors hover:bg-[#ECECEF] hover:text-ink"
+        >
+          {open ? "收起完整输出" : "查看完整输出"}
+        </button>
+      </div>
+      {open && (
+        <div className="mt-1.5 overflow-hidden rounded-md border border-[#E3E8F2] bg-white">
+          {loading && !page ? (
+            <p className="px-2 py-2 text-[11px] text-ink-faint">加载中…</p>
+          ) : error ? (
+            <p className="px-2 py-2 text-[11px] text-[#B0443C]">{error}</p>
+          ) : page ? (
+            <>
+              <div className="flex items-center justify-between gap-2 border-b border-[#EDF1F7] px-2 py-1 text-[10.5px] text-ink-faint">
+                <span className="tabular-nums">
+                  第 {page.offset + 1}–{page.offset + lineCount} 行 / 共 {page.totalLines} 行
+                </span>
+                <span className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => void load(Math.max(0, page.offset - TOOL_OUTPUT_PAGE_SIZE))}
+                    disabled={loading || page.offset <= 0}
+                    className="rounded border border-border px-1.5 py-0.5 text-[10.5px] text-ink-muted transition-colors hover:bg-[#ECECEF] hover:text-ink disabled:opacity-40"
+                  >
+                    上一页
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void load(page.offset + TOOL_OUTPUT_PAGE_SIZE)}
+                    disabled={loading || !page.hasMore}
+                    className="rounded border border-border px-1.5 py-0.5 text-[10.5px] text-ink-muted transition-colors hover:bg-[#ECECEF] hover:text-ink disabled:opacity-40"
+                  >
+                    下一页
+                  </button>
+                </span>
+              </div>
+              <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all px-2 py-1.5 font-mono text-[10.5px] leading-4 text-ink-soft">
+                {page.text || "（空）"}
+              </pre>
+            </>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Compact badges for `classify_decision` results (choice / score / bool). */
 function DecisionBadges({ details }: { details: DecisionDetailsView }) {
   const entries = Object.entries(details.answers);
@@ -658,6 +796,7 @@ function ToolCallCard({
   const resultImages = result ? contentImages(result.content) : [];
   const decision = useMemo(() => readDecisionDetails(details), [details]);
   const generatedImage = useMemo(() => readImageDetails(details), [details]);
+  const persistedOutput = useMemo(() => readPersistedOutput(details), [details]);
   // Successful edit/write calls show what changed, right in the card: users
   // should not have to open the Git panel to see the AI's own edit.
   const codeDiff = useMemo(
@@ -746,6 +885,7 @@ function ToolCallCard({
         </div>
       )}
       {decision && <DecisionBadges details={decision} />}
+      {persistedOutput && <PersistedOutputPanel output={persistedOutput} />}
       {open && hasDetails && (
         <div className="border-t border-[#EDF1F7] bg-[#FBFCFE]">
           {tree && (

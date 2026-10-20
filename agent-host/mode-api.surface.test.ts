@@ -29,7 +29,7 @@ test("command whitelist accepts set_agent_mode and extension_ui_response", () =>
 });
 
 test("plan/ask/full tool policy is shipped", () => {
-  assert.deepEqual(effectiveToolsForMode("plan", "full").sort(), ["find", "grep", "ls", "read"]);
+  assert.deepEqual(effectiveToolsForMode("plan", "full").sort(), ["find", "grep", "ls", "read", "tool_history_get"]);
   for (const t of ASK_CONFIRM_TOOLS) assert.equal(needsAskConfirm("ask", t), true);
   assert.equal(needsAskConfirm("full", "bash"), false);
   assert.match(EXECUTE_PLAN_PROMPT, /计划/);

@@ -17,6 +17,7 @@ import type {
   BrowserPageSnapshot,
 } from "./domains/browser.ts";
 import type { DevEnvironmentReport } from "./domains/dev-environment.ts";
+import type { ToolOutputPageDto } from "./domains/tool-outputs.ts";
 import type {
   AuxModelCatalogue,
   AuxModelConfig,
@@ -275,6 +276,12 @@ export interface AgentHostMethods {
     result: DevEnvironmentReport;
   };
 
+  // ---- persisted large tool outputs (files owned by the host) ----
+  "toolOutput.read": {
+    params: { file: string; offset?: number; limit?: number };
+    result: ToolOutputPageDto;
+  };
+
   // ---- session metadata / mutation ----
   "sessions.locate": {
     params: { sessionId: string };
@@ -419,6 +426,7 @@ export const IMPLEMENTED_HOST_METHODS = [
   "image.generate",
   "decision.classify",
   "env.probe",
+  "toolOutput.read",
   "sessions.locate",
   "sessions.state",
   "sessions.rename",

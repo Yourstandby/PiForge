@@ -106,6 +106,12 @@ import {
 } from "./mcp-service.ts";
 import { probeDevEnvironment } from "./dev-tools.ts";
 import {
+  HISTORY_DEFAULT_LIMIT,
+  HISTORY_MAX_LIMIT,
+  isToolOutputPath,
+  readToolOutputPage,
+} from "./tool-outputs.ts";
+import {
   AuxModelError,
   classifyDecision,
   generateImage,
@@ -1066,6 +1072,38 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
         void generateImage(prompt, model)
           .then((report) => result(state, frame.id, report))
           .catch((error: unknown) => failAux(state, frame.id, error));
+        return;
+      }
+      case "toolOutput.read": {
+        const file = readString(params, "file");
+        if (!file) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "file is required");
+          return;
+        }
+        if (!isToolOutputPath(file)) {
+          fail(state, frame.id, "ACCESS_DENIED", "Not a persisted tool output path");
+          return;
+        }
+        const offset = params.offset;
+        const limit = params.limit;
+        if (offset !== undefined && (typeof offset !== "number" || !Number.isFinite(offset) || offset < 0)) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "offset must be a non-negative number");
+          return;
+        }
+        if (
+          limit !== undefined &&
+          (typeof limit !== "number" || !Number.isFinite(limit) || limit < 1 || limit > HISTORY_MAX_LIMIT)
+        ) {
+          fail(state, frame.id, "E_INVALID_PARAMS", `limit must be between 1 and ${HISTORY_MAX_LIMIT}`);
+          return;
+        }
+        void readToolOutputPage(
+          file,
+          offset === undefined ? 0 : Math.floor(offset),
+          limit === undefined ? HISTORY_DEFAULT_LIMIT : Math.floor(limit),
+        )
+          .then((page) => result(state, frame.id, page))
+          .catch((error: unknown) => fail(state, frame.id, "INTERNAL", errorText(error)));
         return;
       }
       case "env.probe": {

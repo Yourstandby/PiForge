@@ -602,6 +602,14 @@ components/models-config/     模型配置弹窗的子组件
 
 > 探测在 `agent-host/dev-tools.ts` 内执行（Node 子进程 + `where`/`which`，带超时与短缓存）。浏览器权限由 `agent-host/browser-permissions.ts` 管理：全局开关存于 `desktop-settings.json`（`browserReadEnabled` / `browserInteractEnabled`，默认关闭），临时授权按会话 id 存在 Host 内存；`desktop-browser-extension.ts` 在 `tool_call` 钩子里校验 `read`（文本 / 截图）与 `interact`（打开 / 导航），未授权时通过 Extension UI 确认框询问用户，拒绝则以 block reason 返回模型。
 
+### 大工具结果持久化（1 条）
+
+| 路由 | 方法 | 用途 |
+| --- | --- | --- |
+| `app/api/tool-outputs/route.ts` | POST | 经 Host `toolOutput.read` 分页读取会话 `tool-outputs/` 下的完整日志 |
+
+> `agent-host/tool-outputs.ts` 定义阈值（10KB / 2000 行）与落盘路径 `<sessionDir>/tool-outputs/<sessionId>/<toolCallId>.log`；`desktop-tool-output-extension.ts` 在 `tool_result` 钩子中把超大结果替换成「前 40 行 + 后 40 行 + 系统提示」，同时注册 `tool_history_get`（`toolCallId` + `offset` + `limit`，默认 200 行、上限 2000 行）供 Agent 分页取回。Bash 自身已截断时优先复制其 `fullOutputPath` 临时文件，确保落盘的是完整输出。渲染层通过 `/api/tool-outputs` 读取同一文件并在工具卡片内分页展示。
+
 ### 扩展与 Skill 管理（4 条）
 
 | 路由 | 方法 | 用途 |
