@@ -265,6 +265,8 @@ function ChatSession({
       thinkingLevel={chat.thinkingLevel as ThinkingLevel}
       availableThinkingLevels={availableThinkingLevels}
       onThinkingLevelChange={chat.handleThinkingLevelChange}
+      agentMode={chat.agentMode}
+      onAgentModeChange={chat.handleAgentModeChange}
       soundEnabled={soundEnabled}
       onSoundToggle={onSoundToggle}
       onCompactRequest={() => setCompactConfirmOpen(true)}

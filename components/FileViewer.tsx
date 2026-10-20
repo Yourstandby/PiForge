@@ -341,9 +341,20 @@ function ImageViewer({ filePath, cwd }: { filePath: string; cwd?: string }) {
           color: "var(--text-dim)",
           background: "var(--bg-elevated)",
           flexShrink: 0,
+          overflowX: "auto",
         }}
       >
-        <span style={{ fontFamily: "var(--font-mono)" }} title={filePath}>
+        <span
+          style={{
+            fontFamily: "var(--font-mono)",
+            maxWidth: 130,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            flexShrink: 0,
+          }}
+          title={filePath}
+        >
           {getRelativeFilePath(filePath, cwd)}
         </span>
         <span style={{ marginLeft: "auto" }}>{ext || "image"}</span>
@@ -477,9 +488,20 @@ function AudioViewer({ filePath, cwd }: { filePath: string; cwd?: string }) {
           color: "var(--text-dim)",
           background: "var(--bg-elevated)",
           flexShrink: 0,
+          overflowX: "auto",
         }}
       >
-        <span style={{ fontFamily: "var(--font-mono)" }} title={filePath}>
+        <span
+          style={{
+            fontFamily: "var(--font-mono)",
+            maxWidth: 130,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            flexShrink: 0,
+          }}
+          title={filePath}
+        >
           {getRelativeFilePath(filePath, cwd)}
         </span>
         <span style={{ marginLeft: "auto" }}>{ext || "audio"}</span>
@@ -946,9 +968,20 @@ function TextFileViewer({ filePath, cwd, line }: Props) {
           color: "var(--text-dim)",
           background: "var(--bg-elevated)",
           flexShrink: 0,
+          overflowX: "auto",
         }}
       >
-        <span style={{ fontFamily: "var(--font-mono)" }} title={filePath}>
+        <span
+          style={{
+            fontFamily: "var(--font-mono)",
+            maxWidth: 130,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            flexShrink: 0,
+          }}
+          title={filePath}
+        >
           {getRelativeFilePath(filePath, cwd)}
         </span>
         <span style={{ marginLeft: "auto" }}>{data.language}</span>

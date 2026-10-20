@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SessionInfo } from "@/lib/types";
-import { Settings } from "lucide-react";
+import { PanelRightOpen, Settings } from "lucide-react";
 import { getElectronApi } from "@/lib/electron-api";
 import { resolveForkedSession } from "@/lib/fork-session-wait";
 import { buildProjectWindowPath, resolveInitialView } from "@/lib/project-window";
@@ -10,14 +10,12 @@ import { useFileTabs } from "@/hooks/useFileTabs";
 import { useConfigHotReload } from "@/hooks/useConfigHotReload";
 import { ChatSurface } from "./ChatSurface";
 import { FilePanel } from "./FilePanel";
-import { FileViewer } from "./FileViewer";
 import { ModelsConfig } from "./ModelsConfig";
 import { SessionExportModal } from "./SessionExportModal";
 import { SessionSidebar } from "./SessionSidebar";
 import { ExtensionsConfigModal } from "./ExtensionsConfigModal";
 import { AutoRoutingConfig } from "./AutoRoutingConfig";
 import { SkillsConfig } from "./SkillsConfig";
-import { TabBar } from "./TabBar";
 import { TitleBar } from "./TitleBar";
 
 function byModifiedDesc(a: SessionInfo, b: SessionInfo): number {
@@ -41,6 +39,7 @@ export function Workbench() {
   // Sidebar refetch trigger (fork / delete / new session).
   const [sessionsVersion, setSessionsVersion] = useState(0);
   const [settingsModal, setSettingsModal] = useState<SettingsModal>(null);
+  const [rightPanelOpen, setRightPanelOpen] = useState(true);
 
   // ~/.pi/agent edits (models.json, auth.json, extensions, skills) are picked
   // up live: bump the model list key and refresh sessions without a restart.
@@ -86,8 +85,6 @@ export function Workbench() {
     handleOpenDiff,
     handleCloseFileTab,
   } = useFileTabs();
-
-  const activeTab = fileTabs.find((tab) => tab.id === activeFileTabId) ?? null;
 
   const loadSessions = useCallback(async (): Promise<SessionInfo[]> => {
     try {
@@ -340,39 +337,45 @@ export function Workbench() {
             onDraftChange={handleDraftChange}
             onSessionCreated={handleSessionCreated}
             onSessionRenamed={() => setSessionsVersion((version) => version + 1)}
-            onOpenFile={(filePath, fileName, line) => handleOpenFile(filePath, fileName, line)}
+            onOpenFile={(filePath, fileName, line) => {
+              // Chat file links must land in the right panel, never over chat.
+              setRightPanelOpen(true);
+              handleOpenFile(filePath, fileName, line);
+            }}
             onSessionForked={(newSessionId) => {
               void handleSessionForked(newSessionId);
             }}
           />
-          {activeTab && (
-            <div
-              className="absolute inset-0 z-30 flex flex-col bg-[#FCFCFA]"
-              style={{ ["--toolbar-height" as string]: "34px" }}
+          {!rightPanelOpen && (
+            <button
+              type="button"
+              onClick={() => setRightPanelOpen(true)}
+              aria-label="展开右侧面板"
+              title="展开右侧面板"
+              className="absolute right-2 top-2 z-20 flex h-7 w-7 items-center justify-center rounded-md border border-gray-200/70 bg-white/90 text-ink-muted shadow-[0_2px_8px_rgba(0,0,0,0.06)] backdrop-blur transition-colors hover:bg-[#ECECEF] hover:text-ink"
             >
-              <TabBar
-                tabs={fileTabs}
-                activeTabId={activeTab.id}
-                onSelectTab={setActiveFileTabId}
-                onCloseTab={handleCloseFileTab}
-              />
-              <div className="min-h-0 flex-1 overflow-hidden border-t border-[#EBEDF1]">
-                <FileViewer
-                  filePath={activeTab.filePath}
-                  cwd={cwd ?? undefined}
-                  gitDiff={activeTab.mode === "diff"}
-                  line={activeTab.line}
-                />
-              </div>
-            </div>
+              <PanelRightOpen size={14} strokeWidth={1.75} aria-hidden="true" />
+            </button>
           )}
         </div>
 
-        <FilePanel
-          cwd={cwd}
-          onOpenFile={(path, name) => handleOpenFile(path, name)}
-          onOpenDiff={(path, name) => handleOpenDiff(path, name)}
-        />
+        <div
+          className={`shrink-0 overflow-hidden transition-[width] duration-200 ease-in-out ${
+            rightPanelOpen ? "w-[280px]" : "w-0 pointer-events-none"
+          }`}
+          aria-hidden={!rightPanelOpen}
+        >
+          <FilePanel
+            cwd={cwd}
+            fileTabs={fileTabs}
+            activeFileTabId={activeFileTabId}
+            onSelectFileTab={setActiveFileTabId}
+            onCloseFileTab={handleCloseFileTab}
+            onOpenFile={handleOpenFile}
+            onOpenDiff={handleOpenDiff}
+            onCollapse={() => setRightPanelOpen(false)}
+          />
+        </div>
       </div>
 
       {settingsModal === "skills" && (
