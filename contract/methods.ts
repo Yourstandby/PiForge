@@ -18,6 +18,7 @@ import type {
 } from "./domains/browser.ts";
 import type { DevEnvironmentReport } from "./domains/dev-environment.ts";
 import type { SessionBranches, SessionBranchSwitchResult } from "./domains/sessions.ts";
+import type { SubagentView } from "./domains/subagents.ts";
 import type { ToolOutputPageDto } from "./domains/tool-outputs.ts";
 import type {
   AuxModelCatalogue,
@@ -271,6 +272,16 @@ export interface AgentHostMethods {
     result: DecisionReport;
   };
 
+  // ---- sub-agents ----
+  "subagents.list": {
+    params: Record<string, never>;
+    result: { agents: SubagentView[] };
+  };
+  "subagents.stop": {
+    params: { id: string };
+    result: { ok: boolean };
+  };
+
   // ---- development environment probes ----
   "env.probe": {
     params: { refresh?: boolean };
@@ -440,6 +451,8 @@ export const IMPLEMENTED_HOST_METHODS = [
   "models.setAuxConfig",
   "image.generate",
   "decision.classify",
+  "subagents.list",
+  "subagents.stop",
   "env.probe",
   "toolOutput.read",
   "sessions.getBranches",

@@ -27,6 +27,7 @@ import { desktopTerminalInlineExtension } from "./desktop-terminal-extension.ts"
 import { desktopImageInlineExtension } from "./desktop-image-extension.ts";
 import { desktopDecisionInlineExtension } from "./desktop-decision-extension.ts";
 import { desktopToolOutputInlineExtension } from "./desktop-tool-output-extension.ts";
+import { desktopSubagentInlineExtension } from "./desktop-subagent-extension.ts";
 import { auxToolAvailability } from "./aux-models.ts";
 import { loadDesktopMcpConfig } from "../lib/mcp-config.ts";
 import { findLastAgentMode } from "./agent-mode-persistence.ts";
@@ -947,6 +948,7 @@ export async function startRpcSession(
         desktopImageInlineExtension(),
         desktopDecisionInlineExtension(),
         desktopToolOutputInlineExtension(),
+        desktopSubagentInlineExtension(),
       ],
     });
     await resourceLoader.reload();

@@ -602,6 +602,15 @@ components/models-config/     模型配置弹窗的子组件
 
 > 探测在 `agent-host/dev-tools.ts` 内执行（Node 子进程 + `where`/`which`，带超时与短缓存）。浏览器权限由 `agent-host/browser-permissions.ts` 管理：全局开关存于 `desktop-settings.json`（`browserReadEnabled` / `browserInteractEnabled`，默认关闭），临时授权按会话 id 存在 Host 内存；`desktop-browser-extension.ts` 在 `tool_call` 钩子里校验 `read`（文本 / 截图）与 `interact`（打开 / 导航），未授权时通过 Extension UI 确认框询问用户，拒绝则以 block reason 返回模型。
 
+### 子 Agent（2 条）
+
+| 路由 | 方法 | 用途 |
+| --- | --- | --- |
+| `app/api/subagents/route.ts` | GET / POST | 经 Host `subagents.list` 获取子 Agent 列表；`subagents.stop` 中止指定子 Agent |
+| `app/api/subagents/events/route.ts` | GET | SSE：Host `subagents` 主题（`subagent_started` / `subagent_output` / `subagent_finished` + 全量快照） |
+
+> `agent-host/subagents.ts` 管理子 Agent：每个子 Agent 用 `SessionManager.inMemory(cwd)` + 独立 `AgentSession`，不加载用户扩展/MCP（`noExtensions`），只开放只读内置工具，继承父级 model/thinkingLevel；最多 4 个并行，完成后返回最终报告。主 Agent 通过 `agent-host/desktop-subagent-extension.ts` 的 `spawn_agent` 工具调用；主轮中断会 abort 所有子会话，Host 关闭时统一 `stopAllSubagents()`。子 Agent 的工具输出只进内存与事件流，主会话 JSONL 只在主 Agent 的 tool_result 落盘时追加一条记录。
+
 ### 会话分支切换（1 条）
 
 | 路由 | 方法 | 用途 |

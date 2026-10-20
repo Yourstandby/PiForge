@@ -77,6 +77,11 @@ function getRuntime(): Promise<ModelRuntime> {
   return runtimePromise;
 }
 
+/** Shared runtime for auxiliary calls and sub-agent sessions. */
+export function getSharedAuxRuntime(): Promise<ModelRuntime> {
+  return getRuntime();
+}
+
 /** Credentials or models.json changed: the next call rebuilds the runtime. */
 export function invalidateAuxRuntime(): void {
   runtimePromise = null;

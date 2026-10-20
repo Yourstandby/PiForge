@@ -214,7 +214,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     assert.equal(unknown.error.code, "E_UNKNOWN_METHOD");
 
     // ---- subscriptions ----
-    client.send({ kind: "req", id: 3, method: "host.subscribe", params: { topics: ["processes", "terminal"] } });
+    client.send({ kind: "req", id: 3, method: "host.subscribe", params: { topics: ["processes", "terminal", "subagents"] } });
     const subscribe = await client.waitFor((frame) => frame.kind === "res" && frame.id === 3);
     assert.equal(subscribe.ok, true);
     assert.ok(subscribe.result.subscriptionId);
@@ -227,6 +227,10 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       (frame) => frame.kind === "evt" && frame.topic === "terminal.changed",
     );
     assert.deepEqual(terminalSnapshot.payload.blocks, []);
+    const subagentSnapshot = await client.waitFor(
+      (frame) => frame.kind === "evt" && frame.topic === "subagents.changed",
+    );
+    assert.deepEqual(subagentSnapshot.payload.agents, []);
 
     // ---- terminal lifecycle ----
     for (const [id, method, params] of [
@@ -415,6 +419,17 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     const toolOutputDenied = await client.waitFor((frame) => frame.kind === "res" && frame.id === 26);
     assert.equal(toolOutputDenied.ok, false);
     assert.equal(toolOutputDenied.error.code, "ACCESS_DENIED");
+
+    // ---- sub-agents (Host-owned child sessions) ----
+    client.send({ kind: "req", id: 32, method: "subagents.list", params: {} });
+    const subagentsEmpty = await client.waitFor((frame) => frame.kind === "res" && frame.id === 32);
+    assert.equal(subagentsEmpty.ok, true, JSON.stringify(subagentsEmpty.error));
+    assert.deepEqual(subagentsEmpty.result.agents, []);
+
+    client.send({ kind: "req", id: 33, method: "subagents.stop", params: { id: "missing-agent" } });
+    const subagentStop = await client.waitFor((frame) => frame.kind === "res" && frame.id === 33);
+    assert.equal(subagentStop.ok, true, JSON.stringify(subagentStop.error));
+    assert.equal(subagentStop.result.ok, false);
 
     // ---- code-block apply (writes stay behind the host file policy) ----
     client.send({

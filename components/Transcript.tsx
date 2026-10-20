@@ -564,6 +564,37 @@ function PersistedOutputPanel({ output }: { output: PersistedOutputView }) {
   );
 }
 
+interface SubagentDetailsView {
+  kind: "subagent";
+  ok: boolean;
+  name?: string;
+  status?: string;
+  durationMs?: number;
+  toolCalls?: number;
+  error?: string;
+}
+
+function readSubagentDetails(details: unknown): SubagentDetailsView | null {
+  const record = asRecord(details);
+  if (!record || record.kind !== "subagent") return null;
+  return {
+    kind: "subagent",
+    ok: record.ok !== false,
+    ...(typeof record.name === "string" ? { name: record.name } : {}),
+    ...(typeof record.status === "string" ? { status: record.status } : {}),
+    ...(typeof record.durationMs === "number" ? { durationMs: record.durationMs } : {}),
+    ...(typeof record.toolCalls === "number" ? { toolCalls: record.toolCalls } : {}),
+    ...(typeof record.error === "string" ? { error: record.error } : {}),
+  };
+}
+
+const SUBAGENT_STATUS_LABEL: Record<string, string> = {
+  running: "执行中",
+  completed: "已完成",
+  failed: "失败",
+  cancelled: "已取消",
+};
+
 /** Compact badges for `classify_decision` results (choice / score / bool). */
 function DecisionBadges({ details }: { details: DecisionDetailsView }) {
   const entries = Object.entries(details.answers);
@@ -820,6 +851,9 @@ function ToolCallCard({
   const decision = useMemo(() => readDecisionDetails(details), [details]);
   const generatedImage = useMemo(() => readImageDetails(details), [details]);
   const persistedOutput = useMemo(() => readPersistedOutput(details), [details]);
+  const subagent = useMemo(() => readSubagentDetails(details), [details]);
+  const spawnPending = name === "spawn_agent" && !result;
+  const spawnName = typeof input.name === "string" && input.name.trim() ? input.name.trim() : "agent";
   // Successful edit/write calls show what changed, right in the card: users
   // should not have to open the Git panel to see the AI's own edit.
   const codeDiff = useMemo(
@@ -845,6 +879,11 @@ function ToolCallCard({
         {generatedImage && (
           <span className="shrink-0 rounded bg-[#F1ECFE] px-1.5 py-0.5 text-[10px] font-medium text-[#6D56C1]">
             生图
+          </span>
+        )}
+        {name === "spawn_agent" && (
+          <span className="shrink-0 rounded bg-[#E8F3FF] px-1.5 py-0.5 text-[10px] font-medium text-accent-strong">
+            子 Agent
           </span>
         )}
         {decision && (
@@ -880,6 +919,47 @@ function ToolCallCard({
           />
         )}
       </button>
+      {name === "spawn_agent" && (
+        <div className="border-t border-[#EDF1F7] bg-[#F7FBFF] px-3 py-1.5 text-[11px]">
+          {spawnPending ? (
+            <span className="flex items-center gap-1.5 text-accent-strong">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" aria-hidden="true" />
+              已启动子 Agent：{spawnName}，正在后台执行…
+            </span>
+          ) : (
+            <span className="flex flex-wrap items-center gap-1.5 text-ink-muted">
+              <span className="truncate">
+                子 Agent：{subagent?.name ?? spawnName}
+              </span>
+              <span
+                className={`rounded-full border px-1.5 py-0.5 text-[9.5px] font-medium ${
+                  subagent?.status === "failed"
+                    ? "border-[#F0D5D2] bg-[#FDF6F5] text-[#B0443C]"
+                    : subagent?.status === "cancelled"
+                      ? "border-[#E3E8F2] bg-white text-ink-faint"
+                      : "border-[#D9E5FB] bg-white text-accent-strong"
+                }`}
+              >
+                {SUBAGENT_STATUS_LABEL[subagent?.status ?? ""] ?? (subagent?.ok === false ? "失败" : "已完成")}
+              </span>
+              {subagent?.durationMs !== undefined && (
+                <span className="tabular-nums text-ink-faint">{formatDuration(subagent.durationMs)}</span>
+              )}
+              {subagent?.toolCalls !== undefined && (
+                <span className="text-ink-faint">{subagent.toolCalls} 次工具调用</span>
+              )}
+              {subagent?.error && <span className="truncate text-[#B0443C]">{subagent.error}</span>}
+              <button
+                type="button"
+                onClick={() => window.dispatchEvent(new Event("piforge:agents-open"))}
+                className="ml-auto shrink-0 rounded border border-border bg-white px-1.5 py-0.5 text-[10px] text-ink-muted transition-colors hover:bg-[#ECECEF] hover:text-ink"
+              >
+                查看 Agents
+              </button>
+            </span>
+          )}
+        </div>
+      )}
       {generatedImage && (generatedImage.ok || generatedImage.error) && (
         <div className="flex flex-wrap items-center gap-1.5 border-t border-[#EDF1F7] bg-[#FBF9FF] px-3 py-1.5 text-[11px] text-ink-muted">
           <span className="truncate">

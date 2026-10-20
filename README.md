@@ -47,6 +47,7 @@ Agent Host 关闭时会先排空会话 JSONL、终止所有受管进程树；Nex
 - **开发环境检测** — 设置 → 开发环境 · 环境检测由 Agent Host 扫描 PATH，列出 Node、Python、Git、Bash、Bun、jq 等工具的版本号与可执行文件路径；Node / Git / Bash 等关键工具缺失时给出提示。
 - **大工具结果持久化** — 工具输出超过 10KB 或 2000 行时不再全量塞进上下文：只保留前后各 40 行预览，完整内容写入会话目录 `tool-outputs/`，并在结尾提示用 `tool_history_get`（`toolCallId` / `offset` / `limit`）分页取回，压缩上下文后依然可查。工具卡片底部提供「查看完整输出」按钮，可在卡片内分页浏览完整日志。
 - **树状分支对话** — 会话 JSONL 本身就是树（每条 entry 带 `parentId`）。历史消息悬浮工具栏新增「分支」：以该消息为终点截断后续上下文，再发送消息即形成平行分支；气泡上方显示 `‹ 1/2 ›` 切换器，左右切换时只重载当前 transcript，草稿与流式状态不丢失。切换在 Agent Host 内完成（live 会话走 `navigateTree`，冷会话记住叶节点待下次启动），宿主外的 UI 只做展示。
+- **子 Agent 并行协作** — 主 Agent 可用 `spawn_agent` 把独立调研任务交给子 Agent：子 Agent 拥有**独立上下文**（内存 SessionManager，绝不写入主会话 JSONL）、只读工具（read/grep/find/ls）与父级模型，最多 4 个并行；完成后把精炼报告作为 `tool_result` 返回主 Agent。右侧面板新增 **Agents** Tab，实时显示名称、Running/Idle、耗时、工具调用与流式输出，可展开日志或停止运行。生命周期事件（started / output / finished）由 Host 广播，Next 仅代理。
 - **代码块一键应用** — Markdown 代码块右上角「应用」按钮直接写入右侧打开的文件：确认框内可选「覆盖文件」或「追加到文件」，写入由 Agent Host 校验可写路径后原子完成，并自动刷新文件视图。
 - **文件拖拽引用** — 从右侧文件树把文件拖进输入框，自动插入 `@相对路径` 引用，与 `@` 补全、粘贴图片共用同一套输入体验。
 - **霜蓝米白极简 UI** — 固定三栏、低对比浅色、细腻阴影；不引入深色主题干扰阅读。

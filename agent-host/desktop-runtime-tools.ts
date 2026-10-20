@@ -2,7 +2,11 @@ import type { ToolInfo } from "../lib/pi-types.ts";
 import { effectiveToolsForMode, type AgentMode, type ToolPreset } from "../lib/approval-policy.ts";
 import { withMemoryTools } from "./desktop-ltm-extension.ts";
 import { BROWSER_PREVIEW_TOOL_NAME } from "./browser-bridge.ts";
-import { CLASSIFY_DECISION_TOOL_NAME, GENERATE_IMAGE_TOOL_NAME } from "./aux-tool-names.ts";
+import {
+  CLASSIFY_DECISION_TOOL_NAME,
+  GENERATE_IMAGE_TOOL_NAME,
+  SPAWN_AGENT_TOOL_NAME,
+} from "./aux-tool-names.ts";
 import { TOOL_HISTORY_TOOL_NAME } from "./tool-outputs.ts";
 
 /** Auxiliary model tools are only declared once the user configured them. */
@@ -29,6 +33,8 @@ export function desktopRuntimeTools(mode: AgentMode, preset: ToolPreset, codemod
   // Background processes are a desktop capability registered by our inline
   // extension; ask mode still gates them through the approval hook.
   if (registered.some((tool) => tool.name === "run_bg")) names.push("run_bg");
+  // Sub-agent delegation: available whenever the extension is registered.
+  if (registered.some((tool) => tool.name === SPAWN_AGENT_TOOL_NAME)) names.push(SPAWN_AGENT_TOOL_NAME);
   // Oversized tool outputs are persisted; the agent reads them back by page.
   if (registered.some((tool) => tool.name === TOOL_HISTORY_TOOL_NAME)) names.push(TOOL_HISTORY_TOOL_NAME);
   // Built-in browser inspection (read page text / screenshot) — read-only.

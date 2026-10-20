@@ -105,6 +105,13 @@ import {
   refreshMcpAuth,
 } from "./mcp-service.ts";
 import { probeDevEnvironment } from "./dev-tools.ts";
+import {
+  listSubagents,
+  onSubagentsChange,
+  stopAllSubagents,
+  stopSubagent,
+} from "./subagents.ts";
+import type { SubagentLifecycleEvent } from "../contract/domains/subagents.ts";
 import { applyCodeToFile, FileApplyError } from "./file-apply.ts";
 import {
   getSessionBranches,
@@ -177,7 +184,7 @@ const DEFAULT_LOG = (message: string) => {
 /** Coalesce chatty process/terminal output into at most ~4 events/second. */
 const BROADCAST_INTERVAL_MS = 250;
 
-const GLOBAL_TOPICS: readonly GlobalTopic[] = ["processes", "terminal"];
+const GLOBAL_TOPICS: readonly GlobalTopic[] = ["processes", "terminal", "subagents"];
 
 function tokensMatch(actual: string, expected: string): boolean {
   const actualBytes = Buffer.from(actual, "utf8");
@@ -238,6 +245,11 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
 
   const offProcessesChange = onManagedProcessesChange(() => scheduleBroadcast("processes"));
   const offTerminalChange = onTerminalLogChange(() => scheduleBroadcast("terminal"));
+  let lastSubagentEvent: SubagentLifecycleEvent | undefined;
+  const offSubagentsChange = onSubagentsChange((event) => {
+    lastSubagentEvent = event;
+    scheduleBroadcast("subagents");
+  });
 
   function writeFrame(state: ConnectionState, frame: HostFrame): boolean {
     if (state.closed || state.socket.destroyed || !state.socket.writable) return false;
@@ -394,6 +406,14 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       for (const subscription of targets) sendEvent(subscription, topic, payload);
       return;
     }
+    if (topic === "subagents") {
+      const payload: HostEventPayloads["subagents.changed"] = {
+        agents: listSubagents(),
+        ...(lastSubagentEvent ? { event: lastSubagentEvent } : {}),
+      };
+      for (const subscription of targets) sendEvent(subscription, topic, payload);
+      return;
+    }
     const payload: HostEventPayloads["terminal.changed"] = {
       blocks: listTerminalBlocks(),
     };
@@ -541,6 +561,13 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
   function emitTopicSnapshotTo(subscription: Subscription, topic: GlobalTopic): void {
     if (topic === "processes") {
       sendEvent(subscription, topic, { processes: listManagedProcesses() });
+      return;
+    }
+    if (topic === "subagents") {
+      sendEvent(subscription, topic, {
+        agents: listSubagents(),
+        ...(lastSubagentEvent ? { event: lastSubagentEvent } : {}),
+      });
       return;
     }
     sendEvent(subscription, topic, { blocks: listTerminalBlocks() });
@@ -1121,6 +1148,19 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
           .catch((error: unknown) => fail(state, frame.id, "INTERNAL", errorText(error)));
         return;
       }
+      case "subagents.list": {
+        result(state, frame.id, { agents: listSubagents() });
+        return;
+      }
+      case "subagents.stop": {
+        const id = readString(params, "id");
+        if (!id) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "id is required");
+          return;
+        }
+        result(state, frame.id, { ok: stopSubagent(id) });
+        return;
+      }
       case "env.probe": {
         if (params.refresh !== undefined && typeof params.refresh !== "boolean") {
           fail(state, frame.id, "E_INVALID_PARAMS", "refresh must be a boolean");
@@ -1582,6 +1622,7 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       listenersDetached = true;
       offProcessesChange();
       offTerminalChange();
+      offSubagentsChange();
       clearBroadcastTimers();
       for (const state of [...sockets]) {
         try {
@@ -1615,6 +1656,12 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       }
       clearAllBrowserSessionGrants();
       clearPendingSessionLeaves();
+
+      try {
+        await stopAllSubagents();
+      } catch (error) {
+        log(`failed to stop sub-agents: ${errorText(error)}`);
+      }
 
       try {
         const stopped = await stopAllManagedProcesses();
