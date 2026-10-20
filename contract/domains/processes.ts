@@ -22,6 +22,9 @@ export type ManagedProcessStatus =
 /** Who asked for this process. Used by cleanup/owner checks. */
 export type ManagedProcessOwner = "agent" | "user";
 
+/** How the command string is interpreted (Windows supports PowerShell). */
+export type ManagedProcessShell = "cmd" | "powershell";
+
 /** Readiness of a long-running service (dev server, watcher). */
 export type ManagedProcessReadiness = "pending" | "ready" | "failed";
 
@@ -55,6 +58,7 @@ export interface ManagedProcessView {
   name: string;
   command: string;
   cwd: string;
+  shell: ManagedProcessShell;
   owner: ManagedProcessOwner;
   status: ManagedProcessStatus;
   readiness: ManagedProcessReadiness;
@@ -86,6 +90,8 @@ export interface ManagedProcessRecord {
   name: string;
   command: string;
   cwd: string;
+  /** Defaults to "cmd" for records written before this field existed. */
+  shell?: ManagedProcessShell;
   pid: number | null;
   /** POSIX process group id (= leader pid); null on Windows. */
   pgid: number | null;

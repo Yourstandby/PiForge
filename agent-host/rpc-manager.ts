@@ -22,6 +22,7 @@ import {
 import { readDesktopSettings } from "../lib/desktop-settings.ts";
 import { desktopRuntimeTools } from "./desktop-runtime-tools.ts";
 import { desktopProcessInlineExtension } from "./desktop-process-extension.ts";
+import { desktopPowerShellInlineExtension } from "./desktop-powershell-extension.ts";
 import { desktopBrowserInlineExtension } from "./desktop-browser-extension.ts";
 import { desktopTerminalInlineExtension } from "./desktop-terminal-extension.ts";
 import { desktopImageInlineExtension } from "./desktop-image-extension.ts";
@@ -943,6 +944,7 @@ export async function startRpcSession(
         desktopApprovalInlineExtension(modeRef),
         desktopLtmInlineExtension({ getCwd: () => cwd }),
         desktopProcessInlineExtension({ getCwd: () => cwd }),
+        desktopPowerShellInlineExtension(() => cwd),
         desktopBrowserInlineExtension(),
         desktopTerminalInlineExtension({ getCwd: () => cwd }),
         desktopImageInlineExtension(),

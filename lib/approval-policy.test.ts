@@ -45,6 +45,12 @@ test("askBlockResult shape", () => {
   assert.match(r.reason, /Ask mode/);
 });
 
+test("PowerShell is gated in ask mode and summarized like bash", () => {
+  assert.equal(needsAskConfirm("ask", "powershell"), true);
+  assert.equal(needsAskConfirm("full", "powershell"), false);
+  assert.match(summarizeToolCall("powershell", { command: "Get-ChildItem" }), /^powershell: Get-ChildItem/);
+});
+
 test("summarizeToolCall prefers bash command and paths", () => {
   assert.match(summarizeToolCall("bash", { command: "ls -la" }), /ls -la/);
   assert.match(summarizeToolCall("write", { path: "a.ts" }), /a\.ts/);

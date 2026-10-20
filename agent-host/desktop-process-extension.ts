@@ -50,6 +50,13 @@ const RunBgParams = Type.Object({
   name: Type.Optional(
     Type.String({ description: "Short label shown in the process panel (optional)." }),
   ),
+  shell: Type.Optional(
+    Type.Union([Type.Literal("cmd"), Type.Literal("powershell")], {
+      description:
+        "Windows only: interpret the command with cmd.exe (default) or PowerShell. " +
+        "PowerShell runs with -NoProfile -NonInteractive and UTF-8 output, and still uses the managed-process lifecycle.",
+    }),
+  ),
 });
 
 const ProcessReadParams = Type.Object({
@@ -164,11 +171,12 @@ export function createDesktopProcessFactory(
             command: params.command,
             name: params.name,
             owner: "agent",
+            ...(params.shell === "powershell" ? { shell: "powershell" as const } : {}),
           });
           return textResult(
             [
               `Started managed process "${started.name}" (processId: ${started.id}).`,
-              `status: ${started.status} · readiness: ${started.readiness}`,
+              `status: ${started.status} · readiness: ${started.readiness} · shell: ${started.shell}`,
               endpointLine(started),
               "It keeps running after this turn. The user can stop / force-stop / restart it in the Processes tab; do not start the same server twice.",
               `Next: call ${PROCESS_WAIT_TOOL_NAME} with processId: ${started.id} and for: "ready" if you need the service.`,
@@ -183,6 +191,7 @@ export function createDesktopProcessFactory(
               processId: started.id,
               pid: started.pid,
               owner: started.owner,
+              shell: started.shell,
               status: started.status,
               readiness: started.readiness,
               endpoint: started.endpoint,

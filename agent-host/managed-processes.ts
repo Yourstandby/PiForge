@@ -17,6 +17,7 @@ import type {
   ManagedProcessExitReason,
   ManagedProcessOwner,
   ManagedProcessReadiness,
+  ManagedProcessShell,
   ManagedProcessStatus,
   ManagedProcessView,
 } from "../contract/domains/processes.ts";
@@ -31,12 +32,14 @@ import {
   removeProcessRecord,
   upsertProcessRecord,
 } from "./process-instance-store.ts";
+import { buildPowerShellArgs, POWERSHELL_ENV, resolvePowerShell } from "./powershell.ts";
 
 interface ManagedProcessEntry {
   id: string;
   name: string;
   command: string;
   cwd: string;
+  shell: ManagedProcessShell;
   owner: ManagedProcessOwner;
   status: ManagedProcessStatus;
   readiness: ManagedProcessReadiness;
@@ -168,6 +171,7 @@ function toView(entry: ManagedProcessEntry): ManagedProcessView {
     name: entry.name,
     command: entry.command,
     cwd: entry.cwd,
+    shell: entry.shell,
     owner: entry.owner,
     status: entry.status,
     readiness: entry.readiness,
@@ -212,6 +216,8 @@ export interface StartManagedProcessOptions {
   name?: string;
   /** Who started it; controls crash-reaper eligibility. Default "user". */
   owner?: ManagedProcessOwner;
+  /** How to interpret `command`; default "cmd" (spawn shell). */
+  shell?: ManagedProcessShell;
 }
 
 function transition(entry: ManagedProcessEntry, to: ManagedProcessStatus): void {
@@ -232,6 +238,7 @@ function persistRecord(entry: ManagedProcessEntry): void {
     name: entry.name,
     command: entry.command,
     cwd: entry.cwd,
+    shell: entry.shell,
     pid: entry.pid,
     pgid: entry.pgid,
     startedAt: entry.startedAt,
@@ -239,16 +246,32 @@ function persistRecord(entry: ManagedProcessEntry): void {
 }
 
 function spawnChild(entry: ManagedProcessEntry): void {
-  const child = spawn(entry.command, {
-    cwd: entry.cwd,
-    shell: true,
-    windowsHide: true,
-    // POSIX: detached puts the child in its own process group so cleanup can
-    // signal the whole tree (`kill(-pgid)`). Windows uses taskkill /T instead.
-    detached: process.platform !== "win32",
-    stdio: ["pipe", "pipe", "pipe"],
-    env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" },
-  });
+  // PowerShell background runs use the same state machine, readiness, logging
+  // and bounded cleanup as cmd runs; only the argv differs.
+  const usePowerShell = entry.shell === "powershell";
+  const powerShell = usePowerShell ? resolvePowerShell() : null;
+  if (usePowerShell && !powerShell) {
+    throw new Error("PowerShell is not available on this machine");
+  }
+  const child = spawn(
+    powerShell ? powerShell.executable : entry.command,
+    powerShell ? buildPowerShellArgs(entry.command) : [],
+    {
+      cwd: entry.cwd,
+      shell: powerShell ? false : true,
+      windowsHide: true,
+      // POSIX: detached puts the child in its own process group so cleanup can
+      // signal the whole tree (`kill(-pgid)`). Windows uses taskkill /T instead.
+      detached: process.platform !== "win32",
+      stdio: ["pipe", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        FORCE_COLOR: "0",
+        NO_COLOR: "1",
+        ...(usePowerShell ? POWERSHELL_ENV : {}),
+      },
+    },
+  );
   entry.child = child;
   entry.pid = child.pid ?? null;
   entry.pgid = process.platform === "win32" ? null : (child.pid ?? null);
@@ -317,11 +340,19 @@ export function startManagedProcess(
   const command = options.command.trim();
   if (!command) throw new Error("Command is required");
   if (command.length > MAX_COMMAND_LENGTH) throw new Error("Command is too long");
+  const shell = options.shell ?? "cmd";
+  if (shell === "powershell") {
+    if (process.platform !== "win32") throw new Error("PowerShell is only available on Windows");
+    if (!resolvePowerShell()) {
+      throw new Error("No PowerShell found: install PowerShell 7 (pwsh) or enable Windows PowerShell 5.1");
+    }
+  }
 
   const entry: ManagedProcessEntry = {
     id: randomUUID(),
     name: options.name?.trim() || defaultName(command),
     command,
+    shell,
     cwd: options.cwd,
     owner: options.owner ?? "user",
     status: "starting",
