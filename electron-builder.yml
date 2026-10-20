@@ -92,6 +92,10 @@ win:
     - target: nsis
       arch:
         - x64
+    - target: zip
+      arch:
+        - x64
+  artifactName: "PiForge-${version}-win-${arch}.${ext}"
   icon: build/icon.ico
   signAndEditExecutable: false
 
