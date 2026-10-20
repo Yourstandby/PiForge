@@ -107,6 +107,7 @@ export interface UseAgentSessionOptions {
   onAgentEndEvent?: () => void;
   onSessionCreated?: (session: SessionInfo) => void;
   onSessionForked?: (newSessionId: string) => void;
+  onNewSession?: () => void;
   modelsRefreshKey?: number;
   onBranchDataChange?: (
     tree: SessionTreeNode[],
@@ -126,6 +127,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     onAgentEndEvent,
     onSessionCreated,
     onSessionForked,
+    onNewSession,
     modelsRefreshKey,
     onBranchDataChange,
     onSystemPromptChange,
@@ -624,6 +626,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     sessionIdRef,
     pendingScrollToUserRef,
     setMessages,
+    setEntryIds,
     setAgentRunning,
     setAgentPhase,
     dispatch,
@@ -639,6 +642,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     connectEvents,
     onSessionCreated,
     onSessionForked,
+    onNewSession,
     onFollowUpQueueSnapshot: acceptFollowUpQueue,
     onPendingSteerQueued: handlePendingSteerQueued,
     onPendingSteerFailed: handlePendingSteerFailed,

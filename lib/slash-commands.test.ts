@@ -27,6 +27,9 @@ test("slash command items include built-ins and enabled skills", () => {
   ]);
 
   assert.ok(items.some((item) => item.label === "/skills" && item.kind === "command"));
+  const builtins = buildSlashCommandItems("", []);
+  assert.ok(builtins.some((item) => item.label === "/clear" && item.kind === "command"));
+  assert.ok(builtins.some((item) => item.label === "/new" && item.kind === "command"));
   assert.ok(items.some((item) => item.label === "/frontend-design" && item.kind === "skill"));
   assert.ok(!items.some((item) => item.label === "/hidden-skill"));
 });

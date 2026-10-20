@@ -442,6 +442,9 @@ export function Workbench() {
             onDraftChange={handleDraftChange}
             onSessionCreated={handleSessionCreated}
             onSessionRenamed={() => setSessionsVersion((version) => version + 1)}
+            onNewSession={() => {
+              void handleNewSession();
+            }}
             onOpenFile={(filePath, fileName, line) => {
               // Chat file links must land in the right panel, never over chat.
               setRightPanelOpen(true);

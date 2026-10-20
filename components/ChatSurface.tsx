@@ -25,6 +25,8 @@ interface Props {
   onSessionRenamed?: () => void;
   /** Open a file reference from the transcript in the file viewer. */
   onOpenFile?: (filePath: string, fileName: string, line?: number) => void;
+  /** `/new` slash command: start a fresh session in the current project. */
+  onNewSession?: () => void;
 }
 
 /**
@@ -52,6 +54,7 @@ function ChatSession({
   onSessionForked,
   onSessionRenamed,
   onOpenFile,
+  onNewSession,
   onReload,
 }: Props & { onReload: () => void }) {
   const { soundEnabled, onSoundToggle, playDoneSound } = useAudio();
@@ -92,9 +95,30 @@ function ChatSession({
     onBranchDataChange: handleBranchDataChange,
     onAgentEnd: playDoneSound,
     onSessionRenamed: () => onSessionRenamed?.(),
+    onNewSession,
   });
 
   const currentModel = chat.displayModel ?? null;
+  const {
+    agentRunning: escAgentRunning,
+    extensionUiRequest: escExtensionUi,
+    trustPrompt: escTrustPrompt,
+    handleAbort: handleEscAbort,
+  } = chat;
+
+  // Esc = hard interrupt while the agent is generating. Menus/dialogs consume
+  // Escape first via preventDefault, so this only fires when nothing else did.
+  useEffect(() => {
+    if (!escAgentRunning) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented || event.isComposing) return;
+      if (escExtensionUi || escTrustPrompt) return;
+      event.preventDefault();
+      void handleEscAbort();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [escAgentRunning, escExtensionUi, escTrustPrompt, handleEscAbort]);
 
   // --- Manual context compaction -------------------------------------------
   // The summarising itself is pi's own `compact` command (POST → rpc-manager):

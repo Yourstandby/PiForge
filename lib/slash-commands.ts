@@ -20,6 +20,8 @@ export interface SlashCommandItem {
 }
 
 export const BUILTIN_SLASH_COMMANDS: SlashCommandItem[] = [
+  { id: "clear", label: "/clear", insertText: "/clear ", description: "清空当前对话视图（不删除会话文件）", kind: "command" },
+  { id: "new", label: "/new", insertText: "/new ", description: "在当前项目新建会话", kind: "command" },
   { id: "compact", label: "/compact", insertText: "/compact ", description: "压缩当前上下文", kind: "command" },
   { id: "tools", label: "/tools", insertText: "/tools ", description: "选择工具预设", kind: "command" },
   { id: "skills", label: "/skills", insertText: "/skills ", description: "查看或调用可用 skills", kind: "command" },

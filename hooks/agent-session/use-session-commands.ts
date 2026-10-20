@@ -61,6 +61,7 @@ export type UseSessionCommandsOptions = {
   sessionIdRef: MutableRefObject<string | null>;
   pendingScrollToUserRef: MutableRefObject<boolean>;
   setMessages: Dispatch<SetStateAction<AgentMessage[]>>;
+  setEntryIds: Dispatch<SetStateAction<Array<string | undefined>>>;
   setAgentRunning: (v: boolean) => void;
   setAgentPhase: Dispatch<SetStateAction<AgentPhase>>;
   dispatch: Dispatch<StreamAction>;
@@ -76,6 +77,7 @@ export type UseSessionCommandsOptions = {
   connectEvents: (sid: string) => void;
   onSessionCreated?: (session: SessionInfo) => void;
   onSessionForked?: (newSessionId: string) => void;
+  onNewSession?: () => void;
   onFollowUpQueueSnapshot: (snapshot: FollowUpQueueSnapshot) => void;
   onPendingSteerQueued: (item: { id: string; message: string }) => void;
   onPendingSteerFailed: (id: string) => void;
@@ -101,6 +103,7 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
     sessionIdRef,
     pendingScrollToUserRef,
     setMessages,
+    setEntryIds,
     setAgentRunning,
     setAgentPhase,
     dispatch,
@@ -116,6 +119,7 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
     connectEvents,
     onSessionCreated,
     onSessionForked,
+    onNewSession,
     onFollowUpQueueSnapshot,
     onPendingSteerQueued,
     onPendingSteerFailed,
@@ -165,6 +169,18 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
         const cmd = parts[0].toLowerCase();
         let handled = false;
         switch (cmd) {
+          case "clear":
+            setMessages([]);
+            setEntryIds([]);
+            setAgentPhase(null);
+            setCanExecutePlan(false);
+            dispatch({ type: "reset" });
+            handled = true;
+            break;
+          case "new":
+            onNewSession?.();
+            handled = true;
+            break;
           case "compact":
             handleCompact();
             handled = true;
@@ -365,11 +381,14 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
       contextChars,
       connectEvents,
       onSessionCreated,
+      onNewSession,
       pendingScrollToUserRef,
       setMessages,
+      setEntryIds,
+      setAgentPhase,
+      setCanExecutePlan,
       handleCompact,
       setAgentRunning,
-      setAgentPhase,
       dispatch,
       setPendingModel,
       sessionIdRef,

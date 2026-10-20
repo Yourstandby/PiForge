@@ -283,6 +283,20 @@ export function Composer({
     onReorderFollowUps(orderedIds);
   };
 
+  const executeSlashItem = (item: SlashCommandItem) => {
+    // Fixed built-in commands execute on Enter; skills insert their trigger so
+    // the user can add arguments before sending.
+    if (item.kind === "command" && !busy && onSubmit) {
+      onSubmit(item.label);
+      onValueChange("");
+      setMention(null);
+      setSlashDismissedValue(item.insertText);
+      textareaRef.current?.focus();
+      return;
+    }
+    applySlashItem(item);
+  };
+
   const dropQueueItem = (targetId: string) => {
     if (!draggingQueueId || !onReorderFollowUps || queueBusy) return;
     if (draggingQueueId === targetId) return;
@@ -469,7 +483,13 @@ export function Composer({
                 setSlashIndex((index) => (index - 1 + slashItems.length) % slashItems.length);
                 return;
               }
-              if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                const item = slashItems[slashIndex];
+                if (item) executeSlashItem(item);
+                return;
+              }
+              if (e.key === "Tab" && !e.shiftKey) {
                 e.preventDefault();
                 const item = slashItems[slashIndex];
                 if (item) applySlashItem(item);
