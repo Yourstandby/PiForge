@@ -3,15 +3,18 @@
 import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import {
   FileCode,
+  GitBranch,
   Globe,
   PanelRightClose,
   SquareTerminal,
   Terminal,
 } from "lucide-react";
 import { FileExplorer } from "./FileExplorer";
+import { BrowserPanel } from "./BrowserPanel";
 import { FloatingFileViewer, type FloatingFileTarget } from "./FloatingFileViewer";
-import { FloatingGitDiffViewer } from "./FloatingGitDiffViewer";
+import { GitPanel } from "./GitPanel";
 import { ProcessPanel } from "./ProcessPanel";
+import { TerminalPanel } from "./TerminalPanel";
 
 /**
  * FileExplorer renders its rows with inline styles that read the legacy theme
@@ -31,10 +34,11 @@ const explorerTokens = {
   "--font-mono": "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
 } as CSSProperties;
 
-type PanelTab = "files" | "browser" | "processes" | "terminal";
+type PanelTab = "files" | "git" | "browser" | "processes" | "terminal";
 
 const PANEL_TABS = [
   { id: "files" as const, label: "文件", Icon: FileCode },
+  { id: "git" as const, label: "Git", Icon: GitBranch },
   { id: "browser" as const, label: "浏览器", Icon: Globe },
   { id: "processes" as const, label: "进程", Icon: Terminal },
   { id: "terminal" as const, label: "终端", Icon: SquareTerminal },
@@ -43,20 +47,22 @@ const PANEL_TABS = [
 export function FilePanel({
   cwd,
   openFile,
-  gitDiffOpen = false,
+  gitOpenSignal = 0,
+  explorerRefreshKey = 0,
   onOpenFile,
   onOpenDiff,
   onCloseFile,
-  onCloseGitDiff,
   onCollapse,
 }: {
   cwd: string | null;
   openFile: FloatingFileTarget | null;
-  gitDiffOpen?: boolean;
+  /** Incremented by the chat status bar to reveal the Git tab. */
+  gitOpenSignal?: number;
+  /** Bumped on every active-tab change so the file tree re-reads its cwd. */
+  explorerRefreshKey?: number;
   onOpenFile?: (filePath: string, fileName: string, line?: number) => void;
   onOpenDiff?: (filePath: string, fileName: string) => void;
   onCloseFile?: () => void;
-  onCloseGitDiff?: () => void;
   onCollapse?: () => void;
 }) {
   const [tab, setTab] = useState<PanelTab>("files");
@@ -64,8 +70,21 @@ export function FilePanel({
   // Chat file links and tree clicks must always surface in the Files tab,
   // without touching the chat surface.
   useEffect(() => {
-    if (openFile || gitDiffOpen) setTab("files");
-  }, [openFile, gitDiffOpen]);
+    if (openFile) setTab("files");
+  }, [openFile]);
+
+  // The chat status bar's "Git Diff" button focuses the dedicated Git tab.
+  useEffect(() => {
+    if (gitOpenSignal > 0) setTab("git");
+  }, [gitOpenSignal]);
+
+  // The agent navigating the built-in browser should be visible, not hidden
+  // behind whichever tab the user is currently on.
+  useEffect(() => {
+    const revealBrowser = () => setTab("browser");
+    window.addEventListener("piforge:browser-open", revealBrowser);
+    return () => window.removeEventListener("piforge:browser-open", revealBrowser);
+  }, []);
 
   const handleOpenFile = useCallback(
     (filePath: string, fileName: string, line?: number) => {
@@ -82,6 +101,17 @@ export function FilePanel({
     },
     [onOpenDiff],
   );
+
+  // A screenshot needs the guest surface painted. When the agent asks for one
+  // from another tab, briefly switch to the Browser tab and restore afterwards.
+  const revealForCapture = useCallback(async (): Promise<(() => void) | undefined> => {
+    if (tab === "browser") return undefined;
+    const previous = tab;
+    setTab("browser");
+    // Give the webview a couple of frames to lay out and repaint.
+    await new Promise((resolve) => setTimeout(resolve, 260));
+    return () => setTab(previous);
+  }, [tab]);
 
   return (
     <aside className="flex h-full min-h-0 w-full shrink-0 flex-col border-l border-gray-200/60 bg-[#F5F5F7]">
@@ -129,6 +159,7 @@ export function FilePanel({
                 <FileExplorer
                   key={cwd}
                   cwd={cwd}
+                  refreshKey={explorerRefreshKey}
                   onOpenFile={handleOpenFile}
                   onOpenDiff={handleOpenDiff}
                 />
@@ -136,12 +167,7 @@ export function FilePanel({
                 <p className="px-3 py-2 text-[11px] text-ink-faint">暂无项目</p>
               )}
             </div>
-            {gitDiffOpen ? (
-              <FloatingGitDiffViewer
-                cwd={cwd}
-                onClose={() => onCloseGitDiff?.()}
-              />
-            ) : openFile ? (
+            {openFile ? (
               <FloatingFileViewer
                 target={openFile}
                 cwd={cwd}
@@ -151,15 +177,24 @@ export function FilePanel({
           </>
         )}
 
-        {tab === "browser" && (
-          <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
-            <Globe size={22} strokeWidth={1.4} className="text-ink-faint" aria-hidden="true" />
-            <p className="text-[12px] text-ink-muted">内置浏览器预留位置</p>
-            <p className="text-[11px] leading-5 text-ink-faint">
-              后续可在此接入 Electron WebContentsView，不影响中间聊天区。
-            </p>
-          </div>
-        )}
+        {/* Git stays mounted so its list/diff state survives tab switches. */}
+        <div className={tab === "git" ? "h-full" : "hidden"}>
+          <GitPanel cwd={cwd} active={tab === "git"} />
+        </div>
+
+        {/*
+          The browser panel stays mounted while other tabs are active: the
+          `<webview>` guest keeps running and keeps answering the `web_preview`
+          bridge, so the agent can read the page even while the user is on the
+          Files tab. It is hidden until the Browser tab (or a screenshot) asks
+          for it.
+        */}
+        <div className={tab === "browser" ? "h-full" : "hidden"}>
+          <BrowserPanel
+            active={tab === "browser"}
+            onBeforeCapture={revealForCapture}
+          />
+        </div>
 
         {tab === "processes" && (
           <div className="h-full overflow-y-auto py-1">
@@ -168,12 +203,8 @@ export function FilePanel({
         )}
 
         {tab === "terminal" && (
-          <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
-            <SquareTerminal size={22} strokeWidth={1.4} className="text-ink-faint" aria-hidden="true" />
-            <p className="text-[12px] text-ink-muted">终端预留位置</p>
-            <p className="text-[11px] leading-5 text-ink-faint">
-              后续可在此接入终端会话，保持右侧独立工作区。
-            </p>
+          <div className="h-full">
+            <TerminalPanel />
           </div>
         )}
       </div>

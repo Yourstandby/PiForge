@@ -129,7 +129,9 @@ export async function readGitStatus(
 ): Promise<GitStatusResult> {
   const repoRoot = await resolveGitRepoRoot(cwd, runner);
   const result = await runner(
-    ["status", "--porcelain=v1", "-z", "--untracked-files=normal"],
+    // `-uall` lists untracked *files* instead of collapsing new directories
+    // into a single `dir/` entry — the Git panel diffs one file at a time.
+    ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
     { cwd: repoRoot },
   );
   if (result.code !== 0) {
@@ -204,4 +206,92 @@ export async function readGitDiff(
   const stat = await fs.stat(absolute).catch(() => null);
   if (!stat) throw new GitStatusError("PATH_OUTSIDE_CWD", "File not found");
   return `Untracked file (${stat.size} bytes) — no textual diff available.`;
+}
+
+/** Current branch name, or null when detached / unavailable. */
+export async function readGitBranch(
+  cwd: string,
+  runner: GitRunner = runGitProcess,
+): Promise<string | null> {
+  try {
+    const repoRoot = await resolveGitRepoRoot(cwd, runner);
+    const result = await runner(["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repoRoot });
+    const branch = result.stdout.trim();
+    if (result.code !== 0 || !branch) return null;
+    return branch === "HEAD" ? null : branch.slice(0, 200);
+  } catch {
+    return null;
+  }
+}
+
+export type GitCommitErrorCode =
+  | "EMPTY_MESSAGE"
+  | "NOTHING_TO_COMMIT"
+  | "NOT_GIT_REPOSITORY"
+  | "GIT_UNAVAILABLE"
+  | "COMMIT_FAILED";
+
+export class GitCommitError extends Error {
+  readonly code: GitCommitErrorCode;
+  /** git's own output, shown in the panel toast so the user can act on it. */
+  readonly output: string;
+
+  constructor(code: GitCommitErrorCode, message: string, output = "") {
+    super(message);
+    this.name = "GitCommitError";
+    this.code = code;
+    this.output = output;
+  }
+}
+
+export interface GitCommitResult {
+  /** Short hash of the new commit, when git reported one. */
+  hash: string | null;
+  /** Combined stdout/stderr of `git commit`. */
+  output: string;
+}
+
+export const MAX_COMMIT_MESSAGE_LENGTH = 5_000;
+
+const NOTHING_TO_COMMIT_RE =
+  /nothing to commit|nothing added to commit|no changes added to commit|nothing specified, nothing added/i;
+
+/**
+ * `git add -A` + `git commit -m <message>` in the repository containing `cwd`.
+ *
+ * execFile with argument arrays: the message is never interpreted by a shell.
+ */
+export async function commitAllChanges(
+  cwd: string,
+  message: string,
+  runner: GitRunner = runGitProcess,
+): Promise<GitCommitResult> {
+  const trimmed = message.trim();
+  if (!trimmed) throw new GitCommitError("EMPTY_MESSAGE", "Commit message is required");
+  if (trimmed.length > MAX_COMMIT_MESSAGE_LENGTH) {
+    throw new GitCommitError("EMPTY_MESSAGE", "Commit message is too long");
+  }
+
+  const repoRoot = await resolveGitRepoRoot(cwd, runner);
+
+  const staged = await runner(["add", "-A"], { cwd: repoRoot });
+  if (staged.code !== 0) {
+    const output = [staged.stdout, staged.stderr].filter(Boolean).join("\n").trim();
+    throw new GitCommitError("COMMIT_FAILED", output || "git add failed", output);
+  }
+
+  const committed = await runner(["commit", "-m", trimmed], { cwd: repoRoot });
+  const output = [committed.stdout, committed.stderr].filter(Boolean).join("\n").trim();
+  if (committed.code !== 0) {
+    if (NOTHING_TO_COMMIT_RE.test(output)) {
+      throw new GitCommitError("NOTHING_TO_COMMIT", "工作区没有可提交的改动", output);
+    }
+    throw new GitCommitError("COMMIT_FAILED", output || "git commit failed", output);
+  }
+
+  const hash = await runner(["rev-parse", "--short", "HEAD"], { cwd: repoRoot });
+  return {
+    hash: hash.code === 0 ? hash.stdout.trim() || null : null,
+    output,
+  };
 }

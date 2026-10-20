@@ -33,5 +33,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   quitAndInstall: () => ipcRenderer.invoke("quit-and-install"),
   openWindow: (path: string) => ipcRenderer.invoke("new-window", path),
+  /** PNG screenshot of a <webview> guest, for the agent's web_preview tool. */
+  captureWebview: (webContentsId: number) => ipcRenderer.invoke("capture-webview", webContentsId),
   setTheme: (theme: "light" | "dark" | "glacier") => ipcRenderer.send("set-theme", theme),
 });

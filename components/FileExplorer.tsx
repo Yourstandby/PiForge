@@ -61,7 +61,12 @@ function changedMark(status: string): { label: string; color: string; title: str
 async function fetchEntries(dirPath: string): Promise<FileNode[]> {
   const encoded = encodeFilePathForApi(dirPath);
   const res = await fetch(`/api/files/${encoded}?type=list`);
-  if (!res.ok) return [];
+  if (!res.ok) {
+    // Surface the real reason (e.g. path not allowed) instead of rendering an
+    // empty tree that looks like "this folder has no files".
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `读取目录失败（HTTP ${res.status}）`);
+  }
   const data = await res.json() as { entries?: FileEntry[] };
   return (data.entries ?? []).map((e) => ({
     name: e.name,
@@ -336,7 +341,7 @@ export function FileExplorer({ cwd, onOpenFile, onOpenDiff, refreshKey, onAtMent
     setError(null);
     fetchEntries(cwd)
       .then((entries) => setRoots(entries))
-      .catch((e) => setError(String(e)))
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false));
   }, [cwd, refreshKey]);
 
