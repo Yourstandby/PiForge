@@ -51,6 +51,9 @@ export function desktopRuntimeTools(mode: AgentMode, preset: ToolPreset, codemod
   for (const name of ["herdr_spawn", "herdr_status", "herdr_message"]) {
     if (registered.some((tool) => tool.name === name)) names.push(name);
   }
+  for (const name of ["orchestrator_spawn", "orchestrator_status"]) {
+    if (registered.some((tool) => tool.name === name)) names.push(name);
+  }
   // Sandboxed plugins: always visible when the plugin manager loaded them.
   // Plan mode returned above, so plugin tools (which may request Host writes
   // through RPC) stay out of read-only plans.

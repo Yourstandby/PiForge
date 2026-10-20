@@ -45,6 +45,10 @@ import type {
 } from "./domains/memory.ts";
 import type { ManagedProcessView } from "./domains/processes.ts";
 import type { HerdrAgentView } from "./domains/herdr.ts";
+import type {
+  OrchestratorSpawnInput,
+  OrchestratorTaskView,
+} from "./domains/orchestrator.ts";
 import type { PluginView } from "./domains/plugins.ts";
 import type {
   CustomProviderInput,
@@ -127,6 +131,20 @@ export interface AgentHostMethods {
   "plugins.reload": {
     params: Record<string, never>;
     result: { plugins: PluginView[] };
+  };
+
+  // ---- process-isolated orchestration workers ----
+  "orchestrator.spawn": {
+    params: OrchestratorSpawnInput;
+    result: { task: OrchestratorTaskView };
+  };
+  "orchestrator.list": {
+    params: Record<string, never>;
+    result: { tasks: OrchestratorTaskView[] };
+  };
+  "orchestrator.stop": {
+    params: { id: string };
+    result: { ok: boolean };
   };
 
   // ---- managed background processes ----
@@ -508,6 +526,9 @@ export const IMPLEMENTED_HOST_METHODS = [
   "plugins.list",
   "plugins.setEnabled",
   "plugins.reload",
+  "orchestrator.spawn",
+  "orchestrator.list",
+  "orchestrator.stop",
   "processes.list",
   "processes.start",
   "processes.stop",

@@ -159,6 +159,14 @@ import {
   setPluginEnabled,
   stopPlugins,
 } from "./plugin-manager.ts";
+import {
+  listOrchestratorTasks,
+  onOrchestratorChange,
+  OrchestratorError,
+  spawnOrchestratorTask,
+  stopAllOrchestratorTasks,
+  stopOrchestratorTask,
+} from "./orchestrator.ts";
 
 export interface AgentHostServerOptions {
   /** Named pipe path (Windows) or Unix domain socket path. */
@@ -280,6 +288,8 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
           return wsServer.info();
         case "plugins.list":
           return { plugins: listPlugins() };
+        case "orchestrator.list":
+          return { tasks: listOrchestratorTasks() };
         case "files.authorize": {
           const target = request.params.path;
           const mode = request.params.mode;
@@ -308,6 +318,9 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
   const offTerminalChange = onTerminalLogChange(() => scheduleBroadcast("terminal"));
   let lastSubagentEvent: SubagentLifecycleEvent | undefined;
   let pendingSubagentEvents: SubagentLifecycleEvent[] = [];
+  const offOrchestratorChange = onOrchestratorChange((task) => {
+    wsServer.publish("orchestrator.changed", { task });
+  });
   const offSubagentsChange = onSubagentsChange((event) => {
     if (event) {
       lastSubagentEvent = event;
@@ -700,6 +713,36 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
           .catch((error: unknown) => {
             fail(state, frame.id, error instanceof PluginManagerError ? "E_INVALID_PARAMS" : "INTERNAL", errorText(error));
           });
+        return;
+      }
+      case "orchestrator.spawn": {
+        const input = params as unknown as Parameters<typeof spawnOrchestratorTask>[0];
+        void spawnOrchestratorTask(input)
+          .then((task) => {
+            requestSessionResourceReload();
+            result(state, frame.id, { task });
+          })
+          .catch((error: unknown) => {
+            const message = errorText(error);
+            if (error instanceof OrchestratorError && error.code === "E_LIMIT") {
+              fail(state, frame.id, "E_BACKPRESSURE", message);
+            } else {
+              fail(state, frame.id, "INTERNAL", message);
+            }
+          });
+        return;
+      }
+      case "orchestrator.list": {
+        result(state, frame.id, { tasks: listOrchestratorTasks() });
+        return;
+      }
+      case "orchestrator.stop": {
+        const id = readString(params, "id");
+        if (!id) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "id is required");
+          return;
+        }
+        void stopOrchestratorTask(id).then((ok) => result(state, frame.id, { ok }));
         return;
       }
       case "plugins.reload": {
@@ -1854,6 +1897,12 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       }
       subscriptions.clear();
 
+      try {
+        await stopAllOrchestratorTasks();
+      } catch (error) {
+        log(`failed to stop orchestrator workers: ${errorText(error)}`);
+      }
+      offOrchestratorChange();
       try {
         stopPlugins();
       } catch (error) {
