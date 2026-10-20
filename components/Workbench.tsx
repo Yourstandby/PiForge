@@ -165,6 +165,25 @@ export function Workbench() {
 
   const handleCloseFile = useCallback(() => setOpenFile(null), []);
 
+  const handleInsertCode = useCallback((code: string, language?: string) => {
+    const fenced = `\`\`\`${language ?? ""}
+${code}
+\`\`\``;
+    setDraft((current) => {
+      const next = current.trim()
+        ? `${current.replace(/\s+$/, "")}
+
+${fenced}`
+        : fenced;
+      try {
+        window.localStorage.setItem(`piforge.draft:${draftKeyRef.current}`, next);
+      } catch {
+        // storage disabled
+      }
+      return next;
+    });
+  }, []);
+
   const loadSessions = useCallback(async (): Promise<SessionInfo[]> => {
     try {
       const res = await fetch("/api/sessions");
@@ -445,6 +464,7 @@ export function Workbench() {
             onNewSession={() => {
               void handleNewSession();
             }}
+            onInsertCode={handleInsertCode}
             onOpenFile={(filePath, fileName, line) => {
               // Chat file links must land in the right panel, never over chat.
               setRightPanelOpen(true);

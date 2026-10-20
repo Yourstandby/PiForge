@@ -99,7 +99,17 @@ function LinkifiedChildren({
 
 const MARKDOWN_PLUGINS = { remarkPlugins: [remarkGfm, remarkMath], rehypePlugins: [rehypeKatex] };
 
-function CodeBlock({ code, lang }: { code: string; lang: string }) {
+type InsertCodeHandler = (code: string, language?: string) => void;
+
+function CodeBlock({
+  code,
+  lang,
+  onInsertCode,
+}: {
+  code: string;
+  lang: string;
+  onInsertCode?: InsertCodeHandler;
+}) {
   const [copied, setCopied] = useState(false);
   if (lang === "mermaid") return <MermaidBlock code={code} />;
   const copy = async () => {
@@ -130,6 +140,17 @@ function CodeBlock({ code, lang }: { code: string; lang: string }) {
       <pre className="overflow-x-auto p-3 text-[12.5px] leading-6">
         <code className="font-mono">{code}</code>
       </pre>
+      {onInsertCode && (
+        <div className="flex justify-end border-t border-[#E3E8F2] px-2 py-1">
+          <button
+            type="button"
+            onClick={() => onInsertCode(code, lang)}
+            className="rounded px-1.5 py-0.5 text-[10px] text-ink-faint transition-colors hover:bg-[#E8EFFB] hover:text-accent-strong"
+          >
+            插入到输入框
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -174,6 +195,7 @@ function MermaidBlock({ code }: { code: string }) {
 function createMarkdownComponents(
   cwd?: string | null,
   onOpenFile?: OpenFileHandler,
+  onInsertCode?: InsertCodeHandler,
 ): Components {
   const linkify = (children: React.ReactNode) => (
     <LinkifiedChildren cwd={cwd} onOpenFile={onOpenFile}>{children}</LinkifiedChildren>
@@ -220,7 +242,13 @@ function createMarkdownComponents(
   code: ({ className, children }) => {
     const lang = /language-([\w-]+)/.exec(className ?? "")?.[1]?.toLowerCase() ?? "";
     if (lang || String(children).includes("\n")) {
-      return <CodeBlock code={String(children).replace(/\n$/, "")} lang={lang} />;
+      return (
+        <CodeBlock
+          code={String(children).replace(/\n$/, "")}
+          lang={lang}
+          onInsertCode={onInsertCode}
+        />
+      );
     }
     const raw = String(children);
     const reference = parseFileReference(raw);
@@ -625,6 +653,7 @@ export function Transcript({
   forkingEntryId,
   cwd,
   onOpenFile,
+  onInsertCode,
   nestedExecutions,
 }: {
   messages: AgentMessage[];
@@ -635,13 +664,14 @@ export function Transcript({
   /** Project root for resolving relative file references. */
   cwd?: string | null;
   onOpenFile?: OpenFileHandler;
+  onInsertCode?: InsertCodeHandler;
   /** Live nested tool results captured from SSE (not persisted by pi). */
   nestedExecutions?: Record<string, NestedExecutionView>;
 }) {
   const results = toolResultsById(messages);
   const markdownComponents = useMemo(
-    () => createMarkdownComponents(cwd, onOpenFile),
-    [cwd, onOpenFile],
+    () => createMarkdownComponents(cwd, onOpenFile, onInsertCode),
+    [cwd, onOpenFile, onInsertCode],
   );
   const [copiedTurn, setCopiedTurn] = useState<number | null>(null);
 

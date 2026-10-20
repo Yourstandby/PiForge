@@ -27,6 +27,8 @@ interface Props {
   onOpenFile?: (filePath: string, fileName: string, line?: number) => void;
   /** `/new` slash command: start a fresh session in the current project. */
   onNewSession?: () => void;
+  /** Insert a rendered Markdown code block into the composer. */
+  onInsertCode?: (code: string, language?: string) => void;
 }
 
 /**
@@ -55,6 +57,7 @@ function ChatSession({
   onSessionRenamed,
   onOpenFile,
   onNewSession,
+  onInsertCode,
   onReload,
 }: Props & { onReload: () => void }) {
   const { soundEnabled, onSoundToggle, playDoneSound } = useAudio();
@@ -351,6 +354,7 @@ function ChatSession({
                   forkingEntryId={chat.forkingEntryId}
                   cwd={session?.cwd ?? newSessionCwd}
                   onOpenFile={onOpenFile}
+                  onInsertCode={onInsertCode}
                   nestedExecutions={chat.nestedToolExecutions}
                 />
               )}
