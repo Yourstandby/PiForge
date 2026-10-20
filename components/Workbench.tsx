@@ -361,7 +361,7 @@ export function Workbench() {
 
         <div
           className={`shrink-0 overflow-hidden transition-[width] duration-200 ease-in-out ${
-            rightPanelOpen ? "w-[280px]" : "w-0 pointer-events-none"
+            rightPanelOpen ? "w-[560px]" : "w-0 pointer-events-none"
           }`}
           aria-hidden={!rightPanelOpen}
         >

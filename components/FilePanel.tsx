@@ -92,7 +92,7 @@ export function FilePanel({
   );
 
   return (
-    <aside className="flex w-[280px] shrink-0 flex-col border-l border-gray-200/60 bg-[#F5F5F7]">
+    <aside className="flex w-[560px] shrink-0 flex-col border-l border-gray-200/60 bg-[#F5F5F7]">
       {/* Panel tabs: icon + label, full-width, selected = light blue + underline */}
       <div className="flex h-10 shrink-0 items-stretch border-b border-gray-200/60 bg-[#F5F5F7]">
         <div role="tablist" aria-label="右侧面板" className="flex min-w-0 flex-1 items-stretch">
