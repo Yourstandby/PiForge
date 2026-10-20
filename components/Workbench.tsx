@@ -24,6 +24,19 @@ function byModifiedDesc(a: SessionInfo, b: SessionInfo): number {
 
 type SettingsModal = "skills" | "models" | "extensions" | "auto" | null;
 
+const MIN_RIGHT_PANEL_WIDTH = 240;
+const MAX_RIGHT_PANEL_WIDTH = 760;
+const RIGHT_PANEL_WIDTH_KEY = "piforge.rightPanelWidth";
+
+function clampRightPanelWidth(width: number): number {
+  if (typeof window === "undefined") return width;
+  const max = Math.max(
+    MIN_RIGHT_PANEL_WIDTH,
+    Math.min(MAX_RIGHT_PANEL_WIDTH, Math.round(window.innerWidth * 0.5)),
+  );
+  return Math.min(max, Math.max(MIN_RIGHT_PANEL_WIDTH, Math.round(width)));
+}
+
 export function Workbench() {
   const [selected, setSelected] = useState<SessionInfo | null>(null);
   const [newSessionCwd, setNewSessionCwd] = useState<string | null>(null);
@@ -40,6 +53,63 @@ export function Workbench() {
   const [sessionsVersion, setSessionsVersion] = useState(0);
   const [settingsModal, setSettingsModal] = useState<SettingsModal>(null);
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
+  const [rightPanelWidth, setRightPanelWidth] = useState(560);
+  const [rightPanelResizing, setRightPanelResizing] = useState(false);
+  const rightPanelDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+
+  // Responsive default + persisted user width; re-clamp when the window shrinks.
+  useEffect(() => {
+    let saved: number | null = null;
+    try {
+      const raw = window.localStorage.getItem(RIGHT_PANEL_WIDTH_KEY);
+      const parsed = raw ? Number(raw) : NaN;
+      if (Number.isFinite(parsed) && parsed > 0) saved = parsed;
+    } catch {
+      // storage disabled
+    }
+    const fallback = Math.min(560, Math.max(360, Math.round(window.innerWidth * 0.36)));
+    setRightPanelWidth(clampRightPanelWidth(saved ?? fallback));
+    const onWindowResize = () => {
+      setRightPanelWidth((current) => clampRightPanelWidth(current));
+    };
+    window.addEventListener("resize", onWindowResize);
+    return () => window.removeEventListener("resize", onWindowResize);
+  }, []);
+
+  const startRightPanelResize = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      rightPanelDragRef.current = { startX: event.clientX, startWidth: rightPanelWidth };
+      setRightPanelResizing(true);
+      event.currentTarget.setPointerCapture(event.pointerId);
+    },
+    [rightPanelWidth],
+  );
+
+  const moveRightPanelResize = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = rightPanelDragRef.current;
+    if (!drag) return;
+    setRightPanelWidth(clampRightPanelWidth(drag.startWidth + drag.startX - event.clientX));
+  }, []);
+
+  const endRightPanelResize = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (!rightPanelDragRef.current) return;
+      rightPanelDragRef.current = null;
+      setRightPanelResizing(false);
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      } catch {
+        // pointer already released
+      }
+      try {
+        window.localStorage.setItem(RIGHT_PANEL_WIDTH_KEY, String(rightPanelWidth));
+      } catch {
+        // storage disabled
+      }
+    },
+    [rightPanelWidth],
+  );
 
   // ~/.pi/agent edits (models.json, auth.json, extensions, skills) are picked
   // up live: bump the model list key and refresh sessions without a restart.
@@ -359,10 +429,26 @@ export function Workbench() {
           )}
         </div>
 
+        {rightPanelOpen && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="调整右侧面板宽度"
+            title="拖动调整右侧面板宽度"
+            onPointerDown={startRightPanelResize}
+            onPointerMove={moveRightPanelResize}
+            onPointerUp={endRightPanelResize}
+            onPointerCancel={endRightPanelResize}
+            className="relative z-20 w-1 shrink-0 touch-none cursor-col-resize bg-transparent transition-colors hover:bg-[#D9E5FB] active:bg-accent/30"
+          />
+        )}
         <div
-          className={`shrink-0 overflow-hidden transition-[width] duration-200 ease-in-out ${
-            rightPanelOpen ? "w-[560px]" : "w-0 pointer-events-none"
-          }`}
+          className={`shrink-0 overflow-hidden ${
+            rightPanelResizing
+              ? ""
+              : "transition-[width] duration-200 ease-in-out"
+          } ${rightPanelOpen ? "" : "pointer-events-none"}`}
+          style={{ width: rightPanelOpen ? rightPanelWidth : 0 }}
           aria-hidden={!rightPanelOpen}
         >
           <FilePanel
