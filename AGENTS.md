@@ -1,7 +1,9 @@
 # PiForge - Development Notes
 
-PiForge 是 Pi Coding Agent 的 Windows 桌面端，衍生自
+PiForge 是 Pi Coding Agent 的 Windows 桌面端，对标
+[DLYZZT/pi-desktop](https://github.com/DLYZZT/pi-desktop) 与
 [Chasen-Liao/pi-agent-desktop](https://github.com/Chasen-Liao/pi-agent-desktop)（MIT）。
+**学设计、重实现，不搬运代码**（上游为 Apache-2.0/MIT，与本项目许可证不同）。
 
 ## 🚨 最高优先级：架构与 UI 铁律
 
@@ -14,6 +16,7 @@ PiForge 是 Pi Coding Agent 的 Windows 桌面端，衍生自
 - **Agent Host 隔离（v0.4.0）**：Pi SDK / AgentSession / 工具执行 / 受管进程 / LTM 只允许运行在 `agent-host/`。Next 侧禁止直接导入会话 API、禁止 spawn 受管进程、禁止直接读写 LTM 数据库。
 - **文件授权铁律**：Next 的 `/api/files`、file-index、git、statusline、processes 必须先调用 Host `files.authorize`；Next 不维护 allowed-roots。
 - **零内部端口**：Host 与 Next 只走命名管道 / Unix Socket，不新增 localhost TCP 服务。
+- **Extension UI Bridge**：Extension 的 `confirm` / `select` / `input` / `editor` / `notify` 由 Host 端分配 UUID + Deferred Promise 管理，Renderer 通过 preload bridge 回传结果。**禁止在 Next 侧维护 pending 队列**，禁止为此新增 HTTP 路由。
 
 ### 2. UI 铁律（改前端前必看）
 - **左栏（SessionSidebar）**：宽度固定 `260px`，背景 `#F5F5F7`。禁止内嵌文件树或重复按钮。
@@ -25,6 +28,20 @@ PiForge 是 Pi Coding Agent 的 Windows 桌面端，衍生自
 - **拒绝过度思考**：不要长篇大论写规划报告，直接看代码、写代码。
 - **禁止乱删文件**：清理死代码前必须确认无引用，禁止破坏核心业务逻辑。
 - **验证闭环**：改完必须运行 `npx tsc --noEmit` 和 `npm run lint`。
+
+---
+
+## 阶段八约束（发布基础设施与 Windows 原生体验）
+
+> 当前进度：v0.5.0 已打包、已打 annotated tag `v0.5.0`，未推送、未发 GitHub Release。
+> 阶段八从第 1 步开始，**每步单独 commit，完成后停下汇报**（设计要点 3 行内 / 测试结果含命令与数字 / 未覆盖边界列点），不一次性写完六步。
+
+1. **自动更新**：`electron-updater`，Main 主导；用户确认后下载；任务结束重启安装；**更新源固定**，不得在运行时切换。
+2. **发布管线**：GitHub Actions 由 `v*` tag 触发；产出 NSIS + ZIP + `latest.yml` + SHA-256；支持 `workflow_dispatch` 预演。
+3. **PowerShell 一等公民**：`pwsh` 7 优先，回退 Windows PowerShell 5.1；强制 UTF-8、正确处理多行与引号，统一 `-NoProfile -NonInteractive`；与受管进程生命周期衔接。
+4. **Sub-Agent 验证护栏**：完成时检查测试证据；无证据标记 `verified: false`，UI 显示"未验证"徽章；默认不强制阻断。
+5. **会话标题与搜索**：首条消息后台生成标题、手动优先、搜索、按日期分组。附带两项会话交互韧性：运行中消息队列（`Enter` 立即 steer / `Alt+Enter` 排队 + 重排）、会话加载 deadline + 单次重试。
+6. **文档与测试**：README + ARCHITECTURE + 全量测试 + packaged smoke（含 Extension UI Bridge `confirm` 弹窗用例，验证 Host 不挂起、Renderer 能正常回传）。
 
 ---
 
@@ -55,8 +72,8 @@ PiForge 是 Pi Coding Agent 的 Windows 桌面端，衍生自
 3. **模型列表**：`createPiRuntime` 必须走 `createAgentSessionServices`，否则扩展模型会消失。
 4. **打包配置**：`node_modules` 必须放在 extraResources；前端依赖放 devDependencies。
 5. **Host ESM 打包**：`agent-host/dist` 复制到 `resources/standalone/agent-host/`，入口是稳定 wrapper + `{"type":"module"}`；Pi/pi-mcp/typebox 从共享的 `standalone/node_modules` 解析。
-6. **SSE 断线续传**：agent 事件带单调 seq；Next 断开时 Host 保持会话，重连默认从 lastDeliveredSeq+1 重放；不要在 Next 维护事件队列。
-7. **文件白名单**：Host 返回 realpath 后 Next 才做 IO；新会话 cwd 由 Host 在 agent.create/ensure 时注册，Next 不再有 allowed-roots 缓存。
+6. **流式断线续传**：agent 事件带单调 seq；Next 断开时 Host 保持会话，重连默认从 `lastDeliveredSeq+1` 重放（**经命名管道 / Unix Socket，非 HTTP SSE**）；不要在 Next 维护事件队列。
+7. **文件白名单**：Host 返回 realpath 后 Next 才做 IO；新会话 cwd 由 Host 在 `agent.create/ensure` 时注册，Next 不再有 allowed-roots 缓存。
 
 ## globalThis 状态
 
@@ -78,6 +95,7 @@ PiForge 是 Pi Coding Agent 的 Windows 桌面端，衍生自
 
 - **MCP 工具**：如果 `.codegraph/` 存在，优先用 `codegraph_explore` 查代码，少用 `grep`。
 - **Next.js 提示**：不要凭记忆写 Next.js 代码，版本有 breaking changes，必要时查 `node_modules/next/dist/docs/`。
+- **对标项目**：DLYZZT/pi-desktop（功能密度高）与 Chasen-Liao/pi-agent-desktop（桌面交互细节扎实）。只读其设计意图，不复制代码；尤其不要照搬其 `app/api/` 的 REST 路由形态。
 
 <!-- 本文件由人类维护，AI 修改代码前必须重新阅读本文件。 -->
 
