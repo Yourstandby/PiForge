@@ -76,6 +76,8 @@ export function Workbench() {
       event.preventDefault();
       rightPanelDragRef.current = { startX: event.clientX, startWidth: rightPanelWidth };
       setRightPanelResizing(true);
+      document.body.style.userSelect = "none";
+      document.body.style.cursor = "col-resize";
       event.currentTarget.setPointerCapture(event.pointerId);
     },
     [rightPanelWidth],
@@ -89,21 +91,26 @@ export function Workbench() {
 
   const endRightPanelResize = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
-      if (!rightPanelDragRef.current) return;
+      const drag = rightPanelDragRef.current;
+      if (!drag) return;
       rightPanelDragRef.current = null;
+      const finalWidth = clampRightPanelWidth(drag.startWidth + drag.startX - event.clientX);
+      setRightPanelWidth(finalWidth);
       setRightPanelResizing(false);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
       try {
         event.currentTarget.releasePointerCapture(event.pointerId);
       } catch {
         // pointer already released
       }
       try {
-        window.localStorage.setItem(RIGHT_PANEL_WIDTH_KEY, String(rightPanelWidth));
+        window.localStorage.setItem(RIGHT_PANEL_WIDTH_KEY, String(finalWidth));
       } catch {
         // storage disabled
       }
     },
-    [rightPanelWidth],
+    [],
   );
 
   // ~/.pi/agent edits (models.json, auth.json, extensions, skills) are picked
