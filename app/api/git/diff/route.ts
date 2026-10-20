@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { errorMessage, getRequestId, jsonError, logApiError } from "@/lib/api-error";
-import { getAllowedRoots, isPathAllowed } from "@/lib/allowed-roots";
+import { authorizeHostPath, hostFileAccessError } from "@/lib/host-files";
 import { GitStatusError, readGitDiff } from "@/lib/git-status";
 
 export const dynamic = "force-dynamic";
@@ -14,9 +14,10 @@ export async function GET(req: Request) {
   if (!cwd || !target) return jsonError(req, 400, "Missing cwd or path");
 
   try {
-    const allowedRoots = await getAllowedRoots();
-    if (!isPathAllowed(cwd, allowedRoots)) {
-      return jsonError(req, 403, "Access denied");
+    try {
+      await authorizeHostPath(cwd, "list");
+    } catch (error) {
+      return hostFileAccessError(req, error, "/api/git/diff", "GET");
     }
     const diff = await readGitDiff(cwd, target);
     return NextResponse.json({ diff });

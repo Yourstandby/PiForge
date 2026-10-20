@@ -197,6 +197,16 @@ export interface AgentHostMethods {
     result: { ok: true };
   };
 
+  // ---- files (authorization lives in the host; bytes stay in Next) ----
+  "files.allowedRoots": {
+    params: Record<string, never>;
+    result: { roots: string[] };
+  };
+  "files.authorize": {
+    params: { path: string; op: "read" | "write" | "list" };
+    result: { realPath: string };
+  };
+
   // ---- browser bridge ----
   "browser.poll": {
     params: Record<string, never>;
@@ -298,6 +308,8 @@ export const IMPLEMENTED_HOST_METHODS = [
   "sessions.state",
   "sessions.rename",
   "sessions.delete",
+  "files.allowedRoots",
+  "files.authorize",
   "browser.poll",
   "browser.pushSnapshot",
   "browser.resolveCommand",

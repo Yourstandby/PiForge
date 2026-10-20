@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { errorMessage, getRequestId, jsonError, logApiError } from "@/lib/api-error";
-import { getAllowedRoots, isPathAllowed } from "@/lib/allowed-roots";
+import { authorizeHostPath, hostFileAccessError } from "@/lib/host-files";
 import { buildFileIndex, searchFileIndex } from "@/lib/file-index";
 
 export const dynamic = "force-dynamic";
@@ -14,9 +14,10 @@ export async function GET(req: Request) {
   if (!cwd) return jsonError(req, 400, "Missing cwd");
 
   try {
-    const allowedRoots = await getAllowedRoots();
-    if (!isPathAllowed(cwd, allowedRoots)) {
-      return jsonError(req, 403, "Access denied");
+    try {
+      await authorizeHostPath(cwd, "list");
+    } catch (error) {
+      return hostFileAccessError(req, error, "/api/file-index", "GET");
     }
     const { entries, truncated } = await buildFileIndex(cwd);
     const matches = searchFileIndex(entries, query, 20);

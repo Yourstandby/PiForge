@@ -54,4 +54,7 @@ export interface AgentHostClient {
   ): Promise<AgentEventSubscription>;
 
   close(): void;
+
+  /** Observe transport status transitions (used by SSE routes to close/reconnect). */
+  onStatusChange(listener: (status: AgentHostClientStatus) => void): () => void;
 }

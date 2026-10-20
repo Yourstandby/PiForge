@@ -44,6 +44,12 @@ import {
 import { deleteSession, renameSession } from "./session-admin.ts";
 import { getSessionOnlyTrustMap } from "./trust-store.ts";
 import {
+  AccessDeniedError,
+  addAllowedRoot,
+  authorizePath,
+  getAllowedRoots,
+} from "./allowed-roots.ts";
+import {
   pushBrowserSnapshot,
   recordBrowserPoll,
   resolveBrowserCommand,
@@ -603,6 +609,7 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
           fail(state, frame.id, "E_INVALID_PARAMS", "cwd is required");
           return;
         }
+        addAllowedRoot(cwd);
         const command = params.command;
         if (!isRecord(command)) {
           fail(state, frame.id, "E_INVALID_PARAMS", "command must be an object");
@@ -654,6 +661,7 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
           fail(state, frame.id, "E_INVALID_PARAMS", "sessionId, filePath and cwd are required");
           return;
         }
+        addAllowedRoot(cwd);
         const agentMode = isAgentMode(params.agentMode) ? params.agentMode : undefined;
         const toolPreset = isToolPreset(params.toolPreset) ? params.toolPreset : undefined;
         const toolNames = Array.isArray(params.toolNames) && params.toolNames.every((name) => typeof name === "string")
@@ -869,6 +877,34 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
         void deleteSession(sessionId, filePath)
           .then(() => result(state, frame.id, { ok: true }))
           .catch((error: unknown) => fail(state, frame.id, "INTERNAL", errorText(error)));
+        return;
+      }
+
+      // ---------------------------------------------------------------------
+      // File access policy (Next performs the IO on the returned path)
+      // ---------------------------------------------------------------------
+      case "files.allowedRoots": {
+        void getAllowedRoots()
+          .then((roots) => result(state, frame.id, { roots: [...roots] }))
+          .catch((error: unknown) => fail(state, frame.id, "INTERNAL", errorText(error)));
+        return;
+      }
+      case "files.authorize": {
+        const target = readString(params, "path");
+        const op = params.op;
+        if (!target || (op !== "read" && op !== "write" && op !== "list")) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "path and op (read|write|list) are required");
+          return;
+        }
+        void authorizePath(target, op)
+          .then((realPath) => result(state, frame.id, { realPath }))
+          .catch((error: unknown) => {
+            if (error instanceof AccessDeniedError) {
+              fail(state, frame.id, "ACCESS_DENIED", error.message);
+              return;
+            }
+            fail(state, frame.id, "INTERNAL", errorText(error));
+          });
         return;
       }
 

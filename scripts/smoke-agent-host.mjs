@@ -21,7 +21,9 @@ import { connect } from "node:net";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const hostEntry = path.join(repoRoot, "agent-host", "dist", "agent-host", "index.js");
+const hostEntry = process.env.PIFORGE_HOST_ENTRY
+  ? path.resolve(process.env.PIFORGE_HOST_ENTRY)
+  : path.join(repoRoot, "agent-host", "dist", "agent-host", "index.js");
 const TIMEOUT_MS = 20_000;
 
 if (!existsSync(hostEntry)) {

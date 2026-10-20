@@ -5,6 +5,7 @@ import { AlertCircle, CheckCircle2, ListTodo } from "lucide-react";
 import type { AgentMessage, SessionInfo, SessionTreeNode } from "@/lib/types";
 import { useAgentSession } from "@/hooks/useAgentSession";
 import { useAudio } from "@/hooks/useAudio";
+import { useHostHealth } from "@/hooks/useHostHealth";
 import { conversationToMarkdown } from "@/lib/conversation-markdown";
 import { BranchCloneModal, type BranchCloneMode } from "./BranchCloneModal";
 import { BranchNavigator } from "./BranchNavigator";
@@ -140,6 +141,20 @@ function ChatSession({
   // we only ask for confirmation and report how many tokens came back.
   const [compactConfirmOpen, setCompactConfirmOpen] = useState(false);
   const [compactToast, setCompactToast] = useState<{ ok: boolean; text: string } | null>(null);
+
+  // Engine liveness: reuse the existing transient toast so the UI layout is
+  // unchanged, but a crashed/restarting host is visible instead of silent.
+  const hostHealth = useHostHealth();
+  const hostWasDown = useRef(false);
+  useEffect(() => {
+    if (hostHealth === "down" && !hostWasDown.current) {
+      hostWasDown.current = true;
+      setCompactToast({ ok: false, text: "后台引擎断开，正在重连…" });
+    } else if (hostHealth === "ok" && hostWasDown.current) {
+      hostWasDown.current = false;
+      setCompactToast({ ok: true, text: "后台引擎已恢复" });
+    }
+  }, [hostHealth]);
 
   useEffect(() => {
     if (!compactToast) return;

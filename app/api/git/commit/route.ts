@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { errorMessage, getRequestId, jsonError, logApiError } from "@/lib/api-error";
-import { getAllowedRoots, isPathAllowed } from "@/lib/allowed-roots";
+import { authorizeHostPath, hostFileAccessError } from "@/lib/host-files";
 import { GitCommitError, GitStatusError, commitAllChanges } from "@/lib/git-status";
 
 export const dynamic = "force-dynamic";
@@ -15,9 +15,10 @@ export async function POST(req: Request) {
     const message = typeof body.message === "string" ? body.message : "";
     if (!cwd) return jsonError(req, 400, "Missing cwd");
 
-    const allowedRoots = await getAllowedRoots();
-    if (!isPathAllowed(cwd, allowedRoots)) {
-      return jsonError(req, 403, "Access denied");
+    try {
+      await authorizeHostPath(cwd, "list");
+    } catch (error) {
+      return hostFileAccessError(req, error, "/api/git/commit", "POST");
     }
 
     const result = await commitAllChanges(cwd, message);

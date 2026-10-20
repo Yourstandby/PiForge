@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { jsonError } from "@/lib/api-error";
-import { getAllowedRoots, isPathAllowed } from "@/lib/allowed-roots";
+import { authorizeHostPath, hostFileAccessError } from "@/lib/host-files";
 import { getAgentHostClient } from "@/lib/agent-host-client";
 import { jsonAgentHostError } from "@/lib/agent-host-http";
 
@@ -32,9 +32,10 @@ export async function POST(req: Request) {
     switch (body.action) {
       case "start": {
         if (!body.cwd || !body.command) return jsonError(req, 400, "Missing cwd or command");
-        const allowedRoots = await getAllowedRoots();
-        if (!isPathAllowed(body.cwd, allowedRoots)) {
-          return jsonError(req, 403, "Access denied");
+        try {
+          await authorizeHostPath(body.cwd, "list");
+        } catch (error) {
+          return hostFileAccessError(req, error, "/api/processes", "POST");
         }
         const result = await client.call("processes.start", {
           cwd: body.cwd,

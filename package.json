@@ -30,7 +30,7 @@
   "scripts": {
     "dev": "npm run build:agent-host && node scripts/dev.mjs",
     "build": "npm run build:standalone",
-    "build:standalone": "next build && node scripts/ensure-standalone-next-runtimes.mjs && node scripts/ensure-standalone-pi-runtime.mjs && node scripts/ensure-standalone-macos-universal-runtimes.mjs && node scripts/dereference-standalone-symlinks.mjs && node scripts/smoke-standalone-server.mjs",
+    "build:standalone": "next build && node scripts/ensure-standalone-next-runtimes.mjs && node scripts/ensure-standalone-pi-runtime.mjs && npm run build:agent-host && node scripts/ensure-standalone-agent-host.mjs && node scripts/ensure-standalone-macos-universal-runtimes.mjs && node scripts/dereference-standalone-symlinks.mjs && node scripts/smoke-standalone-server.mjs",
     "start": "next start -p 30141",
     "lint": "eslint .",
     "icons": "node scripts/build-brand-icons.mjs",
@@ -48,7 +48,8 @@
     "pack:mac": "npm run build:standalone && npm run build:electron && npx electron-builder --mac --universal --dir && node scripts/smoke-packaged-standalone.mjs",
     "dist": "npm run build:standalone && npm run build:electron && npx electron-builder --publish never && node scripts/smoke-packaged-standalone.mjs",
     "dist:mac": "npm run build:standalone && npm run build:electron && npx electron-builder --mac --universal --publish never && node scripts/smoke-packaged-standalone.mjs",
-    "smoke:agent-isolation": "node scripts/smoke-agent-isolation.mjs"
+    "smoke:agent-isolation": "node scripts/smoke-agent-isolation.mjs",
+    "smoke:host-reconnect": "node scripts/smoke-host-reconnect.mjs"
   },
   "build": {
     "extends": "electron-builder.yml"

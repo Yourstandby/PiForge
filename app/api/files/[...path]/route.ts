@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 import { errorMessage, getRequestId, jsonError, logApiError } from "@/lib/api-error";
-import { getAllowedRoots, isPathAllowed, isWindowsAbsolutePath, normalizeSlashes } from "@/lib/allowed-roots";
+import { authorizeHostPath, isHostAccessDenied } from "@/lib/host-files";
+import { jsonAgentHostError } from "@/lib/agent-host-http";
+import { isWindowsAbsolutePath, normalizeSlashes } from "@/lib/path-text";
 import { validateWritablePath } from "@/lib/path-policy";
 import {
   DEFAULT_DIR_LIST_LIMIT,
@@ -16,22 +18,15 @@ import {
 } from "@/lib/file-browser";
 
 /**
- * Resolves a path to its canonical form via realpath(3), then re-validates
- * against allowedRoots. This closes a symlink-bypass vector: string-based
- * isPathAllowed cannot detect a symlink inside an allowed root pointing
- * to a forbidden target, but realpath follows the final symlink target.
- * fs.promises.stat/writeFile also follow symlinks, so the original check
- * was vulnerable to symlink redirection in all three handlers (GET/PUT/watch).
+ * The host owns the file policy: it canonicalizes the path (realpath) and
+ * checks allowed roots + writable-path rules. Next performs the IO only on the
+ * canonical path returned here.
  */
-async function resolveAuthorizedPath(
-  filePath: string,
-  allowedRoots: Set<string>,
-): Promise<string> {
-  const realPath = await fs.promises.realpath(filePath);
-  if (!isPathAllowed(realPath, allowedRoots)) {
-    throw new Error("Access denied");
+function fileAccessError(req: NextRequest, error: unknown, method: string): Response {
+  if (isHostAccessDenied(error)) {
+    return jsonError(req, 403, "Access denied");
   }
-  return realPath;
+  return jsonAgentHostError(req, error, { route: "/api/files/[...path]", method });
 }
 
 const TEXT_PREVIEW_MAX_BYTES = 256 * 1024;
@@ -139,12 +134,11 @@ export async function GET(
     const filePath = filePathFromSegments(segments);
     const type = request.nextUrl.searchParams.get("type") ?? "list";
 
-    const allowedRoots = await getAllowedRoots();
     let realPath: string;
     try {
-      realPath = await resolveAuthorizedPath(filePath, allowedRoots);
-    } catch {
-      return jsonError(request, 403, "Access denied");
+      realPath = await authorizeHostPath(filePath, "read");
+    } catch (error) {
+      return fileAccessError(request, error, "GET");
     }
 
     let stat: fs.Stats;
@@ -300,15 +294,13 @@ export async function POST(
       return jsonError(request, 415, "multipart/form-data required");
     }
 
-    const allowedRoots = await getAllowedRoots();
-    let realParent: string;
+    let targetPath: string;
     try {
-      realParent = await resolveAuthorizedPath(path.dirname(filePath), allowedRoots);
-    } catch {
-      return jsonError(request, 403, "Access denied");
+      targetPath = await authorizeHostPath(filePath, "write");
+    } catch (error) {
+      return fileAccessError(request, error, "POST");
     }
 
-    const targetPath = path.join(realParent, path.basename(filePath));
     const writeError = validateWritablePath(targetPath);
     if (writeError) {
       return jsonError(request, 403, writeError);
@@ -369,15 +361,11 @@ export async function PUT(
     const { path: segments } = await params;
     const filePath = filePathFromSegments(segments);
 
-    const allowedRoots = await getAllowedRoots();
-
-    // Resolve symlinks before any operation — symlinks pointing outside
-    // allowed roots bypass string-based isPathAllowed checks.
     let realPath: string;
     try {
-      realPath = await resolveAuthorizedPath(filePath, allowedRoots);
-    } catch {
-      return jsonError(request, 403, "Access denied");
+      realPath = await authorizeHostPath(filePath, "write");
+    } catch (error) {
+      return fileAccessError(request, error, "PUT");
     }
 
     // Reject writes to version-control metadata, node_modules internals, and

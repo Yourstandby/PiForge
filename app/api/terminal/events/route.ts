@@ -19,6 +19,7 @@ export async function GET(req: Request) {
 
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   let subscription: HostSubscription | undefined;
+  let offStatus: (() => void) | undefined;
   let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null;
   let closed = false;
 
@@ -27,6 +28,7 @@ export async function GET(req: Request) {
     closed = true;
     if (heartbeat) clearInterval(heartbeat);
     subscription?.close();
+    offStatus?.();
     try {
       controllerRef?.close();
     } catch {
@@ -61,6 +63,10 @@ export async function GET(req: Request) {
         subscription.close();
         return;
       }
+
+      offStatus = client.onStatusChange((status) => {
+        if (status !== "ready") cleanup();
+      });
 
       heartbeat = setInterval(() => {
         if (controller.desiredSize === null) {

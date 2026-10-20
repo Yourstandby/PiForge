@@ -60,6 +60,25 @@ if (!packagedOutput) {
   process.exit(1);
 }
 
+// The Agent Host ships inside resources/standalone: stable wrapper entry,
+// compiled contract/lib tree, and the shared Pi dependency closure.
+const hostEntry = join(packagedOutput.standaloneDir, "agent-host", "index.js");
+const hostServer = join(packagedOutput.standaloneDir, "agent-host", "agent-host", "index.js");
+const hostPackage = join(packagedOutput.standaloneDir, "agent-host", "package.json");
+const piSdk = join(packagedOutput.standaloneDir, "node_modules", "@earendil-works", "pi-coding-agent", "package.json");
+for (const [label, file] of [
+  ["agent-host entry", hostEntry],
+  ["agent-host server", hostServer],
+  ["agent-host package.json", hostPackage],
+  ["pi SDK runtime", piSdk],
+]) {
+  if (!existsSync(file)) {
+    console.error(`smoke-packaged-standalone: missing ${label}: ${file}`);
+    process.exit(1);
+  }
+}
+console.log("smoke-packaged-standalone: agent-host runtime present");
+
 const result = spawnSync(
   process.execPath,
   [

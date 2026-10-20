@@ -70,6 +70,8 @@ let agentHostToken: string | null = null;
 let agentHostReady = false;
 let agentHostShutdownStarted = false;
 let agentHostShutdownComplete = false;
+let agentHostRestartAttempts: number[] = [];
+let agentHostRestartTimer: ReturnType<typeof setTimeout> | null = null;
 let isQuitting = false;
 let logFilePath: string | null = null;
 const DEFAULT_PORT = 30141;
@@ -248,6 +250,7 @@ async function startAgentHost(): Promise<void> {
     agentHostReady = false;
     if (agentHostProcess === child) agentHostProcess = null;
     logError("Agent Host exited", { code });
+    scheduleAgentHostRestart();
   });
 
   await new Promise<void>((resolve) => {
@@ -261,6 +264,13 @@ async function startAgentHost(): Promise<void> {
         logInfo("Agent Host ready", { pid: child.pid, endpoint: agentHostEndpoint, detail });
       } else {
         logError("Agent Host failed to become ready", detail);
+        // Force the exit handler to run so the restart policy applies to a
+        // hung/dead host instead of leaving the app permanently degraded.
+        try {
+          child.kill();
+        } catch {
+          // Already gone.
+        }
       }
       resolve();
     };
@@ -276,7 +286,33 @@ async function startAgentHost(): Promise<void> {
   });
 }
 
+function scheduleAgentHostRestart(): void {
+  if (isQuitting || agentHostRestartTimer) return;
+
+  const now = Date.now();
+  agentHostRestartAttempts = agentHostRestartAttempts.filter((at) => now - at < 60_000);
+  if (agentHostRestartAttempts.length >= 5) {
+    logError("Agent Host restart limit reached; manual restart required");
+    return;
+  }
+  agentHostRestartAttempts.push(now);
+  const delay = Math.min(5_000, 500 * 2 ** (agentHostRestartAttempts.length - 1));
+  logInfo("Scheduling Agent Host restart", {
+    delayMs: delay,
+    attempt: agentHostRestartAttempts.length,
+  });
+  agentHostRestartTimer = setTimeout(() => {
+    agentHostRestartTimer = null;
+    if (isQuitting) return;
+    void startAgentHost();
+  }, delay);
+}
+
 function stopAgentHost(): Promise<void> {
+  if (agentHostRestartTimer) {
+    clearTimeout(agentHostRestartTimer);
+    agentHostRestartTimer = null;
+  }
   const child = agentHostProcess;
   agentHostProcess = null;
   agentHostReady = false;

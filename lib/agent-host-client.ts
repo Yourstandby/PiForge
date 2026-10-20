@@ -104,6 +104,7 @@ class PipeAgentHostClient implements AgentHostClient {
   private currentStatus: AgentHostClient["status"] = "idle";
   private nextId = 0;
   private readonly pending = new Map<number, PendingCall>();
+  private readonly statusListeners = new Set<(status: AgentHostClient["status"]) => void>();
   private readonly hubs = new Map<GlobalTopic, TopicHub>();
   private readonly agentHubs = new Map<string, AgentHub>();
   private readonly hostSubscriptions = new Map<string, HostSubscriptionRef>();
@@ -120,6 +121,23 @@ class PipeAgentHostClient implements AgentHostClient {
 
   get status(): AgentHostClient["status"] {
     return this.currentStatus;
+  }
+
+  onStatusChange(listener: (status: AgentHostClient["status"]) => void): () => void {
+    this.statusListeners.add(listener);
+    return () => this.statusListeners.delete(listener);
+  }
+
+  private setStatus(next: AgentHostClient["status"]): void {
+    if (this.currentStatus === next) return;
+    this.currentStatus = next;
+    for (const listener of [...this.statusListeners]) {
+      try {
+        listener(next);
+      } catch (error) {
+        console.error("agent-host status listener failed:", error);
+      }
+    }
   }
 
   async call<M extends MethodName>(
@@ -267,7 +285,7 @@ class PipeAgentHostClient implements AgentHostClient {
 
   close(): void {
     this.closed = true;
-    this.currentStatus = "closed";
+    this.setStatus("closed");
     this.clearReconnectTimer();
     this.failPending(hostUnavailable("Agent Host client closed"));
     const socket = this.socket;
@@ -365,7 +383,7 @@ class PipeAgentHostClient implements AgentHostClient {
     }
 
     this.clearReconnectTimer();
-    this.currentStatus = "connecting";
+    this.setStatus("connecting");
 
     return new Promise<void>((resolve, reject) => {
       const socket = connect(endpoint);
@@ -390,7 +408,7 @@ class PipeAgentHostClient implements AgentHostClient {
         finished = true;
         clearTimeout(handshakeTimer);
         this.socket = null;
-        this.currentStatus = "idle";
+        this.setStatus("idle");
         try {
           socket.destroy();
         } catch {
@@ -427,7 +445,7 @@ class PipeAgentHostClient implements AgentHostClient {
                 handshaken = true;
                 finished = true;
                 clearTimeout(handshakeTimer);
-                this.currentStatus = "ready";
+                this.setStatus("ready");
                 this.reconnectAttempts = 0;
                 resolve();
                 this.resubscribeAll();
@@ -551,7 +569,7 @@ class PipeAgentHostClient implements AgentHostClient {
   private handleDisconnect(): void {
     if (this.closed) return;
     this.socket = null;
-    this.currentStatus = "reconnecting";
+    this.setStatus("reconnecting");
     this.hostSubscriptions.clear();
     this.earlyEvents.clear();
     for (const hub of this.hubs.values()) {
@@ -572,7 +590,7 @@ class PipeAgentHostClient implements AgentHostClient {
       [...this.hubs.values()].some((hub) => hub.listeners.size > 0) ||
       [...this.agentHubs.values()].some((hub) => hub.listeners.size > 0);
     if (!hasListeners) {
-      this.currentStatus = "idle";
+      this.setStatus("idle");
       return;
     }
     const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** this.reconnectAttempts);

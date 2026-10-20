@@ -68,9 +68,7 @@ export async function POST(req: Request) {
       ...(toolPreset !== undefined ? { toolPreset: toolPreset as ToolPresetDto } : {}),
     });
 
-    // Keep the files-route allowed-roots cache in sync for the new cwd.
-    globalThis.__piAllowedRootsCache?.roots.add(cwd);
-
+    // The host registers the cwd as an allowed root when it starts the session.
     return NextResponse.json({ success: true, sessionId: result.sessionId });
   } catch (error) {
     return jsonAgentHostError(req, error, { route: "/api/agent/new", method: "POST" });
