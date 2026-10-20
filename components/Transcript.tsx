@@ -7,6 +7,9 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { Check, ChevronDown, Copy, GitFork, X } from "lucide-react";
 import type { AgentMessage, ToolResultMessage } from "@/lib/types";
+import { diffStats } from "@/lib/diff-lines";
+import { isEditToolName, toolDiffPath, toolDiffRows } from "@/lib/tool-diff";
+import { DiffRows } from "./DiffRows";
 import { getFileName } from "@/lib/file-paths";
 import {
   findFileReferences,
@@ -508,6 +511,14 @@ function ToolCallCard({
   const tree = nested?.calls.length ? buildNestedTree(nested.calls) : null;
   const output = result ? resultText(result).trim() : "";
   const resultImages = result ? contentImages(result.content) : [];
+  // Successful edit/write calls show what changed, right in the card: users
+  // should not have to open the Git panel to see the AI's own edit.
+  const codeDiff = useMemo(
+    () => (result && !result.isError && isEditToolName(name) ? toolDiffRows(name, input) : null),
+    [result, name, input],
+  );
+  const codeDiffStats = useMemo(() => (codeDiff ? diffStats(codeDiff) : null), [codeDiff]);
+  const codeDiffPath = toolDiffPath(name, input);
 
   return (
     <div className="my-2.5 overflow-hidden rounded-lg border border-[#E3E8F2] bg-white">
@@ -571,6 +582,31 @@ function ToolCallCard({
                   部分子调用未记录（超出数量或体积上限）
                 </p>
               )}
+            </div>
+          )}
+          {codeDiff && codeDiff.length > 0 && codeDiffStats && (
+            <div className="border-b border-[#EDF1F7]">
+              <p className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-ink-faint">
+                <span>代码改动</span>
+                {codeDiffPath && (
+                  <span className="min-w-0 truncate font-mono text-[10.5px] normal-case tracking-normal text-ink-muted">
+                    {getFileName(codeDiffPath)}
+                  </span>
+                )}
+                {codeDiffStats.added > 0 && (
+                  <span className="font-mono text-[10px] normal-case tracking-normal text-[#16A34A]">
+                    +{codeDiffStats.added}
+                  </span>
+                )}
+                {codeDiffStats.removed > 0 && (
+                  <span className="font-mono text-[10px] normal-case tracking-normal text-[#DC2626]">
+                    −{codeDiffStats.removed}
+                  </span>
+                )}
+              </p>
+              <div className="max-h-72 overflow-auto border-t border-[#EDF1F7] bg-white">
+                <DiffRows rows={codeDiff} />
+              </div>
             </div>
           )}
           {hasArgs && (

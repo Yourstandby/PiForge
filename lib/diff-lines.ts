@@ -108,3 +108,117 @@ export function diffStats(rows: DiffLine[]): { added: number; removed: number } 
   }
   return { added, removed };
 }
+
+/** Above this many DP cells the line diff degrades to a delete-block/add-block. */
+const DIFF_CELL_LIMIT = 260_000;
+
+interface DiffOp {
+  kind: "context" | "add" | "del";
+  text: string;
+}
+
+function splitDiffLines(text: string): string[] {
+  if (!text) return [];
+  // A single trailing newline is a file terminator, not an extra empty line.
+  const normalized = text.replace(/\r\n/g, "\n").replace(/\n$/, "");
+  return normalized.split("\n");
+}
+
+function lcsOps(oldLines: string[], newLines: string[]): DiffOp[] {
+  const n = oldLines.length;
+  const m = newLines.length;
+  if (n === 0) return newLines.map((text) => ({ kind: "add", text }));
+  if (m === 0) return oldLines.map((text) => ({ kind: "del", text }));
+  if (n * m > DIFF_CELL_LIMIT) {
+    return [
+      ...oldLines.map((text): DiffOp => ({ kind: "del", text })),
+      ...newLines.map((text): DiffOp => ({ kind: "add", text })),
+    ];
+  }
+
+  const width = m + 1;
+  const dp = new Int32Array((n + 1) * width);
+  for (let i = n - 1; i >= 0; i -= 1) {
+    for (let j = m - 1; j >= 0; j -= 1) {
+      dp[i * width + j] =
+        oldLines[i] === newLines[j]
+          ? dp[(i + 1) * width + (j + 1)] + 1
+          : Math.max(dp[(i + 1) * width + j], dp[i * width + (j + 1)]);
+    }
+  }
+
+  const ops: DiffOp[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (oldLines[i] === newLines[j]) {
+      ops.push({ kind: "context", text: oldLines[i] });
+      i += 1;
+      j += 1;
+    } else if (dp[(i + 1) * width + j] >= dp[i * width + (j + 1)]) {
+      ops.push({ kind: "del", text: oldLines[i] });
+      i += 1;
+    } else {
+      ops.push({ kind: "add", text: newLines[j] });
+      j += 1;
+    }
+  }
+  while (i < n) {
+    ops.push({ kind: "del", text: oldLines[i] });
+    i += 1;
+  }
+  while (j < m) {
+    ops.push({ kind: "add", text: newLines[j] });
+    j += 1;
+  }
+  return ops;
+}
+
+/**
+ * Line diff between two text fragments (no git involved), in the same row
+ * shape as {@link parseUnifiedDiff} so both can use one renderer.
+ *
+ * Used by the transcript's tool cards: `edit` gives before/after snippets,
+ * `write` an entire file. Common leading/trailing lines become context rows.
+ */
+export function diffLines(oldText: string, newText: string): DiffLine[] {
+  const oldLines = splitDiffLines(oldText);
+  const newLines = splitDiffLines(newText);
+
+  let prefix = 0;
+  while (prefix < oldLines.length && prefix < newLines.length && oldLines[prefix] === newLines[prefix]) {
+    prefix += 1;
+  }
+  let suffix = 0;
+  while (
+    suffix < oldLines.length - prefix &&
+    suffix < newLines.length - prefix &&
+    oldLines[oldLines.length - 1 - suffix] === newLines[newLines.length - 1 - suffix]
+  ) {
+    suffix += 1;
+  }
+
+  const ops: DiffOp[] = [
+    ...oldLines.slice(0, prefix).map((text): DiffOp => ({ kind: "context", text })),
+    ...lcsOps(oldLines.slice(prefix, oldLines.length - suffix), newLines.slice(prefix, newLines.length - suffix)),
+    ...oldLines.slice(oldLines.length - suffix).map((text): DiffOp => ({ kind: "context", text })),
+  ];
+
+  const rows: DiffLine[] = [];
+  let oldLine = 1;
+  let newLine = 1;
+  for (const op of ops) {
+    if (op.kind === "context") {
+      rows.push({ kind: "context", oldLine, newLine, text: op.text });
+      oldLine += 1;
+      newLine += 1;
+    } else if (op.kind === "add") {
+      rows.push({ kind: "add", oldLine: null, newLine, text: op.text });
+      newLine += 1;
+    } else {
+      rows.push({ kind: "del", oldLine, newLine: null, text: op.text });
+      oldLine += 1;
+    }
+  }
+  return rows;
+}

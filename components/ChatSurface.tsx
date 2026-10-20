@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertCircle, CheckCircle2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, ListTodo } from "lucide-react";
 import type { AgentMessage, SessionInfo, SessionTreeNode } from "@/lib/types";
 import { useAgentSession } from "@/hooks/useAgentSession";
 import { useAudio } from "@/hooks/useAudio";
@@ -242,6 +242,33 @@ function ChatSession({
 
   const composer = (
     <div className="flex flex-col gap-2">
+      {chat.canExecutePlan && chat.agentMode === "plan" && (
+        <div
+          role="group"
+          aria-label="计划已生成"
+          className="flex items-center gap-2 self-start rounded-xl border border-[#D9E5FB] bg-[#F5F9FF] px-2.5 py-1.5 text-[12px] text-ink-soft shadow-[0_1px_2px_rgba(15,23,42,0.04)]"
+        >
+          <ListTodo size={13} strokeWidth={1.9} className="shrink-0 text-accent" aria-hidden="true" />
+          <span className="min-w-0">计划已生成，批准后开始执行。</span>
+          <button
+            type="button"
+            onClick={() => {
+              void chat.handleExecutePlan();
+            }}
+            disabled={chat.agentRunning}
+            className="ml-1 shrink-0 rounded-md bg-accent px-2 py-1 text-[11.5px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            批准并执行
+          </button>
+          <button
+            type="button"
+            onClick={() => chat.dismissPlan()}
+            className="shrink-0 rounded-md px-1.5 py-1 text-[11.5px] text-ink-muted transition-colors hover:bg-[#ECECEF] hover:text-ink"
+          >
+            拒绝
+          </button>
+        </div>
+      )}
       {compactToast && (
         <div
           role="status"

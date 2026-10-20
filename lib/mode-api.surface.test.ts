@@ -9,6 +9,7 @@ import { AGENT_COMMAND_TYPES, validateAgentCommand } from "./agent-commands.ts";
 import {
   ASK_CONFIRM_TOOLS,
   EXECUTE_PLAN_PROMPT,
+  PLAN_MODE_SYSTEM_PROMPT,
   effectiveToolsForMode,
   needsAskConfirm,
 } from "./approval-policy.ts";
@@ -93,4 +94,10 @@ test("UI entry points exist in source", () => {
     const src = readFileSync(join(root, f), "utf8");
     assert.ok(src.length > 50, f);
   }
+});
+
+test("plan mode injects an explicit plan-only system prompt", () => {
+  assert.match(PLAN_MODE_SYSTEM_PROMPT, /计划模式/);
+  assert.match(PLAN_MODE_SYSTEM_PROMPT, /不要调用 write \/ edit/);
+  assert.match(PLAN_MODE_SYSTEM_PROMPT, /等待批准/);
 });

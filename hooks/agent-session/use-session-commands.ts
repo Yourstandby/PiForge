@@ -421,6 +421,7 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
     const sid = sessionIdRef.current;
     if (!sid || agentRunning) return;
     setCanExecutePlan(false);
+    // Approving leaves plan mode (ask mode keeps a confirm before each write).
     setAgentMode("ask");
     try {
       await sendAgentCommand(sid, { type: "set_agent_mode", mode: "ask" });
@@ -429,6 +430,9 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
     }
     await handleSend(EXECUTE_PLAN_PROMPT);
   }, [agentRunning, handleSend, sessionIdRef, setAgentMode, setCanExecutePlan]);
+
+  /** "拒绝": hide the approval bar and stay in plan mode for another pass. */
+  const dismissPlan = useCallback(() => setCanExecutePlan(false), [setCanExecutePlan]);
 
   const handleAbort = useCallback(async () => {
     const sid = sessionIdRef.current;
@@ -611,5 +615,6 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
     handleAbortCompaction,
     handleAgentModeChange,
     handleExecutePlan,
+    dismissPlan,
   };
 }

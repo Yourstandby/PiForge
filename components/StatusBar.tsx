@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   BookOpen,
   Check,
@@ -8,6 +8,7 @@ import {
   FileArchive,
   Gauge,
   GitCompare,
+  ListTodo,
   Loader2,
   ShieldAlert,
   ShieldCheck,
@@ -38,7 +39,7 @@ const AGENT_MODE_OPTIONS: Array<{
 }> = [
   { value: "full", label: "完全访问", description: "工具直接执行，不再逐次确认", Icon: ShieldCheck },
   { value: "ask", label: "标准", description: "写入与命令类工具执行前确认", Icon: ShieldAlert },
-  { value: "plan", label: "只读", description: "仅允许读取与规划工具", Icon: BookOpen },
+  { value: "plan", label: "计划", description: "只读分析，先输出计划再执行", Icon: BookOpen },
 ];
 
 const THINKING_LABELS: Record<ThinkingLevel, string> = {
@@ -72,6 +73,45 @@ interface Props {
   sessionStats: SessionStats | null;
   contextUsage: ContextUsage | null;
   currentProvider?: string | null;
+}
+
+/** One-click plan-mode switch; remembers the mode to restore on toggle-off. */
+function PlanToggle({
+  mode,
+  disabled,
+  onChange,
+}: {
+  mode: AgentMode;
+  disabled: boolean;
+  onChange: (mode: AgentMode) => void;
+}) {
+  const active = mode === "plan";
+  const previousMode = useRef<AgentMode>("full");
+  useEffect(() => {
+    if (mode !== "plan") previousMode.current = mode;
+  }, [mode]);
+
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(active ? previousMode.current : "plan")}
+      disabled={disabled}
+      aria-pressed={active}
+      title={
+        active
+          ? "计划模式：只读分析并先输出计划（点击关闭）"
+          : "计划模式：先输出修改计划，批准后再执行"
+      }
+      className={`flex h-7 items-center gap-1 rounded-md px-1.5 text-[11px] transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-50 ${
+        active
+          ? "bg-[#E8EFFB] font-medium text-accent-strong ring-1 ring-[#C9DCFB] hover:bg-[#DDE9FC]"
+          : "text-ink-muted hover:bg-[#ECECEF] hover:text-ink"
+      }`}
+    >
+      <ListTodo size={13} strokeWidth={1.85} aria-hidden="true" />
+      Plan 模式
+    </button>
+  );
 }
 
 function ThinkingMenu({
@@ -250,6 +290,11 @@ export function StatusBar({
           onModelChange={onModelChange}
         />
         <ModeMenu
+          mode={agentMode}
+          disabled={isStreaming}
+          onChange={onAgentModeChange}
+        />
+        <PlanToggle
           mode={agentMode}
           disabled={isStreaming}
           onChange={onAgentModeChange}

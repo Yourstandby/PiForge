@@ -874,6 +874,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     handleSend: commands.handleSend,
     handleAgentModeChange: commands.handleAgentModeChange,
     handleExecutePlan: commands.handleExecutePlan,
+    dismissPlan: commands.dismissPlan,
     handleAbort: commands.handleAbort,
     handleFork: commands.handleFork,
     handleNavigate: commands.handleNavigate,
