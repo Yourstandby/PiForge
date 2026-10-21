@@ -17,9 +17,12 @@ const SHELL_GUIDANCE = [
   "Trim output inside the command (`Select-Object -First 40`, `| head -20`, `Select-String`): long dumps are truncated anyway and still cost input tokens.",
 ];
 
-export function createDesktopShellGuidanceFactory(): ExtensionFactory {
+export function createDesktopShellGuidanceFactory(
+  options?: { platform?: NodeJS.Platform },
+): ExtensionFactory {
+  const platform = options?.platform ?? process.platform;
   return (pi: ExtensionAPI) => {
-    if (process.platform !== "win32") return;
+    if (platform !== "win32") return;
     pi.on("before_agent_start", (event) => {
       const options = event.systemPromptOptions;
       const existing = options.promptGuidelines ?? [];

@@ -4,16 +4,23 @@ import { createDesktopShellGuidanceFactory } from "./desktop-shell-guidance-exte
 
 type Handler = (event: { systemPromptOptions: { promptGuidelines?: string[] } }) => void;
 
-function setup() {
+function setup(platform: NodeJS.Platform = "win32") {
   const handlers = new Map<string, Handler>();
   const pi = {
     on: (event: string, handler: Handler) => {
       handlers.set(event, handler);
     },
   };
-  createDesktopShellGuidanceFactory()(pi as never);
+  // 平台显式注入：Windows 上跑 Linux CI 才不会因为 process.platform 而假失败。
+  createDesktopShellGuidanceFactory({ platform })(pi as never);
   return handlers;
 }
+
+test("registers nothing outside Windows", () => {
+  for (const platform of ["linux", "darwin"] as const) {
+    assert.equal(setup(platform).size, 0, `${platform} must stay silent`);
+  }
+});
 
 test("appends bash/powershell guidance bullets once", () => {
   const handlers = setup();
