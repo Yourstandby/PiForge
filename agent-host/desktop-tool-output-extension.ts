@@ -20,9 +20,22 @@ import {
   readToolOutputPage,
   toolOutputFilePath,
 } from "./tool-outputs.ts";
+import {
+  READ_TOOL_OUTPUT_BUDGET,
+  TRUNCATION_HINT,
+  truncateToolOutput,
+} from "./tool-output-budget.ts";
 
-/** Tools whose output is already bounded / retrievable from disk. */
-const EXEMPT_TOOLS = new Set<string>(["read", "write", "edit", TOOL_HISTORY_TOOL_NAME]);
+/**
+ * 已在工具内部自带界限 / 可从磁盘回读的工具（`write`/`edit` 只回一行确认）。
+ * `read` 不再豁免：它是最多行的输出源，走文件内容预算（头 300 行 + offset 续读）。
+ */
+const EXEMPT_TOOLS = new Set<string>(["write", "edit", TOOL_HISTORY_TOOL_NAME]);
+
+const READ_TOOL_NAME = "read";
+/** read 被截断时额外给一句针对性引导（offset 是它自己的分页参数）。 */
+const READ_CONTINUE_HINT =
+  "也可以用 read 的 offset/limit 从上次中断处继续（例：offset=301, limit=300）。";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -74,6 +87,32 @@ export function createDesktopToolOutputFactory(): ExtensionFactory {
       const text = textOf(event.content);
       const fullOutputPath = fullOutputPathOf(event.details);
       if (!text && !fullOutputPath) return;
+
+      /** 文件内容型（read）：只裁不落盘 —— 源文件本来就在磁盘上，用 offset 续读。 */
+      if (event.toolName === READ_TOOL_NAME) {
+        const truncation = truncateToolOutput(text, READ_TOOL_OUTPUT_BUDGET);
+        if (!truncation.truncated) return;
+        const nonText = event.content.filter((block) => block.type !== "text");
+        const baseDetails = isRecord(event.details) ? event.details : {};
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `${truncation.text}\n${TRUNCATION_HINT}\n${READ_CONTINUE_HINT}`,
+            },
+            ...nonText,
+          ],
+          details: {
+            ...baseDetails,
+            toolOutputTruncation: {
+              kind: "read-truncated",
+              totalLines: truncation.totalLines,
+              keptLines: truncation.keptLines,
+              truncatedBy: truncation.truncatedBy,
+            },
+          },
+        };
+      }
 
       let sessionDir: string;
       let sessionId: string;

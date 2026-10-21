@@ -19,7 +19,7 @@ export function ProjectSortMenu({ value, onChange }: {
   return <Menu.Root modal={false} onOpenChange={(_open, details) => {
     if (isKeyboardActivation(details.event)) setInstant(true);
   }}>
-    <Menu.Trigger className="sidebar-icon-button sidebar-sort-trigger" aria-label={t("sidebar.sortProjects")} title={t("sidebar.sortProjects")} data-custom={value !== "name" || undefined} onPointerDown={() => setInstant(false)} onKeyDown={() => setInstant(true)}>
+    <Menu.Trigger className="flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded text-gray-500 hover:bg-gray-200 hover:text-gray-700 sidebar-sort-trigger" aria-label={t("sidebar.sortProjects")} title={t("sidebar.sortProjects")} data-custom={value !== "name" || undefined} onPointerDown={() => setInstant(false)} onKeyDown={() => setInstant(true)}>
       <SidebarIcon name="sort" size={16} />
     </Menu.Trigger>
     <Menu.Portal>

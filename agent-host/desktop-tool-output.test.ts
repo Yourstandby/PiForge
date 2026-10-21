@@ -131,7 +131,6 @@ test("tool_history_get is exempt and reads pages back", async () => {
       ctx,
     );
     assert.equal(historyToolResult, undefined);
-    assert.equal(await handlers.get("tool_result")?.(resultEvent("read", lineText(3_000)), ctx), undefined);
 
     const tool = tools.find((candidate) => candidate.name === TOOL_HISTORY_TOOL_NAME);
     assert.ok(tool, "tool_history_get must be registered");
@@ -152,6 +151,56 @@ test("tool_history_get is exempt and reads pages back", async () => {
 
     const missing = await tool.execute("history-3", { toolCallId: "unknown-call" }, undefined, undefined, ctx);
     assert.match(missing.content[0]?.text ?? "", /No persisted output/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("read output is capped by the file-content budget instead of being exempt", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-tool-output-read-"));
+  try {
+    const sessionDir = join(dir, "sessions", "project");
+    const { handlers, ctx } = setup(sessionDir);
+    const result = (await handlers.get("tool_result")?.(
+      resultEvent("read", lineText(3_000)),
+      ctx,
+    )) as { content: Array<{ type: string; text?: string }>; details: Record<string, unknown> };
+    assert.ok(result, "a 3000-line read must be trimmed");
+    const text = result.content[0]?.text ?? "";
+    assert.match(text, /\[输出过长已截断，共 3000 行\]/);
+    assert.match(text, /请使用 grep、sed 等工具分段读取/);
+    assert.match(text, /offset=301/);
+    assert.match(text, /output line 1\n/);
+    assert.doesNotMatch(text, /output line 3000/);
+    // 源文件就在磁盘上：read 只裁剪，不落盘。
+    assert.equal(existsSync(join(sessionDir, "tool-outputs")), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("read output that fits the budget is left untouched", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-tool-output-read-small-"));
+  try {
+    const { handlers, ctx } = setup(join(dir, "sessions", "project"));
+    const result = await handlers.get("tool_result")?.(resultEvent("read", lineText(50)), ctx);
+    assert.equal(result, undefined);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("read keeps pi's own pagination hint after truncation", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-tool-output-read-page-"));
+  try {
+    const { handlers, ctx } = setup(join(dir, "sessions", "project"));
+    const body = `${lineText(1_000)}\n\n[Showing lines 1-1000 of 4000. Use offset=1001 to continue.]`;
+    const result = (await handlers.get("tool_result")?.(resultEvent("read", body), ctx)) as {
+      content: Array<{ type: string; text?: string }>;
+    };
+    const text = result.content[0]?.text ?? "";
+    assert.match(text, /Use offset=1001 to continue/);
+    assert.match(text, /\[输出过长已截断，共 1002 行\]/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -1,15 +1,18 @@
 "use client";
 
-import { Children, useCallback, useEffect, useId, useMemo, useState } from "react";
+import { Children, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, Copy, CornerDownLeft, GitBranch, GitFork, X } from "lucide-react";
-import type { AgentMessage, ToolResultMessage } from "@/lib/types";
+import { BrainCircuit, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, CornerDownLeft, GitBranch, GitFork, Loader2, Wrench, X } from "lucide-react";
+import type { AgentMessage, AssistantMessage, ToolResultMessage } from "@/lib/types";
 import { diffStats } from "@/lib/diff-lines";
+import { estimateTokens } from "@/lib/live-usage";
 import type { BranchSwitchInfo } from "@/lib/session-branches-view";
 import { isEditToolName, toolDiffPath, toolDiffRows } from "@/lib/tool-diff";
+import { useI18n } from "./I18nProvider";
+import { useTypedText } from "@/hooks/useSmoothTypewriter";
 import { DiffRows } from "./DiffRows";
 import { getFileName } from "@/lib/file-paths";
 import {
@@ -830,24 +833,166 @@ function NestedToolRow({
   );
 }
 
+/**
+ * 折叠面板的「用户意图记忆」。
+ * 流式更新会让文章节点的归属发生变化（同一轮里的过程块会从第 N 条消息挪到
+ * 第 N+1 条消息），React 会重建子树 → 局部 state 归零，用户刚点开的卡片又
+ * 被默认值收回去。这里用一份模块级 map 记住"用户最后一次点的是开还是关"，
+ * 重挂载后优先恢复它；只保留最近 500 条，避免无限增长。
+ */
+const stickyOpenState = new Map<string, boolean>();
+
+function readStickyOpen(key: string | undefined): boolean | undefined {
+  return key ? stickyOpenState.get(key) : undefined;
+}
+
+function writeStickyOpen(key: string | undefined, value: boolean): void {
+  if (!key) return;
+  if (stickyOpenState.size > 500) stickyOpenState.clear();
+  stickyOpenState.set(key, value);
+}
+
+/** 一轮对话（用户提问 → 若干条 assistant 消息）里的过程数据。 */
+export interface RoundProcess {
+  thinking: Array<{ text: string; usage?: AssistantMessage["usage"] }>;
+  tools: Array<{ block: Extract<TurnBlock, { kind: "tool" }>; usage?: AssistantMessage["usage"] }>;
+}
+
+/** Token 数量：超过 1 万就缩写（zh: 123.4万 / en: 1.2M），避免一长串数字吓人。 */
+function formatTokenCount(value: number, locale: string): string {
+  if (!Number.isFinite(value) || value <= 0) return "0";
+  if (value < 10_000) return value.toLocaleString();
+  try {
+    return new Intl.NumberFormat(locale.startsWith("zh") ? "zh-CN" : "en-US", {
+      notation: "compact",
+      maximumFractionDigits: 1,
+    }).format(value);
+  } catch {
+    return `${Math.round(value / 1000)}k`;
+  }
+}
+
+/**
+ * 金额格式化：消耗常常小到 1e-6 级别，固定 4 位小数会全变成 0.0000。
+ * - < 0.0001：显示 `<¥0.0001`（避免假零）
+ * - < 0.01  ：6 位小数并去掉尾部 0
+ * - < 1     ：4 位小数
+ * - 其它    ：2 位小数
+ */
+function formatMoney(cost: number, currencySymbol: string): string | null {
+  if (!Number.isFinite(cost) || cost <= 0) return null;
+  if (cost < 0.0001) return `<${currencySymbol}0.0001`;
+  if (cost < 0.01) {
+    const text = cost.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+    return `${currencySymbol}${text}`;
+  }
+  if (cost < 1) return `${currencySymbol}${cost.toFixed(4)}`;
+  return `${currencySymbol}${cost.toFixed(2)}`;
+}
+
+/** 单个思考段 / 工具卡的估算消耗（tokens + 折算价格）。 */
+export interface BlockUsage {
+  tokens: number;
+  cost: number;
+}
+
 function ToolCallCard({
   name,
   input,
   result,
   details,
   nestedExecutions,
+  defaultExpanded = false,
+  open: controlledOpen,
+  onToggleOpen,
+  streaming = false,
+  tokensPerSecond,
+  usage,
+  currencySymbol = "$",
+  liveOutput,
+  stateKey,
+  onUserInteract,
 }: {
   name: string;
   input: Record<string, unknown>;
   result?: ToolResultMessage;
   details?: unknown;
   nestedExecutions?: Record<string, NestedExecutionView>;
+  /** 过程框展开时，工具卡直接摊开原始输入/输出，不用再逐个点。 */
+  defaultExpanded?: boolean;
+  /** 手风琴：父级传入时完全受控，同一时刻只展开一张卡。 */
+  open?: boolean;
+  /** 受控模式下切换展开。 */
+  onToggleOpen?: () => void;
+  /** 该工具仍在执行：右上角显示实时速度，输出区自动跟随到底。 */
+  streaming?: boolean;
+  tokensPerSecond?: number | null;
+  /** 本卡片估算消耗，显示在右下角。 */
+  usage?: BlockUsage | null;
+  currencySymbol?: string;
+  /** 执行中的实时输出（pi 的 tool_execution_update），没有时显示"正在执行…"。 */
+  liveOutput?: string;
+  /** 跨重挂载保存用户的手动展开/收起。 */
+  stateKey?: string;
+  /** 告知父级：用户动过这张卡，自动折叠逻辑要让路。 */
+  onUserInteract?: () => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const summary = toolSummary(input);
+  // 手风琴：父级传入 open / onToggleOpen 时完全受控，同一时刻只展开一张卡。
+  const isControlled = typeof controlledOpen === "boolean";
+  const [internalOpen, setInternalOpen] = useState(() => readStickyOpen(stateKey) ?? defaultExpanded);
+  const open = isControlled ? controlledOpen : internalOpen;
+  /** 用户是否亲手点过（点过之后所有自动折叠逻辑一律让路）。 */
+  const userToggledRef = useRef(isControlled ? false : readStickyOpen(stateKey) !== undefined);
+  const setOpen = useCallback((next: boolean) => {
+    if (next === open) return;
+    if (isControlled) {
+      onToggleOpen?.();
+      return;
+    }
+    writeStickyOpen(stateKey, next);
+    setInternalOpen(next);
+  }, [open, isControlled, onToggleOpen, stateKey]);
+  const toggle = () => {
+    userToggledRef.current = true;
+    setOpen(!open);
+    onUserInteract?.();
+  };
+
+  /**
+   * 执行结束（success / error）后不立刻收：先让用户看到最后一屏日志，
+   * 1 秒后再折叠成「工具 · bash · npm run dev · 523ms」这一行摘要。
+   * 只在"结果刚刚出现"那一次调度；用户手动展开过就不再自动收。
+   */
+  const hadResultRef = useRef(Boolean(result));
+  useEffect(() => {
+    const hasResult = Boolean(result);
+    const justFinished = hasResult && !hadResultRef.current;
+    hadResultRef.current = hasResult;
+    if (!justFinished || userToggledRef.current || !open) return;
+    const timer = window.setTimeout(() => {
+      if (userToggledRef.current) return;
+      setOpen(false);
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [result, open, setOpen]);
+  const rawSummary = toolSummary(input);
+  /** 执行中：参数摘要和日志用打字机逐字刷出（结束后立刻补齐）。 */
+  const typingLog = streaming && !result;
+  const summary = useTypedText(rawSummary, typingLog, 10);
+  const typedLiveOutput = useTypedText(liveOutput ?? "", typingLog, 24);
   const hasArgs = Object.keys(input).length > 0;
   const hasDetails = hasArgs || Boolean(result);
   const duration = formatDuration(result?.durationMs);
+  /** 运行中的秒表：每 200ms 刷新，给人「真的在跑」的反馈。 */
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const startedAtRef = useRef<number>(0);
+  useEffect(() => {
+    if (!streaming) return;
+    startedAtRef.current = Date.now();
+    setElapsedMs(0);
+    const timer = window.setInterval(() => setElapsedMs(Date.now() - startedAtRef.current), 200);
+    return () => window.clearInterval(timer);
+  }, [streaming]);
   const nested = result?.nestedCalls;
   const tree = nested?.calls.length ? buildNestedTree(nested.calls) : null;
   const output = result ? resultText(result).trim() : "";
@@ -866,17 +1011,33 @@ function ToolCallCard({
   );
   const codeDiffStats = useMemo(() => (codeDiff ? diffStats(codeDiff) : null), [codeDiff]);
   const codeDiffPath = toolDiffPath(name, input);
+  // 执行中让输出区一直贴底，形成"日志在流"的观感
+  const outputRef = useRef<HTMLPreElement>(null);
+  useEffect(() => {
+    const el = outputRef.current;
+    if (el && streaming) el.scrollTop = el.scrollHeight;
+  }, [streaming, output, liveOutput]);
 
   return (
-    <div className="my-2.5 overflow-hidden rounded-lg border border-[#E3E8F2] bg-white">
+    <div
+      className={`overflow-hidden ${
+        streaming ? "tool-running rounded-md border border-accent/35 bg-white" : ""
+      }`}
+    >
       <button
         type="button"
-        onClick={() => hasDetails && setOpen((value) => !value)}
+        onClick={() => hasDetails && toggle()}
         aria-expanded={hasDetails ? open : undefined}
-        className={`flex w-full items-center gap-2 px-3 py-2 text-left ${
+        className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left ${
           hasDetails ? "cursor-pointer transition-colors hover:bg-[#F7FAFF]" : "cursor-default"
         }`}
       >
+        {streaming && (
+          <span
+            aria-hidden="true"
+            className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-[#22c55e]"
+          />
+        )}
         <span className="shrink-0 rounded bg-[#EDF3FD] px-1.5 py-0.5 text-[10px] font-medium text-accent-strong">
           工具
         </span>
@@ -897,13 +1058,24 @@ function ToolCallCard({
         )}
         <span className="shrink-0 font-mono text-[11px] text-ink-muted">· {name}</span>
         <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-ink-soft">
-          {summary || "（无参数）"}
+          {summary || (streaming ? "" : "（无参数）")}
+          {streaming && !result && (
+            <span className="ml-0.5 animate-pulse text-accent" aria-hidden="true">
+              ▍
+            </span>
+          )}
         </span>
         {tree && (
           <span className="shrink-0 text-[10px] text-ink-faint">{nested?.calls.length} 子调用</span>
         )}
-        {duration && (
-          <span className="shrink-0 tabular-nums text-[10.5px] text-ink-faint">{duration}</span>
+        {streaming ? (
+          <span className="shrink-0 tabular-nums text-[10.5px] text-accent-strong">
+            {formatDuration(elapsedMs) ?? "0 ms"}
+          </span>
+        ) : (
+          duration && (
+            <span className="shrink-0 tabular-nums text-[10.5px] text-ink-faint">{duration}</span>
+          )
         )}
         {result ? (
           result.isError ? (
@@ -921,6 +1093,20 @@ function ToolCallCard({
               open ? "rotate-180" : ""
             }`}
           />
+        )}
+        {streaming && tokensPerSecond ? (
+          <span className="shrink-0 rounded bg-[#F1F3F7] px-1 py-px font-mono text-[10px] tabular-nums text-ink-faint">
+            {tokensPerSecond} tokens/s
+          </span>
+        ) : null}
+        {usage && usage.tokens > 0 && (
+          <span className="shrink-0 text-[10px] tabular-nums text-gray-400">
+            {usage.tokens.toLocaleString()} tokens
+            {(() => {
+              const money = formatMoney(usage.cost, currencySymbol);
+              return money ? ` · ${money}` : "";
+            })()}
+          </span>
         )}
       </button>
       {name === "spawn_agent" && (
@@ -1044,7 +1230,7 @@ function ToolCallCard({
                   </span>
                 )}
               </p>
-              <div className="max-h-72 overflow-auto border-t border-[#EDF1F7] bg-white">
+              <div className="diff-flash max-h-72 overflow-auto border-t border-[#EDF1F7] bg-white">
                 <DiffRows rows={codeDiff} />
               </div>
             </div>
@@ -1064,18 +1250,27 @@ function ToolCallCard({
               <summary className="cursor-pointer select-none px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-ink-faint">
                 原始输入
               </summary>
-              <pre className="max-h-64 overflow-auto px-3 pb-2 font-mono text-[11.5px] leading-5 text-ink-soft">
+              <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all px-3 pb-2 font-mono text-[11.5px] leading-5 text-ink-soft">
                 {JSON.stringify(input, null, 2)}
               </pre>
             </details>
           )}
           {result && (
-            <details className="border-b border-[#EDF1F7] last:border-b-0" open={!tree && !hasArgs}>
+            <details className="border-[#EDF1F7] last:border-b-0" open={!tree && !hasArgs}>
               <summary className="cursor-pointer select-none px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-ink-faint">
                 原始输出{result.isError ? "（失败）" : ""}
               </summary>
-              <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all px-3 pb-2 font-mono text-[11.5px] leading-5 text-ink-soft">
-                {output || "（空）"}
+              <pre
+                ref={outputRef}
+                className="max-h-64 overflow-auto whitespace-pre-wrap break-all px-3 pb-2 font-mono text-[11.5px] leading-5 text-ink-soft"
+              >
+                {output ||
+                  (streaming
+                    ? typedLiveOutput && typedLiveOutput.trim()
+                      ? typedLiveOutput
+                      : "正在执行…"
+                    : "（空）")}
+                {streaming && <span className="ml-0.5 inline-block h-3 w-1 animate-pulse bg-accent align-middle" aria-hidden="true" />}
               </pre>
             </details>
           )}
@@ -1085,42 +1280,1021 @@ function ToolCallCard({
   );
 }
 
-function ThinkingBlock({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
+/** 折叠/展开共用的高度过渡：0fr ↔ 1fr，内容常驻但收起后不占空间。 */
+function Collapsible({ open, children }: { open: boolean; children: React.ReactNode }) {
   return (
-    <div className="my-2.5 overflow-hidden rounded-lg border border-dashed border-[#E3E0D8] bg-[#FBFBF7]">
-      <button
-        type="button"
-        onClick={() => setOpen((value) => !value)}
-        aria-expanded={open}
-        className="flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-[#F7F7F1]"
-      >
-        <span className="text-[10px] font-medium uppercase tracking-wider text-ink-faint">思考</span>
-        {!open && (
-          <span className="min-w-0 flex-1 truncate text-[11px] text-ink-faint">
-            {text.replace(/\s+/g, " ").trim().slice(0, 90)}
-          </span>
-        )}
-        <ChevronDown
-          size={12}
-          strokeWidth={2}
-          aria-hidden="true"
-          className={`ml-auto shrink-0 text-ink-faint transition-transform duration-150 ${
-            open ? "rotate-180" : ""
-          }`}
-        />
-      </button>
-      {open && (
-        <div className="max-h-72 overflow-y-auto border-t border-[#EFEDE6] px-3 py-2 text-[12px] leading-6 whitespace-pre-wrap text-ink-muted">
-          {text}
-        </div>
-      )}
+    <div
+      className={`grid transition-[grid-template-rows] duration-150 ease-out ${
+        open ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+      }`}
+      style={{ willChange: "grid-template-rows" }}
+      aria-hidden={!open}
+    >
+      <div className="min-h-0 overflow-hidden">{children}</div>
     </div>
   );
 }
 
+/** 把一个块的文本按 message 级 usage 的比例折算成 tokens / 价格。 */
+function blockUsage(text: string, messageUsage?: AssistantMessage["usage"]): BlockUsage | null {
+  const tokens = estimateTokens(text);
+  if (tokens <= 0) return null;
+  const totalTokens =
+    (messageUsage?.input ?? 0) +
+    (messageUsage?.output ?? 0) +
+    (messageUsage?.cacheRead ?? 0) +
+    (messageUsage?.cacheWrite ?? 0);
+  const totalCost = messageUsage?.cost?.total ?? 0;
+  const cost = totalTokens > 0 && totalCost > 0 ? (tokens / totalTokens) * totalCost : 0;
+  return { tokens, cost };
+}
+
+/** 「思考链」一栏：默认收起，只留一行标题；展开后逐段显示 + 每段右下角用量。 */
+function ThinkingSection({
+  items,
+  live,
+  tokensPerSecond,
+  currencySymbol,
+  stateKey,
+}: {
+  items: Array<{ text: string; usage?: AssistantMessage["usage"] }>;
+  live: boolean;
+  tokensPerSecond?: number;
+  currencySymbol: string;
+  stateKey?: string;
+}) {
+  // 默认收起；但用户手动点开过就记住（跨重挂载恢复）
+  const [open, setOpen] = useState(() => readStickyOpen(stateKey) ?? false);
+  const toggle = () => {
+    const next = !open;
+    writeStickyOpen(stateKey, next);
+    setOpen(next);
+  };
+  const speed = live && tokensPerSecond && tokensPerSecond > 0 ? tokensPerSecond : null;
+  /** 「思考」一栏的合计消耗（折叠行右侧安静地显示一次）。 */
+  const totalUsage = items.reduce(
+    (acc, item) => {
+      const usage = blockUsage(item.text, item.usage);
+      if (usage) {
+        acc.tokens += usage.tokens;
+        acc.cost += usage.cost;
+      }
+      return acc;
+    },
+    { tokens: 0, cost: 0 },
+  );
+  const totalMoney = formatMoney(totalUsage.cost, currencySymbol);
+
+  return (
+    <div className="mt-0.5">
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={open}
+        className="flex w-full items-center gap-1.5 rounded-md px-1 py-0 text-left text-[11px] text-ink-faint transition-colors hover:text-ink-muted"
+      >
+        {live ? (
+          <Loader2 size={12} strokeWidth={1.9} aria-hidden="true" className="shrink-0 animate-spin" />
+        ) : (
+          <BrainCircuit size={12} strokeWidth={1.9} aria-hidden="true" className="shrink-0" />
+        )}
+        <span className={live ? "animate-pulse" : undefined}>
+          {live ? "思考中…" : "思考过程"} · {items.length} 段{open ? "" : "（点击展开）"}
+        </span>
+        {speed !== null && (
+          <span className="shrink-0 rounded bg-[#F1F3F7] px-1 py-px font-mono text-[10px] tabular-nums text-ink-faint">
+            {speed} tokens/s
+          </span>
+        )}
+        {totalUsage.tokens > 0 && (
+          <span className="shrink-0 text-[10px] tabular-nums text-gray-400">
+            {totalUsage.tokens.toLocaleString()} tokens
+            {totalMoney ? ` · ${totalMoney}` : ""}
+          </span>
+        )}
+        <ChevronDown
+          size={11}
+          strokeWidth={2}
+          aria-hidden="true"
+          className={`ml-auto shrink-0 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+      <Collapsible open={open}>
+        <div className="mt-1 space-y-1.5 border-l-2 border-[#EDEBE4] pl-3">
+          {items.map((item, index) => {
+            const usage = blockUsage(item.text, item.usage);
+            return (
+              <div key={`thinking-${index}`}>
+                <div className="whitespace-pre-wrap break-words text-[12px] leading-6 text-ink-faint">
+                  {item.text}
+                </div>
+                {usage && (
+                  <p className="mt-0.5 text-right text-[10px] tabular-nums text-ink-faint">
+                    {usage.tokens.toLocaleString()} tokens
+                    {(() => {
+                      const money = formatMoney(usage.cost, currencySymbol);
+                      return money ? ` · ${money}` : "";
+                    })()}
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </Collapsible>
+    </div>
+  );
+}
+
+/**
+ * 「工具」一栏：执行期间默认展开（逐个卡片摊开 + 日志跟随 + 速度徽标），
+ * 一旦开始输出最终文字就整栏自动收起，只留一行 `已执行 N 个操作 (bash x2)`。
+ */
+function ToolsSection({
+  items,
+  nestedExecutions,
+  live,
+  finalStarted,
+  tokensPerSecond,
+  currencySymbol,
+  liveOutputs,
+  liveOutputFor,
+  stateKey,
+}: {
+  items: Array<{ block: Extract<TurnBlock, { kind: "tool" }>; usage?: AssistantMessage["usage"] }>;
+  nestedExecutions?: Record<string, NestedExecutionView>;
+  live: boolean;
+  /** 已经开始输出最终 Markdown 文字 → 立刻自动收起。 */
+  finalStarted: boolean;
+  tokensPerSecond?: number;
+  currencySymbol: string;
+  liveOutputs?: Record<string, string>;
+  /** 稳定取值器（父级 ref + useCallback([])）：逐帧读实时输出不会让 memo 失效。 */
+  liveOutputFor?: (toolName: string) => string | undefined;
+  stateKey?: string;
+}) {
+  const running = live && !finalStarted;
+  // 执行中优先"强制展开"，只有非执行态才回落到用户上次的 sticky 选择
+  const [open, setOpen] = useState(() => (live && !finalStarted ? true : readStickyOpen(stateKey) ?? false));
+  /** 用户手动点过就锁住，自动折叠不再覆盖。 */
+  const userToggledRef = useRef(readStickyOpen(stateKey) !== undefined);
+  const toggle = () => {
+    const next = !open;
+    userToggledRef.current = true;
+    writeStickyOpen(stateKey, next);
+    setOpen(next);
+  };
+
+  /** 上一帧是否在跑：用于识别"新一次执行开始"（初始值不用 running，避免初始化顺序问题）。 */
+  const wasRunningRef = useRef(false);
+  useEffect(() => {
+    // 新一次执行开始（false → true）：清掉上一轮的手动记忆，强制展开，
+    // 这样开发时一定能看到"正在执行 + 日志滚动"的过程态。
+    if (running && !wasRunningRef.current) {
+      userToggledRef.current = false;
+      setOpen(true);
+    }
+    wasRunningRef.current = running;
+  }, [running]);
+
+  useEffect(() => {
+    // 执行中展开；开始写最终回复时立刻收起（用户手动干预过则不覆盖）
+    if (userToggledRef.current) return;
+    setOpen(live && !finalStarted);
+  }, [live, finalStarted]);
+
+  const counts = items.reduce<Record<string, number>>((acc, item) => {
+    acc[item.block.name] = (acc[item.block.name] ?? 0) + 1;
+    return acc;
+  }, {});
+  const summary = Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, count]) => `${name} x${count}`)
+    .join(", ");
+  const failed = items.filter((item) => item.block.result?.isError).length;
+  const speed = live && tokensPerSecond && tokensPerSecond > 0 ? tokensPerSecond : null;
+  /** 整个「工具」一栏的合计消耗（只在摘要行右侧安静地显示一次）。 */
+  const totalUsage = items.reduce(
+    (acc, item) => {
+      const usage = blockUsage(
+        `${item.block.name} ${JSON.stringify(item.block.input)} ${
+          item.block.result ? resultText(item.block.result) : ""
+        }`,
+        item.usage,
+      );
+      if (usage) {
+        acc.tokens += usage.tokens;
+        acc.cost += usage.cost;
+      }
+      return acc;
+    },
+    { tokens: 0, cost: 0 },
+  );
+  const totalMoney = formatMoney(totalUsage.cost, currencySymbol);
+  // 手风琴：同一时刻只展开一张工具卡；执行中的那张自动展开。
+  const [openIndex, setOpenIndex] = useState<number | null>(() => {
+    if (!running) return null;
+    const idx = items.findIndex((item) => !item.block.result);
+    return idx >= 0 ? idx : null;
+  });
+  const runningIndex = items.findIndex((item) => !item.block.result);
+  useEffect(() => {
+    if (running && runningIndex >= 0) setOpenIndex(runningIndex);
+  }, [running, runningIndex]);
+
+  return (
+    <div className="mt-0.5">
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={open}
+        className="flex w-full items-center gap-1.5 rounded-md px-1 py-0 text-left text-[11px] text-ink-faint transition-colors hover:text-ink-muted"
+      >
+        {running ? (
+          <Loader2 size={12} strokeWidth={1.9} aria-hidden="true" className="shrink-0 animate-spin" />
+        ) : (
+          <Wrench
+            size={12}
+            strokeWidth={1.9}
+            aria-hidden="true"
+            className={`shrink-0 ${failed > 0 ? "text-[#C2554E]" : "text-ink-faint"}`}
+          />
+        )}
+        <span className={`min-w-0 truncate ${running ? "animate-pulse" : ""}`}>
+          {running ? `正在执行 ${items.length} 个操作` : `已执行 ${items.length} 个操作`}
+          {running && (
+            <span className="ml-0.5 animate-pulse text-accent" aria-hidden="true">
+              ▍
+            </span>
+          )}
+          {summary && <span className="ml-1 font-mono text-[10.5px]">({summary})</span>}
+          {failed > 0 && <span className="ml-1 text-[#C2554E]">{failed} 个失败</span>}
+          {!open && "（点击展开）"}
+        </span>
+        {speed !== null && (
+          <span className="shrink-0 rounded bg-[#F1F3F7] px-1 py-px font-mono text-[10px] tabular-nums text-ink-faint">
+            {speed} tokens/s
+          </span>
+        )}
+        {totalUsage.tokens > 0 && (
+          <span className="shrink-0 text-[10px] tabular-nums text-gray-400">
+            {totalUsage.tokens.toLocaleString()} tokens
+            {totalMoney ? ` · ${totalMoney}` : ""}
+          </span>
+        )}
+        <ChevronDown
+          size={11}
+          strokeWidth={2}
+          aria-hidden="true"
+          className={`ml-auto shrink-0 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+      <Collapsible open={open}>
+        <div className="mt-1 divide-y divide-[#F3F5F9] border-l-2 border-[#EDEBE4] pl-2">
+          {items.map((item, index) => (
+            <ToolCallCard
+              key={`${item.block.name}-${index}`}
+              name={item.block.name}
+              input={item.block.input}
+              result={item.block.result}
+              details={item.block.result?.details}
+              nestedExecutions={nestedExecutions}
+              open={openIndex === index}
+              onToggleOpen={() => setOpenIndex((prev) => (prev === index ? null : index))}
+              streaming={running && !item.block.result}
+              tokensPerSecond={tokensPerSecond}
+              usage={blockUsage(
+                `${item.block.name} ${JSON.stringify(item.block.input)} ${
+                  item.block.result ? resultText(item.block.result) : ""
+                }`,
+                item.usage,
+              )}
+              currencySymbol={currencySymbol}
+              liveOutput={
+                liveOutputFor ? liveOutputFor(item.block.name) : liveOutputs?.[item.block.name]
+              }
+              stateKey={stateKey ? `${stateKey}:tool:${index}` : undefined}
+              onUserInteract={() => {
+                userToggledRef.current = true;
+              }}
+            />
+          ))}
+        </div>
+      </Collapsible>
+    </div>
+  );
+}
+
+/**
+ * 一轮回复的渲染：
+ *  - 思考 → 「思考链」一栏（默认收起）
+ *  - 工具 → 「工具」一栏（执行中展开，开始输出最终文字即自动收起）
+ *  - 最终 Markdown → 独立、干净地展示在最下方，右下角给出总消耗
+ */
+function AssistantBlocks({
+  blocks,
+  nestedExecutions,
+  turn,
+  markdownComponents,
+  live = false,
+  tokensPerSecond,
+  messageUsage,
+  currencySymbol,
+  laterTurnStarted = false,
+  roundProcess,
+  showProcess = true,
+  liveToolOutputs,
+  liveOutputFor,
+  roundKey,
+}: {
+  blocks: TurnBlock[];
+  nestedExecutions?: Record<string, NestedExecutionView>;
+  turn: { text: string; messageIndex: number };
+  markdownComponents: Components;
+  live?: boolean;
+  tokensPerSecond?: number;
+  messageUsage?: AssistantMessage["usage"];
+  currencySymbol: string;
+  /**
+   * 后面已经有新的轮次（= 模型开始写最终回复 / 又发起新一轮）。
+   * 工具调用常常在**上一条 assistant 消息**里，最终文字在**下一条消息**里，
+   * 只看本条 blocks 永远等不到"最终文字"，所以必须把这个信号传进来。
+   */
+  laterTurnStarted?: boolean;
+  /** 按「一轮对话」聚合好的思考 + 工具（跨多条 assistant 消息合并）。 */
+  roundProcess?: RoundProcess;
+  /** 只有本轮最后一条 assistant 消息负责渲染过程块，避免出现多个工具标题。 */
+  showProcess?: boolean;
+  /** 执行中工具的实时输出（toolName → 文本）。 */
+  liveToolOutputs?: Record<string, string>;
+  /** 稳定取值器：按工具名读实时输出（引用恒定，不打断 memo）。 */
+  liveOutputFor?: (toolName: string) => string | undefined;
+  /** 本轮唯一标识：用于记忆折叠面板的用户选择。 */
+  roundKey?: number;
+}) {
+  if (blocks.length === 0) {
+    return (
+      <>
+        <ReactMarkdown {...MARKDOWN_PLUGINS} components={markdownComponents}>
+          {turn.text}
+        </ReactMarkdown>
+      </>
+    );
+  }
+
+  // 「最终结果」= 出现过工具/思考之后的那段文字（通常是最后一段）
+  let finalTextIndex = -1;
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    if (blocks[index].kind === "text") {
+      finalTextIndex = index;
+      break;
+    }
+  }
+  if (finalTextIndex >= 0) {
+    const hasProcessBefore = blocks
+      .slice(0, finalTextIndex)
+      .some((block) => block.kind === "tool" || block.kind === "thinking");
+    if (!hasProcessBefore) finalTextIndex = -1;
+  }
+
+  const thinking: RoundProcess["thinking"] = roundProcess
+    ? roundProcess.thinking
+    : blocks
+        .filter((block): block is Extract<TurnBlock, { kind: "thinking" }> => block.kind === "thinking")
+        .map((block) => ({ text: block.text, usage: messageUsage }));
+  const tools: RoundProcess["tools"] = roundProcess
+    ? roundProcess.tools
+    : blocks
+        .filter((block): block is Extract<TurnBlock, { kind: "tool" }> => block.kind === "tool")
+        .map((block) => ({ block, usage: messageUsage }));
+  const hasProcess = thinking.length > 0 || tools.length > 0;
+
+  // 纯文字/图片（没有思考也没有工具）：不套折叠框，直接渲染
+  if (!hasProcess) {
+    return (
+      <>
+        {blocks.map((block, index) =>
+          block.kind === "image" ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              key={`plain-img-${index}`}
+              src={block.src}
+              alt="模型输出图片"
+              className="my-2 max-h-80 rounded-lg border border-[#E3E8F2] object-contain"
+            />
+          ) : block.kind === "text" ? (
+            <ReactMarkdown
+              key={`plain-text-${index}`}
+              {...MARKDOWN_PLUGINS}
+              components={markdownComponents}
+            >
+              {block.text}
+            </ReactMarkdown>
+          ) : null,
+        )}
+      </>
+    );
+  }
+
+  /**
+   * 「开始输出最终回复」的判定（两种都算）：
+   * 1. 本条消息里，最后一个文本块之后不再有工具/思考 → 它自己就是最终回复；
+   * 2. 后面已经出现了新的轮次 → 本条的思考/工具已经结束（最常见的真实形态）。
+   */
+  const textTailHasProcess =
+    finalTextIndex >= 0 &&
+    blocks
+      .slice(finalTextIndex + 1)
+      .some((block) => block.kind === "tool" || block.kind === "thinking");
+  const finalStarted = (finalTextIndex >= 0 && !textTailHasProcess) || laterTurnStarted;
+  const interimText = blocks.filter(
+    (block, index) => block.kind === "text" && index !== finalTextIndex,
+  );
+
+  return (
+    <>
+      {showProcess && thinking.length > 0 && (
+        <ThinkingSection
+          items={thinking}
+          live={live && !finalStarted}
+          tokensPerSecond={tokensPerSecond}
+          currencySymbol={currencySymbol}
+          stateKey={roundKey !== undefined ? `round:${roundKey}:thinking` : undefined}
+        />
+      )}
+      {showProcess && tools.length > 0 && (
+        <ToolsSection
+          items={tools}
+          nestedExecutions={nestedExecutions}
+          live={live}
+          finalStarted={finalStarted}
+          tokensPerSecond={tokensPerSecond}
+          currencySymbol={currencySymbol}
+          liveOutputs={liveToolOutputs}
+          liveOutputFor={liveOutputFor}
+          stateKey={roundKey !== undefined ? `round:${roundKey}:tools` : undefined}
+        />
+      )}
+
+      {interimText.map((block, index) =>
+        block.kind === "text" ? (
+          <ReactMarkdown
+            key={`interim-${index}`}
+            {...MARKDOWN_PLUGINS}
+            components={markdownComponents}
+          >
+            {block.text}
+          </ReactMarkdown>
+        ) : null,
+      )}
+
+      {finalTextIndex >= 0 && blocks[finalTextIndex].kind === "text" && (
+        <div className="mt-2">
+          <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.08em] text-ink-faint">
+            <span className="h-1 w-1 rounded-full bg-accent" aria-hidden="true" />
+            最终回复
+          </div>
+          <div className="text-[14px] leading-7 text-ink">
+            <ReactMarkdown {...MARKDOWN_PLUGINS} components={markdownComponents}>
+              {(blocks[finalTextIndex] as Extract<TurnBlock, { kind: "text" }>).text}
+            </ReactMarkdown>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* 惰性渲染：离屏轮次的复杂内容（Markdown / 代码高亮 / 工具卡）换成等高空壳 */
+/* -------------------------------------------------------------------------- */
+
+/** 视口外多远就换成空壳（px）。留足缓冲，避免快速滚动时来回水合。 */
+const LAZY_UNMOUNT_MARGIN_PX = 1200;
+/** 重新进入安全区后，等滚动稍停再水合，避免拖拽期间逐帧渲染。 */
+const LAZY_HYDRATE_DELAY_MS = 80;
+
+/**
+ * 包住一轮消息的**正文**（不含角色行/复制按钮）：
+ * - 安全区内：正常渲染完整内容；
+ * - 离开 1200px 缓冲：记住真实高度后替换成等高灰块；
+ * - 重新靠近：滚动停 80ms 后再水合（拖拽期间不逐帧挂载）。
+ * `pin`（正在流式输出的那一轮）永不卸载。
+ */
+function LazyTurnBody({ pin = false, children }: { pin?: boolean; children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const activeRef = useRef(true);
+  const pinnedRef = useRef(pin);
+  const heightRef = useRef(0);
+  const [active, setActive] = useState(true);
+
+  pinnedRef.current = pin;
+
+  useEffect(() => {
+    const node = ref.current;
+    if (!node || typeof IntersectionObserver === "undefined") return;
+    let el: HTMLElement | null = node.parentElement;
+    while (el && !/(auto|scroll)/.test(getComputedStyle(el).overflowY)) el = el.parentElement;
+    if (!el) return;
+
+    let timer: number | null = null;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[entries.length - 1];
+        if (!entry) return;
+        if (entry.isIntersecting) {
+          if (activeRef.current || timer !== null) return;
+          timer = window.setTimeout(() => {
+            timer = null;
+            activeRef.current = true;
+            setActive(true);
+          }, LAZY_HYDRATE_DELAY_MS);
+          return;
+        }
+        if (timer !== null) {
+          window.clearTimeout(timer);
+          timer = null;
+        }
+        if (!activeRef.current || pinnedRef.current) return;
+        // 切到后台标签时容器是 display:none，这一帧高度为 0，IO 也会报
+        // not-intersecting。此时若照常卸载，heightRef 会被记成 0，占位符
+        // 塔成 min-h-16，整页高度骤降、切回后 scrollTop 被 clamp（表现为
+        // “乱跳到中间”）。高度为 0 就当作“不可测量”，保留已渲染内容。
+        const measured = node.getBoundingClientRect().height;
+        if (measured <= 0) return;
+        heightRef.current = measured;
+        activeRef.current = false;
+        setActive(false);
+      },
+      { root: el, rootMargin: `${LAZY_UNMOUNT_MARGIN_PX}px 0px` },
+    );
+    observer.observe(node);
+    return () => {
+      observer.disconnect();
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, []);
+
+  return (
+    <div
+      ref={ref}
+      style={active ? undefined : { height: heightRef.current || undefined }}
+      data-lazy={active ? undefined : "placeholder"}
+    >
+      {active ? children : <div aria-hidden="true" className="h-full min-h-16 w-full rounded-xl bg-[#F1F3F7]" />}
+    </div>
+  );
+}
+
+/** 单条回复的用量小结：只在该条消息真正完成后出现。 */
+function TurnUsage({
+  usage,
+  currencySymbol = "$",
+  tokens: tokensOverride,
+  cost: costOverride,
+  breakdown,
+  label = "本次新增",
+  locale = "zh-CN",
+}: {
+  usage?: AssistantMessage["usage"];
+  currencySymbol?: string;
+  /** 传入聚合后的值（整轮总计）时优先使用。 */
+  tokens?: number;
+  cost?: number;
+  /** 输入 / 缓存 / 输出的明细（整轮聚合值）。 */
+  breakdown?: { input: number; output: number; cacheRead: number; cacheWrite: number };
+  label?: string;
+  locale?: string;
+}) {
+  const parts = breakdown ?? {
+    input: usage?.input ?? 0,
+    output: usage?.output ?? 0,
+    cacheRead: usage?.cacheRead ?? 0,
+    cacheWrite: usage?.cacheWrite ?? 0,
+  };
+  /** 主行只显示"本轮新增"：input + output，不含缓存读写。 */
+  const added = parts.input + parts.output;
+  /** 悬浮里给出全量口径（含缓存 / 历史上下文）。 */
+  const total = tokensOverride ?? added + parts.cacheRead + parts.cacheWrite;
+  if (added <= 0 && total <= 0) return null;
+  const cost = costOverride ?? usage?.cost?.total ?? 0;
+  const money = formatMoney(cost, currencySymbol);
+  const cache = parts.cacheRead + parts.cacheWrite;
+  const detail = [
+    `新增 ${fmt(added)}（输入 ${fmt(parts.input)} + 输出 ${fmt(parts.output)}）`,
+    `全量 ${fmt(total)}（缓存命中 ${fmt(cache)}）`,
+    "口径：新增 = 本轮新送入 + 新生成；全量 = 含历史上下文与缓存命中",
+  ].join(" · ");
+  return (
+    <p className="mt-1.5 text-right text-[11px] tabular-nums text-gray-400" title={detail}>
+      {label}: {formatTokenCount(added, locale)} tokens
+      {money ? ` · ${money}` : ""}
+    </p>
+  );
+
+  function fmt(value: number): string {
+    return formatTokenCount(value, locale);
+  }
+}
+
+/** 首屏只挂载最近这么多轮；更早的历史按需展开（长会话切换不再卡顿）。 */
+const INITIAL_TURNS = 20;
+const TURN_BATCH = 20;
+
+/** 稳定的空引用：缺省的实时工具输出用它，避免每帧 new 一个 `{}`。 */
+const EMPTY_TOOL_OUTPUTS: Record<string, string> = {};
+
+/** 引用级比较：同一轮的 turn 对象一个都没换（历史已冻结）就算没变。 */
+function sameTurnRefs(a: TranscriptTurnView[], b: TranscriptTurnView[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index] !== b[index]) return false;
+  }
+  return true;
+}
+
+export interface TranscriptTurnView {
+  role: "user" | "assistant";
+  text: string;
+  images: string[];
+  blocks: TurnBlock[];
+  messageIndex: number;
+}
+
+/**
+ * messages → 渲染轮次（Transcript 与右侧导航共用的唯一数据源）。
+ *
+ * 导航以前是扫 DOM 的 `[data-turn-role="user"]`，一旦「首屏只挂载最近 20 轮」
+ * 生效，更早的轮次根本不在 DOM 里，刻度就只剩零星几个。这里把推导逻辑抽出来，
+ * 导航直接遍历完整 messages，与当前挂载了多少 DOM 无关。
+ */
+export function buildTranscriptTurns(messages: AgentMessage[]): TranscriptTurnView[] {
+  const results = toolResultsById(messages);
+  return messages
+    .map((message, messageIndex): TranscriptTurnView | null => {
+      if (message.role === "user") {
+        const text = userText(message).trim();
+        const images = contentImages((message as { content?: unknown }).content);
+        return text || images.length > 0
+          ? { role: "user", text, images, blocks: [], messageIndex }
+          : null;
+      }
+      if (message.role === "assistant") {
+        const blocks = assistantBlocks(message, results);
+        return blocks.length > 0 ? { role: "assistant", text: "", images: [], blocks, messageIndex } : null;
+      }
+      if (message.role === "custom") {
+        // 扩展注入的隐藏上下文（display:false）属于请求侧：只给模型看，不进对话记录。
+        // 例：PIFORGE_PREFIX_STRIP_CWD=1 时的 `<context>cwd: …</context>`。
+        if (!(message as { display?: boolean }).display) return null;
+        const text = userText(message).trim();
+        return text ? { role: "assistant", text, images: [], blocks: [], messageIndex } : null;
+      }
+      return null;
+    })
+    .filter((turn): turn is TranscriptTurnView => turn !== null);
+}
+
+/* -------------------------------------------------------------------------- */
+/* 单条轮次（TurnRow）：React.memo + 自定 areEqual                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 一轮对话的用量合计（输入 + 输出 + 缓存读 + 缓存写，跨本轮所有 assistant 消息）。
+ * 父级按 `roundKey` 记忆化，历史轮的引用保持不变，末条才拿到它。
+ */
+interface RoundTotals {
+  tokens: number;
+  cost: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+/** 「复制这段内容」的目标文本：用户取原文，AI 取全部文本块。 */
+function turnCopyText(turn: TranscriptTurnView): string {
+  if (turn.role === "user") return turn.text;
+  return turn.blocks
+    .filter((block): block is Extract<TurnBlock, { kind: "text" }> => block.kind === "text")
+    .map((block) => block.text)
+    .join("\n\n");
+}
+
+/**
+ * 单条轮次的 props：**全部显式传入**，组件内部不引用父组件闭包。
+ * 只有这样 `areTurnRowPropsEqual` 才有意义 —— 流式期间父级每帧重建的
+ * 只有最后那一条，其余行的 props 引用原封不动，memo 就能整行跳过。
+ */
+interface TurnRowProps {
+  turn: TranscriptTurnView;
+  /** 在 turns 里的下标：`#turn-N`、复制态、`round:N` 折叠记忆都用它。 */
+  index: number;
+  /** 本轮最后一条 assistant 消息（思考 / 工具过程块只在它身上渲染）。 */
+  isLastOfRound: boolean;
+  /** 所属轮次 key（= 本轮用户消息的 turns 下标）；-1 表示无归属。 */
+  roundKey: number;
+  /** 整轮聚合的思考 + 工具（父级按轮缓存，历史轮引用稳定）。 */
+  roundProcess?: RoundProcess;
+  /** 整轮用量合计：只给本轮末条，其余为 undefined。 */
+  usageTotals?: RoundTotals;
+  /** 当前挂载列表里的第一条（顶部不画分割线）。 */
+  firstInList: boolean;
+  markdownComponents: Components;
+  currencySymbol: string;
+  locale: string;
+  /** 只有被复制的那一条是 true（父级传 `copiedTurn === index`）。 */
+  copied: boolean;
+  /** 本条消息的 usage（流式那条由父级从 streamingMessage 取）。 */
+  usage?: AssistantMessage["usage"];
+  /** 本条消息的会话条目 id（fork / 分支的锚点）。 */
+  entryId?: string;
+  /** 这一条正在流式输出（会话在跑 且 是最后一条）。 */
+  live: boolean;
+  /** 整个会话正在跑：用来判断「本条的思考 / 工具已经结束」。 */
+  liveTurn: boolean;
+  tokensPerSecond?: number;
+  /** 执行中工具的实时输出（按工具名索引，只对正在跑的那条有意义）。 */
+  liveToolOutputs?: Record<string, string>;
+  /** 稳定取值器（父级 useCallback([]) + ref），逐帧调用不会破坏 memo。 */
+  liveOutputFor: (toolName: string) => string | undefined;
+  nestedExecutions?: Record<string, NestedExecutionView>;
+  cwd?: string | null;
+  onOpenFile?: OpenFileHandler;
+  onCopy: (index: number, text: string) => void;
+  onFork?: (entryId: string) => void;
+  /** 正在为本条派生新会话。 */
+  forking: boolean;
+  onBranch?: (entryId: string) => void | Promise<void>;
+  branchSwitch?: (entryId: string) => BranchSwitchInfo | null;
+  onSwitchBranch?: (leafId: string | null) => void;
+}
+
+function TurnRowImpl({
+  turn,
+  index,
+  isLastOfRound,
+  roundKey,
+  roundProcess,
+  usageTotals,
+  firstInList,
+  markdownComponents,
+  currencySymbol,
+  locale,
+  copied,
+  usage,
+  entryId,
+  live,
+  liveTurn,
+  tokensPerSecond,
+  liveToolOutputs,
+  liveOutputFor,
+  nestedExecutions,
+  cwd,
+  onOpenFile,
+  onCopy,
+  onFork,
+  forking,
+  onBranch,
+  branchSwitch,
+  onSwitchBranch,
+}: TurnRowProps) {
+  /** 开发期渲染计数：直接量化「历史行有没有跟着流式重渲」。 */
+  const renderCountRef = useRef(0);
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+    renderCountRef.current += 1;
+    console.debug(`[render] turn ${index} rendered ${renderCountRef.current} times`);
+  });
+
+  // The very first message cannot be forked (nothing before it), and a
+  // fork mid-stream would race the entry ids the SSE events don't carry.
+  const canFork = Boolean(onFork && entryId) && turn.messageIndex > 0;
+  const canBranch = Boolean(onBranch && entryId);
+  const switcher = entryId && branchSwitch ? branchSwitch(entryId) : null;
+  /** 后面已经有新的轮次 → 本条的思考 / 工具已经结束，过程块立刻收起。 */
+  const laterTurnStarted = liveTurn && !live;
+
+  return (
+    <article
+      id={`turn-${index}`}
+      data-message-index={turn.messageIndex}
+      data-turn-role={turn.role}
+      // 渲染隔离：每条消息自成 layout/paint/style 容器，滚动时互不牵连；
+      // 外部留白：AI 回复内部紧凑（mt-0.5 / mt-2），「用户提问」上方用
+      // 细分割线 + 大间距划出一轮对话的边界。
+      className={`group relative overflow-hidden scroll-mt-4 [contain:content] [overflow-anchor:none] ${
+        turn.role === "user"
+          ? firstInList
+            ? "mb-1"
+            : "mt-8 mb-1 border-t border-gray-100 pt-6"
+          : "mt-0.5 mb-3"
+      }`}
+    >
+      <div
+        className={`flex items-center justify-between gap-2 ${
+          turn.role === "user" ? "mb-2" : "mb-0.5"
+        }`}
+      >
+        <div className="flex min-w-0 items-center gap-2">
+          {switcher && switcher.total > 1 && (
+            <span
+              className="flex shrink-0 items-center gap-0.5 rounded-full border border-[#E3E8F2] bg-white px-1 py-0.5 text-[10.5px] text-ink-muted shadow-[0_1px_2px_rgba(17,17,17,0.03)]"
+              aria-label={`分支 ${switcher.index + 1}/${switcher.total}`}
+            >
+              <button
+                type="button"
+                onClick={() => onSwitchBranch?.(switcher.targets[switcher.index - 1]?.leafId ?? null)}
+                disabled={switcher.index <= 0}
+                aria-label="上一个分支"
+                title="上一个分支"
+                className="flex h-4 w-4 items-center justify-center rounded-full transition-colors hover:bg-[#ECECEF] hover:text-ink disabled:cursor-default disabled:opacity-30"
+              >
+                <ChevronLeft size={11} strokeWidth={2.2} aria-hidden="true" />
+              </button>
+              <span className="tabular-nums px-0.5">
+                {switcher.index + 1}/{switcher.total}
+              </span>
+              <button
+                type="button"
+                onClick={() => onSwitchBranch?.(switcher.targets[switcher.index + 1]?.leafId ?? null)}
+                disabled={switcher.index >= switcher.total - 1}
+                aria-label="下一个分支"
+                title="下一个分支"
+                className="flex h-4 w-4 items-center justify-center rounded-full transition-colors hover:bg-[#ECECEF] hover:text-ink disabled:cursor-default disabled:opacity-30"
+              >
+                <ChevronRight size={11} strokeWidth={2.2} aria-hidden="true" />
+              </button>
+            </span>
+          )}
+          <span
+            className={`truncate text-[11px] font-medium uppercase tracking-[0.08em] ${
+              turn.role === "user" ? "text-accent" : "text-gray-700"
+            }`}
+          >
+            {turn.role === "user" ? "你" : "PiForge"}
+          </span>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+        <button
+          type="button"
+          onClick={() => onCopy(index, turnCopyText(turn))}
+          title={copied ? "已复制" : "复制这段内容"}
+          aria-label={copied ? "已复制" : "复制这段内容"}
+          className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-ink-faint opacity-0 transition-colors duration-150 hover:bg-[#ECECEF] hover:text-ink focus:opacity-100 group-hover:opacity-100"
+        >
+          {copied ? (
+            <Check size={11} strokeWidth={2.2} className="text-[#3E8A63]" aria-hidden="true" />
+          ) : (
+            <Copy size={11} strokeWidth={1.9} aria-hidden="true" />
+          )}
+          {copied ? "已复制" : "复制"}
+        </button>
+        {canBranch && (
+          <button
+            type="button"
+            onClick={() => void onBranch!(entryId!)}
+            title="从此消息开启新分支"
+            aria-label="从此消息开启新分支"
+            className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-ink-faint opacity-0 transition-colors duration-150 hover:bg-[#ECECEF] hover:text-accent-strong focus:opacity-100 group-hover:opacity-100"
+          >
+            <GitBranch size={11} strokeWidth={1.9} aria-hidden="true" />
+            分支
+          </button>
+        )}
+        {canFork && (
+          <button
+            type="button"
+            onClick={() => onFork!(entryId!)}
+            disabled={forking}
+            title={forking ? "正在创建会话…" : "从此处派生新会话"}
+            aria-label={forking ? "正在创建会话" : "从此处派生新会话"}
+            className={`flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] transition-colors duration-150 disabled:cursor-not-allowed ${
+              forking
+                ? "text-accent opacity-100"
+                : "text-ink-faint opacity-0 hover:bg-[#ECECEF] hover:text-accent-strong focus:opacity-100 group-hover:opacity-100"
+            }`}
+          >
+            <GitFork size={11} strokeWidth={1.9} aria-hidden="true" />
+            {forking ? "创建中…" : "派生"}
+          </button>
+        )}
+        </div>
+      </div>
+
+      <LazyTurnBody pin={live}>
+      {turn.role === "user" ? (
+        <div className="whitespace-pre-wrap break-words rounded-xl border border-[#E7E9EE] border-l-2 border-l-accent/50 bg-blue-50/30 px-4 py-3 text-[14px] leading-7 text-ink">
+          {turn.text && <FileLinkText text={turn.text} cwd={cwd} onOpenFile={onOpenFile} />}
+          {turn.images.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {turn.images.map((src, imageIndex) => (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  key={imageIndex}
+                  src={src}
+                  alt={`用户图片 ${imageIndex + 1}`}
+                  className="max-h-64 rounded-md border border-[#E7E9EE] object-contain"
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="break-words text-[14px] leading-7 text-ink-soft">
+          <AssistantBlocks
+            blocks={turn.blocks}
+            nestedExecutions={nestedExecutions}
+            turn={turn}
+            markdownComponents={markdownComponents}
+            live={live}
+            laterTurnStarted={laterTurnStarted}
+            roundProcess={roundProcess}
+            showProcess={isLastOfRound}
+            liveToolOutputs={liveToolOutputs}
+            liveOutputFor={liveOutputFor}
+            roundKey={roundKey >= 0 ? roundKey : undefined}
+            tokensPerSecond={tokensPerSecond}
+            messageUsage={usage}
+            currencySymbol={currencySymbol}
+          />
+        </div>
+      )}
+      </LazyTurnBody>
+      {/* 每条 AI 回复底部的极简消耗统计：优先用整轮合计（只有末条拿得到），其次单条 usage */}
+      {turn.role !== "user" && (
+        <TurnUsage
+          usage={usage}
+          currencySymbol={currencySymbol}
+          tokens={usageTotals?.tokens}
+          cost={usageTotals?.cost}
+          breakdown={
+            usageTotals
+              ? {
+                  input: usageTotals.input,
+                  output: usageTotals.output,
+                  cacheRead: usageTotals.cacheRead,
+                  cacheWrite: usageTotals.cacheWrite,
+                }
+              : undefined
+          }
+          locale={locale}
+        />
+      )}
+    </article>
+  );
+}
+
+/**
+ * 逐项自定义比较：默认的 shallow compare 会把 `markdownComponents`（对象）、
+ * `turn`（对象）当引用比，也会在流式期间被 `liveToolOutputs` 这类逐帧变化的
+ * 引用拉下水，所以这里显式写清楚「什么算变了」。
+ */
+function areTurnRowPropsEqual(prev: TurnRowProps, next: TurnRowProps): boolean {
+  // 约定好的必备项
+  if (prev.turn !== next.turn) return false;
+  if (prev.index !== next.index) return false;
+  if (prev.isLastOfRound !== next.isLastOfRound) return false;
+  if (prev.roundKey !== next.roundKey) return false;
+  if (prev.firstInList !== next.firstInList) return false;
+  if (prev.markdownComponents !== next.markdownComponents) return false;
+  if (prev.currencySymbol !== next.currencySymbol) return false;
+  if (prev.copied !== next.copied) return false;
+  if (prev.usage !== next.usage) return false;
+  if (prev.entryId !== next.entryId) return false;
+  if (prev.usageTotals !== next.usageTotals) return false;
+
+  // 下面这些是父级 useCallback / useMemo 冻结的引用或原始值：
+  // 引用不等 = 真的变了（切会话、开跑 / 收跑、嵌套执行推进、分支数据刷新）。
+  if (prev.locale !== next.locale) return false;
+  if (prev.live !== next.live) return false;
+  if (prev.liveTurn !== next.liveTurn) return false;
+  if (prev.forking !== next.forking) return false;
+  if (prev.nestedExecutions !== next.nestedExecutions) return false;
+  if (prev.cwd !== next.cwd) return false;
+  if (prev.onOpenFile !== next.onOpenFile) return false;
+  if (prev.onCopy !== next.onCopy) return false;
+  if (prev.onFork !== next.onFork) return false;
+  if (prev.onBranch !== next.onBranch) return false;
+  if (prev.branchSwitch !== next.branchSwitch) return false;
+  if (prev.onSwitchBranch !== next.onSwitchBranch) return false;
+
+  // 流式相关：只有「正在流」和「本轮末条」还需要跟着逐帧/逐 tick 更新，
+  // 其余历史行在上面的项全等时直接跳过，一个字节的正文都不重渲。
+  if (next.live || next.isLastOfRound) {
+    if (prev.tokensPerSecond !== next.tokensPerSecond) return false;
+    if (prev.liveToolOutputs !== next.liveToolOutputs) return false;
+    if (prev.roundProcess !== next.roundProcess) return false;
+    if (prev.liveOutputFor !== next.liveOutputFor) return false;
+  }
+  return true;
+}
+
+const TurnRow = memo(TurnRowImpl, areTurnRowPropsEqual);
+
 export function Transcript({
   messages,
+  messageKeys,
   entryIds,
   onFork,
   forkingEntryId,
@@ -1133,8 +2307,16 @@ export function Transcript({
   branchSwitch,
   onSwitchBranch,
   nestedExecutions,
+  revealTurn,
+  liveTurn,
+  tokensPerSecond,
+  liveToolOutputs,
+  precomputedTurns,
+  streamingMessage,
 }: {
   messages: AgentMessage[];
+  /** 1:1 with `messages`：React 渲染用的稳定 key（下标会随插入平移，不能当下标用）。 */
+  messageKeys?: Array<string | undefined>;
   /** 1:1 with `messages`; the session entry id used by `fork`/`navigate_tree`. */
   entryIds?: Array<string | undefined>;
   onFork?: (entryId: string) => void;
@@ -1154,222 +2336,459 @@ export function Transcript({
   onSwitchBranch?: (leafId: string | null) => void;
   /** Live nested tool results captured from SSE (not persisted by pi). */
   nestedExecutions?: Record<string, NestedExecutionView>;
+  /** 导航点了某个尚未挂载的轮次：先把它拉进渲染窗口，再滚动过去。 */
+  revealTurn?: number | null;
+  /** 最后一轮是否正在流式输出：思考过程/执行日志据此显示「思考中/正在执行」。 */
+  liveTurn?: boolean;
+  /** 实时生成速度（tokens/s），显示在思考标题栏。 */
+  tokensPerSecond?: number;
+  /** 执行中工具的实时输出（toolName → 文本）。 */
+  liveToolOutputs?: Record<string, string>;
+  /**
+   * 调用方已经算好的轮次列表（与右侧导航共用，避免对同一份 messages 算两遍）。
+   * 必须是**冻结的历史**（不含 `streamingMessage`），否则历史行每帧换汤不换药，
+   * `TurnRow` 的 memo 会全部失效。
+   */
+  precomputedTurns?: TranscriptTurnView[];
+  /**
+   * 正在流式输出的那一条消息（与 `messages` 分开传）：
+   * `messages` 只在 message_end 时变化，因此历史轮次可以彻底冻结，
+   * 流式期间只重算最后这一条。
+   */
+  streamingMessage?: AgentMessage | null;
 }) {
-  const results = toolResultsById(messages);
+  const { locale } = useI18n();
+  /** 中文界面用人民币符号，其余用美元。 */
+  const currencySymbol = locale.startsWith("zh") ? "¥" : "$";
   const markdownComponents = useMemo(
     () => createMarkdownComponents(cwd, onOpenFile, onInsertCode, onApplyCode, applyTargetName),
     [cwd, onOpenFile, onInsertCode, onApplyCode, applyTargetName],
   );
   const [copiedTurn, setCopiedTurn] = useState<number | null>(null);
+  /** 「已复制」提示的定时器：卸载时必须清掉，否则切会话会遗留一堆待触发的 timer。 */
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    },
+    [],
+  );
 
-  const copyTurn = (index: number, text: string) => {
+  /** 引用恒定：`TurnRow` 的 memo 比较里直接比它的引用。 */
+  const copyTurn = useCallback((index: number, text: string) => {
     void navigator.clipboard
       .writeText(text)
       .then(() => {
         setCopiedTurn(index);
-        setTimeout(() => setCopiedTurn(null), 1600);
+        if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+        copyTimerRef.current = setTimeout(() => {
+          copyTimerRef.current = null;
+          setCopiedTurn(null);
+        }, 1600);
       })
       .catch(() => {
         /* clipboard unavailable */
       });
-  };
+  }, []);
 
-  const turns = messages
-    .map((message, messageIndex) => {
-      if (message.role === "user") {
-        const text = userText(message).trim();
-        const images = contentImages((message as { content?: unknown }).content);
-        return text || images.length > 0
-          ? { role: "user" as const, text, images, blocks: [] as TurnBlock[], messageIndex }
-          : null;
+  /**
+   * 实时工具输出：值放 ref，读取走一个**引用恒稳定**的 getter。
+   * 这样 `liveToolOutputs` 逐 tick 换新对象时，也不会把 memo 的 props 比炸。
+   */
+  const liveToolOutputsRef = useRef<Record<string, string>>({});
+  liveToolOutputsRef.current = liveToolOutputs ?? EMPTY_TOOL_OUTPUTS;
+  const liveOutputFor = useCallback(
+    (toolName: string) => liveToolOutputsRef.current[toolName],
+    [],
+  );
+
+  /** 历史轮次：`messages` 只在 message_end 变，流式期间引用稳定 → 引用冻结。 */
+  const historyTurns = useMemo(() => buildTranscriptTurns(messages), [messages]);
+  /** 流式轮次：每帧只重算这一条，并把 messageIndex 补上历史长度偏移。 */
+  const streamingTurns = useMemo(() => {
+    if (!streamingMessage) return [] as TranscriptTurnView[];
+    const offset = messages.length;
+    return buildTranscriptTurns([streamingMessage]).map((turn) => ({
+      ...turn,
+      messageIndex: turn.messageIndex + offset,
+    }));
+  }, [streamingMessage, messages.length]);
+  /**
+   * 渲染序列 = 冻结的历史 + 至多一条流式。
+   * 历史一律用调用方给的 `precomputedTurns`（与导航共用同一份，且必须是冻结历史），
+   * 没给才回落到自己算的 `historyTurns`；流式那条永远追加在末尾。
+   */
+  const turns = useMemo(() => {
+    const base = precomputedTurns ?? historyTurns;
+    return streamingTurns.length > 0 ? [...base, ...streamingTurns] : base;
+  }, [precomputedTurns, historyTurns, streamingTurns]);
+
+  /* ---------------- 增量挂载：首屏 20 轮，其余按需 ----------------
+     会话刚打开时只渲染尾部窗口，避免一次性 parse/render 上千轮 markdown。
+     头部起点在「首次超过窗口」时冻结，流式新增不会把已显示的轮次挤掉。 */
+  const [extraEarlier, setExtraEarlier] = useState(0);
+  const tailStart = Math.max(0, turns.length - (INITIAL_TURNS + extraEarlier));
+  const [frozenStart, setFrozenStart] = useState<number | null>(null);
+  useEffect(() => {
+    if (frozenStart === null && turns.length > INITIAL_TURNS + extraEarlier) {
+      setFrozenStart(turns.length - INITIAL_TURNS - extraEarlier);
+    }
+  }, [turns.length, extraEarlier, frozenStart]);
+  const start = Math.max(0, (frozenStart ?? tailStart) - extraEarlier);
+
+  /* 导航跳到更早的轮次时，先把目标轮次拉进渲染窗口（最多两轮收敛）。 */
+  useEffect(() => {
+    if (revealTurn == null) return;
+    if (revealTurn >= start) return;
+    setExtraEarlier((value) => value + (start - revealTurn));
+  }, [revealTurn, start]);
+
+  /* ---------------- 无限向上滚动：视口锚点 + 残差校正 ----------------
+     往上塞历史会把当前内容整体顶下去，所以加载前后都对同一根「锚点」对齐：
+     1. 触发瞬间记录**第一条可见轮次**相对视口的 top（没有轮次时退化为 scrollHeight）；
+     2. DOM 提交后（useLayoutEffect，绘制前）按差值补 scrollTop；
+     3. 再补最多两帧残差，吃掉图片/字体/折叠动画带来的二次回流。
+     结果：用户正在看的那条消息在屏幕上纹丝不动，滚动条也不会猛地跳一下。 */
+  const rootRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const scrollParentRef = useRef<HTMLElement | null>(null);
+  const anchorRef = useRef<{ el: HTMLElement; root: HTMLElement; top: number } | null>(null);
+  const heightAnchorRef = useRef<{ el: HTMLElement; height: number } | null>(null);
+  const loadingEarlierRef = useRef(false);
+  const startRef = useRef(start);
+  startRef.current = start;
+  const hasTurns = turns.length > 0;
+
+  /** 记录「第一条可见轮次」的屏幕位置，作为加载后的对齐基准。 */
+  const captureAnchor = useCallback(() => {
+    const el = scrollParentRef.current;
+    if (!el) return;
+    const rootTop = el.getBoundingClientRect().top;
+    for (const node of el.querySelectorAll<HTMLElement>("[data-turn-role]")) {
+      const rect = node.getBoundingClientRect();
+      if (rect.bottom > rootTop) {
+        anchorRef.current = { el: node, root: el, top: rect.top };
+        heightAnchorRef.current = null;
+        return;
       }
-      if (message.role === "assistant") {
-        const blocks = assistantBlocks(message, results);
-        return blocks.length > 0 ? { role: "assistant" as const, text: "", images: [] as string[], blocks, messageIndex } : null;
+    }
+    // 极端情况（还没渲染出轮次）：退回高度差补偿
+    anchorRef.current = null;
+    heightAnchorRef.current = { el, height: el.scrollHeight };
+  }, []);
+
+  const loadEarlier = useCallback(() => {
+    if (loadingEarlierRef.current || startRef.current <= 0) return;
+    captureAnchor();
+    loadingEarlierRef.current = true;
+    setExtraEarlier((value) => value + TURN_BATCH);
+  }, [captureAnchor]);
+
+  /* 提交后立即对齐（绘制前），随后再补两帧残差。 */
+  useLayoutEffect(() => {
+    let raf = 0;
+    let frames = 0;
+    const sync = () => {
+      const anchor = anchorRef.current;
+      const fallback = heightAnchorRef.current;
+      let residual = 0;
+
+      if (anchor) {
+        if (!anchor.el.isConnected) {
+          anchorRef.current = null;
+        } else {
+          residual = anchor.el.getBoundingClientRect().top - anchor.top;
+          if (Math.abs(residual) >= 0.5) anchor.root.scrollTop += residual;
+        }
+      } else if (fallback) {
+        const delta = fallback.el.scrollHeight - fallback.height;
+        if (Math.abs(delta) >= 0.5) fallback.el.scrollTop += delta;
+        fallback.height = fallback.el.scrollHeight;
       }
-      if (message.role === "custom") {
-        const text = userText(message).trim();
-        return text ? { role: "assistant" as const, text, images: [] as string[], blocks: [] as TurnBlock[], messageIndex } : null;
+
+      if (anchorRef.current && Math.abs(residual) >= 0.5 && frames < 2) {
+        frames += 1;
+        raf = requestAnimationFrame(sync);
+        return;
       }
-      return null;
-    })
-    .filter(
-      (turn): turn is {
-        role: "user" | "assistant";
-        text: string;
-        images: string[];
-        blocks: TurnBlock[];
-        messageIndex: number;
-      } => turn !== null,
+      anchorRef.current = null;
+      heightAnchorRef.current = null;
+    };
+    sync();
+    return () => cancelAnimationFrame(raf);
+  }, [extraEarlier]);
+
+  /* 冷却：避免一次滚动里连环触发多个批次（每批都已锚定，不会移动视线）。 */
+  useEffect(() => {
+    if (!loadingEarlierRef.current) return;
+    const timer = window.setTimeout(() => {
+      loadingEarlierRef.current = false;
+    }, 140);
+    return () => window.clearTimeout(timer);
+  }, [extraEarlier]);
+
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+    let el: HTMLElement | null = sentinel.parentElement;
+    while (el && !/(auto|scroll)/.test(getComputedStyle(el).overflowY)) {
+      el = el.parentElement;
+    }
+    const root = el;
+    if (!root) return;
+    scrollParentRef.current = root;
+
+    const check = () => {
+      if (loadingEarlierRef.current || startRef.current <= 0) return;
+      const rootTop = root.getBoundingClientRect().top;
+      const sentinelTop = sentinel.getBoundingClientRect().top;
+      // 进入视口上方 600px 的预加载区就补历史
+      if (sentinelTop - rootTop <= 600) loadEarlier();
+    };
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) check();
+      },
+      { root, rootMargin: "600px 0px 0px 0px" },
     );
+    observer.observe(sentinel);
+
+    // 兜底：插入后哨兵可能仍停在预加载区内，IntersectionObserver 不会重复回调
+    let frame = 0;
+    const onScroll = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        check();
+      });
+    };
+    root.addEventListener("scroll", onScroll, { passive: true });
+
+    return () => {
+      observer.disconnect();
+      root.removeEventListener("scroll", onScroll);
+      if (frame) cancelAnimationFrame(frame);
+      scrollParentRef.current = null;
+      loadingEarlierRef.current = false;
+    };
+  }, [loadEarlier, hasTurns]);
+
+  /**
+   * 按「一轮对话」聚合过程：
+   * 一条用户提问 + 之后的多条 assistant 消息（pi 常把工具调用单独存成一条消息）。
+   * 这样同一轮里**只会渲染一个思考标题和一个工具标题**，工具也不会被拆散。
+   */
+  /**
+   * 按 turn.messageIndex 取原始消息（流式那条从 streamingMessage 兜底）。
+   * 用 ref 实现，使这个回调**引用恒稳定** —— 否则它每帧都变，
+   * 任何依赖它的子组件/memo 都会永远失效。
+   */
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  const streamingRef = useRef<AgentMessage | null>(streamingMessage ?? null);
+  streamingRef.current = streamingMessage ?? null;
+  const messageAt = useCallback((messageIndex: number): AssistantMessage | undefined => {
+    const history = messagesRef.current;
+    return (messageIndex < history.length ? history[messageIndex] : streamingRef.current) as
+      | AssistantMessage
+      | undefined;
+  }, []);
+
+  /**
+   * 逐轮身份缓存：`turns` 每帧都会重建，但**历史轮的 turn 对象引用是冻结的**。
+   * 这里给每一轮单独记一份「参与计算的 turn 引用 / 消息区间」，
+   * 只有真正变了的那一轮才重建对象，其余轮次原样复用 →
+   * 传给 `TurnRow` 的 `roundProcess` / `usageTotals` 引用稳定，memo 才不会白比。
+   */
+  const roundCacheRef = useRef<{
+    processes: Map<number, { turns: TranscriptTurnView[]; value: RoundProcess }>;
+    totals: Map<
+      number,
+      { from: number; to: number; last: AgentMessage | undefined; value: RoundTotals }
+    >;
+  }>({ processes: new Map(), totals: new Map() });
+
+  const roundInfo = useMemo(() => {
+    const roundKeyOf: number[] = new Array(turns.length).fill(-1);
+    const lastAssistantOfRound = new Map<number, number>();
+    /** 每一轮里参与过程聚合的 assistant 轮次（按轮分组，给 process 缓存做失效判断）。 */
+    const roundTurns = new Map<number, TranscriptTurnView[]>();
+    let currentKey = -1;
+    turns.forEach((turn, index) => {
+      if (turn.role === "user") {
+        currentKey = index;
+        roundTurns.set(index, []);
+        return;
+      }
+      if (currentKey < 0) return;
+      roundKeyOf[index] = currentKey;
+      lastAssistantOfRound.set(currentKey, index);
+      roundTurns.get(currentKey)?.push(turn);
+    });
+
+    /** 聚合思考 / 工具：同轮的 turn 引用没变就直接复用上一帧的对象。 */
+    const cache = roundCacheRef.current;
+    const processes = new Map<number, RoundProcess>();
+    const nextProcessCache = new Map<number, { turns: TranscriptTurnView[]; value: RoundProcess }>();
+    for (const [key, group] of roundTurns) {
+      const cached = cache.processes.get(key);
+      if (cached && sameTurnRefs(cached.turns, group)) {
+        processes.set(key, cached.value);
+        nextProcessCache.set(key, cached);
+        continue;
+      }
+      const value: RoundProcess = { thinking: [], tools: [] };
+      for (const turn of group) {
+        const usage = (messages[turn.messageIndex] as AssistantMessage | undefined)?.usage;
+        for (const block of turn.blocks) {
+          if (block.kind === "thinking") value.thinking.push({ text: block.text, usage });
+          else if (block.kind === "tool") value.tools.push({ block, usage });
+        }
+      }
+      processes.set(key, value);
+      nextProcessCache.set(key, { turns: group, value });
+    }
+    cache.processes = nextProcessCache;
+
+    /**
+     * 整轮消耗按**消息区间**统计，而不是按 turns：
+     * turns 会过滤掉"没有可渲染 block"的 assistant 消息，而最终回复的 usage
+     * 恰恰可能落在这些消息上（导致只统计到工具那一条的 637 tokens）。
+     * 区间 = [本轮用户消息下标, 下一条用户消息下标) 内的所有 assistant 消息。
+     */
+    const ranges: Array<{ key: number; from: number; to: number }> = [];
+    turns.forEach((turn, index) => {
+      if (turn.role !== "user") return;
+      ranges.push({ key: index, from: turn.messageIndex, to: messages.length });
+    });
+    ranges.forEach((range, index) => {
+      range.to = ranges[index + 1]?.from ?? messages.length;
+    });
+
+    /** 整轮合计（输入 + 输出 + 缓存读 + 缓存写）：区间没动就复用旧对象。 */
+    const totals = new Map<number, RoundTotals>();
+    const nextTotalsCache = new Map<
+      number,
+      { from: number; to: number; last: AgentMessage | undefined; value: RoundTotals }
+    >();
+    for (const range of ranges) {
+      const last = messages[range.to - 1];
+      const cached = cache.totals.get(range.key);
+      if (cached && cached.from === range.from && cached.to === range.to && cached.last === last) {
+        totals.set(range.key, cached.value);
+        nextTotalsCache.set(range.key, cached);
+        continue;
+      }
+      const value: RoundTotals = {
+        tokens: 0,
+        cost: 0,
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+      };
+      for (let messageIndex = range.from; messageIndex < range.to; messageIndex += 1) {
+        const message = messages[messageIndex] as
+          | { role?: string; usage?: AssistantMessage["usage"] }
+          | undefined;
+        const usage = message?.usage;
+        if (!usage || message?.role !== "assistant") continue;
+        value.input += usage.input ?? 0;
+        value.output += usage.output ?? 0;
+        value.cacheRead += usage.cacheRead ?? 0;
+        value.cacheWrite += usage.cacheWrite ?? 0;
+        value.tokens +=
+          (usage.input ?? 0) + (usage.output ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
+        value.cost += usage.cost?.total ?? 0;
+      }
+      totals.set(range.key, value);
+      nextTotalsCache.set(range.key, { from: range.from, to: range.to, last, value });
+    }
+    cache.totals = nextTotalsCache;
+
+    return { roundKeyOf, processes, lastAssistantOfRound, totals };
+  }, [turns, messages]);
+
+  /**
+   * 开发期渲染基线：每帧 / 每次 turns 变化打一行，配合 `TurnRow` 内部的
+   * `[render] turn N rendered M times` 就能看出历史行到底有没有被重渲。
+   */
+  const renderStatsRef = useRef({ updates: 0, historyTurns: 0 });
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+    renderStatsRef.current.updates += 1;
+    renderStatsRef.current.historyTurns = historyTurns.length;
+    console.debug("[render] turns update", {
+      updates: renderStatsRef.current.updates,
+      historyTurns: historyTurns.length,
+      streamingTurns: streamingTurns.length,
+      visible: Math.max(0, turns.length - start),
+    });
+  }, [turns, historyTurns, streamingTurns, start]);
 
   if (turns.length === 0) {
     return <p className="py-10 text-center text-[13px] text-ink-faint">这段会话还没有可显示的对话</p>;
   }
 
   return (
-    <div>
-      {turns.map((turn, index) => {
-        const entryId = entryIds?.[turn.messageIndex];
-        // The very first message cannot be forked (nothing before it), and a
-        // fork mid-stream would race the entry ids the SSE events don't carry.
-        const canFork = Boolean(onFork && entryId) && turn.messageIndex > 0;
-        const canBranch = Boolean(onBranch && entryId);
-        const forking = Boolean(entryId) && forkingEntryId === entryId;
-        const switcher = entryId && branchSwitch ? branchSwitch(entryId) : null;
+    <div ref={rootRef}>
+      {/* 顶部哨兵：透明、1px 高，不占视觉空间 */}
+      <div ref={sentinelRef} aria-hidden="true" className="h-px w-full" />
+      {turns.slice(start).map((turn, offset) => {
+        const index = start + offset;
+        const roundKey = roundInfo.roundKeyOf[index] ?? -1;
+        const isLastOfRound =
+          roundKey >= 0 && roundInfo.lastAssistantOfRound.get(roundKey) === index;
+        // 同一轮里除最后一条 assistant 消息外，如果不含文字就没有内容可渲染
+        // （它们的思考/工具已经聚合到本轮最后一个过程块里），直接跳过避免巨大留白。
+        if (
+          turn.role !== "user" &&
+          !isLastOfRound &&
+          !turn.blocks.some((block) => block.kind === "text" || block.kind === "image")
+        ) {
+          return null;
+        }
+        const messageIndex = turn.messageIndex;
+        const entryId = entryIds?.[messageIndex];
+        /** 只有最后一条属于「正在流式输出」，其余历史行一律稳定。 */
+        const live = Boolean(liveTurn) && index === turns.length - 1;
         return (
-        <article key={index} className="group mb-8 last:mb-0">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <div className="flex min-w-0 items-center gap-2">
-              {switcher && switcher.total > 1 && (
-                <span
-                  className="flex shrink-0 items-center gap-0.5 rounded-full border border-[#E3E8F2] bg-white px-1 py-0.5 text-[10.5px] text-ink-muted shadow-[0_1px_2px_rgba(17,17,17,0.03)]"
-                  aria-label={`分支 ${switcher.index + 1}/${switcher.total}`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => onSwitchBranch?.(switcher.targets[switcher.index - 1]?.leafId ?? null)}
-                    disabled={switcher.index <= 0}
-                    aria-label="上一个分支"
-                    title="上一个分支"
-                    className="flex h-4 w-4 items-center justify-center rounded-full transition-colors hover:bg-[#ECECEF] hover:text-ink disabled:cursor-default disabled:opacity-30"
-                  >
-                    <ChevronLeft size={11} strokeWidth={2.2} aria-hidden="true" />
-                  </button>
-                  <span className="tabular-nums px-0.5">
-                    {switcher.index + 1}/{switcher.total}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => onSwitchBranch?.(switcher.targets[switcher.index + 1]?.leafId ?? null)}
-                    disabled={switcher.index >= switcher.total - 1}
-                    aria-label="下一个分支"
-                    title="下一个分支"
-                    className="flex h-4 w-4 items-center justify-center rounded-full transition-colors hover:bg-[#ECECEF] hover:text-ink disabled:cursor-default disabled:opacity-30"
-                  >
-                    <ChevronRight size={11} strokeWidth={2.2} aria-hidden="true" />
-                  </button>
-                </span>
-              )}
-              <span className="truncate text-[11px] font-medium uppercase tracking-[0.08em] text-ink-faint">
-                {turn.role === "user" ? "你" : "PiForge"}
-              </span>
-            </div>
-            <div className="flex shrink-0 items-center gap-1">
-            <button
-              type="button"
-              onClick={() =>
-                copyTurn(
-                  index,
-                  turn.role === "user"
-                    ? turn.text
-                    : turn.blocks
-                        .filter((block): block is Extract<TurnBlock, { kind: "text" }> => block.kind === "text")
-                        .map((block) => block.text)
-                        .join("\n\n"),
-                )
-              }
-              title={copiedTurn === index ? "已复制" : "复制这段内容"}
-              aria-label={copiedTurn === index ? "已复制" : "复制这段内容"}
-              className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-ink-faint opacity-0 transition-colors duration-150 hover:bg-[#ECECEF] hover:text-ink focus:opacity-100 group-hover:opacity-100"
-            >
-              {copiedTurn === index ? (
-                <Check size={11} strokeWidth={2.2} className="text-[#3E8A63]" aria-hidden="true" />
-              ) : (
-                <Copy size={11} strokeWidth={1.9} aria-hidden="true" />
-              )}
-              {copiedTurn === index ? "已复制" : "复制"}
-            </button>
-            {canBranch && (
-              <button
-                type="button"
-                onClick={() => void onBranch!(entryId!)}
-                title="从此消息开启新分支"
-                aria-label="从此消息开启新分支"
-                className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-ink-faint opacity-0 transition-colors duration-150 hover:bg-[#ECECEF] hover:text-accent-strong focus:opacity-100 group-hover:opacity-100"
-              >
-                <GitBranch size={11} strokeWidth={1.9} aria-hidden="true" />
-                分支
-              </button>
-            )}
-            {canFork && (
-              <button
-                type="button"
-                onClick={() => onFork!(entryId!)}
-                disabled={forking}
-                title={forking ? "正在创建会话…" : "从此处派生新会话"}
-                aria-label={forking ? "正在创建会话" : "从此处派生新会话"}
-                className={`flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] transition-colors duration-150 disabled:cursor-not-allowed ${
-                  forking
-                    ? "text-accent opacity-100"
-                    : "text-ink-faint opacity-0 hover:bg-[#ECECEF] hover:text-accent-strong focus:opacity-100 group-hover:opacity-100"
-                }`}
-              >
-                <GitFork size={11} strokeWidth={1.9} aria-hidden="true" />
-                {forking ? "创建中…" : "派生"}
-              </button>
-            )}
-            </div>
-          </div>
-
-          {turn.role === "user" ? (
-            <div className="whitespace-pre-wrap break-words rounded-xl border border-[#E7E9EE] bg-white px-4 py-3 text-[14px] leading-7 text-ink shadow-[0_1px_2px_rgba(17,17,17,0.03)]">
-              {turn.text && <FileLinkText text={turn.text} cwd={cwd} onOpenFile={onOpenFile} />}
-              {turn.images.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {turn.images.map((src, imageIndex) => (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      key={imageIndex}
-                      src={src}
-                      alt={`用户图片 ${imageIndex + 1}`}
-                      className="max-h-64 rounded-md border border-[#E7E9EE] object-contain"
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="break-words text-[14px] leading-7 text-ink-soft">
-              {turn.blocks.length === 0 ? (
-                <ReactMarkdown {...MARKDOWN_PLUGINS} components={markdownComponents}>
-                  {turn.text}
-                </ReactMarkdown>
-              ) : (
-                turn.blocks.map((block, blockIndex) =>
-                  block.kind === "text" ? (
-                    <ReactMarkdown
-                      key={blockIndex}
-                      {...MARKDOWN_PLUGINS}
-                      components={markdownComponents}
-                    >
-                      {block.text}
-                    </ReactMarkdown>
-                  ) : block.kind === "thinking" ? (
-                    <ThinkingBlock key={blockIndex} text={block.text} />
-                  ) : block.kind === "image" ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      key={blockIndex}
-                      src={block.src}
-                      alt="模型输出图片"
-                      className="my-2 max-h-80 rounded-lg border border-[#E3E8F2] object-contain"
-                    />
-                  ) : (
-                    <ToolCallCard
-                      key={blockIndex}
-                      name={block.name}
-                      input={block.input}
-                      result={block.result}
-                      details={block.result?.details}
-                      nestedExecutions={nestedExecutions}
-                    />
-                  ),
-                )
-              )}
-            </div>
-          )}
-        </article>
+          <TurnRow
+            /* key 优先用调用方给的稳定 id（流式占位是常量 key）：
+               下标会随"新 user 消息插入"而平移，用它做 key 会让 React 复用错节点，
+               表现就是"新消息被塞进了上一条消息的 DOM 里"。 */
+            key={messageKeys?.[messageIndex] ?? messageIndex}
+            turn={turn}
+            index={index}
+            isLastOfRound={isLastOfRound}
+            roundKey={roundKey}
+            roundProcess={roundKey >= 0 ? roundInfo.processes.get(roundKey) : undefined}
+            usageTotals={isLastOfRound && roundKey >= 0 ? roundInfo.totals.get(roundKey) : undefined}
+            firstInList={offset === 0}
+            markdownComponents={markdownComponents}
+            currencySymbol={currencySymbol}
+            locale={locale}
+            copied={copiedTurn === index}
+            usage={messageAt(messageIndex)?.usage}
+            entryId={entryId}
+            live={live}
+            liveTurn={Boolean(liveTurn)}
+            /* 实时输出 / 速度只对「正在流」的那条有意义：
+               传给历史行既会把本次运行的输出串到旧卡片上，还会让它们逐 tick 重渲。 */
+            tokensPerSecond={live ? tokensPerSecond : undefined}
+            liveToolOutputs={live ? liveToolOutputs : undefined}
+            liveOutputFor={liveOutputFor}
+            nestedExecutions={nestedExecutions}
+            cwd={cwd}
+            onOpenFile={onOpenFile}
+            onCopy={copyTurn}
+            onFork={onFork}
+            forking={Boolean(entryId) && forkingEntryId === entryId}
+            onBranch={onBranch}
+            branchSwitch={branchSwitch}
+            onSwitchBranch={onSwitchBranch}
+          />
         );
       })}
     </div>

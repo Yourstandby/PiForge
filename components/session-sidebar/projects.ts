@@ -1,3 +1,4 @@
+import { normalizeProjectPath } from "../../lib/project-color.ts";
 import type { SessionInfo } from "../../lib/types";
 import { buildSessionTree, type SessionTreeNode } from "./helpers.ts";
 
@@ -13,11 +14,8 @@ export interface SidebarProject {
 
 // Only Windows paths are case-insensitive. Keep the original cwd for all actions.
 export function projectKey(cwd: string): string {
-  const path = cwd.trim().replace(/\\/g, "/").replace(/\/+$/, "") || (cwd.trim() ? "/" : "");
-  // WSL's host/distribution names are Windows identifiers; its Linux suffix is not.
-  const wsl = path.match(/^(\/\/(?:wsl\.localhost|wsl\$)\/[^/]+)(\/.*)?$/i);
-  if (wsl) return wsl[1].toLowerCase() + (wsl[2] ?? "");
-  return /^(?:[a-z]:|\/\/)/i.test(path) ? path.toLowerCase() : path;
+  // 归一化只有一处实现（lib/project-color.ts），项目色块才能与分组结果严格一致。
+  return normalizeProjectPath(cwd);
 }
 
 export function projectName(cwd: string): string {

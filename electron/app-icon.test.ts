@@ -10,3 +10,7 @@ test("getAppIconPath selects the native macOS icon", () => {
 test("getAppIconPath keeps the Windows icon for non-macOS packages", () => {
   assert.equal(getAppIconPath("C:\\Pi", "win32"), path.join("C:\\Pi", "build", "icon.ico"));
 });
+
+test("getAppIconPath uses the PNG icon on Linux", () => {
+  assert.equal(getAppIconPath("/opt/PiForge", "linux"), path.join("/opt/PiForge", "build", "icon.png"));
+});

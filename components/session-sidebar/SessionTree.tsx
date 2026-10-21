@@ -55,10 +55,13 @@ function SessionItem({
   const { locale, t } = useI18n();
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
-  const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
+  /** 删除确认弹窗的固定定位坐标（portal + fixed，绝不参与列表排版）。 */
+  const [confirmPos, setConfirmPos] = useState<{ x: number; y: number } | null>(null);
+  const confirmRef = useRef<HTMLDivElement>(null);
+  const confirmDelete = confirmPos !== null;
   const inputRef = useRef<HTMLInputElement>(null);
   const selectRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -77,6 +80,10 @@ function SessionItem({
     setMenuPos(null);
     if (reason === "escape") triggerRef.current?.focus();
   });
+  // 删除确认弹窗：点取消 / 点空白 / Esc 都立刻关闭（允许点击触发按钮本身算"内部"）
+  useDismissOnOutsideClick([confirmRef, triggerRef], confirmDelete, (reason) => {
+    closeDeleteConfirm(reason === "escape");
+  });
 
   const commitRename = useCallback(async () => {
     setRenaming(false);
@@ -94,7 +101,7 @@ function SessionItem({
   }, [renameValue, session.id, session.name, onRenamed, t]);
 
   const deleteSession = async () => {
-    setConfirmDelete(false);
+    closeDeleteConfirm();
     setDeleting(true);
     try {
       await apiJson("/api/sessions/" + encodeURIComponent(session.id), { method: "DELETE" }, { fallback: t("common.failed") });
@@ -114,8 +121,21 @@ function SessionItem({
       setRenameValue(session.name ?? "");
       setRenaming(true);
     } },
-    { label: t("sidebar.deleteAction"), icon: "trash" as const, run: () => setConfirmDelete(true) },
+    { label: t("sidebar.deleteAction"), icon: "trash" as const, run: () => openDeleteConfirm() },
   ];
+  const openDeleteConfirm = () => {
+    const rect = triggerRef.current?.getBoundingClientRect() ?? selectRef.current?.getBoundingClientRect();
+    const width = 248;
+    const x = rect ? Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8)) : 16;
+    const y = rect ? Math.max(8, Math.min(rect.bottom + 6, window.innerHeight - 132)) : 80;
+    setConfirmPos({ x, y });
+  };
+
+  const closeDeleteConfirm = (restoreFocus = false) => {
+    setConfirmPos(null);
+    if (restoreFocus) triggerRef.current?.focus();
+  };
+
   const openMenu = (x: number, y: number) => {
     setActionError(null);
     setMenuPos({
@@ -131,11 +151,7 @@ function SessionItem({
         event.preventDefault();
         openMenu(event.clientX, event.clientY);
       }}>
-        {confirmDelete ? <>
-          <span className="sidebar-delete-label">{t("sidebar.deleteSession", { name: title })}</span>
-          <button className="sidebar-confirm-delete" onClick={() => void deleteSession()}>{t("common.delete")}</button>
-          <button className="sidebar-cancel-delete" onClick={() => { setConfirmDelete(false); selectRef.current?.focus(); }}>{t("common.cancel")}</button>
-        </> : renaming ? <input ref={inputRef} aria-label={t("sidebar.renameSession")} className="sidebar-rename-input" value={renameValue} onChange={(event) => setRenameValue(event.target.value)} onBlur={() => void commitRename()} onKeyDown={(event) => {
+        {renaming ? <input ref={inputRef} aria-label={t("sidebar.renameSession")} className="sidebar-rename-input" value={renameValue} onChange={(event) => setRenameValue(event.target.value)} onBlur={() => void commitRename()} onKeyDown={(event) => {
           if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); }
           if (event.key === "Escape") { cancelRenameRef.current = true; setRenaming(false); }
         }} /> : <>
@@ -152,6 +168,47 @@ function SessionItem({
           }}><SidebarIcon name="more" size={14} /></button>
         </>}
       </div>
+      {confirmDelete && createPortal(
+        <div
+          ref={confirmRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label={t("sidebar.deleteAction")}
+          className="rounded-xl bg-white p-3.5 shadow-[0_18px_44px_-10px_rgba(15,23,42,0.22),0_2px_8px_rgba(15,23,42,0.06)]"
+          style={{
+            position: "fixed",
+            top: confirmPos?.y ?? 0,
+            left: confirmPos?.x ?? 0,
+            width: 248,
+            zIndex: 999,
+          }}
+        >
+          <p className="text-xs leading-relaxed text-gray-600">
+            {t("sidebar.deleteConfirm")}
+          </p>
+          <p className="mt-1 truncate text-xs text-gray-400" title={title}>
+            {title}
+          </p>
+          <div className="mt-3 flex items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={() => closeDeleteConfirm(true)}
+              className="rounded-md bg-gray-100 px-3 py-1 text-xs text-gray-600 transition-colors hover:bg-gray-200"
+            >
+              {t("common.cancel")}
+            </button>
+            <button
+              type="button"
+              onClick={() => void deleteSession()}
+              disabled={deleting}
+              className="rounded-md bg-red-50 px-3 py-1 text-xs font-medium text-red-600 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {t("common.delete")}
+            </button>
+          </div>
+        </div>,
+        document.body,
+      )}
       {actionError && <p className="sidebar-action-error" role="alert">{actionError}</p>}
       {menuPos && createPortal(
         <div ref={menuRef} role="menu" aria-label={t("common.moreActions")} className="sidebar-session-menu material-popover shadow-popover t-dropdown is-open" data-origin="top-right" style={{ position: "fixed", top: menuPos.y, left: menuPos.x, zIndex: 1000 }} onKeyDown={(event) => {

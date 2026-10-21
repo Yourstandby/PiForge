@@ -44,6 +44,14 @@ export type AgentEvent =
       args?: unknown;
     }
   | {
+      /** 执行中的增量输出（bash 边跑边吐日志）：用于工具卡实时渲染。 */
+      type: "tool_execution_update";
+      toolCallId: string;
+      toolName: string;
+      args?: unknown;
+      partialResult?: unknown;
+    }
+  | {
       type: "tool_execution_end";
       toolCallId: string;
       toolName?: string;
@@ -149,6 +157,21 @@ export class AgentEventsManager {
     es.onmessage = (e) => {
       try {
         const event = JSON.parse(e.data) as AgentEvent;
+        // 开发期流式诊断：确认 SSE 是"一小块一小块"到达的。
+        // F12 → Network → EventStream 应能与这里的日志一一对应。
+        if (process.env.NODE_ENV !== "production" && event.type === "message_update") {
+          const content = (event.message as { content?: unknown } | undefined)?.content;
+          const text = Array.isArray(content)
+            ? content
+                .map((block) => (block as { text?: string })?.text ?? "")
+                .join("")
+            : "";
+          console.debug("[sse] message_update", {
+            at: Math.round(performance.now()),
+            chars: text.length,
+            tail: text.slice(-24),
+          });
+        }
         this.handleAgentEvent?.(event);
       } catch (err) {
         console.error("Failed to parse agent event", { data: e.data, error: err });

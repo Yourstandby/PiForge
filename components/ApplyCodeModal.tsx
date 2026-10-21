@@ -5,6 +5,7 @@ import { CornerDownLeft, Loader2 } from "lucide-react";
 import type { FloatingFileTarget } from "./FloatingFileViewer";
 import { ModalSurface } from "./ModalSurface";
 import { getRelativeFilePath } from "@/lib/file-paths";
+import { ErrorNotice } from "./ErrorNotice";
 
 type ApplyMode = "overwrite" | "append";
 
@@ -96,11 +97,7 @@ export function ApplyCodeModal({
             {done === "overwrite" ? "已覆盖写入。" : "已追加到文件末尾。"}
           </p>
         )}
-        {error && (
-          <p role="alert" className="text-[12px] text-danger">
-            {error}
-          </p>
-        )}
+        {error && <ErrorNotice className="block text-[12px] text-danger" message={error} />}
       </div>
 
       <div className="flex items-center justify-end gap-2 border-t border-divider px-4 py-3">

@@ -139,9 +139,11 @@ export async function GET(
 
   return new Response(stream, {
     headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
+      // 明确告诉任何反代（Nginx / Electron 侧代理）不要缓冲。
+      "X-Accel-Buffering": "no",
     },
   });
 }

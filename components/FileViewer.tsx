@@ -9,6 +9,7 @@ import { encodeFilePathForApi, getFileName, getRelativeFilePath } from "@/lib/fi
 import { getVirtualLineWindow } from "./file-viewer-virtualization";
 import { shouldUseLargeSourceViewer } from "./file-viewer-large-source";
 import { useI18n } from "./I18nProvider";
+import { ErrorNotice } from "./ErrorNotice";
 
 interface Props {
   filePath: string;
@@ -727,7 +728,7 @@ function GitDiffViewer({ filePath, cwd }: Props) {
         {loading ? (
           <p className="px-4 py-3 text-[11px] text-ink-faint">读取 Git Diff…</p>
         ) : error ? (
-          <p className="px-4 py-3 text-[11px] text-danger">{error}</p>
+          <ErrorNotice message={error} className="block px-4 py-3 text-[11px] text-danger" />
         ) : !diff?.trim() ? (
           <p className="px-4 py-3 text-[11px] text-ink-faint">
             工作区没有可显示的差异（文件可能已暂存或已提交）。
@@ -946,7 +947,7 @@ function TextFileViewer({ filePath, cwd, line }: Props) {
   if (error) {
     return (
       <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--danger)", fontSize: 13 }}>
-        {error}
+        <ErrorNotice message={error} fallback="正在等待本地引擎就绪…" />
       </div>
     );
   }

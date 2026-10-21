@@ -39,6 +39,49 @@ function persistAutoRouting(enabled: boolean): void {
 
 type ModelListItem = { id: string; name: string; provider: string; input?: string[] };
 
+interface ModelsPayload {
+  models: Record<string, string>;
+  modelList?: ModelListItem[];
+  defaultModel?: { provider: string; modelId: string } | null;
+  thinkingLevels?: Record<string, string[]>;
+  thinkingLevelMaps?: Record<string, Record<string, string | null>>;
+  autoRouting?: AutoRoutingTargets;
+}
+
+/**
+ * `/api/models` 是全局数据（与具体会话无关），且每次请求都要穿过
+ * Next→Host 命名管道并重建运行时。以前每开一个会话标签就重拉一次，
+ * 快速切会话时会排队阻塞在管道上。这里做模块级缓存 + 在途请求去重：
+ * 无论同时挂载多少个 ChatSurface，全局只会有一次真实请求。
+ */
+let modelsCache: ModelsPayload | null = null;
+let modelsInFlight: Promise<ModelsPayload | null> | null = null;
+let modelsCacheKey: number | undefined;
+
+function invalidateModelsCache(): void {
+  modelsCache = null;
+}
+
+function fetchModelsPayload(): Promise<ModelsPayload | null> {
+  if (modelsCache) return Promise.resolve(modelsCache);
+  if (!modelsInFlight) {
+    modelsInFlight = fetch("/api/models")
+      .then((r) => r.json() as Promise<ModelsPayload>)
+      .then((payload) => {
+        modelsCache = payload;
+        return payload;
+      })
+      .catch((err) => {
+        console.error("Failed to load model list:", err);
+        return null;
+      })
+      .finally(() => {
+        modelsInFlight = null;
+      });
+  }
+  return modelsInFlight;
+}
+
 export type UseSessionModelToolsOptions = {
   isNew: boolean;
   modelsRefreshKey?: number;
@@ -153,38 +196,35 @@ export function useSessionModelTools(opts: UseSessionModelToolsOptions) {
   );
 
   useEffect(() => {
-    fetch("/api/models")
-      .then((r) => r.json())
-      .then(
-        (d: {
-          models: Record<string, string>;
-          modelList?: ModelListItem[];
-          defaultModel?: { provider: string; modelId: string } | null;
-          thinkingLevels?: Record<string, string[]>;
-          thinkingLevelMaps?: Record<string, Record<string, string | null>>;
-          autoRouting?: AutoRoutingTargets;
-        }) => {
-          setModelNames(d.models);
-          if (d.autoRouting) setAutoTargets(d.autoRouting);
-          if (d.thinkingLevels) setModelThinkingLevels(d.thinkingLevels);
-          if (d.thinkingLevelMaps) setModelThinkingLevelMaps(d.thinkingLevelMaps);
-          if (d.modelList) {
-            setModelList(d.modelList);
-            if (isNew && d.modelList.length > 0) {
-              const def = d.defaultModel;
-              const match =
-                def && d.modelList.find((m) => m.id === def.modelId && m.provider === def.provider);
-              const selected = match
-                ? { provider: match.provider, modelId: match.id }
-                : { provider: d.modelList[0].provider, modelId: d.modelList[0].id };
-              setNewSessionModelState(selected);
-            }
-          }
+    // 模型配置变更（ModelsConfig / 切 provider）会 bump modelsRefreshKey，
+    // 只有这时才丢掉缓存。
+    if (modelsCacheKey !== modelsRefreshKey) {
+      modelsCacheKey = modelsRefreshKey;
+      invalidateModelsCache();
+    }
+    let cancelled = false;
+    void fetchModelsPayload().then((d) => {
+      if (cancelled || !d) return;
+      setModelNames(d.models);
+      if (d.autoRouting) setAutoTargets(d.autoRouting);
+      if (d.thinkingLevels) setModelThinkingLevels(d.thinkingLevels);
+      if (d.thinkingLevelMaps) setModelThinkingLevelMaps(d.thinkingLevelMaps);
+      if (d.modelList) {
+        setModelList(d.modelList);
+        if (isNew && d.modelList.length > 0) {
+          const def = d.defaultModel;
+          const match =
+            def && d.modelList.find((m) => m.id === def.modelId && m.provider === def.provider);
+          const selected = match
+            ? { provider: match.provider, modelId: match.id }
+            : { provider: d.modelList[0].provider, modelId: d.modelList[0].id };
+          setNewSessionModelState(selected);
         }
-      )
-      .catch((err) => {
-        console.error("Failed to load model list:", err);
-      });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [isNew, modelsRefreshKey]);
 
   return {

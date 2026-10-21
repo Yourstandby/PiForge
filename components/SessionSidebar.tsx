@@ -11,7 +11,9 @@ import { groupSessionNodesByDate } from "./session-sidebar/date-groups";
 import { SortableProjects } from "./session-sidebar/SortableProjects";
 import { useSidebarPreferences } from "./session-sidebar/useSidebarPreferences";
 import { useI18n } from "./I18nProvider";
-import { apiJson } from "./apiJson";
+import { fetchSessions, invalidateSessions } from "@/lib/sessions-cache";
+import { ErrorNotice } from "./ErrorNotice";
+import { SidebarErrorBoundary } from "./session-sidebar/SidebarErrorBoundary";
 
 interface Props {
   selectedSessionId: string | null;
@@ -29,10 +31,11 @@ interface Props {
   onOpenFile?: (filePath: string, fileName: string) => void;
   explorerRefreshKey?: number;
   onAtMention?: (relativePath: string) => void;
+  onOpenProjectWindow?: () => void;
   onCollapse?: () => void;
 }
 
-export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, onInitialRestoreDone, refreshKey, onSessionDeleted, onBranchSession, onCloneSession, onExportSession, selectedCwd: selectedCwdProp, onCwdChange, onCollapse }: Props) {
+export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, onInitialRestoreDone, refreshKey, onSessionDeleted, onBranchSession, onCloneSession, onExportSession, selectedCwd: selectedCwdProp, onCwdChange, onCollapse, onOpenProjectWindow }: Props) {
   const { t, locale } = useI18n();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -47,11 +50,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const pendingProjectRef = useRef<string | null>(null);
   const scrolledSessionRef = useRef<string | null>(null);
 
-  const loadSessions = useCallback(async (showLoading = false) => {
+  const loadSessions = useCallback(async (showLoading = false, force = false) => {
     try {
       if (showLoading) setLoading(true);
-      const data = await apiJson<{ sessions: SessionInfo[] }>("/api/sessions", undefined, { fallback: t("common.failed") });
-      setAllSessions(data.sessions);
+      setAllSessions(await fetchSessions({ force }));
       setError(null);
       if (!showLoading) {
         setSessionRefreshDone(true);
@@ -149,14 +151,30 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
 
   return (
     <div className="sidebar-workspace">
-      <SidebarHeader selectedCwd={selectedCwd ?? projects[0]?.cwd ?? null} onNewSession={newSession} onAddProject={addProject} loadSessions={loadSessions} sessionRefreshDone={sessionRefreshDone} searchQuery={searchQuery} onSearchQueryChange={setSearchQuery} sortMode={preferences.sortMode} onCollapse={onCollapse} onSortModeChange={(sortMode, animate) => {
+      <SidebarHeader selectedCwd={selectedCwd ?? projects[0]?.cwd ?? null} onNewSession={newSession} onAddProject={addProject} onOpenProjectWindow={onOpenProjectWindow} loadSessions={loadSessions} sessionRefreshDone={sessionRefreshDone} searchQuery={searchQuery} onSearchQueryChange={setSearchQuery} sortMode={preferences.sortMode} onCollapse={onCollapse} onSortModeChange={(sortMode, animate) => {
         setAnimateProjectSorting(animate);
         setPreferences((previous) => ({ ...previous, sortMode }));
       }} />
-      <nav ref={projectListRef} className="sidebar-project-list" aria-label={t("sidebar.projects")} aria-busy={loading}>
+      <nav ref={projectListRef} className="sidebar-project-list scrollbar-none" aria-label={t("sidebar.projects")} aria-busy={loading}>
         {loading && <div className="sidebar-empty" role="status">{t("common.loading")}</div>}
-        {error && <div className="sidebar-empty text-danger" role="alert">{error}</div>}
-        {!loading && !error && visibleProjects.length === 0 && <div className="sidebar-empty" role="status">{t(searching ? "sidebar.noSearchResults" : "sidebar.noProjects")}</div>}
+        {/* 刷新失败只提示、不清空已有项目；带一键重试 */}
+        {error && (
+          <div className="sidebar-empty text-danger" role="status">
+            <ErrorNotice message={error} fallback="正在等待本地引擎就绪…" />
+            <button
+              type="button"
+              onClick={() => {
+                invalidateSessions();
+                void loadSessions(true, true);
+              }}
+              className="mt-1 rounded-md border border-border px-2 py-1 text-[11px] text-ink-muted transition-colors hover:bg-[#ECECEF] hover:text-ink"
+            >
+              重试
+            </button>
+          </div>
+        )}
+        {!loading && visibleProjects.length === 0 && <div className="sidebar-empty" role="status">{t(searching ? "sidebar.noSearchResults" : "sidebar.noProjects")}</div>}
+        <SidebarErrorBoundary onRetry={() => void loadSessions()}>
         <SortableProjects projects={visibleProjects} disabled={searching || loading} animateChanges={animateProjectSorting && !searching} listRef={projectListRef} onReorder={(projectOrder) => {
           setPreferences((previous) => ({ ...previous, sortMode: "manual", projectOrder }));
         }} renderProject={(project, dragHandle, dragging) => (
@@ -167,10 +185,18 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             {project.sessions.length === 0 && <button className="sidebar-empty-project" onClick={() => newSession(project.cwd)}>{t("sidebar.startFirstSession")}<SidebarIcon name="plus" size={13} /></button>}
             {groupSessionNodesByDate(project.tree).map((group) => <div key={group.bucket} className="sidebar-date-group-wrap">
               <div className="sidebar-date-group">{t(`sidebar.date.${group.bucket}`)}</div>
-              {group.nodes.map((node) => <SessionTreeItem key={node.session.id} node={node} selectedSessionId={selectedSessionId} onSelectSession={onSelectSession} onRenamed={loadSessions} onSessionDeleted={(id) => { onSessionDeleted?.(id); void loadSessions(); }} onBranchSession={onBranchSession} onCloneSession={onCloneSession} onExportSession={onExportSession} depth={0} searching={searching} />)}
+              {group.nodes.map((node) => <SessionTreeItem key={node.session.id} node={node} selectedSessionId={selectedSessionId} onSelectSession={onSelectSession} onRenamed={() => {
+                    invalidateSessions();
+                    void loadSessions(false, true);
+                  }} onSessionDeleted={(id) => {
+                    onSessionDeleted?.(id);
+                    invalidateSessions();
+                    void loadSessions(false, true);
+                  }} onBranchSession={onBranchSession} onCloneSession={onCloneSession} onExportSession={onExportSession} depth={0} searching={searching} />)}
             </div>)}
           </ProjectGroup>
         )} />
+        </SidebarErrorBoundary>
       </nav>
     </div>
   );

@@ -20,6 +20,7 @@ import type {
   ManagedProcessStatus,
   ManagedProcessView,
 } from "@contract/domains/processes";
+import { ErrorNotice } from "./ErrorNotice";
 
 const STATUS_DOT: Record<ManagedProcessStatus, string> = {
   starting: "#B7791F",
@@ -391,7 +392,13 @@ export function ProcessPanel() {
   );
 
   if (error) {
-    return <p className="px-3 py-2 text-[11px] text-danger">{error}</p>;
+    return (
+      <ErrorNotice
+        message={error}
+        className="block px-3 py-2 text-[11px] text-danger"
+        fallback={<span className="block px-3 py-2 text-[11px] text-ink-faint">正在等待本地引擎就绪…</span>}
+      />
+    );
   }
 
   return (

@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import type { TranslationKey } from "@/lib/i18n";
 import { useI18n } from "./I18nProvider";
 import { ModalSurface } from "./ModalSurface";
+import { ErrorNotice } from "./ErrorNotice";
 
 export type BranchCloneMode = "branch" | "clone";
 type CloneWorkspaceMode = "directory" | "worktree";
@@ -177,7 +178,7 @@ export function BranchCloneModal({
         <form onSubmit={handleSubmit} className="p-4 flex flex-col gap-3.5">
           {error && (
             <div className="p-2.5 rounded-control bg-red-500/10 border border-red-500/20 text-red-400 text-[12px]">
-              {error}
+              <ErrorNotice className="block" message={error} />
             </div>
           )}
 

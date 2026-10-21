@@ -4,8 +4,14 @@ import type { SessionBranches, SessionBranchSwitchResult } from "@contract/domai
 
 /** A hung Host/pipe must not leave the transcript spinner forever. */
 export const SESSION_LOAD_DEADLINE_MS = 15_000;
-/** One retry, per resilience requirement; no unbounded retry storms. */
-export const SESSION_LOAD_RETRIES = 1;
+/**
+ * 两次重试，按退避间隔（300ms / 900ms）：
+ * 开发环境重启 Next、Host 刚起来、命名管道短暂不可用都是**瞬时**故障，
+ * 立刻重试往往正好撞在同一个窗口上；留一点间隔就会自愈。
+ * 上限仍是 2 次，避免制造重试风暴。
+ */
+export const SESSION_LOAD_RETRIES = 2;
+export const SESSION_LOAD_RETRY_DELAYS_MS = [300, 900] as const;
 
 export class SessionLoadTimeoutError extends Error {
   timeoutMs: number;
@@ -71,6 +77,9 @@ export async function fetchSession(
     } catch (error) {
       lastError = error;
       if (attempt >= retries || !isRetryableSessionLoadError(error)) throw error;
+      // 退避后再试（最后一次失败前不再等待）
+      const delay = SESSION_LOAD_RETRY_DELAYS_MS[Math.min(attempt, SESSION_LOAD_RETRY_DELAYS_MS.length - 1)];
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
   throw lastError;

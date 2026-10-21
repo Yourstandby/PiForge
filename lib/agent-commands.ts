@@ -23,6 +23,7 @@ const AGENT_COMMAND_TYPE_LIST = [
   "abort_compaction",
   "set_auto_retry",
   "set_agent_mode",
+  "reload_resources",
   "extension_ui_response",
 ] as const;
 

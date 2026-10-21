@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import type { ExtensionAPI } from "./sdk-adapter.ts";
 import { PLAN_MODE_SYSTEM_PROMPT } from "../lib/approval-policy.ts";
 import { createDesktopApprovalFactory } from "./desktop-approval-extension.ts";
+import { STATIC_CWD_SECTION } from "./prompt-prefix.ts";
 
 type Handler = (event: unknown, ctx?: unknown) => unknown;
 
@@ -60,4 +61,263 @@ test("full mode leaves the prompt untouched", async () => {
   const result = await handlers.get("before_agent_start")?.(event);
   assert.equal(result, undefined);
   assert.equal(event.systemPromptOptions.appendSystemPrompt, "CUSTOM");
+});
+
+type RegisteredTool = { name: string; description?: string; parameters?: unknown; exposure?: string };
+
+function setupPrefix(options: {
+  mode?: "plan" | "ask" | "full";
+  cwd?: string;
+  registered?: RegisteredTool[];
+  active?: string[];
+} = {}) {
+  const handlers = new Map<string, Handler>();
+  const activeTools: string[][] = [];
+  const registered = options.registered ?? [];
+  const pi = {
+    on: (name: string, handler: Handler) => {
+      handlers.set(name, handler);
+      return () => handlers.delete(name);
+    },
+    setActiveTools: (names: string[]) => activeTools.push(names),
+    getAllTools: () => registered,
+    getActiveTools: () => options.active ?? [],
+    registerTool: () => {},
+  } as unknown as ExtensionAPI;
+  const modeRef = {
+    current: options.mode ?? "full",
+    toolPreset: "default" as const,
+    ...(options.cwd ? { getCwd: () => options.cwd } : {}),
+  };
+  createDesktopApprovalFactory(modeRef)(pi);
+  return { handlers, activeTools, modeRef };
+}
+
+function prefixEvent() {
+  return {
+    type: "before_agent_start",
+    prompt: "hi",
+    get systemPrompt() {
+      return "BASE PROMPT";
+    },
+    systemPromptOptions: {
+      appendSystemPrompt: "",
+      cwd: "D:/Pi/PiForge",
+      sections: {} as Record<string, string>,
+      selectedTools: [] as string[],
+    },
+  };
+}
+
+async function withEnv<T>(name: string, value: string | undefined, run: () => Promise<T>): Promise<T> {
+  const previous = process.env[name];
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+  try {
+    return await run();
+  } finally {
+    if (previous === undefined) delete process.env[name];
+    else process.env[name] = previous;
+  }
+}
+
+test("prefix purity: identical state yields byte-identical tools and prompt", async () => {
+  const registered: RegisteredTool[] = [
+    { name: "browser_read", description: "Read the built-in browser page text" },
+    { name: "run_bg", description: "Run a command in the background" },
+    { name: "spawn_agent", description: "Delegate to a sub-agent" },
+    { name: "tool_history_get", description: "Read oversized tool output" },
+    { name: "tool_search", description: "Search deferred tools" },
+  ];
+  const { handlers, activeTools } = setupPrefix({ registered, cwd: "D:\\Pi\\PiForge" });
+
+  const first = prefixEvent();
+  await handlers.get("before_agent_start")?.(first);
+  const second = prefixEvent();
+  await handlers.get("before_agent_start")?.(second);
+
+  assert.deepEqual(activeTools[0], activeTools[1], "同一状态两次请求的工具数组必须完全相等");
+  assert.deepEqual(
+    first.systemPromptOptions,
+    second.systemPromptOptions,
+    "同一状态两次请求的提示词输入必须完全相等",
+  );
+  // 扩展工具超过阈值 → 只声明核心工具 + 常驻工具，其余进存根目录。
+  assert.deepEqual(activeTools[0], [
+    "bash",
+    "edit",
+    "read",
+    "spawn_agent",
+    "tool_search",
+    "write",
+  ]);
+  // 回归护栏：spawn_agent 一旦被存根掉，模型就再也派不出子 Agent（Agents 面板永远空）。
+  assert.ok(activeTools[0].includes("spawn_agent"), "spawn_agent 必须常驻声明");
+  const addendum = (first.systemPromptOptions as { appendSystemPrompt?: string }).appendSystemPrompt ?? "";
+  assert.match(addendum, /\[未加载的工具\]/);
+  assert.match(addendum, /browser_read: Read the built-in browser page text/);
+  assert.equal(
+    addendum,
+    (second.systemPromptOptions as { appendSystemPrompt?: string }).appendSystemPrompt,
+    "存根目录本身也必须是静态文本",
+  );
+});
+
+test("tool order is ASCII sorted even when the registry order churns", async () => {
+  const tools = [
+    { name: "mcp__Zeta", exposure: "direct" },
+    { name: "mcp__alpha", exposure: "direct" },
+    { name: "bash" },
+  ];
+  const { handlers, activeTools } = setupPrefix({ registered: tools, cwd: "/repo" });
+  // 用过扩展工具 → 放开完整集合
+  await handlers.get("tool_call")?.({ toolName: "browser_read", input: {} });
+  await handlers.get("before_agent_start")?.(prefixEvent());
+  const order = activeTools[0];
+  assert.deepEqual(order, [...order].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
+  assert.ok(order.indexOf("mcp__Zeta") < order.indexOf("mcp__alpha"), "ASCII 序：大写在前");
+
+  // 注册顺序反过来，集合不变 → 锁存后必须一模一样
+  const churned = setupPrefix({
+    registered: [tools[2], tools[1], tools[0]],
+    cwd: "/repo",
+  });
+  await churned.handlers.get("tool_call")?.({ toolName: "browser_read", input: {} });
+  await churned.handlers.get("before_agent_start")?.(prefixEvent());
+  assert.deepEqual(churned.activeTools[0], order);
+});
+
+test("cwd stays in the system prompt by default (per-session constant)", async () => {
+  const { handlers } = setupPrefix({ cwd: "D:\\Pi\\PiForge" });
+  const event = prefixEvent();
+  const result = await handlers.get("before_agent_start")?.(event);
+  assert.equal(event.systemPromptOptions.sections.cwd, undefined, "不应改写 SDK 的 cwd 段");
+  assert.equal(result, undefined, "默认不注入额外的用户消息块");
+});
+
+test("PIFORGE_PREFIX_STRIP_CWD=1 moves cwd out of the prompt into the user message", async () => {
+  await withEnv("PIFORGE_PREFIX_STRIP_CWD", "1", async () => {
+    const { handlers } = setupPrefix({ cwd: "D:\\Pi\\PiForge" });
+    const event = prefixEvent();
+    const result = (await handlers.get("before_agent_start")?.(event)) as {
+      message?: { customType?: string; content?: unknown; display?: boolean };
+    };
+    assert.equal(event.systemPromptOptions.sections.cwd, STATIC_CWD_SECTION);
+    assert.ok(result?.message, "真实 cwd 必须随用户消息下发");
+    assert.equal(result.message.display, false);
+    assert.equal(result.message.content, "<context>cwd: D:/Pi/PiForge</context>");
+  });
+});
+
+test("a tool activated on the SDK side is not dropped by the loadout latch", async () => {
+  /** 6 个直接暴露的 MCP 工具 → 扩展工具数 > 5 → 走存根模式。 */
+  const mcpTools: RegisteredTool[] = ["a", "b", "c", "d", "e", "f"].map((suffix) => ({
+    name: `mcp__${suffix}`,
+    exposure: "direct",
+    description: `Tool ${suffix}`,
+  }));
+  const registered: RegisteredTool[] = [...mcpTools, { name: "tool_search", description: "Search" }];
+  const state: { active: string[] } = { active: [] };
+  const handlers = new Map<string, Handler>();
+  const seen: string[][] = [];
+  const pi = {
+    on: (name: string, handler: Handler) => {
+      handlers.set(name, handler);
+      return () => handlers.delete(name);
+    },
+    setActiveTools: (names: string[]) => seen.push(names),
+    getAllTools: () => registered,
+    getActiveTools: () => state.active,
+    registerTool: () => {},
+  } as unknown as ExtensionAPI;
+  createDesktopApprovalFactory({ current: "full", toolPreset: "default" })(pi);
+
+  await handlers.get("before_agent_start")?.(prefixEvent());
+  assert.deepEqual(seen[0], ["bash", "edit", "read", "tool_search", "write"]);
+  assert.ok(!seen[0].includes("mcp__a"), "存根模式下不声明完整 schema");
+
+  // 模型点名要 mcp__a：SDK 把它激活，且它真的被调用过。
+  await handlers.get("tool_call")?.({ toolName: "mcp__a", input: {} });
+  state.active = ["bash", "edit", "mcp__a", "read", "write"];
+  await handlers.get("before_agent_start")?.(prefixEvent());
+  assert.ok(seen[1].includes("mcp__a"), "被点名的工具必须完整注入");
+  assert.ok(!seen[1].includes("mcp__b"), "其余工具仍然保持存根");
+
+  // 状态没再变：第三次请求必须与第二次字节级一致（锁存生效）。
+  await handlers.get("before_agent_start")?.(prefixEvent());
+  assert.deepEqual(seen[2], seen[1]);
+});
+
+test("desktop_use_tool loads a stubbed tool on the next turn", async () => {
+  const registered: RegisteredTool[] = [
+    { name: "browser_read", description: "Read the browser" },
+    { name: "run_bg", description: "Run in background" },
+    { name: "spawn_agent", description: "Delegate" },
+    { name: "tool_history_get", description: "Read oversized tool output" },
+    { name: "tool_search", description: "Search" },
+  ];
+  const state: { active: string[] } = { active: [] };
+  const registeredTools: Array<{
+    name: string;
+    execute: (id: string, params: Record<string, unknown>) => Promise<{ content: unknown[] }>;
+  }> = [];
+  const handlers = new Map<string, Handler>();
+  const seen: string[][] = [];
+  const pi = {
+    on: (name: string, handler: Handler) => {
+      handlers.set(name, handler);
+      return () => handlers.delete(name);
+    },
+    setActiveTools: (names: string[]) => {
+      state.active = [...names];
+      seen.push(names);
+    },
+    getAllTools: () => registered,
+    getActiveTools: () => state.active,
+    registerTool: (definition: { name: string; execute: never }) => {
+      registeredTools.push(definition);
+      registered.push({ name: definition.name, description: "Load a stubbed tool" });
+    },
+  } as unknown as ExtensionAPI;
+  createDesktopApprovalFactory({ current: "full", toolPreset: "default" })(pi);
+
+  await handlers.get("before_agent_start")?.(prefixEvent());
+  assert.ok(!seen[0].includes("browser_read"), "默认只给存根");
+  assert.ok(seen[0].includes("desktop_use_tool"), "点名通道必须声明");
+
+  const useTool = registeredTools.find((tool) => tool.name === "desktop_use_tool");
+  assert.ok(useTool, "desktop_use_tool 必须注册");
+  const result = (await useTool!.execute("call-1", { name: "browser_read" })) as {
+    content: Array<{ text?: string }>;
+  };
+  assert.match(result.content[0]?.text ?? "", /Loaded browser_read/);
+
+  await handlers.get("before_agent_start")?.(prefixEvent());
+  assert.ok(seen[1].includes("browser_read"), "点名后必须完整注入");
+  assert.ok(!seen[1].includes("run_bg"), "没点名的仍然保持存根");
+
+  // 未知工具名不能污染装载
+  const bad = (await useTool!.execute("call-2", { name: "nope" })) as {
+    content: Array<{ text?: string }>;
+  };
+  assert.match(bad.content[0]?.text ?? "", /Unknown tool/);
+});
+
+test("plan mode also reports the prefix diff only when it changes", async () => {
+  await withEnv("PIFORGE_DEBUG_PREFIX", "1", async () => {
+    const { handlers } = setupPrefix({ mode: "plan", cwd: "/repo" });
+    const lines: string[] = [];
+    const original = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(" "));
+    };
+    try {
+      await handlers.get("before_agent_start")?.(prefixEvent());
+      await handlers.get("before_agent_start")?.(prefixEvent());
+    } finally {
+      console.log = original;
+    }
+    assert.equal(lines.length, 1, "第二次前缀未变，不应重复打印");
+    assert.match(lines[0], /首次建立前缀/);
+  });
 });

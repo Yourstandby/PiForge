@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { diffStats, parseUnifiedDiff, type DiffLine } from "@/lib/diff-lines";
 import { DiffRow } from "./DiffRows";
+import { visibleErrorMessage } from "@/lib/ui-error";
 
 /**
  * Git tab: working-tree status, per-file diff and a commit box.
@@ -314,8 +315,10 @@ export function GitPanel({ cwd, active = true }: { cwd: string | null; active?: 
               <p className="flex items-center gap-1.5 px-3 py-2 text-[11px] text-ink-faint">
                 <Loader2 size={11} className="animate-spin" aria-hidden="true" /> 读取 Git 状态…
               </p>
+            ) : error && visibleErrorMessage(error) ? (
+              <p className="px-3 py-2 text-[11px] text-danger">{visibleErrorMessage(error)}</p>
             ) : error ? (
-              <p className="px-3 py-2 text-[11px] text-danger">{error}</p>
+              <p className="px-3 py-2 text-[11px] text-ink-faint">正在等待本地引擎就绪…</p>
             ) : notGitRepo ? (
               <div className="flex h-full flex-col items-center justify-center gap-1.5 px-4 text-center">
                 <GitBranch size={20} strokeWidth={1.4} className="text-ink-faint" aria-hidden="true" />

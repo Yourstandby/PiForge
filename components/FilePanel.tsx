@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   Bot,
+  ChevronLeft,
   FileCode,
   GitBranch,
   Globe,
@@ -44,17 +45,24 @@ const explorerTokens = {
 
 type PanelTab = "files" | "git" | "browser" | "processes" | "terminal" | "agents" | "fleet" | "orchestrator" | "plugins";
 
+/** 主标签：文件 / Git / 浏览器 / 进程 / 终端 / 舰队 / 编排。
+ *  「插件」与「Agents」已迁移到左侧边栏底部工具栏，但仍然通过
+ *  `piforge:panel-tab` 事件在此面板渲染（见 HIDDEN_TAB_LABELS）。 */
 const PANEL_TABS = [
   { id: "files" as const, label: "文件", Icon: FileCode },
   { id: "git" as const, label: "Git", Icon: GitBranch },
   { id: "browser" as const, label: "浏览器", Icon: Globe },
   { id: "processes" as const, label: "进程", Icon: Terminal },
   { id: "terminal" as const, label: "终端", Icon: SquareTerminal },
-  { id: "agents" as const, label: "Agents", Icon: Bot },
   { id: "fleet" as const, label: "舰队", Icon: Users },
   { id: "orchestrator" as const, label: "编排", Icon: Network },
-  { id: "plugins" as const, label: "插件", Icon: Puzzle },
 ];
+
+/** 从侧边栏进入、但不在标签栏常驻的视图。 */
+const HIDDEN_TAB_LABELS: Partial<Record<PanelTab, { label: string; Icon: typeof Bot }>> = {
+  agents: { label: "Agents", Icon: Bot },
+  plugins: { label: "插件", Icon: Puzzle },
+};
 
 export function FilePanel({
   cwd,
@@ -81,6 +89,27 @@ export function FilePanel({
   onCollapse?: () => void;
 }) {
   const [tab, setTab] = useState<PanelTab>("files");
+  // 内容区极窄时给一个折叠提示（垂直图标栏永远保留）
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [contentWidth, setContentWidth] = useState(0);
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      setContentWidth(entries[0]?.contentRect.width ?? el.clientWidth);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  const contentTooNarrow = contentWidth > 0 && contentWidth < 180;
+
+  // 「插件 / Agents」是二级视图：进入时隐藏 Tab 栏，返回时回到进来之前的标签。
+  const hiddenView = HIDDEN_TAB_LABELS[tab] ?? null;
+  const lastPrimaryTabRef = useRef<PanelTab>("files");
+  useEffect(() => {
+    // 只在主标签上记录落点；进入二级视图时保持「从哪里来」
+    if (!hiddenView) lastPrimaryTabRef.current = tab;
+  }, [tab, hiddenView]);
 
   // Chat file links and tree clicks must always surface in the Files tab,
   // without touching the chat surface.
@@ -106,6 +135,17 @@ export function FilePanel({
     const revealAgents = () => setTab("agents");
     window.addEventListener("piforge:agents-open", revealAgents);
     return () => window.removeEventListener("piforge:agents-open", revealAgents);
+  }, []);
+
+  // 左侧边栏底部工具栏（插件 / Agents）通过这个事件切换面板标签。
+  useEffect(() => {
+    const onPanelTab = (event: Event) => {
+      const detail = (event as CustomEvent<PanelTab>).detail;
+      const all: string[] = [...PANEL_TABS.map((t) => t.id), ...Object.keys(HIDDEN_TAB_LABELS)];
+      if (typeof detail === "string" && all.includes(detail)) setTab(detail as PanelTab);
+    };
+    window.addEventListener("piforge:panel-tab", onPanelTab);
+    return () => window.removeEventListener("piforge:panel-tab", onPanelTab);
   }, []);
 
   const handleOpenFile = useCallback(
@@ -135,43 +175,119 @@ export function FilePanel({
     return () => setTab(previous);
   }, [tab]);
 
+
   return (
-    <aside className="flex h-full min-h-0 w-full shrink-0 flex-col border-l border-gray-200/60 bg-[#F5F5F7]">
-      {/* Panel tabs: icon + label, full-width, selected = light blue + underline */}
-      <div className="flex h-10 shrink-0 items-stretch border-b border-gray-200/60 bg-[#F5F5F7]">
-        <div role="tablist" aria-label="右侧面板" className="flex min-w-0 flex-1 items-stretch">
-          {PANEL_TABS.map(({ id, label, Icon }) => {
-            const selected = tab === id;
-            return (
-              <button
-                key={id}
-                type="button"
-                role="tab"
-                aria-selected={selected}
-                title={label}
-                onClick={() => setTab(id)}
-                className={`flex min-w-0 flex-1 items-center justify-center gap-1 border-b-2 px-0.5 text-[10.5px] transition-colors duration-150 ${
-                  selected
-                    ? "border-accent bg-[#E8EFFB] font-medium text-accent-strong"
-                    : "border-transparent text-ink-muted hover:bg-[#ECECEF] hover:text-ink"
-                }`}
-              >
-                <Icon size={12} strokeWidth={1.9} aria-hidden="true" className="shrink-0" />
-                <span className="truncate">{label}</span>
-              </button>
-            );
-          })}
-        </div>
+    <aside className="flex h-full min-h-0 w-full shrink-0 border-l border-gray-200/60 bg-[#F5F5F7]">
+      {/* ---- 垂直活动栏（Activity Bar）：固定 44px，永不随内容滚动 ---- */}
+      <nav
+        aria-label="右侧面板"
+        className="flex h-full w-11 shrink-0 flex-col items-center gap-0.5 border-r border-gray-200/60 bg-[#F5F5F7] py-1"
+      >
+        {/* 收起面板：固定在活动栏最顶端，样式/尺寸与其它图标一致 */}
         <button
           type="button"
           onClick={onCollapse}
           aria-label="收起右侧面板"
           title="收起右侧面板"
-          className="flex w-7 shrink-0 items-center justify-center border-l border-gray-200/60 text-ink-faint transition-colors hover:bg-[#ECECEF] hover:text-ink"
+          className="mb-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-ink-faint transition-colors duration-150 hover:bg-[#ECECEF] hover:text-ink"
         >
-          <PanelRightClose size={14} strokeWidth={1.75} aria-hidden="true" />
+          <PanelRightClose size={13} strokeWidth={1.75} aria-hidden="true" />
         </button>
-      </div>
+        <div className="mb-0.5 w-7 border-t border-gray-200/70" aria-hidden="true" />
+
+        {PANEL_TABS.map(({ id, label, Icon }) => {
+          const selected = tab === id;
+          return (
+            <button
+              key={id}
+              type="button"
+              title={label}
+              aria-label={label}
+              aria-current={selected ? "page" : undefined}
+              onClick={() => setTab(id)}
+              className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-md transition-colors duration-150 ${
+                selected
+                  ? "bg-[#E8EFFB] text-accent-strong"
+                  : "text-ink-muted hover:bg-[#ECECEF] hover:text-ink"
+              }`}
+            >
+              {/* 激活指示：图标左侧蓝色竖条 */}
+              {selected && (
+                <span
+                  aria-hidden="true"
+                  className="absolute -left-1 top-1.5 bottom-1.5 w-[2px] rounded-full bg-accent"
+                />
+              )}
+              <Icon size={15} strokeWidth={1.9} aria-hidden="true" />
+            </button>
+          );
+        })}
+
+        {/* 次要视图（插件 / Agents）：同样只占图标栏宽度，内容在右侧区域渲染 */}
+        <div className="mt-1 w-7 border-t border-gray-200/70" aria-hidden="true" />
+        {(["plugins", "agents"] as const).map((id) => {
+          const { label, Icon } = HIDDEN_TAB_LABELS[id]!;
+          const selected = tab === id;
+          return (
+            <button
+              key={id}
+              type="button"
+              title={label}
+              aria-label={label}
+              aria-current={selected ? "page" : undefined}
+              onClick={() => setTab(id)}
+              className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-md transition-colors duration-150 ${
+                selected
+                  ? "bg-[#E8EFFB] text-accent-strong"
+                  : "text-ink-muted hover:bg-[#ECECEF] hover:text-ink"
+              }`}
+            >
+              {selected && (
+                <span
+                  aria-hidden="true"
+                  className="absolute -left-1 top-1.5 bottom-1.5 w-[2px] rounded-full bg-accent"
+                />
+              )}
+              <Icon size={15} strokeWidth={1.9} aria-hidden="true" />
+            </button>
+          );
+        })}
+
+      </nav>
+
+      {/* ---- 内容区 ---- */}
+      <div ref={contentRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {hiddenView && (
+          <div className="flex h-9 shrink-0 items-center justify-between border-b border-gray-200/60 px-2">
+            <div className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-ink">
+              <hiddenView.Icon size={13} strokeWidth={1.9} aria-hidden="true" className="shrink-0 text-accent-strong" />
+              <span className="truncate">{hiddenView.label}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setTab(lastPrimaryTabRef.current)}
+              title="返回上一个面板"
+              aria-label="返回上一个面板"
+              className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-ink-muted transition-colors duration-150 hover:bg-[#ECECEF] hover:text-ink"
+            >
+              <ChevronLeft size={12} strokeWidth={2} aria-hidden="true" />
+              返回
+            </button>
+          </div>
+        )}
+
+        {contentTooNarrow && (
+          <div className="shrink-0 border-b border-gray-200/60 bg-white/70 px-2 py-1 text-[10.5px] leading-relaxed text-ink-faint">
+            内容区过窄，可拖动左边缘加宽，或
+            <button
+              type="button"
+              onClick={onCollapse}
+              className="ml-0.5 underline decoration-dotted underline-offset-2 hover:text-ink"
+            >
+              收起面板
+            </button>
+          </div>
+        )}
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
         {tab === "files" && (
@@ -252,6 +368,7 @@ export function FilePanel({
             <TerminalPanel />
           </div>
         )}
+        </div>
       </div>
     </aside>
   );

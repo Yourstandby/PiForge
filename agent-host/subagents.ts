@@ -76,10 +76,19 @@ function snapshotView(record: SubagentRecord): SubagentView {
   };
 }
 
+/**
+ * 列表顺序 = 面板顺序：**运行中的永远在最上面**，其余按开始时间倒序。
+ * 只按 startedAt 排会让"刚拉起的那个"被并发启动的旧任务挤下去。
+ */
 export function listSubagents(): SubagentView[] {
   return [...records.values()]
     .map(snapshotView)
-    .sort((a, b) => b.startedAt - a.startedAt);
+    .sort((a, b) => {
+      const runningRank = (view: SubagentView) => (view.status === "running" ? 0 : 1);
+      const rank = runningRank(a) - runningRank(b);
+      if (rank !== 0) return rank;
+      return b.startedAt - a.startedAt;
+    });
 }
 
 export function stopSubagent(id: string): boolean {

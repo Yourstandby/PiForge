@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { useI18n } from "./I18nProvider";
 import { ModalSurface } from "./ModalSurface";
+import { ErrorNotice } from "./ErrorNotice";
 
 export interface SessionExportModalProps {
   isOpen: boolean;
@@ -65,7 +66,7 @@ export function SessionExportModal({ isOpen, onClose, sessionId }: SessionExport
 
           {error && (
             <div className="p-2.5 rounded-control bg-red-500/10 border border-red-500/20 text-red-400 text-[12px]">
-              {error}
+              <ErrorNotice className="block" message={error} />
             </div>
           )}
 

@@ -9,6 +9,7 @@ import type {
 } from "@contract/domains/mcp";
 import { apiJson } from "./apiJson";
 import { useI18n } from "./I18nProvider";
+import { ErrorNotice } from "./ErrorNotice";
 
 export interface McpResourceBrowserProps {
   serverId: string;
@@ -131,7 +132,7 @@ export function McpResourceBrowser({ serverId, scope, cwd, onClose }: McpResourc
 
       {error && (
         <div className="mx-4 mt-3 rounded-control border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-600">
-          {error}
+          <ErrorNotice message={error} />
         </div>
       )}
 

@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, CheckCircle2, ListTodo } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { AlertCircle, ArrowDown, CheckCircle2, ListTodo } from "lucide-react";
 import type { AgentMessage, SessionInfo, SessionTreeNode } from "@/lib/types";
 import { useAgentSession } from "@/hooks/useAgentSession";
+import { useSmoothTypewriter } from "@/hooks/useSmoothTypewriter";
 import { useAudio } from "@/hooks/useAudio";
 import { useHostHealth } from "@/hooks/useHostHealth";
 import { conversationToMarkdown } from "@/lib/conversation-markdown";
@@ -11,11 +12,14 @@ import { buildBranchSwitchMap } from "@/lib/session-branches-view";
 import { buildImagineMessage } from "@/lib/imagine-command";
 import { BranchCloneModal, type BranchCloneMode } from "./BranchCloneModal";
 import { BranchNavigator } from "./BranchNavigator";
+import { visibleErrorMessage } from "@/lib/ui-error";
+import { estimateTokens, setLiveUsage } from "@/lib/live-usage";
 import { Composer } from "./Composer";
 import { ExtensionUiDialog } from "./ExtensionUiDialog";
 import { ModalSurface } from "./ModalSurface";
 import { StatusBar, type ThinkingLevel } from "./StatusBar";
-import { Transcript } from "./Transcript";
+import { buildTranscriptTurns, Transcript } from "./Transcript";
+import { TranscriptNav } from "./TranscriptNav";
 
 interface Props {
   session: SessionInfo | null;
@@ -36,6 +40,11 @@ interface Props {
   active?: boolean;
   /** `/new` slash command: start a fresh session in the current project. */
   onNewSession?: () => void;
+  /**
+   * 上报本标签的实时状态，供标签栏显示状态指示灯。
+   * running = 正在生成/调用工具；waiting = 需要用户处理；idle = 空闲。
+   */
+  onActivityChange?: (activity: "idle" | "running" | "waiting") => void;
   /** Insert a rendered Markdown code block into the composer. */
   onInsertCode?: (code: string, language?: string) => void;
   /** File currently open in the right panel; empty when nothing is open. */
@@ -55,6 +64,38 @@ interface Props {
  * server's running flag closes that gap (and any dropped-event gap) without
  * touching the shared send logic.
  */
+/** 对话导航用：只取用户消息的纯文本（折叠空白，前 20 字 + 省略号）。 */
+function navPreview(message: AgentMessage): string {
+  const content = (message as { content?: unknown }).content;
+  const raw =
+    typeof content === "string"
+      ? content
+      : Array.isArray(content)
+        ? content
+            .map((block) => {
+              const typed = block as { type?: string; text?: string };
+              return typed?.type === "text" ? typed.text ?? "" : "";
+            })
+            .join(" ")
+        : "";
+  // 兜底清洗：即使文本源里混入了角色标签或操作按钮文字，也一律剔除
+  const text = raw
+    .replace(/\s+/g, " ")
+    .replace(/(?:^|\s)(?:你|PiForge|复制|已复制|复制这段内容|分支|派生|创建中…)(?=\s|$)/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  // 简略列表单行截断，深色气泡里最多展示 3–4 行
+  return text.length > 200 ? `${text.slice(0, 200)}…` : text;
+}
+
+/** 粗估单价（USD / token），只用于流式期间的实时跳动，结算仍以真实 usage 为准。 */
+const LIVE_COST_PER_TOKEN = 0.000004;
+
+/** 右侧导航的刻度数量上限：永远是 9 个（DeepSeek 式「动态滚动窗口」）。 */
+const MAX_NAV_TICKS = 9;
+/** 回弹后蓝条落回的位置：第 5 格（0 基下标 4）。 */
+const NAV_WINDOW_CENTER = Math.floor(MAX_NAV_TICKS / 2);
+
 export function ChatSurface(props: Props) {
   const [reloadKey, setReloadKey] = useState(0);
   const reload = useCallback(() => setReloadKey((key) => key + 1), []);
@@ -76,6 +117,7 @@ function ChatSession({
   applyTargetName,
   onApplyCode,
   onOpenGitDiff,
+  onActivityChange,
   active = true,
   onReload,
 }: Props & { onReload: () => void }) {
@@ -108,10 +150,15 @@ function ChatSession({
     branchLeafChangeRef.current?.(leafId);
   }, []);
 
+  // 会话加载失败时的优雅重试：手动点「重试」+ 可重试错误自动退避重试。
+  const [retrying, setRetrying] = useState(false);
+  const autoRetryRef = useRef(0);
+
   const chat = useAgentSession({
     session,
     newSessionCwd,
     modelsRefreshKey,
+    active,
     onSessionCreated,
     onSessionForked,
     onBranchDataChange: handleBranchDataChange,
@@ -127,6 +174,15 @@ function ChatSession({
     trustPrompt: escTrustPrompt,
     handleAbort: handleEscAbort,
   } = chat;
+
+  // 标签状态指示灯：等待用户处理 > 运行中 > 空闲。只在变化时上报。
+  const needsUser = Boolean(escExtensionUi || escTrustPrompt || chat.canExecutePlan);
+  const activity = needsUser ? "waiting" : escAgentRunning ? "running" : "idle";
+  const onActivityChangeRef = useRef(onActivityChange);
+  onActivityChangeRef.current = onActivityChange;
+  useEffect(() => {
+    onActivityChangeRef.current?.(activity);
+  }, [activity]);
 
   // Esc = hard interrupt while the agent is generating. Menus/dialogs consume
   // Escape first via preventDefault, so this only fires when nothing else did.
@@ -255,6 +311,11 @@ function ChatSession({
     [chat.branches],
   );
 
+  const branchSwitchFor = useCallback(
+    (entryId: string) => branchSwitchMap.get(entryId) ?? null,
+    [branchSwitchMap],
+  );
+
   const handleSwitchBranch = useCallback(
     (leafId: string | null) => {
       void chat.handleLeafChange(leafId);
@@ -271,14 +332,139 @@ function ChatSession({
     [chat, onDraftChange],
   );
 
-  const streaming = chat.streamState.isStreaming ? chat.streamState.streamingMessage : null;
-  const messages: AgentMessage[] = streaming
-    ? [...chat.messages, streaming as AgentMessage]
-    : chat.messages;
+  const rawStreaming = chat.streamState.isStreaming ? chat.streamState.streamingMessage : null;
+  /**
+   * 平滑打字机：上游 chunk 粒度可能极大（一次几百字），这里用 rAF 每帧放 3 个字，
+   * 流式结束后 `enabled=false` 会瞬间补齐剩余字符。
+   */
+  const { message: streaming } = useSmoothTypewriter(
+    rawStreaming as { content?: unknown } | null,
+    Boolean(rawStreaming),
+  );
+
+  /**
+   * 开发期流式诊断：每次文本增长都打印 chunk 大小与尾部内容。
+   * - 每次几十~一百多字符 → 上游是真流式，打字机按设定节奏铺开；
+   * - 每次几百上千字符   → provider 粒度太粗，打字机会自动走"积压 >200 瞬补"分支。
+   */
+  const lastChunkLenRef = useRef(0);
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+    const content = (rawStreaming as { content?: unknown } | null)?.content;
+    const text = typeof content === "string"
+      ? content
+      : Array.isArray(content)
+        ? content
+            .map((block) => (block as { type?: string; text?: string })?.type === "text"
+              ? (block as { text?: string }).text ?? ""
+              : "")
+            .join("")
+        : "";
+    const delta = text.length - lastChunkLenRef.current;
+    lastChunkLenRef.current = text.length;
+    if (delta > 0) console.log("[SSE Chunk]", delta, text.slice(-80));
+  }, [rawStreaming]);
+  /**
+   * 稳定消息 key（修复"新消息被塞进上一条消息里"的错位）。
+   *
+   * 旧实现用数组下标当 React key：流式期间若新的 user 消息插进来，后面所有
+   * 下标都会平移，React 就会把新 DOM 复用到旧节点上。这里给每条消息对象分配
+   * 一个只增不减的稳定 id（WeakMap，对象存活期不变），流式那条永远是同一个
+   * 常量 key，因此插入/追加都只会让 React "移动"节点，而不会"错挂"。
+   */
+  const stableIdRef = useRef(new WeakMap<object, string>());
+  const stableIdSeqRef = useRef(0);
+  const stableKeyOf = useCallback((message: AgentMessage) => {
+    const object = message as unknown as object;
+    let key = stableIdRef.current.get(object);
+    if (!key) {
+      stableIdSeqRef.current += 1;
+      key = `msg-${stableIdSeqRef.current}`;
+      stableIdRef.current.set(object, key);
+    }
+    return key;
+  }, []);
+
+  const STREAMING_KEY = "__live_stream__";
+  /** 流式开始时的插入位置：中途来了新的 user 消息，助手占位也不会被挤到它后面。 */
+  const streamingAnchorRef = useRef<number | null>(null);
+  if (streaming) {
+    if (streamingAnchorRef.current === null) {
+      streamingAnchorRef.current = chat.messages.length;
+    }
+  } else {
+    streamingAnchorRef.current = null;
+  }
+
+  // 流式最后一条消息合并进列表时保持引用稳定，否则 transcriptNode 的 memo 每帧失效。
+  const messages: AgentMessage[] = useMemo(() => {
+    if (!streaming) return chat.messages;
+    const anchor = Math.min(streamingAnchorRef.current ?? chat.messages.length, chat.messages.length);
+    return [
+      ...chat.messages.slice(0, anchor),
+      streaming as AgentMessage,
+      ...chat.messages.slice(anchor),
+    ];
+  }, [chat.messages, streaming]);
+
+  /** 与 `messages` 严格 1:1 的稳定 key。 */
+  const messageKeys: string[] = useMemo(() => {
+    const base = chat.messages.map((message) => stableKeyOf(message));
+    if (!streaming) return base;
+    const anchor = Math.min(streamingAnchorRef.current ?? chat.messages.length, chat.messages.length);
+    return [...base.slice(0, anchor), STREAMING_KEY, ...base.slice(anchor)];
+  }, [chat.messages, streaming, stableKeyOf]);
+
+  /**
+   * 开发期结构自检：每条新消息到达时打印一次顺序 + 是否处于流式。
+   * 正常应为 `0:user 1:assistant 2:user …`，流式的那条永远在末尾。
+   */
+  const streamingFlag = Boolean(streaming);
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+    console.debug(
+      "[messages]",
+      chat.messages.map((message, index) => `${index}:${message.role}`).join(" "),
+      "| streaming:",
+      streamingFlag ? "appended-tail" : "none",
+    );
+  }, [chat.messages, streamingFlag]);
 
   // No session yet + no messages = the hero composer. Once a session is
   // selected (or a first message is queued) switch to the transcript view.
+  const retrySessionLoad = useCallback(async () => {
+    if (!session || retrying) return;
+    setRetrying(true);
+    try {
+      await chat.loadSession(session.id, true, true);
+    } finally {
+      setRetrying(false);
+    }
+  }, [chat, session, retrying]);
+
+  // 可重试错误（HTTP 5xx / 超时 / 管道中断）：1.5s、3s 各自动重试一次，
+  // 覆盖「Host 刚起来」「next dev 刚重载」这类瞬时窗口，避免用户手动点。
+  const loadSessionRef = useRef(chat.loadSession);
+  loadSessionRef.current = chat.loadSession;
+
+  useEffect(() => {
+    if (!chat.error || !session) {
+      autoRetryRef.current = 0;
+      return;
+    }
+    const retryable = /(HTTP 5\d\d|timed out|Failed to fetch|network|socket|ENOENT|ECONN)/i.test(chat.error);
+    if (!retryable || autoRetryRef.current >= 2) return;
+    const attempt = autoRetryRef.current + 1;
+    const timer = window.setTimeout(() => {
+      autoRetryRef.current = attempt;
+      void loadSessionRef.current(session.id, false, true);
+    }, attempt * 1500);
+    return () => window.clearTimeout(timer);
+  }, [chat.error, session]);
+
   const showTranscript = messages.length > 0 || session !== null || Boolean(chat.error);
+  /** 真·加载失败（没有任何消息可显示）：用极简卡片替代整个对话界面。 */
+  const loadFailed = Boolean(chat.error) && messages.length === 0;
 
   // Reconcile with the server when the run ends without us seeing agent_end.
   useEffect(() => {
@@ -313,10 +499,590 @@ function ChatSession({
   }, [chat.agentRunning, session, onReload]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
+  const composerContainerRef = useRef<HTMLDivElement>(null);
+  /** 用户是否已主动上翻（镜像 awayFromBottom，供自动跟随判断用，避免 deps 抖动）。 */
+  const awayFromBottomRef = useRef(false);
+  /**
+   * 「自动跟随」开关：true = 新内容到达时滚到底部。
+   * - 用户向上滚轮 → 立刻置 false（绝不把用户拽回去）
+   * - 用户滚回底部（距底 < 100px）或点「回到最新」→ 重新置 true
+   */
+  const followOutputRef = useRef(true);
+  /** 距底 <150px 视为"贴底"；只有贴底时才允许自动滚动跟随。 */
+  const isNearBottomRef = useRef(true);
+  /**
+   * 用户主动接管（点击对话区 / 向上滚动）。
+   * true 时跳过一切自动贴底，直到用户自己滚回底部或点「回到最新」。
+   */
+  const userPausedRef = useRef(false);
+  /** 输入时保持贴底：仅当用户当前在底部附近（手动上翻后不打扰）。 */
+  const stickToBottomIfNear = useCallback(() => {
+    if (userPausedRef.current || !isNearBottomRef.current) return;
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
+  }, []);
+  /** 镜像「是否正在流式」，供 ResizeObserver 闭包读取（避免依赖抖动）。 */
+  const agentRunningRef = useRef(false);
+  agentRunningRef.current = chat.agentRunning;
+
+  /** 新一轮开始（发送后）：强制跟随——用户刚发消息，期望看到后续回复。 */
+  useEffect(() => {
+    if (!chat.agentRunning) return;
+    userPausedRef.current = false;
+    followOutputRef.current = true;
+    isNearBottomRef.current = true;
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        const el = scrollRef.current;
+        if (el) el.scrollTop = el.scrollHeight;
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+    };
+  }, [chat.agentRunning]);
+
+  /** 用户主动向上滚轮 = 明确想离开底部，立刻停止自动跟随。 */
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onWheel = (event: WheelEvent) => {
+      if (event.deltaY < 0) {
+        userPausedRef.current = true;
+        followOutputRef.current = false;
+        isNearBottomRef.current = false;
+        needsInitialBottomRef.current = false;
+        // 取消进行中的平滑滚动，避免惯性把用户拽回底部。
+        el.scrollTop = el.scrollTop;
+      }
+    };
+    el.addEventListener("wheel", onWheel, { passive: true });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
+  /** 点击对话区（选中文本、展开工具卡、点链接等）= 用户接管，停止自动跟随。 */
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onPointerDown = () => {
+      userPausedRef.current = true;
+      followOutputRef.current = false;
+      isNearBottomRef.current = false;
+      needsInitialBottomRef.current = false;
+      el.scrollTop = el.scrollTop;
+    };
+    el.addEventListener("pointerdown", onPointerDown, { passive: true });
+    return () => el.removeEventListener("pointerdown", onPointerDown);
+  }, []);
+  /**
+   * 「首次打开这个会话，才自动贴底」。
+   * 同一个会话（标签页）再次切回来时 `session.id` 不变，这里不会重跑，
+   * 用户之前滚到哪就停在哪，不会被强制拉到底部。
+   */
+  const needsInitialBottomRef = useRef(true);
+  /** 标签切走时记住滚动位置；切回时恢复（离开时贴底则继续贴底）。 */
+  const savedScrollRef = useRef<{ top: number; atBottom: boolean } | null>(null);
+  const wasActiveRef = useRef(true);
+
+  /**
+   * 切换标签页的滚动记忆。注意：实际滚动容器是本地 `scrollRef`
+   * （useChatScroll 的 setScrollContainer 从未绑定，别处改动不会生效）。
+   * 离开时记下位置，回来时多帧恢复（图片/代码块异步擑高，一次恢复会被 clamp）；
+   * 离开时在底部则继续贴底。首次进入不恢复，交给 needsInitialBottom 贴底。
+   */
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const wasActive = wasActiveRef.current;
+    wasActiveRef.current = active;
+    if (!active) {
+      savedScrollRef.current = { top: el.scrollTop, atBottom: isNearBottomRef.current };
+      return;
+    }
+    if (wasActive || !savedScrollRef.current) return;
+    const { top, atBottom } = savedScrollRef.current;
+    followOutputRef.current = atBottom;
+    isNearBottomRef.current = atBottom;
+    const restore = () => {
+      el.scrollTop = atBottom ? el.scrollHeight : top;
+    };
+    restore();
+    requestAnimationFrame(restore);
+    const t1 = window.setTimeout(restore, 120);
+    const t2 = window.setTimeout(restore, 400);
+    return () => {
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+    };
+  }, [active]);
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    needsInitialBottomRef.current = true;
+    followOutputRef.current = true;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [session?.id]);
+
+  /** 开始输入（draft 变化）：在底部附近则保持贴底。 */
+  useEffect(() => {
+    if (!isNearBottomRef.current) return;
+    const raf = requestAnimationFrame(stickToBottomIfNear);
+    return () => cancelAnimationFrame(raf);
+  }, [draft, stickToBottomIfNear]);
+
+  /** 输入框高度变化（多行 / 附件）时同步贴底，避免内容被顶出视野。 */
+  useEffect(() => {
+    const node = composerContainerRef.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (isNearBottomRef.current) stickToBottomIfNear();
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [stickToBottomIfNear]);
+
+  /** 首次内容到位后（异步 markdown/高亮可能还在撑高）再贴一次，然后关闭"首屏贴底"。 */
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !needsInitialBottomRef.current) return;
+    if (messages.length === 0) return;
+    el.scrollTop = el.scrollHeight;
+    needsInitialBottomRef.current = false;
+  }, [messages.length]);
+
+  /**
+   * 内容高度二次变化（代码高亮、图片、折叠动画、折叠面板展开）时：
+   * - 仅在「首屏贴底中」或「正在流式跟随」时贴底；
+   * - 用户上翻后 followOutputRef=false，永不抢夺滚动位置；
+   * - 打开过的会话（首屏贴底已完成）不会因切标签/重排而强制回底。
+   */
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !showTranscript) return;
+    let raf = 0;
+    const stick = () => {
+      if (userPausedRef.current || !followOutputRef.current || !isNearBottomRef.current) return;
+      if (!needsInitialBottomRef.current && !agentRunningRef.current) return;
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        if (!followOutputRef.current) return;
+        el.scrollTop = el.scrollHeight;
+      });
+    };
+    const observer = new ResizeObserver(stick);
+    observer.observe(el);
+    const content = el.firstElementChild;
+    if (content) observer.observe(content);
+    return () => {
+      observer.disconnect();
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [showTranscript]);
+
+  // 新内容（流式文字 / 工具结果 / 折叠面板展开）到达时自动跟随到底部；
+  // 用户主动上翻后 followOutputRef=false，这里就完全不插手。
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || userPausedRef.current || !followOutputRef.current || !isNearBottomRef.current) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distance <= 0) return;
+    if (distance < 140) {
+      // 已经很靠近底部：直接对齐，避免每帧 smooth 造成"追不上的橡皮筋"
+      el.scrollTop = el.scrollHeight;
+    } else {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    }
   }, [messages.length, chat.streamState.streamingMessage, chat.agentRunning]);
+
+  /**
+   * bash 工具开始执行时，顺手把右侧面板切到「终端」Tab：
+   * 终端本来就由 host 的 desktop-terminal-extension 推流，这里只负责点亮入口，
+   * 不弹面板、不打断当前输入。
+   */
+  const seenBashToolsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const phase = chat.agentPhase;
+    if (phase?.kind !== "running_tools") return;
+    for (const tool of phase.tools) {
+      if (tool.name !== "bash" || seenBashToolsRef.current.has(tool.id)) continue;
+      seenBashToolsRef.current.add(tool.id);
+      window.dispatchEvent(new CustomEvent("piforge:panel-tab", { detail: "terminal" }));
+    }
+  }, [chat.agentPhase]);
+
+  // ------------------------------------------------------------------ 对话导航
+  /**
+   * 刻度数据源 = 已落盘的 `chat.messages`（**不含流式那条**），**不读 DOM**。
+   * 两个理由：
+   * 1. 以前是扫 `[data-turn-role="user"]`，一旦「首屏只挂载最近 20 轮」生效，
+   *    更早的轮次不在 DOM 里，长会话就只剩零星几个刻度；
+   * 2. 这份列表同时作为 `precomputedTurns` 传给 Transcript，必须是冻结的历史，
+   *    否则 `TurnRow` 的 memo 会被每帧重建的 turn 对象整行打穿。
+   * 流式那一条由 Transcript 自己从 `streamingMessage` 追加（`#turn-N` 仍对齐）。
+   */
+  const visibleTurns = useMemo(
+    () => (showTranscript ? buildTranscriptTurns(chat.messages) : []),
+    [showTranscript, chat.messages],
+  );
+
+  /** 每个用户轮次 → 该轮在 turns 数组中的下标（跳转锚点 `id="turn-N"`）。 */
+  const userTurns = useMemo(() => {
+    const out: Array<{ turnIndex: number; text: string }> = [];
+    visibleTurns.forEach((turn, turnIndex) => {
+      if (turn.role !== "user") return;
+      const message = chat.messages[turn.messageIndex];
+      out.push({ turnIndex, text: message ? navPreview(message) : turn.text });
+    });
+    return out;
+  }, [visibleTurns, chat.messages]);
+
+  /** 当前所在轮次（turns 下标）。ref 让滚动监听不必因状态变化重新绑定。 */
+  const [activeTurn, setActiveTurn] = useState(0);
+  const activeTurnRef = useRef(0);
+
+  /** 当前滚动位置在 userTurns 里的位置（最后一个 turnIndex ≤ activeTurn）。 */
+  const activeUserPos = useMemo(() => {
+    let position = -1;
+    for (let index = 0; index < userTurns.length; index += 1) {
+      if (userTurns[index].turnIndex <= activeTurn) position = index;
+      else break;
+    }
+    return position < 0 ? 0 : position;
+  }, [userTurns, activeTurn]);
+
+  /**
+   * 滑动窗口（Minimap / DeepSeek 式吸附）：9 个刻度永远是一段连续轮次。
+   *
+   * `startOffset = clamp(activePos - 4, 0, total - 9)`
+   *  - 在底部：startOffset 撞到 total-9，高亮落在第 9 格（最下方）；
+   *  - 往上滚：窗口先不动，高亮逐格上移（9→8→7…，上方灰刻度被"消耗"）；
+   *  - 高亮走到第 5 格（中间）后继续上滚：窗口整体上移一格补新刻度，高亮保持居中；
+   *  - 到对话最顶部：startOffset 被 0 夹住，窗口无法再平移，高亮停在第 1 格。
+   * 向下滚动完全对称。两端靠 clamp 兜住，绝不会溢出这 9 格。
+   */
+  /**
+   * 「触发式回弹」滑动窗口：先稳住边缘，越界一格才翻页。
+   *  - 蓝条走到第 1 格（pos === start）时窗口**不动**，稳稳停在最上方；
+   *  - 只有再往上、激活了更早的一条（pos < start）才翻窗，蓝条落到第 5 格；
+   *  - 底部对称：pos === start+8 稳住，pos > start+8 才翻窗落到第 5 格；
+   *  - 到整个对话首/末条（无处可补）时窗口停平，蓝条停在首末格不再回弹。
+   */
+  const [navStartOffset, setNavStartOffset] = useState(0);
+  const navStartRef = useRef(0);
+  const navInitializedRef = useRef(false);
+
+  useEffect(() => {
+    const total = userTurns.length;
+    if (total === 0) {
+      navInitializedRef.current = false;
+      navStartRef.current = 0;
+      setNavStartOffset(0);
+      return;
+    }
+    const maxStart = Math.max(0, total - MAX_NAV_TICKS);
+
+    // 首次拿到数据：窗口直接落在底部（最新一轮占第 9 格）
+    if (!navInitializedRef.current) {
+      navInitializedRef.current = true;
+      navStartRef.current = maxStart;
+      setNavStartOffset(maxStart);
+      return;
+    }
+
+    const start = Math.min(navStartRef.current, maxStart);
+    let next = start;
+    // 严格越界才回弹（站在第 1 / 第 9 格时保持不动）
+    const overflowTop = activeUserPos < start;
+    const overflowBottom = activeUserPos > start + MAX_NAV_TICKS - 1;
+    if (overflowTop && start > 0) {
+      next = Math.max(0, Math.min(maxStart, activeUserPos - NAV_WINDOW_CENTER));
+    } else if (overflowBottom && start < maxStart) {
+      next = Math.max(0, Math.min(maxStart, activeUserPos - NAV_WINDOW_CENTER));
+    }
+
+    if (next !== navStartRef.current) {
+      navStartRef.current = next;
+      setNavStartOffset(next);
+    }
+  }, [activeUserPos, userTurns.length]);
+
+  /**
+   * 实际生效的窗口起点：初始化完成前直接贴底（最新一轮在第 9 格），
+   * 这样会话刚加载时不会先闪一帧「从顶部开始」的窗口。
+   */
+  const navWindowStart = useMemo(() => {
+    const maxStart = Math.max(0, userTurns.length - MAX_NAV_TICKS);
+    return navInitializedRef.current ? Math.min(navStartOffset, maxStart) : maxStart;
+  }, [userTurns.length, navStartOffset]);
+
+  const navTicks = useMemo(
+    () => userTurns.slice(navWindowStart, navWindowStart + MAX_NAV_TICKS),
+    [userTurns, navWindowStart],
+  );
+
+  /** 全量条目：悬浮卡片要能翻到**所有**历史提问（不再受 9 条窗口限制）。 */
+  const navAllItems = useMemo(
+    () => userTurns.map((tick) => ({ id: `turn-${tick.turnIndex}`, text: tick.text })),
+    [userTurns],
+  );
+  /** 轨道 9 个刻度落在全量列表里的下标。 */
+  const navTickPositions = useMemo(
+    () =>
+      navTicks
+        .map((tick) => userTurns.findIndex((item) => item.turnIndex === tick.turnIndex))
+        .filter((index) => index >= 0),
+    [navTicks, userTurns],
+  );
+
+  const [awayFromBottom, setAwayFromBottom] = useState(false);
+
+  /** 蓝条位置 = 当前轮次在窗口内的下标（0=最上，8=最下），不再提前居中。 */
+  const activeTickIndex = useMemo(() => {
+    if (userTurns.length === 0) return -1;
+    return Math.min(MAX_NAV_TICKS - 1, Math.max(0, activeUserPos - navWindowStart));
+  }, [userTurns.length, activeUserPos, navWindowStart]);
+
+  /** 待跳转目标：目标轮次可能还没挂载，先请 Transcript 把它拉进渲染窗口。 */
+  const [pendingJump, setPendingJump] = useState<{ turnIndex: number; token: number } | null>(null);
+
+  useEffect(() => {
+    if (!pendingJump) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    let frame = 0;
+    let raf = 0;
+    const attempt = () => {
+      const target = el.querySelector<HTMLElement>(`#turn-${pendingJump.turnIndex}`);
+      if (target) {
+        const scrollMargin = parseFloat(getComputedStyle(target).scrollMarginTop) || 0;
+        const align = () => {
+          const delta =
+            target.getBoundingClientRect().top - el.getBoundingClientRect().top - scrollMargin;
+          if (Math.abs(delta) >= 0.5) el.scrollTop += delta;
+          return delta;
+        };
+        // 首帧对齐后，再补一帧：`content-visibility:auto` 的离屏轮次用估算高度占位，
+        // 真正渲染出来后会二次回流，需要再校准一次才不会"差一截"。
+        if (Math.abs(align()) >= 0.5) requestAnimationFrame(align);
+        setPendingJump(null);
+        return;
+      }
+      // 等 Transcript 把目标轮次挂上来（最多撑 8 帧）
+      if (frame++ < 8) raf = requestAnimationFrame(attempt);
+      else setPendingJump(null);
+    };
+    raf = requestAnimationFrame(attempt);
+    return () => cancelAnimationFrame(raf);
+  }, [pendingJump]);
+
+  /** 点击刻度 / 列表项：跳到对应轮次（必要时先展开历史）。 */
+  const jumpToTurn = useCallback(
+    (index: number) => {
+      const tick = userTurns[index];
+      if (!tick) return;
+      setPendingJump((previous) => ({ turnIndex: tick.turnIndex, token: (previous?.token ?? 0) + 1 }));
+      setActiveTurn(tick.turnIndex);
+    },
+    [userTurns],
+  );
+
+  /**
+   * 「回到最新对话」按钮走瞬移（直接写 scrollTop，无平滑动画）；
+   * 键盘快捷键仍可传 "smooth"。瞬移同样会触发 scroll 事件，
+   * 右侧导航的窗口回弹/蓝条滑动因此能正常播放。
+   */
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (behavior === "smooth") {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+      return;
+    }
+    el.scrollTop = el.scrollHeight;
+  }, []);
+
+  // 滚动时：高亮当前所在回合 + 判断是否离开底部（只统计已挂载的轮次）。
+  // 拖拽滚动条会连续派发上百个 scroll 事件，这里用 rAF 合并成「每帧最多一次」，
+  // 并且只在值真的变化时才 setState，避免滚动期间高频重渲染掉帧。
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    let raf = 0;
+    let lastAway: boolean | null = null;
+    let lastActive = Number.NaN;
+
+    const measure = () => {
+      raf = 0;
+      const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+      // 距底 <150px 视为贴底；只有此时才允许自动跟随
+      const near = distance < 150;
+      isNearBottomRef.current = near;
+      if (near) followOutputRef.current = true;
+      // 真正滚回底部才解除「用户接管」，点击/微滚动不会误恢复。
+      if (distance < 40) userPausedRef.current = false;
+      const away = distance > 120;
+      if (away !== lastAway) {
+        lastAway = away;
+        awayFromBottomRef.current = away;
+        setAwayFromBottom(away);
+      }
+
+      const threshold = el.getBoundingClientRect().top + 96;
+      let current = activeTurnRef.current;
+      let found = false;
+      const nodes = el.querySelectorAll<HTMLElement>('[data-turn-role="user"]');
+      for (const node of nodes) {
+        if (node.getBoundingClientRect().top > threshold) continue;
+        const parsed = Number(node.id.slice("turn-".length));
+        if (Number.isFinite(parsed)) {
+          current = parsed;
+          found = true;
+        }
+      }
+      if (found && current !== lastActive) {
+        lastActive = current;
+        activeTurnRef.current = current;
+        setActiveTurn(current);
+      }
+    };
+
+    // 拖拽滚动期间暂停装饰性动画（打字机光标、脉冲点、转圈）：
+    // 动画和滚动抢同一个合成线程，暂停后拖拽明显更跟手。
+    let idleTimer: ReturnType<typeof setTimeout> | null = null;
+    const markScrolling = () => {
+      el.dataset.scrolling = "true";
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        idleTimer = null;
+        delete el.dataset.scrolling;
+      }, 180);
+    };
+
+    const onScroll = () => {
+      markScrolling();
+      if (raf) return;
+      raf = requestAnimationFrame(measure);
+    };
+
+    measure();
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      if (raf) cancelAnimationFrame(raf);
+      if (idleTimer) clearTimeout(idleTimer);
+      delete el.dataset.scrolling;
+    };
+  }, [navAllItems.length, showTranscript]);
+
+  // ------------------------------------------------------------------ 实时用量
+  /** 流式期间的文字长度（用于估算 token / 费用），同时广播给状态栏。 */
+  const liveTokens = useMemo(() => {
+    const partial = chat.streamState.streamingMessage as
+      | { content?: Array<{ type?: string; text?: string }>; usage?: { output?: number } }
+      | null;
+    if (!partial) return 0;
+    const usage = partial.usage;
+    if (usage && typeof usage.output === "number" && usage.output > 0) return usage.output;
+    const text = (partial.content ?? [])
+      .map((block) => (block?.type === "text" ? block.text ?? "" : ""))
+      .join("");
+    return estimateTokens(text);
+  }, [chat.streamState.streamingMessage]);
+
+  /**
+   * 实时生成速度（tokens/s）：对 liveTokens 做 0.5s 采样 + 指数滑动平均，
+   * 避免每来一个 token 就抖动。思考过程标题栏用它显示速度。
+   */
+  const [tokensPerSecond, setTokensPerSecond] = useState(0);
+  const tokenRateRef = useRef<{ tokens: number; at: number; rate: number }>({ tokens: 0, at: 0, rate: 0 });
+
+  useEffect(() => {
+    if (!chat.agentRunning) {
+      tokenRateRef.current = { tokens: 0, at: 0, rate: 0 };
+      setTokensPerSecond(0);
+      return;
+    }
+    const now = performance.now();
+    const prev = tokenRateRef.current;
+    // 新一轮消息（计数回退）或首次采样：只重置基准
+    if (!prev.at || liveTokens < prev.tokens) {
+      tokenRateRef.current = { tokens: liveTokens, at: now, rate: prev.rate };
+      return;
+    }
+    const seconds = (now - prev.at) / 1000;
+    if (seconds < 0.5) return;
+    const instant = (liveTokens - prev.tokens) / seconds;
+    const smoothed = prev.rate > 0 ? prev.rate * 0.6 + instant * 0.4 : instant;
+    tokenRateRef.current = { tokens: liveTokens, at: now, rate: smoothed };
+    setTokensPerSecond(Math.max(0, Math.round(smoothed)));
+  }, [liveTokens, chat.agentRunning]);
+
+  /**
+   * 实时输入速度（tokens/s）：用户打字时对 draft 做同样的 0.5s 采样 + 指数平滑。
+   * 与输出速率并列显示，形成双向动态。
+   */
+  const [inputTokensPerSecond, setInputTokensPerSecond] = useState(0);
+  const inputRateRef = useRef<{ tokens: number; at: number; rate: number }>({ tokens: 0, at: 0, rate: 0 });
+  useEffect(() => {
+    const tokens = estimateTokens(draft);
+    const now = performance.now();
+    const prev = inputRateRef.current;
+    if (tokens === 0) {
+      inputRateRef.current = { tokens: 0, at: 0, rate: 0 };
+      setInputTokensPerSecond(0);
+      return;
+    }
+    if (!prev.at || tokens < prev.tokens) {
+      inputRateRef.current = { tokens, at: now, rate: prev.rate };
+      return;
+    }
+    const seconds = (now - prev.at) / 1000;
+    if (seconds < 0.5) return;
+    const instant = (tokens - prev.tokens) / seconds;
+    const smoothed = prev.rate > 0 ? prev.rate * 0.6 + instant * 0.4 : instant;
+    inputRateRef.current = { tokens, at: now, rate: smoothed };
+    setInputTokensPerSecond(Math.max(0, Math.round(smoothed)));
+  }, [draft]);
+
+  /** 本轮累计输出：当前 user 消息之后已完成 assistant 消息的 output 之和（不含当前流式）。 */
+  const turnOutputTokens = useMemo(() => {
+    let sum = 0;
+    for (let i = chat.messages.length - 1; i >= 0; i--) {
+      const message = chat.messages[i] as { role?: string; usage?: { output?: number } };
+      if (message.role === "user") break;
+      if (message.role === "assistant" && message.usage) sum += message.usage.output ?? 0;
+    }
+    return sum;
+  }, [chat.messages]);
+
+  useEffect(() => {
+    if (chat.agentRunning) {
+      setLiveUsage({ tokens: liveTokens, cost: liveTokens * LIVE_COST_PER_TOKEN });
+    } else {
+      setLiveUsage(null);
+    }
+  }, [chat.agentRunning, liveTokens]);
+
+  // 结束（或切换会话）时清掉残留的实时数字
+  useEffect(() => () => setLiveUsage(null), []);
+
+  // Ctrl/Cmd + End（或 Cmd/Ctrl + ↓）：一键回到最新对话，输入框聚焦时同样生效
+  useEffect(() => {
+    if (!active) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+      const isEnd = event.key === "End";
+      const isDown = event.key === "ArrowDown";
+      if (!isEnd && !isDown) return;
+      event.preventDefault();
+      followOutputRef.current = true;
+      scrollToBottom("smooth");
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [active, scrollToBottom]);
 
   const trust = chat.trustPrompt;
   const trustCard = trust ? (
@@ -411,6 +1177,90 @@ function ChatSession({
           {compactToast.text}
         </div>
       )}
+      {/* 后台引擎没起来时给一句提示，但**不做成白色卡片**：
+          这里只是一行红字，避免在输入框上方多出一块色块挡住滚动区。 */}
+      {hostHealth.state !== "ready" && (
+        <div
+          role="status"
+          className="flex items-center gap-1.5 self-start px-1 pb-1 text-[12px] text-danger"
+        >
+          <AlertCircle size={13} strokeWidth={2} className="shrink-0" aria-hidden="true" />
+          <span>
+            {hostHealth.message}
+            <span className="ml-1 text-ink-faint">
+              （发送已停用；引擎恢复后自动可用）
+            </span>
+          </span>
+        </div>
+      )}
+      {(() => {
+        const phase = chat.agentPhase;
+        if (phase?.kind !== "running_tools" || phase.tools.length === 0) return null;
+        const names = Array.from(new Set(phase.tools.map((tool) => tool.name)));
+        const color = (name: string) => {
+          const n = name.toLowerCase();
+          if (n === "edit" || n === "write" || n === "apply_patch") return "text-[#3E8A63]";
+          if (n === "read") return "text-[#9A6B1F]";
+          if (n === "powershell" || n === "pwsh") return "text-[#C2661A]";
+          if (n === "bash" || n === "terminal" || n === "cmd") return "text-accent-strong";
+          return "text-ink-muted";
+        };
+        const shown = names.slice(0, 3);
+        // 徽章整体色调跟随「第一个」工具（PowerShell 橘色），其余工具名各自保留
+        // 自己的文字颜色，不被第一个的样式覆盖。
+        const lead = shown[0]?.toLowerCase() ?? "";
+        const leadIsPowerShell = lead === "powershell" || lead === "pwsh";
+        return (
+          <div
+            className={`mb-1 flex shrink-0 items-center gap-1 self-start rounded-md px-1.5 py-0.5 text-[10px] ${
+              leadIsPowerShell ? "bg-[#FDF3E8] text-[#C2661A]" : "bg-[#F1F7FF] text-accent-strong"
+            }`}
+            title={`正在执行：${phase.tools.map((tool) => tool.name).join(" · ")}`}
+          >
+            <span className="flex h-2.5 items-end gap-[2px]" aria-hidden="true">
+              {[0, 1, 2].map((index) => (
+                <span
+                  key={index}
+                  className={`beat-bar w-[2px] rounded-sm ${leadIsPowerShell ? "bg-[#D9843A]" : "bg-accent"}`}
+                  style={{ height: "10px", animationDelay: `${index * 0.15}s` }}
+                />
+              ))}
+            </span>
+            <span className="max-w-[200px] truncate font-mono">
+              running:{" "}
+              {shown.map((name, index) => (
+                <span key={name} className={color(name)}>
+                  {index > 0 ? ", " : ""}
+                  {name}
+                </span>
+              ))}
+              {names.length > 3 ? ` +${names.length - 3}` : ""}
+            </span>
+          </div>
+        );
+      })()}
+      {(chat.agentRunning || inputTokensPerSecond > 0) && (
+        <div className="mb-1 flex items-center gap-1.5 self-start rounded-md bg-[#F1F7FF] px-1.5 py-0.5 text-[10px] font-medium text-accent-strong">
+          <span className="flex h-2.5 items-end gap-[2px]" aria-hidden="true">
+            {[0, 1, 2].map((index) => (
+              <span
+                key={index}
+                className="beat-bar w-[2px] rounded-sm bg-accent"
+                style={{ height: "10px", animationDelay: `${index * 0.15}s` }}
+              />
+            ))}
+          </span>
+          {inputTokensPerSecond > 0 && (
+            <>
+              <span className="tabular-nums">↑ {inputTokensPerSecond}</span>
+              <span className="text-ink-faint">·</span>
+            </>
+          )}
+          <span className="tabular-nums">↓ {tokensPerSecond} tokens/s</span>
+          <span className="text-ink-faint">·</span>
+          <span className="tabular-nums">{(turnOutputTokens + liveTokens).toLocaleString()} tokens</span>
+        </div>
+      )}
       <Composer
         value={draft}
         onValueChange={onDraftChange}
@@ -474,7 +1324,10 @@ function ChatSession({
       compacting={chat.isCompacting}
       sessionStats={chat.sessionStats}
       contextUsage={chat.contextUsage}
+      activity={chat.sessionActivity}
+      projectPath={session?.cwd ?? newSessionCwd ?? null}
       currentProvider={currentModel?.provider ?? null}
+      runningTools={chat.agentPhase?.kind === "running_tools" ? chat.agentPhase.tools : null}
       hostState={hostHealth.state}
       hostTitle={
         hostHealth.state === "ready" && hostHealth.detail
@@ -482,6 +1335,67 @@ function ChatSession({
           : hostHealth.message
       }
     />
+  );
+
+  /**
+   * 标签切换只改变 `active`（仅用于快捷键与滚动副作用），消息内容不变。
+   * 这里把整段 Transcript 记忆化：切标签时 React 直接复用同一个 element，
+   * 不再对上千条消息做一次完整 reconcile —— 这是切换卡顿的主因。
+   */
+  /** 稳定引用：避免 `onApplyCode ? handler : undefined` 每帧都产生新值，破坏下游 memo。 */
+  const applyCodeHandler = useMemo(
+    () => (onApplyCode ? handleApplyCode : undefined),
+    [onApplyCode, handleApplyCode],
+  );
+
+  const transcriptNode = useMemo(
+    () => (
+      <Transcript
+        revealTurn={pendingJump?.turnIndex ?? null}
+        precomputedTurns={visibleTurns}
+        liveTurn={chat.agentRunning}
+        tokensPerSecond={tokensPerSecond}
+        liveToolOutputs={chat.liveToolOutput}
+        streamingMessage={(streaming as AgentMessage | null) ?? null}
+        messages={chat.messages}
+        messageKeys={messageKeys}
+        entryIds={chat.entryIds}
+        onFork={chat.agentRunning ? undefined : chat.handleFork}
+        forkingEntryId={chat.forkingEntryId}
+        cwd={session?.cwd ?? newSessionCwd}
+        onOpenFile={onOpenFile}
+        onInsertCode={onInsertCode}
+        onApplyCode={applyCodeHandler}
+        applyTargetName={applyTargetName}
+        nestedExecutions={chat.nestedToolExecutions}
+        onBranch={handleBranchAt}
+        branchSwitch={branchSwitchFor}
+        onSwitchBranch={handleSwitchBranch}
+      />
+    ),
+    [
+      messageKeys,
+      chat.entryIds,
+      chat.agentRunning,
+      chat.handleFork,
+      chat.forkingEntryId,
+      chat.nestedToolExecutions,
+      session?.cwd,
+      newSessionCwd,
+      onOpenFile,
+      onInsertCode,
+      applyCodeHandler,
+      pendingJump?.turnIndex,
+      visibleTurns,
+      streaming,
+      chat.messages,
+      tokensPerSecond,
+      chat.liveToolOutput,
+      applyTargetName,
+      handleBranchAt,
+      branchSwitchFor,
+      handleSwitchBranch,
+    ],
   );
 
   return (
@@ -514,33 +1428,49 @@ function ChatSession({
         />
       )}
 
-      {showTranscript ? (
+      {loadFailed ? (
+        /* 加载失败：只有一张居中的极简卡片，不再摆出「正常对话」的输入框 */
+        <div className="flex min-h-0 flex-1 items-center justify-center px-8">
+          <div className="w-full max-w-sm rounded-xl border border-[#E7E9EE] bg-white px-5 py-6 text-center shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
+            <AlertCircle
+              size={20}
+              strokeWidth={1.6}
+              className="mx-auto text-[#C2554E]"
+              aria-hidden="true"
+            />
+            <p className="mt-2 text-[13px] font-medium text-ink">无法加载这段会话</p>
+            <p className="mt-1 break-all text-[11px] leading-relaxed text-ink-faint">
+              {visibleErrorMessage(chat.error) ?? "本地引擎尚未就绪"}
+            </p>
+            <button
+              type="button"
+              onClick={() => void retrySessionLoad()}
+              disabled={retrying || !session}
+              className="mt-4 rounded-md border border-border bg-white px-3 py-1.5 text-[12px] font-medium text-ink-muted transition-colors duration-150 hover:bg-[#ECECEF] hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {retrying ? "重试中…" : "重试"}
+            </button>
+            <p className="mt-2.5 text-[10.5px] leading-relaxed text-ink-faint">
+              引擎重启或开发热更新时会出现，稍等几秒再重试即可。
+            </p>
+          </div>
+        </div>
+      ) : showTranscript ? (
         <>
-          <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+          {/* 定位参照：右侧导航条 absolute 贴在本容器右边缘；overflow-hidden
+              保证任何浮层都不会溢出到右边的终端/文件面板里去。 */}
+          <div className="relative min-h-0 flex-1 overflow-hidden">
+          <div
+            ref={scrollRef}
+            data-chat-scroll="true"
+            data-streaming={chat.agentRunning ? "true" : undefined}
+            className="scrollbar-ghost h-full min-h-0 overflow-y-auto"
+          >
             <div className="mx-auto w-full max-w-3xl px-8 py-10">
               {chat.loading && messages.length === 0 ? (
                 <p className="py-10 text-center text-[13px] text-ink-faint">加载会话…</p>
-              ) : chat.error ? (
-                <div className="py-10 text-center">
-                  <p className="text-[13px] text-ink-muted">无法加载这段会话</p>
-                  <p className="mt-1 text-[11px] text-ink-faint">{chat.error}</p>
-                </div>
               ) : (
-                <Transcript
-                  messages={messages}
-                  entryIds={chat.entryIds}
-                  onFork={chat.agentRunning ? undefined : chat.handleFork}
-                  forkingEntryId={chat.forkingEntryId}
-                  cwd={session?.cwd ?? newSessionCwd}
-                  onOpenFile={onOpenFile}
-                  onInsertCode={onInsertCode}
-                  onApplyCode={onApplyCode ? handleApplyCode : undefined}
-                  applyTargetName={applyTargetName}
-                  nestedExecutions={chat.nestedToolExecutions}
-                  onBranch={handleBranchAt}
-                  branchSwitch={(entryId) => branchSwitchMap.get(entryId) ?? null}
-                  onSwitchBranch={handleSwitchBranch}
-                />
+                transcriptNode
               )}
 
               {chat.agentRunning && !streaming && (
@@ -548,16 +1478,46 @@ function ChatSession({
               )}
             </div>
           </div>
-          <div className="shrink-0 px-8 pb-5">
-            <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
+
+          {/* 右侧对话导航（极简横条轴 + 悬浮白色列表面板） */}
+          <TranscriptNav
+            items={navAllItems}
+            ticks={navTickPositions}
+            activeIndex={activeTickIndex}
+            activeItemIndex={activeUserPos}
+            onJump={jumpToTurn}
+          />
+
+          </div>
+          {/* 与上方消息内容用同一套 max-w-3xl + px-8，左右边界完全对齐 */}
+          <div className="shrink-0 pb-4">
+            <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-8">
               {trustCard}
-              {composer}
+              {/* 输入面板 + 浮在它右上角外侧的「回到最新对话」按钮 */}
+              <div className="relative" ref={composerContainerRef} onFocusCapture={stickToBottomIfNear}>
+                {composer}
+                <button
+                  type="button"
+                  onClick={() => {
+                    userPausedRef.current = false;
+                    followOutputRef.current = true;
+                    scrollToBottom("auto");
+                  }}
+                  aria-label="回到最新对话"
+                  title="回到最新对话（Ctrl/⌘ + End）"
+                  className={`absolute -top-11 right-0 z-20 flex h-8 w-8 items-center justify-center rounded-full border border-[#E1E6F0] bg-white/80 text-ink-muted shadow-[0_2px_10px_rgba(17,17,17,0.10)] backdrop-blur-sm transition-all duration-200 hover:bg-white hover:text-ink ${
+                    awayFromBottom ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
+                  }`}
+                >
+                  <ArrowDown size={15} strokeWidth={2} aria-hidden="true" />
+                </button>
+              </div>
               <div className="shrink-0">{statusBar}</div>
             </div>
           </div>
         </>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto bg-[radial-gradient(ellipse_at_center,_#ffffff_0%,_#f8fafd_55%,_#eef3fb_100%)] px-8 py-6">
+        <div className="scrollbar-ghost flex min-h-0 flex-1 flex-col items-center overflow-y-auto bg-[radial-gradient(ellipse_at_center,_#ffffff_0%,_#f8fafd_55%,_#eef3fb_100%)] px-8 py-6">
           <div className="my-auto flex w-full max-w-3xl flex-col items-center">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -571,7 +1531,24 @@ function ChatSession({
             <p className="mt-2 text-[13px] text-ink-faint">今天想构建点什么？</p>
             <div className="mt-6 flex w-full flex-col gap-2">
               {trustCard}
-              {composer}
+              <div className="relative">
+                {composer}
+                <button
+                  type="button"
+                  onClick={() => {
+                    userPausedRef.current = false;
+                    followOutputRef.current = true;
+                    scrollToBottom("auto");
+                  }}
+                  aria-label="回到最新对话"
+                  title="回到最新对话（Ctrl/⌘ + End）"
+                  className={`absolute -top-11 right-0 z-20 flex h-8 w-8 items-center justify-center rounded-full border border-[#E1E6F0] bg-white/80 text-ink-muted shadow-[0_2px_10px_rgba(17,17,17,0.10)] backdrop-blur-sm transition-all duration-200 hover:bg-white hover:text-ink ${
+                    awayFromBottom ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
+                  }`}
+                >
+                  <ArrowDown size={15} strokeWidth={2} aria-hidden="true" />
+                </button>
+              </div>
               <div className="shrink-0">{statusBar}</div>
             </div>
           </div>

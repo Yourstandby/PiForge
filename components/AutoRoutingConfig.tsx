@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, Sparkles } from "lucide-react";
 import { ModalSurface } from "./ModalSurface";
+import { ErrorNotice } from "./ErrorNotice";
 
 interface ModelListItem {
   id: string;
@@ -213,7 +214,7 @@ export function AutoRoutingConfig({
           </>
         )}
 
-        {error && <p role="alert" className="text-[12px] text-danger">{error}</p>}
+        {error && <ErrorNotice className="block text-[12px] text-danger" message={error} />}
         {saved && <p role="status" className="text-[12px] text-[#3E8A63]">已保存，下一次提问生效。</p>}
       </div>
 

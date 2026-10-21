@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Bot, Loader2, Square } from "lucide-react";
 import type { HerdrAgentView } from "@contract/domains/herdr";
+import { ErrorNotice } from "./ErrorNotice";
 
 function duration(agent: HerdrAgentView): string {
   const ms = agent.endedAt ? agent.durationMs : Date.now() - agent.startedAt;
@@ -84,7 +85,13 @@ export function HerdrPanel() {
       data-last-loaded-at={lastLoadedAt}
       data-refresh-count={refreshCount}
     >
-      {error && <p className="px-1.5 text-[11px] text-danger">{error}</p>}
+      {error && (
+        <ErrorNotice
+          message={error}
+          className="block px-1.5 text-[11px] text-danger"
+          fallback={<span className="block px-1.5 py-1 text-[11px] text-ink-faint">正在等待本地引擎就绪…</span>}
+        />
+      )}
       {agents.length === 0 ? (
         <p className="px-1.5 py-2 text-[11px] leading-5 text-ink-faint">
           <Bot size={12} className="mr-1 inline" aria-hidden="true" />

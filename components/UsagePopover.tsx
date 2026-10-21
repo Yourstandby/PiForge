@@ -6,7 +6,7 @@ import { useCurrency } from "@/hooks/useCurrency";
 import type { UpstreamProviderUsage } from "@/lib/upstream-usage/types";
 import { formatDuration } from "@/lib/upstream-usage/format";
 
-import type { SessionStats, ContextUsage } from "./StatsBar";
+import type { SessionActivity, SessionStats, ContextUsage } from "./StatsBar";
 
 export type SessionStatsProps = SessionStats;
 export type ContextUsageProps = ContextUsage;
@@ -17,6 +17,8 @@ export interface UsagePopoverProps {
   anchorRect: DOMRect | null;
   sessionStats?: SessionStats | null;
   contextUsage?: ContextUsage | null;
+  /** 回合数 / 工具调用汇总；由 transcript 推导，可为空。 */
+  activity?: SessionActivity | null;
   upstreamUsage?: UpstreamProviderUsage | null;
   allUsages?: UpstreamProviderUsage[];
   loading?: boolean;
@@ -29,6 +31,7 @@ export function UsagePopover({
   anchorRect,
   sessionStats = null,
   contextUsage = null,
+  activity = null,
   upstreamUsage = null,
   allUsages = [],
   loading = false,
@@ -74,6 +77,42 @@ export function UsagePopover({
     : allUsages.length > 0
     ? allUsages
     : [];
+
+  /* ---- 账户余额 ----
+     不同 Provider 的能力不同，统一收敛成 4 种状态：
+       available    → 拿到了余额（balance[] 或 rawLimit.remaining）
+       subscription → 订阅制额度（没有「余额」，用 5h/7d 窗口表达）
+       loading      → 正在查询
+       unsupported  → 该 Provider 没有余额接口
+     Provider 返回 error 时单独显示「查询失败」，不影响其它区块。 */
+  const balanceUsage = displayUsages[0] ?? null;
+  const balanceEntries = (balanceUsage?.balance ?? []).filter(
+    (entry) => entry && typeof entry.total !== "undefined" && entry.total !== "",
+  );
+  const rawRemaining =
+    !balanceEntries.length &&
+    balanceUsage?.rawLimit?.remaining != null &&
+    Number.isFinite(Number(balanceUsage.rawLimit.remaining))
+      ? Number(balanceUsage.rawLimit.remaining)
+      : null;
+  const isSubscriptionPlan = Boolean(
+    balanceUsage &&
+      (balanceUsage.provider === "openai-codex" ||
+        balanceUsage.provider === "anthropic" ||
+        (balanceUsage.planType && /sub|plus|pro|team|enterprise/i.test(balanceUsage.planType))),
+  );
+  const balanceState: "available" | "subscription" | "loading" | "unsupported" | "error" =
+    balanceEntries.length > 0 || rawRemaining != null
+      ? "available"
+      : balanceUsage?.error
+        ? "error"
+        : balanceUsage
+          ? isSubscriptionPlan || (balanceUsage.windows?.length ?? 0) > 0
+            ? "subscription"
+            : "unsupported"
+          : loading
+            ? "loading"
+            : "unsupported";
 
   const durationLocale = locale.startsWith("zh") ? "zh" : "en";
   const localizeUpstreamError = (error: string) => {
@@ -162,6 +201,17 @@ export function UsagePopover({
                 </div>
                 <div className="font-mono text-text font-medium mt-0.5 text-[12px]">{tks.output.toLocaleString()}</div>
               </div>
+              {tks.reasoning != null && tks.reasoning > 0 && (
+                <div className="col-span-2 flex items-center justify-between rounded-control bg-accent/5 px-2 py-1" title={t("usage.reasoningHint")}>
+                  <div className="text-[10px] text-text-dim flex items-center gap-1">
+                    <span className="text-accent font-bold">T</span>
+                    <span>{t("usage.reasoning")}</span>
+                  </div>
+                  <div className="font-mono text-text font-medium text-[11px]">
+                    {tks.reasoning.toLocaleString()}
+                  </div>
+                </div>
+              )}
               <div>
                 <div className="text-[10px] text-text-dim flex items-center gap-1">
                   <span className="text-success font-bold">R</span>
@@ -190,6 +240,154 @@ export function UsagePopover({
               {t("usage.zeroTokens")}
             </div>
           )}
+        </div>
+
+        {/* Section 1.5: Session Activity（回合数 / 工具调用），紧跟费用与缓存命中率 */}
+        <div>
+          <div className="flex items-center justify-between text-[10px] font-semibold text-text-dim uppercase tracking-wider mb-1.5">
+            <span>{t("usage.activityTitle")}</span>
+            {activity && activity.toolCalls.total > 0 && (
+              <span className="font-mono font-normal normal-case tracking-normal text-text-muted text-[10px]">
+                {t("usage.toolCallTotal")}: {activity.toolCalls.total}
+              </span>
+            )}
+          </div>
+          {activity && (activity.turns > 0 || activity.toolCalls.total > 0) ? (
+            <div className="space-y-2 rounded-control border border-border bg-bg-panel/60 p-2.5">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <div className="text-[10px] text-text-dim">{t("usage.turns")}</div>
+                  <div className="font-mono text-text font-medium mt-0.5 text-xs">
+                    {t("usage.turnShort", { count: activity.turns })}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-text-dim">{t("usage.cost")}</div>
+                  <div className="font-mono text-text font-medium mt-0.5 text-xs">{costStr}</div>
+                </div>
+              </div>
+
+              {activity.toolCalls.byTool.length > 0 && (
+                <div className="pt-2 border-t border-divider">
+                  <div className="text-[10px] text-text-dim mb-1.5">{t("usage.toolCalls")}</div>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                    {activity.toolCalls.byTool.map((tool) => (
+                      <div
+                        key={tool.name}
+                        className="flex min-w-0 items-center justify-between gap-2"
+                        title={
+                          tool.errors > 0
+                            ? t("usage.toolErrorCount", { count: tool.errors })
+                            : undefined
+                        }
+                      >
+                        <span className="flex min-w-0 items-center gap-1">
+                          <span className={tool.errors > 0 ? "text-danger" : "text-success"}>
+                            {tool.errors > 0 ? "✗" : "✓"}
+                          </span>
+                          <span className="truncate font-mono text-[11px] text-text-muted">
+                            {tool.name}
+                          </span>
+                        </span>
+                        <span className="shrink-0 font-mono text-xs text-text">x{tool.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="text-[11px] text-text-muted italic py-2 px-3 rounded-control border border-border bg-bg-panel/50">
+              {t("usage.noActivity")}
+            </div>
+          )}
+        </div>
+
+        {/* Section 1.6: 账户余额（当前 Provider） */}
+        <div>
+          <div className="flex items-center justify-between text-[10px] font-semibold text-text-dim uppercase tracking-wider mb-1.5">
+            <span>{t("usage.balance")}</span>
+            {onRefresh && (
+              <button
+                type="button"
+                onClick={onRefresh}
+                disabled={loading}
+                className="font-normal normal-case tracking-normal text-text-muted hover:text-text transition-colors duration-150 disabled:opacity-40 cursor-pointer border-none bg-transparent text-[10px]"
+                title={t("usage.refresh")}
+              >
+                {loading ? t("usage.refreshing") : t("usage.refresh")}
+              </button>
+            )}
+          </div>
+
+          <div className="rounded-control border border-border bg-bg-panel/60 p-2.5">
+            {balanceState === "available" ? (
+              <div className="grid grid-cols-2 gap-2">
+                {balanceEntries.length > 0
+                  ? balanceEntries.slice(0, 4).map((entry, index) => (
+                      <div key={`${entry.currency}-${index}`}>
+                        <div className="text-[10px] text-text-dim font-mono uppercase">
+                          {entry.currency}
+                        </div>
+                        <div className="font-mono text-text font-semibold mt-0.5 text-xs">
+                          {entry.total}
+                        </div>
+                        {entry.granted && Number(entry.granted) > 0 && (
+                          <div className="text-[10px] text-text-dim mt-0.5">
+                            {t("usage.gift")}: {entry.granted}
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  : (
+                      <>
+                        <div>
+                          <div className="text-[10px] text-text-dim">{t("usage.remaining")}</div>
+                          <div className="font-mono text-text font-semibold mt-0.5 text-xs">
+                            ${rawRemaining}
+                          </div>
+                        </div>
+                        {balanceUsage?.rawLimit?.used != null && (
+                          <div>
+                            <div className="text-[10px] text-text-dim">{t("usage.cost")}</div>
+                            <div className="font-mono text-text-muted mt-0.5 text-xs">
+                              {formatMoney4(balanceUsage.rawLimit.used)}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
+              </div>
+            ) : balanceState === "loading" ? (
+              <div className="flex items-center gap-2 text-[11px] text-text-muted">
+                <svg className="animate-spin h-3 w-3 text-accent" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                <span>{t("usage.balanceLoading")}</span>
+              </div>
+            ) : balanceState === "subscription" ? (
+              <p className="text-[11px] text-text-muted leading-relaxed">
+                {t("usage.balanceSubscription", {
+                  provider: balanceUsage?.providerName ?? t("usage.unknownProvider"),
+                })}
+              </p>
+            ) : balanceState === "error" ? (
+              <p className="text-[11px] text-text-muted leading-relaxed">
+                {t("usage.balanceError", {
+                  error: localizeUpstreamError(balanceUsage?.error ?? ""),
+                })}
+              </p>
+            ) : balanceUsage ? (
+              <p className="text-[11px] text-text-muted leading-relaxed">
+                {t("usage.balanceUnsupported", { provider: balanceUsage.providerName })}
+              </p>
+            ) : (
+              <p className="text-[11px] text-text-muted leading-relaxed">
+                {t("usage.balanceUnavailable")}
+              </p>
+            )}
+          </div>
         </div>
 
         {/* Section 2: Context Window */}
@@ -325,21 +523,6 @@ export function UsagePopover({
                   )}
 
                   {/* Balance Display */}
-                  {usage.balance && usage.balance.length > 0 && (
-                    <div className="pt-1.5 border-t border-divider flex flex-wrap gap-2 text-[11px]">
-                      {usage.balance.map((b, i) => (
-                        <div key={i} className="flex items-center gap-1.5">
-                          <span className="text-text-muted">{b.currency}:</span>
-                          <span className="font-mono font-medium text-text">{b.total}</span>
-                          {b.granted && Number(b.granted) > 0 && (
-                            <span className="text-[10px] text-text-dim">
-                              ({t("usage.gift")}: {b.granted})
-                            </span>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
 
                   {/* Raw Limit / Credits */}
                   {usage.rawLimit && (usage.rawLimit.used != null || usage.rawLimit.remaining != null) && (

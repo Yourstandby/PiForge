@@ -12,6 +12,7 @@ import type {
 import { useI18n } from "./I18nProvider";
 import { apiJson } from "./apiJson";
 import { getExtensionRenderKey } from "@/lib/extension-render-key";
+import { ErrorNotice } from "./ErrorNotice";
 
 export type ExtensionsTab = "mcp" | "codemode" | "extensions" | "skills" | "diagnostics";
 
@@ -279,7 +280,7 @@ export function ExtensionsConfigModal({
         <div className="flex-1 overflow-y-auto min-h-0">
           {error && (
             <div className="m-4 p-3 rounded-control bg-red-500/10 border border-red-500/20 text-red-400 text-[12px] flex items-center justify-between">
-              <span>{error}</span>
+              <ErrorNotice message={error} className="min-w-0 flex-1 break-words" />
               <button
                 onClick={() => setError(null)}
                 className="text-red-400 font-bold ml-2"

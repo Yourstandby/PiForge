@@ -176,3 +176,56 @@ test("stopSubagent marks an unknown or finished child as not running", async () 
   assert.equal(stopSubagent("does-not-exist"), false);
   assert.deepEqual(listSubagents(), []);
 });
+
+test("a spawned sub-agent is listed as running before it finishes (panel gets a card immediately)", { timeout: 30000 }, async () => {
+  const env = setupEnv();
+  try {
+    const faux = await registerFaux("subagent-live-fixture", ["first child report", "second child report"]);
+    // 先跑完一个，制造"旧任务"。
+    const done = await spawnSubagent({
+      name: "finished-first",
+      task: "Summarise the README.",
+      cwd: env.dir,
+      parentSessionId: "parent-session",
+      model: faux.getModel(),
+    });
+    assert.equal(done.ok, true, done.error);
+
+    /** started 事件触发的那一刻，面板应该已经能拿到这张 running 卡片。 */
+    let snapshotAtStart: { status: string; task: string; isFirst: boolean } | null = null;
+    const off = onSubagentsChange((event) => {
+      if (event?.type !== "subagent_started") return;
+      const listed = listSubagents();
+      const live = listed.find((agent) => agent.id === event.agent.id);
+      snapshotAtStart = live
+        ? { status: live.status, task: live.task, isFirst: listed[0]?.id === live.id }
+        : null;
+    });
+    let spawnedId = "";
+    try {
+      const result = await spawnSubagent({
+        name: "live-one",
+        task: "Inspect src/index.ts and summarise it.",
+        cwd: env.dir,
+        parentSessionId: "parent-session",
+        model: faux.getModel(),
+      });
+      spawnedId = result.agent.id;
+      assert.equal(result.ok, true, result.error);
+    } finally {
+      off();
+    }
+
+    assert.ok(snapshotAtStart, "subagent_started 必须在子 Agent 跑完之前就广播");
+    const seen = snapshotAtStart as unknown as { status: string; task: string; isFirst: boolean };
+    assert.equal(seen.status, "running", "卡片出现时就是 running");
+    assert.equal(seen.task, "Inspect src/index.ts and summarise it.", "卡片带 target prompt");
+    assert.equal(seen.isFirst, true, "新拉起的子 Agent 必须排在最上面");
+
+    // 跑完之后状态收敛到 completed。
+    const finished = listSubagents().find((agent) => agent.id === spawnedId);
+    assert.equal(finished?.status, "completed");
+  } finally {
+    await env.cleanup();
+  }
+});

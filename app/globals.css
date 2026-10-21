@@ -159,6 +159,13 @@ html:not([data-electron-platform]) .app-titlebar-inner {
     transform-origin: bottom left;
     animation: pop-in 140ms cubic-bezier(0.2, 0.8, 0.2, 1);
   }
+
+  /* Dropdowns that open DOWNWARDS must grow from their top edge; otherwise
+     `pop-in`'s translateY + bottom-left origin makes them look like they slide
+     up out of the content below the trigger. */
+  .t-dropdown[data-origin="top-left"] { transform-origin: top left; }
+  .t-dropdown[data-origin="top-right"] { transform-origin: top right; }
+  .t-dropdown[data-origin="bottom-right"] { transform-origin: bottom right; }
 }
 
 @keyframes pop-in {
@@ -334,6 +341,14 @@ span.linenumber { color: var(--text-dim) !important; font-style: normal !importa
   min-height: 0;
   overflow-y: auto;
   padding: 2px 8px 10px;
+  /* 隐藏系统滚动条（滚轮 / 触控板照常滚动）：左栏那根又宽又黑的条太抢眼。 */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.sidebar-project-list::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .sidebar-empty {
@@ -749,3 +764,210 @@ textarea {
     transform: none;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   主对话区滚动条：隐形优先（6px、透明轨道、无箭头、几乎看不见）。
+   重点：**不能**在这里无条件写 `scrollbar-width: thin` —— Chromium 121+ 一旦
+   看到该属性就会忽略整套 `::-webkit-scrollbar` 定制，滚动条退回系统样式，
+   这正是之前"改了没效果"的原因。所以只在真正不支持 webkit 伪元素的引擎里
+   （Firefox 等）才启用标准属性，作为回退。
+   --------------------------------------------------------------------------- */
+/* 关掉浏览器原生 scroll anchoring：它会和我们的 JS 滚动跟随打架，
+   流式输出时表现为"页面自己乱跳"。 */
+html,
+body,
+#__next,
+*[data-chat-scroll],
+*[data-turn-role] {
+  overflow-anchor: none;
+}
+
+/* 流式输出期间禁用过渡动画：高频文本更新 + transition 会引发大量重排。 */
+[data-streaming="true"] * {
+  transition: none !important;
+}
+
+/* 顶部 "生成中" 状态条的呼吸点：缩放 + 透明度双通道，肉眼明显 */
+@keyframes piforge-live-dot {
+  0%,
+  100% {
+    transform: scale(0.8);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scale(1.4);
+    opacity: 1;
+  }
+}
+.live-dot {
+  animation: piforge-live-dot 0.9s ease-in-out infinite;
+}
+
+/* 底部状态栏「正在执行」心跳：三根小竖条错峰跳动，像音频波形 */
+@keyframes piforge-heartbeat {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+.beat-bar {
+  transform-origin: bottom;
+  animation: piforge-heartbeat 0.9s ease-in-out infinite;
+}
+
+/* 工具执行中：卡片边框呼吸 + 新生成代码 diff 的绿色闪一下 */
+@keyframes piforge-tool-running {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgb(59 130 246 / 0.06);
+    border-color: rgb(59 130 246 / 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgb(59 130 246 / 0.1);
+    border-color: rgb(59 130 246 / 0.6);
+  }
+}
+.tool-running {
+  animation: piforge-tool-running 1.6s ease-in-out infinite;
+}
+@keyframes piforge-diff-flash {
+  from {
+    background-color: rgb(22 163 74 / 0.16);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+.diff-flash {
+  animation: piforge-diff-flash 1.2s ease-out both;
+}
+
+/* 拖拽滚动期间暂停装饰性动画：ChatSurface 在滚动容器上挂 data-scrolling，
+   动画与滚动抢同一个合成线程，暂停后拖拽更跟手；停止 180ms 后自动恢复。 */
+[data-scrolling="true"] .animate-pulse,
+[data-scrolling="true"] .animate-spin {
+  animation-play-state: paused;
+}
+
+/* ---------------------------------------------------------------------------
+   全局滚动条统一：所有容器（右侧文件/工具面板、弹窗、代码块等）都向
+   「对话导航悬浮卡片」的极简样式看齐 —— 3px、圆角、透明轨道、
+   gray-300/50 半透明滑块，hover 加深。scrollbar-none / scrollbar-ghost
+   等 utility 特异性更高，仍可在局部覆盖。
+   注意：Chromium 121+ 一旦看到 `scrollbar-width` 就会忽略 ::-webkit-scrollbar
+   定制，所以标准属性只在 Firefox 等引擎里启用。
+   --------------------------------------------------------------------------- */
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(209 213 219 / 0.3) transparent;
+  }
+}
+*::-webkit-scrollbar {
+  width: 3px;
+  height: 3px;
+}
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+*::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: rgb(209 213 219 / 0.3);
+  border-radius: 9999px;
+  background-clip: padding-box;
+  min-height: 24px;
+}
+*:hover::-webkit-scrollbar-thumb,
+*::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(156 163 175 / 0.6);
+}
+
+/* 主对话区滚动条：与全局一致的极简样式（保留类名以兼容既有用法）。 */
+@utility scrollbar-ghost {
+  @supports not selector(::-webkit-scrollbar) {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(209 213 219 / 0.3) transparent;
+  }
+
+  &::-webkit-scrollbar {
+    width: 3px;
+    height: 3px;
+  }
+  &::-webkit-scrollbar-track,
+  &::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  &::-webkit-scrollbar-button {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+  &::-webkit-scrollbar-thumb {
+    background-color: rgb(209 213 219 / 0.3);
+    border-radius: 9999px;
+    background-clip: padding-box;
+    min-height: 24px;
+  }
+  &:hover::-webkit-scrollbar-thumb,
+  &::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(156 163 175 / 0.6);
+  }
+}
+
+/* 极简纵向滚动条（对话导航悬浮卡片专用）：3px、圆角、透明轨道、
+   浅灰半透明滑块（gray-300/50），hover 稍微加深。
+   用 @supports 隔离标准属性，避免 Chromium 因 `scrollbar-width` 忽略
+   ::-webkit-scrollbar 定制。 */
+@utility scrollbar-fine {
+  @supports not selector(::-webkit-scrollbar) {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(209 213 219 / 0.3) transparent;
+  }
+
+  &::-webkit-scrollbar {
+    width: 3px;
+    height: 3px;
+  }
+  /* 轨道 / 边角完全透明 */
+  &::-webkit-scrollbar-track,
+  &::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  &::-webkit-scrollbar-button {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+  /* 滑块：gray-300 / 50%，圆角胶囊 */
+  &::-webkit-scrollbar-thumb {
+    background-color: rgb(209 213 219 / 0.3);
+    border-radius: 9999px;
+    background-clip: padding-box;
+    min-height: 24px;
+  }
+  &:hover::-webkit-scrollbar-thumb,
+  &::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(156 163 175 / 0.6);
+  }
+}
+
+/* Horizontal scrollers that must stay single-line without a visible bar
+   (StatusBar 底部工具栏：绝不换行，必要时静默横向滚动). */
+@utility scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  &::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+}
+

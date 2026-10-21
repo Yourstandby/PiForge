@@ -1,8 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Bot, ChevronDown, Loader2, Square } from "lucide-react";
 import type { SubagentStatus, SubagentView } from "@contract/domains/subagents";
+import { mergeSubagentFrame, sortSubagents } from "@/lib/subagent-view";
+import { ErrorNotice } from "./ErrorNotice";
 
 const STATUS_DOT: Record<SubagentStatus, string> = {
   running: "#3E8A63",
@@ -146,20 +148,29 @@ function SubagentCard({
 
 /**
  * Right-panel "Agents" tab: live sub-agent list with status, duration, tools
- * and streamed output. Data comes from the Host via SSE; Next only proxies.
+ * and streamed output.
+ *
+ * 数据全部由 Host 推送（SSE `/api/subagents/events`），这里只做三件事：
+ *   1. 快照 + 生命周期增量归并（`lib/subagent-view.ts`，运行中置顶）；
+ *   2. 面板一出现 / 窗口重新可见就立即刷新一次，不等轮询；
+ *   3. 5s 轮询只作为 SSE 断线时的兵底。
  */
 export function SubagentPanel() {
   const [agents, setAgents] = useState<SubagentView[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [stopping, setStopping] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  /** SSE 是否活着（只用于展示与轮询降级，不进 effect 依赖）。 */
+  const [live, setLive] = useState(false);
+  const liveRef = useRef(false);
 
   const load = useCallback(async () => {
     try {
       const res = await fetch("/api/subagents");
       const data = (await res.json()) as { agents?: SubagentView[]; error?: string };
       if (!res.ok || data.error) throw new Error(data.error ?? `HTTP ${res.status}`);
-      setAgents(data.agents ?? []);
+      // GET 总是比之前的快照新，直接覆盖 + 运行中置顶。
+      setAgents(sortSubagents(data.agents ?? []));
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -169,23 +180,50 @@ export function SubagentPanel() {
   useEffect(() => {
     void load();
     const source = new EventSource("/api/subagents/events");
+    const setLiveState = (value: boolean) => {
+      liveRef.current = value;
+      setLive(value);
+    };
+    source.onopen = () => setLiveState(true);
+    source.onerror = () => setLiveState(false);
     source.onmessage = (event) => {
       try {
-        const data = JSON.parse(event.data) as { type?: string; agents?: SubagentView[] };
-        if (data.type === "subagents" && data.agents) {
-          setAgents(data.agents);
-          setError(null);
-        }
+        const data = JSON.parse(event.data) as {
+          type?: string;
+          agents?: SubagentView[];
+          events?: Parameters<typeof mergeSubagentFrame>[1]["events"];
+        };
+        if (data.type !== "subagents") return;
+        setLiveState(true);
+        // 立即合并：快照权威 + 增量事件补位 + 运行中置顶（不等下一帧）。
+        setAgents((prev) => mergeSubagentFrame(prev, data));
+        setError(null);
       } catch {
         /* ignore malformed frame */
       }
     };
-    const fallback = setInterval(() => void load(), 10_000);
+    // SSE 活着时轮询不抢主（避免旧快照盖掉更新的状态）。
+    const fallback = setInterval(() => {
+      if (!liveRef.current) void load();
+    }, 5_000);
     const tick = setInterval(() => setNow(Date.now()), 1_000);
     return () => {
       source.close();
       clearInterval(fallback);
       clearInterval(tick);
+    };
+  }, [load]);
+
+  /** 面板重新可见（切回本标签页 / 窗口聚焦）时立即拉一次，不等轮询。 */
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("focus", refresh);
+    return () => {
+      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("focus", refresh);
     };
   }, [load]);
 
@@ -206,11 +244,20 @@ export function SubagentPanel() {
   };
 
   if (error && agents.length === 0) {
-    return <p className="px-3 py-2 text-[11px] text-danger">{error}</p>;
+    return (
+      <ErrorNotice
+        message={error}
+        className="block px-3 py-2 text-[11px] text-danger"
+        fallback={<span className="block px-3 py-2 text-[11px] text-ink-faint">正在等待本地引擎就绪…</span>}
+      />
+    );
   }
 
   return (
     <div className="flex flex-col pt-1">
+      {!live && agents.length > 0 && (
+        <p className="px-3 pb-1 text-[10px] text-ink-faint">实时推送已断开，正在轮询刷新…</p>
+      )}
       {agents.length === 0 ? (
         <div className="px-3 py-3 text-[11px] text-ink-faint">
           <p className="flex items-center gap-1">

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Puzzle } from "lucide-react";
 import type { PluginView } from "@/contract/domains/plugins";
+import { ErrorNotice } from "./ErrorNotice";
 
 /**
  * Read-only panel injected by Host plugins. Plugin bodies are plain text:
@@ -41,7 +42,13 @@ export function PluginPanel() {
 
   return (
     <div className="flex h-full flex-col gap-1 overflow-y-auto px-1.5 py-1" data-testid="plugin-panel">
-      {error && <p className="px-1.5 text-[11px] text-danger">{error}</p>}
+      {error && (
+        <ErrorNotice
+          message={error}
+          className="block px-1.5 text-[11px] text-danger"
+          fallback={<span className="block px-1.5 py-1 text-[11px] text-ink-faint">正在等待本地引擎就绪…</span>}
+        />
+      )}
       {panels.length === 0 ? (
         <p className="px-1.5 py-2 text-[11px] leading-5 text-ink-faint">
           <Puzzle size={12} className="mr-1 inline" aria-hidden="true" />

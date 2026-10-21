@@ -1,3 +1,5 @@
+import { isHostTransportError } from "@/lib/ui-error";
+
 export interface ApiJsonOptions {
   fallback: string;
 }
@@ -28,7 +30,13 @@ export async function apiJson<T>(
   }
 
   if (!response.ok) {
-    throw new Error(responseError(data) ?? options.fallback);
+    const message = responseError(data);
+    // 底层管道/套接字噪声（如 connect ENOENT \.\pipe\piforge-agent-…）不是
+    // 用户能处理的错误：降级成本次调用的友好兜底文案，避免它出现在红字里。
+    if (message && isHostTransportError(message)) {
+      throw new Error(options.fallback);
+    }
+    throw new Error(message ?? options.fallback);
   }
   return data as T;
 }

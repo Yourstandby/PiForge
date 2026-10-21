@@ -17,7 +17,7 @@ PiForge 把 Pi Coding Agent 的会话、工具调用与项目文件收进一个�
 
 底层复用官方 [`@earendil-works/pi-coding-agent`](https://github.com/earendil-works/pi-coding-agent) SDK；v0.7.0 起通过 `agent-host/sdk-adapter.ts` **把整个 Pi SDK 收口到单一适配器**，Pi 升级只需改一层，甚至为未来从 `resources/pi-core/` 动态加载预留了同构接口。v0.4.0 起采用 **Electron Main + Agent Host + Next/Renderer 三进程隔离**：即使 Next 重启，正在运行的 Agent 也不会中断。v0.5.0 补齐 **多智能体工作台**；v0.6.0 把会话推进到独立 Git worktree、Main 持有的浏览器与常驻舰队；v0.7.0 进一步加入 **自定义 Provider、沙箱插件系统、进程级 Worktree 编排、local WebSocket 总线**，并修复了 Windows NSIS 打包链路。
 
-> 当前版本：`v0.7.0`（Plugin Bus · Orchestrator · Hot-swappable Pi Core）
+> 当前版本：`v0.8.0`（Settings Hub · Context Compaction · Startup Speed）
 
 ## 🧱 进程架构
 
@@ -33,6 +33,17 @@ Electron Main ──spawn──▶ Next.js server ──HTTP/SSE──▶ Render
 ```
 
 Agent Host 关闭时会先排空会话 JSONL、终止所有受管进程树与编排 Worker；Next 侧不持有任何 Agent 会话状态。会话 RPC 仍走命名管道 / Unix Socket；v0.7.0 新增的 localhost WebSocket 只用于插件总线、事件中继和后续多模态流，不替代 Host 控制面。
+
+## ✦ v0.8.0 新能力
+
+1. **统一设置中心** — 右上齿轮里的「常规」集中管理思考等级、运行中 `Enter` 行为（立即 steer / 排队）、隐藏思考过程、缓存未命中提示、图片展开、自动压缩、自动重试、空闲预热与技能斜杠命令，改动即时持久化。
+2. **扩展与技能热加载** — 改完 extension 或 `SKILL.md` 不用重启：设置里点「重新加载扩展与技能」，Host 侧重新装配资源，下一次发送即生效。
+3. **上下文自动压缩** — 接近上下文上限时自动摘要旧轮次（保留最近 4 轮，约 45% 触发），也可在底栏手动压缩；折叠区显示被压缩的轮次数。
+4. **PowerShell 一等公民** — Windows 默认走 `powershell`（`pwsh` 7 优先，回退 5.1），仅在确实需要 Git Bash / POSIX 管道时才用 `bash`；转录里的运行提示按 shell 分色（PowerShell 橘色），并统一 `-NoProfile -NonInteractive` + UTF-8。
+5. **Token 经济** — 稳定 prompt 前缀以命中断点缓存、工具输出按预算截断并折叠、重复命令合并，长会话每轮开销明显下降。
+6. **上游核心版本检测** — 底栏与设置页显示当前 pi 核心版本、npm 最新版本与一键复查（npmjs 失败自动切 npmmirror 兜底）。
+7. **启动加速** — Agent Host 与 Next 并行启动（原先串行最多等 10s）、首屏不再阻塞于会话列表扫盘（记住上次项目秒开）、会话列表与汇率请求全局去重、版本检测推迟到空闲期。
+8. **信任门修复** — `HOME` 被 msys2 / conda 指到别处时，不再把用户级 `~/.agents/skills` 误判为项目资源、每次开新会话都弹信任框。
 
 ## ✦ v0.7.0 新能力
 
@@ -166,7 +177,7 @@ npx electron-builder --dir      # → release/win-unpacked
 把目录压成可直接分发的压缩包：
 
 ```powershell
-Compress-Archive -Path 'release\win-unpacked\*' -DestinationPath 'release\PiForge-0.7.0-win-x64.zip' -CompressionLevel Optimal
+Compress-Archive -Path 'release\win-unpacked\*' -DestinationPath 'release\PiForge-0.8.0-win-x64.zip' -CompressionLevel Optimal
 ```
 
 > 国内网络环境可在安装依赖前设置 Electron 镜像，例如
@@ -199,6 +210,27 @@ Compress-Archive -Path 'release\win-unpacked\*' -DestinationPath 'release\PiForg
 | 右侧 插件 Tab | 查看启用插件注入的只读面板 |
 | 设置 → 自定义 Provider | 配置 Ollama / LM Studio / 自建网关的 BaseURL、密钥与模型 |
 | 设置 → 插件管理 | 启用 / 禁用 `~/.pi/agent/plugins/` 下的沙箱插件 |
+
+## 💰 Token 成本与缓存（v0.8.0）
+
+省钱的大头是**命中前缀缓存**，其次才是少读一点。Host 侧现在做三件事：
+
+1. **工具定序 + 装载锁定**：默认只声明 CORE_TOOLS（`bash` / `edit` / `powershell` / `read` / `write`），
+   并且强制 ASCII 字典序、同一状态下原样复用上一份数组 —— 请求体的工具声明字节级一致。
+2. **前缀审计**：`PIFORGE_DEBUG_PREFIX=1 npm run dev:electron`，前缀一有变化就打印
+   「哪一段变了 + 首个差异字符位置」，不再只给一个哈希。
+3. **工具输出预算**：命令 / 日志类结果 100 行 / 8KB，`read` 300 行 / 16KB，超出部分换成
+   `[输出过长已截断，共 X 行]` + grep/sed 续读提示；完整文本落盘，`tool_history_get` 可按页回读。
+   模型自己给的 `[Use offset=… to continue.]` 分页提示会被原样保留。
+4. **易变状态不进 system prompt**：pi 的 `<cwd>` 段在会话内是常量，默认保持原位；
+   若确实需要把动态状态搬进用户消息，用 `PIFORGE_PREFIX_STRIP_CWD=1`。
+5. **历史滑动窗口 + 结构化摘要**：最近 6 轮原样保留，切点永远落在用户消息上（不劈轮次）；
+   窗口外攒够 3 轮 **或** 上下文占用 ≥ 60% 就压（被压区间须 ≥ 3k tokens）。
+   摘要固定四段（用户意图 / 修改文件 / 关键报错 / 最终决策），文件清单另由代码兑底追加；
+   `PIFORGE_DEBUG_COMPACT=1` 可以看到触发原因与压缩体积。
+6. **动态工具存根**：扩展工具 > 5 个时只声明核心工具，其余进「名字 + 一句话」目录；
+   模型用 `tool_search`（deferred/codemode）或 `desktop_use_tool({ name })`（直曝 MCP / 插件工具）
+   点名后，下一轮才注入它的完整 schema —— 且只在工具集合真变了时才翻新前缀。
 
 ## 🏗 架构与目录
 

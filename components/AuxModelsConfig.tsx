@@ -8,6 +8,7 @@ import type {
   AuxModelSelection,
 } from "@contract/domains/aux-models";
 import { ModalSurface } from "./ModalSurface";
+import { ErrorNotice } from "./ErrorNotice";
 
 function toKey(selection: AuxModelSelection | null | undefined): string {
   return selection ? `${selection.provider}:${selection.modelId}` : "";
@@ -257,11 +258,7 @@ export function AuxModelsConfig({ onClose }: { onClose: () => void }) {
           </>
         )}
 
-        {error && (
-          <p role="alert" className="text-[12px] text-danger">
-            {error}
-          </p>
-        )}
+        {error && <ErrorNotice className="block text-[12px] text-danger" message={error} />}
         {saved && (
           <p role="status" className="text-[12px] text-[#3E8A63]">
             已保存，下一次提问生效。

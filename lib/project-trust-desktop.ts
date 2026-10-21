@@ -3,12 +3,32 @@
  * Uses pi's ProjectTrustStore + hasTrustRequiringProjectResources when available.
  * Server-only — do not import from client components (use lib/trust-types.ts).
  */
+import { homedir } from "os";
 import { dirname } from "path";
 import {
   hasTrustRequiringProjectResources,
   ProjectTrustStore,
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
+
+/**
+ * pi 用 `process.env.HOME || homedir()` 当「用户级 skills」基准。msys2 / conda 等
+ * 环境常把 HOME 指到别处（本机就指到 D:\Dev\msys64\home\Luo Wei），于是
+ * `<真实家目录>\.agents\skills` 不再被认作用户级目录，任何项目都会被误判成
+ * 「含需信任资源」，每开一个新会话都弹信任框。调用前把 HOME 对齐真实家目录
+ * （同步、无 await，单线程下安全）。
+ */
+function hasTrustRequiringResources(cwd: string): boolean {
+  const previous = process.env.HOME;
+  const realHome = homedir();
+  try {
+    if (previous !== realHome) process.env.HOME = realHome;
+    return hasTrustRequiringProjectResources(cwd);
+  } finally {
+    if (previous === undefined) delete process.env.HOME;
+    else process.env.HOME = previous;
+  }
+}
 import type { NeedsTrustPayload, TrustOptionDto, TrustOptionId } from "./trust-types.ts";
 
 export type { NeedsTrustPayload, TrustOptionDto, TrustOptionId } from "./trust-types.ts";
@@ -78,7 +98,7 @@ export function evaluateProjectTrust(
     return { action: "proceed", trusted: true };
   }
 
-  if (!hasTrustRequiringProjectResources(cwd)) {
+  if (!hasTrustRequiringResources(cwd)) {
     return { action: "proceed", trusted: true };
   }
 
