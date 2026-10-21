@@ -74,6 +74,18 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }, [hydrated, preference, systemRevision]);
 
   useEffect(() => {
+    // 恢复上次选择的界面缩放（字号设置）。
+    try {
+      const raw = Number(window.localStorage.getItem("pi-ui-scale"));
+      if (Number.isFinite(raw) && raw > 0 && raw !== 1) {
+        document.documentElement.style.zoom = String(raw);
+      }
+    } catch {
+      // ignore restricted storage
+    }
+  }, []);
+
+  useEffect(() => {
     document.documentElement.lang = locale;
     document.documentElement.dir = "ltr";
   }, [locale]);

@@ -1,8 +1,10 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SessionInfo } from "@/lib/types";
-import { PanelLeftOpen, PanelRightOpen, Plug, Settings, Sparkles } from "lucide-react";
+import { fetchSessions, invalidateSessions } from "@/lib/sessions-cache";
+import { parseCwdParam } from "@/lib/project-window";
+import { Bot, CircleHelp, Puzzle, Settings } from "lucide-react";
 import { getElectronApi } from "@/lib/electron-api";
 import { resolveForkedSession } from "@/lib/fork-session-wait";
 import { buildProjectWindowPath, resolveInitialView } from "@/lib/project-window";
@@ -12,7 +14,7 @@ import { FilePanel } from "./FilePanel";
 import { ModelsConfig } from "./ModelsConfig";
 import { SessionExportModal } from "./SessionExportModal";
 import { SessionSidebar } from "./SessionSidebar";
-import { SessionTabBar } from "./SessionTabBar";
+import { SessionTabBar, type SessionTabStatus } from "./SessionTabBar";
 import { ExtensionsConfigModal } from "./ExtensionsConfigModal";
 import { AutoRoutingConfig } from "./AutoRoutingConfig";
 import { AuxModelsConfig } from "./AuxModelsConfig";
@@ -21,22 +23,48 @@ import { PluginsConfig } from "./PluginsConfig";
 import { ApplyCodeModal } from "./ApplyCodeModal";
 import { DevEnvironmentConfig } from "./DevEnvironmentConfig";
 import { McpSettingsModal } from "./McpSettingsModal";
+import { GeneralSettingsModal } from "./GeneralSettingsModal";
 import type { FloatingFileTarget } from "./FloatingFileViewer";
 import { SkillsConfig } from "./SkillsConfig";
+import { HelpModal } from "./HelpModal";
 import { TitleBar } from "./TitleBar";
+
+/** 上次使用的项目目录：决定首屏能否跳过等待会话列表 */
+const LAST_CWD_KEY = "piforge.lastCwd";
 
 function byModifiedDesc(a: SessionInfo, b: SessionInfo): number {
   return new Date(b.modified).getTime() - new Date(a.modified).getTime();
 }
 
-type SettingsModal = "skills" | "models" | "extensions" | "auto" | "aux" | "mcp" | "dev" | "providers" | "plugins" | null;
+type SettingsModal = "general" | "skills" | "models" | "extensions" | "auto" | "aux" | "mcp" | "dev" | "providers" | "plugins" | null;
 
 const MIN_RIGHT_PANEL_WIDTH = 280;
 const MAX_RIGHT_PANEL_WIDTH = 800;
+/** 左侧会话栏展开时的固定宽度（SessionSidebar w-[260px]）。 */
+const LEFT_SIDEBAR_WIDTH = 260;
+/** 聊天区最小可用宽度：右侧面板拉到这里就卡住，不再把聊天区挤窄。 */
+const MIN_CHAT_WIDTH = 560;
 const RIGHT_PANEL_WIDTH_KEY = "piforge.rightPanelWidth";
 
-function clampRightPanelWidth(width: number): number {
-  return Math.min(MAX_RIGHT_PANEL_WIDTH, Math.max(MIN_RIGHT_PANEL_WIDTH, Math.round(width)));
+/** 当前视口 / 侧边栏状态下，右侧面板允许的最大宽度。 */
+function maxRightPanelWidth(viewportWidth: number, leftSidebarOpen: boolean): number {
+  const available = Math.max(
+    0,
+    viewportWidth - (leftSidebarOpen ? LEFT_SIDEBAR_WIDTH : 0),
+  );
+  return Math.max(
+    MIN_RIGHT_PANEL_WIDTH,
+    Math.min(MAX_RIGHT_PANEL_WIDTH, Math.round(available - MIN_CHAT_WIDTH)),
+  );
+}
+
+function clampRightPanelWidth(
+  width: number,
+  viewportWidth: number,
+  leftSidebarOpen: boolean,
+): number {
+  const max = maxRightPanelWidth(viewportWidth, leftSidebarOpen);
+  return Math.min(max, Math.max(MIN_RIGHT_PANEL_WIDTH, Math.round(width)));
 }
 
 /**
@@ -91,6 +119,13 @@ function makeTab(session: SessionInfo | null, newSessionCwd: string | null): Cha
 /** Memoized so typing in one tab never re-renders the others. */
 const ChatPane = memo(ChatSurface);
 
+interface PaneHandlers {
+  onDraftChange: (value: string) => void;
+  onSessionCreated: (session: SessionInfo) => void;
+  onNewSession: () => void;
+  onActivityChange: (activity: "idle" | "running" | "waiting") => void;
+}
+
 export function Workbench() {
   const [tabs, setTabs] = useState<ChatTab[]>([]);
   const [activeKey, setActiveKey] = useState<string | null>(null);
@@ -114,13 +149,26 @@ export function Workbench() {
   // Sidebar refetch trigger (fork / delete / new session).
   const [sessionsVersion, setSessionsVersion] = useState(0);
   const [settingsModal, setSettingsModal] = useState<SettingsModal>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
   const [rightPanelWidth, setRightPanelWidth] = useState(560);
   const [rightPanelResizing, setRightPanelResizing] = useState(false);
   const rightPanelDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
-  // Responsive default + persisted user width; re-clamp when the window shrinks.
+  // 右侧面板宽度夹紧：受视口宽度 + 左侧栏展开状态约束，
+  // 保证聊天区永远 >= MIN_CHAT_WIDTH，拖拽到临界点就卡住。
+  const clampPanelWidth = useCallback(
+    (width: number) =>
+      clampRightPanelWidth(
+        width,
+        typeof window === "undefined" ? 1440 : window.innerWidth,
+        leftSidebarOpen,
+      ),
+    [leftSidebarOpen],
+  );
+
+  // Responsive default + persisted user width.
   useEffect(() => {
     let saved: number | null = null;
     try {
@@ -131,12 +179,24 @@ export function Workbench() {
       // storage disabled
     }
     const fallback = Math.min(800, Math.max(400, Math.round(window.innerWidth * 0.36)));
-    setRightPanelWidth(clampRightPanelWidth(saved ?? fallback));
-    const onWindowResize = () => {
-      setRightPanelWidth((current) => clampRightPanelWidth(current));
+    setRightPanelWidth(clampRightPanelWidth(saved ?? fallback, window.innerWidth, true));
+  }, []);
+
+  // Re-clamp when the window shrinks or the left sidebar is toggled:
+  // the chat column must never be squeezed below MIN_CHAT_WIDTH.
+  useEffect(() => {
+    const reclamp = () => {
+      setRightPanelWidth((current) => clampPanelWidth(current));
     };
-    window.addEventListener("resize", onWindowResize);
-    return () => window.removeEventListener("resize", onWindowResize);
+    reclamp();
+    window.addEventListener("resize", reclamp);
+    return () => window.removeEventListener("resize", reclamp);
+  }, [clampPanelWidth]);
+
+  // 右侧面板限定标签：左侧边栏底部的「插件 / Agents」用它打开对应视图。
+  const openPanelTab = useCallback((tab: "plugins" | "agents") => {
+    setRightPanelOpen(true);
+    window.dispatchEvent(new CustomEvent("piforge:panel-tab", { detail: tab }));
   }, []);
 
   const startRightPanelResize = useCallback(
@@ -151,18 +211,23 @@ export function Workbench() {
     [rightPanelWidth],
   );
 
-  const moveRightPanelResize = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    const drag = rightPanelDragRef.current;
-    if (!drag) return;
-    setRightPanelWidth(clampRightPanelWidth(drag.startWidth + drag.startX - event.clientX));
-  }, []);
+  const moveRightPanelResize = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const drag = rightPanelDragRef.current;
+      if (!drag) return;
+      setRightPanelWidth(
+        clampPanelWidth(drag.startWidth + drag.startX - event.clientX),
+      );
+    },
+    [clampPanelWidth],
+  );
 
   const endRightPanelResize = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       const drag = rightPanelDragRef.current;
       if (!drag) return;
       rightPanelDragRef.current = null;
-      const finalWidth = clampRightPanelWidth(drag.startWidth + drag.startX - event.clientX);
+      const finalWidth = clampPanelWidth(drag.startWidth + drag.startX - event.clientX);
       setRightPanelWidth(finalWidth);
       setRightPanelResizing(false);
       document.body.style.userSelect = "";
@@ -178,7 +243,7 @@ export function Workbench() {
         // storage disabled
       }
     },
-    [],
+    [clampPanelWidth],
   );
 
   // ~/.pi/agent edits (models.json, auth.json, extensions, skills) are picked
@@ -206,13 +271,30 @@ export function Workbench() {
   }, [activeKey]);
 
   const commitTabs = useCallback((next: ChatTab[]) => {
-    tabsRef.current = next;
-    setTabs(next);
+    // 同一 key 出现两次会让两个 pane 同时被判定为「活动」→ 并排渲染两份界面。
+    // 这里做一次去重（后者覆盖前者的位置），从源头保证一个 key 只对应一个视图。
+    const seen = new Set<string>();
+    const deduped: ChatTab[] = [];
+    for (const tab of next) {
+      if (seen.has(tab.key)) continue;
+      seen.add(tab.key);
+      deduped.push(tab);
+    }
+    tabsRef.current = deduped;
+    setTabs(deduped);
   }, []);
 
   const activateTab = useCallback((key: string) => {
     activeKeyRef.current = key;
-    setActiveKey(key);
+    // 切换会话会挂载/重渲大量消息 DOM：标记为非紧急更新，点击先反馈、渲染可中断，
+    // 避免主线程被一次长任务（成百上千轮 markdown）完全堵住。
+    startTransition(() => {
+      setActiveKey(key);
+      // 切回前台即视为已读，清掉「后台已完成」绿点
+      setTabActivity((previous) =>
+        previous[key]?.done ? { ...previous, [key]: { ...previous[key], done: false } } : previous,
+      );
+    });
   }, []);
 
   /** Ctrl+Tab / Ctrl+Shift+Tab: cycle through the open session tabs. */
@@ -231,6 +313,12 @@ export function Workbench() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+      // Ctrl/Cmd+B：折叠 / 展开左侧栏（万一误触折叠后也能一键回来）
+      if (event.key.toLowerCase() === "b" && !event.shiftKey) {
+        event.preventDefault();
+        setLeftSidebarOpen((open) => !open);
+        return;
+      }
       if (event.key !== "Tab") return;
       event.preventDefault();
       cycleTab(event.shiftKey ? -1 : 1);
@@ -255,6 +343,16 @@ export function Workbench() {
   }, [rememberDraft]);
 
   const openTab = useCallback((tab: ChatTab) => {
+    // 同一个会话只允许存在一个标签页：并发 fork / 重复点击时，不再追加第二个
+    // 同名 tab（旧行为会出现两个「你好」并导致 TabBar 布局抖动）。
+    const sessionId = tab.session?.id;
+    if (sessionId) {
+      const existing = tabsRef.current.find((item) => item.session?.id === sessionId);
+      if (existing) {
+        activateTab(existing.key);
+        return;
+      }
+    }
     commitTabs([...tabsRef.current, tab]);
     setDrafts((prev) => ({ ...prev, [tab.key]: readStoredDraft(tab.draftKey) }));
     activateTab(tab.key);
@@ -266,6 +364,13 @@ export function Workbench() {
       const index = prev.findIndex((tab) => tab.key === key);
       if (index < 0) return;
       const next = prev.filter((tab) => tab.key !== key);
+      // 关掉的标签不再需要状态指示灯数据
+      setTabActivity((activity) => {
+        if (!activity[key]) return activity;
+        const rest = { ...activity };
+        delete rest[key];
+        return rest;
+      });
 
       if (next.length === 0) {
         // Closing the last tab lands on a fresh session tab, like a browser.
@@ -329,13 +434,20 @@ ${fenced}`
     });
   }, [rememberDraft]);
 
-  const loadSessions = useCallback(async (): Promise<SessionInfo[]> => {
+  // 记住上一个项目，下次启动可以跳过等待会话列表直接出首屏。
+  useEffect(() => {
+    if (!cwd) return;
     try {
-      const res = await fetch("/api/sessions");
-      if (!res.ok) return [];
-      const data = (await res.json()) as { sessions?: SessionInfo[] };
-      const sorted = [...(data.sessions ?? [])].sort(byModifiedDesc);
-      return sorted;
+      window.localStorage.setItem(LAST_CWD_KEY, cwd);
+    } catch {
+      // 隐私模式 / 配额满：只是少一个加速项，不影响功能
+    }
+  }, [cwd]);
+
+  const loadSessions = useCallback(async (force = false): Promise<SessionInfo[]> => {
+    try {
+      const sessions = await fetchSessions({ force });
+      return [...sessions].sort(byModifiedDesc);
     } catch {
       return [];
     }
@@ -343,6 +455,17 @@ ${fenced}`
 
   useEffect(() => {
     let cancelled = false;
+    // 首屏不等 /api/sessions（它要扫盘统计每个会话）：深链 cwd 或上次项目
+    // 都能立刻开一个空白会话，列表随后到达只负责填充侧栏。
+    const params = new URLSearchParams(window.location.search);
+    const linkedCwd = parseCwdParam(params.get("cwd"));
+    const eagerCwd =
+      linkedCwd ??
+      (params.get("session") ? null : parseCwdParam(window.localStorage.getItem(LAST_CWD_KEY)));
+    if (eagerCwd && tabsRef.current.length === 0) {
+      setCwd(eagerCwd);
+      openTab(makeTab(null, eagerCwd));
+    }
     const initialize = async (sorted: SessionInfo[]) => {
       // Strict-mode double mount / hot reload must not open duplicate tabs.
       if (tabsRef.current.length > 0) return;
@@ -402,8 +525,12 @@ ${fenced}`
         if (session.cwd) setCwd(session.cwd);
         return;
       }
-      openTab(makeTab(session, null));
-      if (session.cwd) setCwd(session.cwd);
+      // 新建标签 = 挂载一整棵新的 ChatSurface，同样放到非紧急更新里，
+      // 保证侧栏点击的手感不被一次性渲染卡死。
+      startTransition(() => {
+        openTab(makeTab(session, null));
+        if (session.cwd) setCwd(session.cwd);
+      });
     },
     [activateTab, openTab],
   );
@@ -495,7 +622,8 @@ ${fenced}`
       // If its SSE event raced the sidebar's first refresh (or the stream was
       // reconnected), this one-shot refetch still picks the name up.
       window.setTimeout(() => {
-        void loadSessions();
+        invalidateSessions();
+        void loadSessions(true);
         setSessionsVersion((version) => version + 1);
       }, 6000);
     },
@@ -505,7 +633,8 @@ ${fenced}`
   /** Keep tab titles in sync with auto-title / rename events. */
   const handleSessionRenamed = useCallback(async () => {
     setSessionsVersion((version) => version + 1);
-    const sorted = await loadSessions();
+    invalidateSessions();
+    const sorted = await loadSessions(true);
     const byId = new Map(sorted.map((item) => [item.id, item]));
     commitTabs(
       tabsRef.current.map((tab) => {
@@ -576,33 +705,88 @@ ${fenced}`
 
   // Per-tab callbacks are cached by tab key so ChatPane's memo() holds: typing
   // in one tab only re-renders that tab.
-  const paneActionsRef = useRef({ setDraftForTab, handleSessionCreated, handleNewSession });
-  useEffect(() => {
-    paneActionsRef.current = { setDraftForTab, handleSessionCreated, handleNewSession };
-  }, [setDraftForTab, handleSessionCreated, handleNewSession]);
+  /**
+   * 后台标签状态：live = 引擎实时状态；done = 后台跑完但用户还没切回去看。
+   * 只在真正变化时才 setState，避免流式事件把 Workbench 也一起重渲染。
+   */
+  const [tabActivity, setTabActivity] = useState<
+    Record<string, { live: "idle" | "running" | "waiting"; done: boolean }>
+  >({});
 
-  const paneHandlers = useMemo(() => {
-    const map = new Map<
-      string,
-      {
-        onDraftChange: (value: string) => void;
-        onSessionCreated: (session: SessionInfo) => void;
-        onNewSession: () => void;
-      }
-    >();
-    for (const tab of tabs) {
-      const key = tab.key;
-      const projectCwd = tab.session?.cwd ?? tab.newSessionCwd ?? null;
-      map.set(key, {
-        onDraftChange: (value) => paneActionsRef.current.setDraftForTab(key, value),
-        onSessionCreated: (session) => paneActionsRef.current.handleSessionCreated(key, session),
-        onNewSession: () => {
-          void paneActionsRef.current.handleNewSession(projectCwd ?? undefined);
-        },
+  const reportTabActivity = useCallback(
+    (key: string, activity: "idle" | "running" | "waiting") => {
+      setTabActivity((previous) => {
+        const current = previous[key];
+        const busy = activity === "running" || activity === "waiting";
+        // 从忙 → 空闲，且当时不是前台标签 → 记为「后台已完成未读」
+        const done = busy
+          ? false
+          : current && (current.live === "running" || current.live === "waiting")
+            ? activeKeyRef.current !== key
+            : (current?.done ?? false);
+        if (current && current.live === activity && current.done === done) return previous;
+        return { ...previous, [key]: { live: activity, done } };
       });
+    },
+    [],
+  );
+
+  const paneActionsRef = useRef({
+    setDraftForTab,
+    handleSessionCreated,
+    handleNewSession,
+    reportActivity: reportTabActivity,
+  });
+  useEffect(() => {
+    paneActionsRef.current = {
+      setDraftForTab,
+      handleSessionCreated,
+      handleNewSession,
+      reportActivity: reportTabActivity,
+    };
+  }, [setDraftForTab, handleSessionCreated, handleNewSession, reportTabActivity]);
+
+  /**
+   * Per-tab handler cache. Handlers must keep a STABLE identity for the whole
+   * lifetime of a tab: `ChatPane` is memoized, and a new callback would force
+   * every already-mounted pane to re-render its full transcript（打开/切换会话
+   * 时的主要卡顿源）。So we build each tab's handlers once and only swap the
+   * implementation they call through `paneActionsRef`.
+   */
+  const paneHandlersCache = useRef(new Map<string, PaneHandlers>());
+  const paneHandlers = useMemo(() => {
+    const map = new Map<string, PaneHandlers>();
+    const cache = paneHandlersCache.current;
+    for (const tab of tabs) {
+      let handlers = cache.get(tab.key);
+      if (!handlers) {
+        const key = tab.key;
+        handlers = {
+          onDraftChange: (value) => paneActionsRef.current.setDraftForTab(key, value),
+          onSessionCreated: (session) => paneActionsRef.current.handleSessionCreated(key, session),
+          onNewSession: () => {
+            const current = tabsRef.current.find((item) => item.key === key);
+            const targetCwd = current?.session?.cwd ?? current?.newSessionCwd ?? undefined;
+            void paneActionsRef.current.handleNewSession(targetCwd);
+          },
+          onActivityChange: (activity) => paneActionsRef.current.reportActivity(key, activity),
+        };
+        cache.set(key, handlers);
+      }
+      map.set(tab.key, handlers);
+    }
+    // 关闭的标签别再占缓存
+    for (const key of cache.keys()) {
+      if (!map.has(key)) cache.delete(key);
     }
     return map;
   }, [tabs]);
+
+  // 唯一的活动视图：activeKey 失效时退回到第一个标签
+  const visibleKey = useMemo(() => {
+    if (activeKey && tabs.some((tab) => tab.key === activeKey)) return activeKey;
+    return tabs[0]?.key ?? null;
+  }, [activeKey, tabs]);
 
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden bg-white">
@@ -610,12 +794,12 @@ ${fenced}`
 
       <div className="flex min-h-0 flex-1">
         <div
-          className={`shrink-0 overflow-hidden transition-all duration-300 ${
+          className={`shrink-0 overflow-hidden transition-[width] duration-300 ${
             leftSidebarOpen ? "w-[260px]" : "w-0"
           }`}
           aria-hidden={!leftSidebarOpen}
         >
-          <div className="flex h-full w-[260px] flex-col overflow-hidden border-r border-black/[0.06] bg-white/70 backdrop-blur-md">
+          <div className="flex h-full w-[260px] flex-col overflow-hidden border-r border-black/[0.06] bg-white">
           <div className="flex min-h-0 flex-1 flex-col">
           <SessionSidebar
             selectedSessionId={activeTab?.session?.id ?? null}
@@ -642,6 +826,7 @@ ${fenced}`
             }}
             onOpenFile={(filePath, fileName) => handleOpenFile(filePath, fileName)}
             onCollapse={() => setLeftSidebarOpen(false)}
+            onOpenProjectWindow={() => { void handleAddProject(); }}
             onAtMention={(relativePath) => {
               const key = activeKeyRef.current;
               if (!key) return;
@@ -650,30 +835,31 @@ ${fenced}`
             }}
           />
           </div>
-          <div className="relative shrink-0 border-t border-gray-200/60 p-2">
+          <div className="relative shrink-0 px-2 pb-2 pt-2">
             {projectError && (
               <p role="status" className="px-1 pb-1 text-[11px] text-[#c2554e]">
                 {projectError}
               </p>
             )}
-            <div className="flex items-center justify-end gap-2">
+            {/* 底部工具行：无托盘背景，与侧栏其它图标同一风格 */}
+            <div className="flex items-center justify-evenly gap-1">
               <button
                 type="button"
-                onClick={() => setSettingsModal("skills")}
-                title="Skill"
-                aria-label="Skill"
+                onClick={() => openPanelTab("plugins")}
+                title="插件"
+                aria-label="插件"
                 className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-500 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900"
               >
-                <Sparkles size={16} strokeWidth={1.75} className="h-4 w-4" aria-hidden="true" />
+                <Puzzle size={16} strokeWidth={1.75} className="h-4 w-4" aria-hidden="true" />
               </button>
               <button
                 type="button"
-                onClick={() => setSettingsModal("mcp")}
-                title="MCP"
-                aria-label="MCP"
+                onClick={() => openPanelTab("agents")}
+                title="Agents"
+                aria-label="Agents"
                 className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-500 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900"
               >
-                <Plug size={16} strokeWidth={1.75} className="h-4 w-4" aria-hidden="true" />
+                <Bot size={16} strokeWidth={1.75} className="h-4 w-4" aria-hidden="true" />
               </button>
               <button
                 type="button"
@@ -686,30 +872,43 @@ ${fenced}`
               >
                 <Settings size={16} strokeWidth={1.75} aria-hidden="true" />
               </button>
+              <button
+                type="button"
+                onClick={() => setHelpOpen(true)}
+                title="帮助：PiForge 功能总览"
+                aria-label="帮助"
+                aria-haspopup="dialog"
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-muted transition-colors duration-150 hover:bg-[#ECECEF] hover:text-ink"
+              >
+                <CircleHelp size={16} strokeWidth={1.75} aria-hidden="true" />
+              </button>
             </div>
             {menuOpen && (
               <div className="material-popover absolute bottom-full left-2 right-2 z-[60] mb-1 rounded-xl p-1.5">
                 {[
-                  { label: "模型与登录", action: () => setSettingsModal("models") },
-                  { label: "Auto 路由", action: () => setSettingsModal("auto") },
-                  { label: "辅助模型（生图 / 决策）", action: () => setSettingsModal("aux") },
-                  { label: "自定义 Provider（Ollama / 网关）", action: () => setSettingsModal("providers") },
-                  { label: "插件管理", action: () => setSettingsModal("plugins") },
-                  { label: "开发环境与浏览器权限", action: () => setSettingsModal("dev") },
-                  { label: "扩展与集成", action: () => setSettingsModal("extensions") },
-                  { label: "技能安装", action: () => setSettingsModal("skills") },
-                  { label: "添加项目…", action: () => { void handleAddProject(); } },
+                  { label: "General", hint: "常规：语言、字号、热加载", action: () => setSettingsModal("general") },
+                  { label: "Models", hint: "模型与登录：选择模型、登录账号", action: () => setSettingsModal("models") },
+                  { label: "Auto", hint: "Auto 路由：按任务难度自动选快 / 强模型", action: () => setSettingsModal("auto") },
+                  { label: "Aux", hint: "辅助模型：生图、决策、标题等轻量任务", action: () => setSettingsModal("aux") },
+                  { label: "Provider", hint: "自定义 Provider：Ollama、自建网关等", action: () => setSettingsModal("providers") },
+                  { label: "Plugins", hint: "插件管理：启用 / 停用扩展", action: () => setSettingsModal("plugins") },
+                  { label: "Dev", hint: "开发环境与内置浏览器权限", action: () => setSettingsModal("dev") },
+                  { label: "Extensions", hint: "扩展与集成总览", action: () => setSettingsModal("extensions") },
+                  { label: "Skills", hint: "技能安装与管理", action: () => setSettingsModal("skills") },
+                  { label: "Help", hint: "帮助：PiForge 功能总览", action: () => setHelpOpen(true) },
                 ].map((item) => (
                   <button
                     key={item.label}
                     type="button"
+                    title={item.hint}
                     onClick={() => {
                       setMenuOpen(false);
                       item.action();
                     }}
-                    className="flex w-full items-center rounded-md px-2 py-1.5 text-left text-[12.5px] text-ink-muted transition-colors duration-150 hover:bg-[#ECECEF] hover:text-ink"
+                    className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px] text-ink-muted transition-colors duration-150 hover:bg-[#ECECEF] hover:text-ink"
                   >
-                    {item.label}
+                    <span className="shrink-0">{item.label}</span>
+                    <span className="min-w-0 truncate text-[10.5px] text-ink-faint">{item.hint}</span>
                   </button>
                 ))}
               </div>
@@ -720,30 +919,50 @@ ${fenced}`
 
         <div className="relative flex min-w-0 flex-1 flex-col">
           <SessionTabBar
-            tabs={tabs.map((tab) => ({
-              key: tab.key,
-              title: tab.title,
-              sessionId: tab.session?.id ?? null,
-              cwd: tab.session?.cwd ?? tab.newSessionCwd,
-            }))}
+            tabs={tabs.map((tab) => {
+              const activity = tabActivity[tab.key];
+              const status: SessionTabStatus =
+                activity?.live === "waiting"
+                  ? "waiting"
+                  : activity?.live === "running"
+                    ? "running"
+                    : activity?.done
+                      ? "done"
+                      : "none";
+              return {
+                key: tab.key,
+                title: tab.title,
+                sessionId: tab.session?.id ?? null,
+                cwd: tab.session?.cwd ?? tab.newSessionCwd,
+                status,
+              };
+            })}
             activeKey={activeKey}
             onSelect={activateTab}
             onClose={closeTab}
             onNew={() => {
               void handleNewSession();
             }}
+            leftCollapsed={!leftSidebarOpen}
+            onExpandLeft={() => setLeftSidebarOpen(true)}
+            rightCollapsed={!rightPanelOpen}
+            onExpandRight={() => setRightPanelOpen(true)}
           />
 
           <div className="relative flex min-h-0 min-w-0 flex-1">
             {/* Every open tab stays mounted: streaming, scroll position and
-                draft survive switching. Inactive panes are just hidden. */}
+                draft survive switching. Inactive panes are just hidden.
+                `visibleKey` 兜底：activeKey 指向已关闭/未知标签时，至少显示第一个，
+                绝不让「一个都不显示」或「两个都显示」的情况出现。 */}
             {tabs.map((tab) => {
               const handlers = paneHandlers.get(tab.key);
+              const visible = tab.key === visibleKey;
               if (!handlers) return null;
               return (
                 <div
                   key={tab.key}
-                  className={tab.key === activeKey ? "flex min-h-0 min-w-0 flex-1" : "hidden"}
+                  aria-hidden={!visible}
+                  className={visible ? "flex min-h-0 min-w-0 flex-1" : "hidden"}
                 >
                   <ChatPane
                     session={tab.session}
@@ -755,6 +974,7 @@ ${fenced}`
                     onSessionCreated={handlers.onSessionCreated}
                     onSessionRenamed={handleSessionRenamed}
                     onNewSession={handlers.onNewSession}
+                    onActivityChange={handlers.onActivityChange}
                     onInsertCode={handleInsertCode}
                     applyTargetName={openFile && !openFile.diff ? openFile.fileName : null}
                     onApplyCode={handleApplyCode}
@@ -766,28 +986,6 @@ ${fenced}`
               );
             })}
 
-            {!leftSidebarOpen && (
-              <button
-                type="button"
-                onClick={() => setLeftSidebarOpen(true)}
-                aria-label="展开左侧边栏"
-                title="展开左侧边栏"
-                className="absolute left-2 top-2 z-20 flex h-7 w-7 items-center justify-center rounded-md border border-gray-200/70 bg-white/90 text-gray-500 shadow-[0_2px_8px_rgba(0,0,0,0.06)] backdrop-blur transition-colors hover:text-gray-800"
-              >
-                <PanelLeftOpen size={16} strokeWidth={1.75} className="h-4 w-4" aria-hidden="true" />
-              </button>
-            )}
-            {!rightPanelOpen && (
-              <button
-                type="button"
-                onClick={() => setRightPanelOpen(true)}
-                aria-label="展开右侧面板"
-                title="展开右侧面板"
-                className="absolute right-2 top-2 z-20 flex h-7 w-7 items-center justify-center rounded-md border border-gray-200/70 bg-white/90 text-ink-muted shadow-[0_2px_8px_rgba(0,0,0,0.06)] backdrop-blur transition-colors hover:bg-[#ECECEF] hover:text-ink"
-              >
-                <PanelRightOpen size={14} strokeWidth={1.75} aria-hidden="true" />
-              </button>
-            )}
           </div>
         </div>
 
@@ -814,20 +1012,30 @@ ${fenced}`
               style={{ touchAction: "none" }}
             />
           )}
-          <FilePanel
-            cwd={activeCwd}
-            explorerRefreshKey={explorerRefreshKey}
-            viewerRefreshKey={fileViewerRefreshKey}
-            openFile={openFile}
-            gitOpenSignal={gitTabSignal}
-            onOpenFile={handleOpenFile}
-            onOpenDiff={handleOpenDiff}
-            onCloseFile={handleCloseFile}
-            onCollapse={() => setRightPanelOpen(false)}
-          />
+          {/* 内部固定宽度：折叠/展开只裁剪外层，内容不逐帧重排 → 过渡流畅。 */}
+          <div className="h-full" style={{ width: rightPanelWidth }}>
+            <FilePanel
+              cwd={activeCwd}
+              explorerRefreshKey={explorerRefreshKey}
+              viewerRefreshKey={fileViewerRefreshKey}
+              openFile={openFile}
+              gitOpenSignal={gitTabSignal}
+              onOpenFile={handleOpenFile}
+              onOpenDiff={handleOpenDiff}
+              onCloseFile={handleCloseFile}
+              onCollapse={() => setRightPanelOpen(false)}
+            />
+          </div>
         </div>
       </div>
 
+      {settingsModal === "general" && (
+        <GeneralSettingsModal
+          sessionId={activeTab?.session?.id ?? null}
+          cwd={activeCwd ?? null}
+          onClose={() => setSettingsModal(null)}
+        />
+      )}
       {settingsModal === "skills" && (
         <SkillsConfig cwd={activeCwd ?? ""} onClose={() => setSettingsModal(null)} />
       )}
@@ -888,6 +1096,8 @@ ${fenced}`
           }}
         />
       )}
+      <HelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
+
       <SessionExportModal
         isOpen={exportSessionId !== null}
         onClose={() => setExportSessionId(null)}

@@ -74,7 +74,7 @@ describe("session-loader-api", () => {
     );
   });
 
-  test("fetchSession retries one network failure", async () => {
+  test("fetchSession retries a network failure", async () => {
     let calls = 0;
     globalThis.fetch = (async () => {
       calls += 1;
@@ -91,7 +91,7 @@ describe("session-loader-api", () => {
     assert.equal(result?.sessionId, "retried");
   });
 
-  test("fetchSession retries one 5xx but not a 4xx", async () => {
+  test("fetchSession retries a 5xx but not a 4xx", async () => {
     let calls = 0;
     globalThis.fetch = (async () => {
       calls += 1;
@@ -111,7 +111,7 @@ describe("session-loader-api", () => {
     assert.equal(calls, 1);
   });
 
-  test("fetchSession aborts at the deadline and retries once", async () => {
+  test("fetchSession aborts at the deadline and uses the retry budget", async () => {
     let calls = 0;
     globalThis.fetch = ((_url: string, init?: RequestInit) => {
       calls += 1;
@@ -123,7 +123,8 @@ describe("session-loader-api", () => {
     }) as typeof globalThis.fetch;
 
     await assert.rejects(() => fetchSession("123", false, { timeoutMs: 10 }), /timed out after 10ms/);
-    assert.equal(calls, 2);
+    // SESSION_LOAD_RETRIES = 2 → initial attempt + 2 retries
+    assert.equal(calls, 3);
   });
 
   test("fetchContext sends correct request without leafId", async () => {

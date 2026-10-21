@@ -68,6 +68,8 @@ export interface AssistantMessage {
     output: number;
     cacheRead: number;
     cacheWrite: number;
+    /** 思考/推理 tokens，是 output 的子集；仅提供商上报时存在。 */
+    reasoning?: number;
     cost: {
       input: number;
       output: number;

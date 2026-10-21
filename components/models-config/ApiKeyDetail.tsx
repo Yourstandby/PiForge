@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import type { ApiKeyProvider } from "./types";
 import { Field, SecretTextInput, SectionTitle } from "./FormControls";
 import { useI18n } from "../I18nProvider";
+import { ErrorNotice } from "../ErrorNotice";
 
 export function ApiKeyDetail({ provider, onRefresh }: { provider: ApiKeyProvider; onRefresh: () => void }) {
   const { t } = useI18n();
@@ -118,7 +119,12 @@ export function ApiKeyDetail({ provider, onRefresh }: { provider: ApiKeyProvider
         </div>
       </Field>
 
-      {error && <p style={{ margin: 0, fontSize: 12, color: "var(--danger)" }}>{error}</p>}
+      {error && (
+        <ErrorNotice
+          message={error}
+          style={{ display: "block", margin: 0, fontSize: 12, color: "var(--danger)" }}
+        />
+      )}
 
       {provider.configured && (
         <button

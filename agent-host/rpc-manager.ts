@@ -1,7 +1,16 @@
 import { existsSync } from "fs";
 import { unlink } from "fs/promises";
 import { randomUUID } from "node:crypto";
-import { createHostAgentSession, createCodemodeExtension, createMcpExtension, createToolSearchExtension, SessionManager } from "./sdk-adapter.ts";
+import {
+  createBashTool,
+  createHostAgentSession,
+  createCodemodeExtension,
+  createMcpExtension,
+  createToolSearchExtension,
+  SessionManager,
+  type SessionEntry,
+  type ToolDefinition,
+} from "./sdk-adapter.ts";
 import type { AgentSessionLike, ToolInfo } from "../lib/pi-types.ts";
 import {
   DEFAULT_AGENT_MODE,
@@ -21,8 +30,10 @@ import {
 } from "./desktop-ltm-extension.ts";
 import { readDesktopSettings } from "../lib/desktop-settings.ts";
 import { desktopRuntimeTools } from "./desktop-runtime-tools.ts";
+import { canonicalToolOrder } from "./prompt-prefix.ts";
 import { desktopProcessInlineExtension } from "./desktop-process-extension.ts";
 import { desktopPowerShellInlineExtension } from "./desktop-powershell-extension.ts";
+import { desktopShellGuidanceInlineExtension } from "./desktop-shell-guidance-extension.ts";
 import { desktopBrowserInlineExtension } from "./desktop-browser-extension.ts";
 import { desktopTerminalInlineExtension } from "./desktop-terminal-extension.ts";
 import { desktopImageInlineExtension } from "./desktop-image-extension.ts";
@@ -32,6 +43,8 @@ import { desktopSubagentInlineExtension } from "./desktop-subagent-extension.ts"
 import { desktopHerdrInlineExtension } from "./desktop-herdr-extension.ts";
 import { desktopPluginInlineExtension } from "./desktop-plugin-extension.ts";
 import { desktopOrchestratorInlineExtension } from "./desktop-orchestrator-extension.ts";
+import { desktopCompactionInlineExtension } from "./desktop-compaction-extension.ts";
+import { compactionSummaryInstructions } from "./compaction-plan.ts";
 import { auxToolAvailability } from "./aux-models.ts";
 import { loadDesktopMcpConfig } from "../lib/mcp-config.ts";
 import { findLastAgentMode } from "./agent-mode-persistence.ts";
@@ -174,7 +187,7 @@ export class AgentSessionWrapper {
     this._agentMode = mode;
     this._modeRef.current = mode;
     this._modeRef.toolPreset = this._toolPreset;
-    const tools = desktopRuntimeTools(mode, this._toolPreset, this._modeRef.codemodeEnabled ?? false, this.inner.getAllTools(), this.inner.getActiveToolNames(), auxToolAvailability());
+    const tools = canonicalToolOrder(desktopRuntimeTools(mode, this._toolPreset, this._modeRef.codemodeEnabled ?? false, this.inner.getAllTools(), this.inner.getActiveToolNames(), auxToolAvailability()));
     this.inner.setActiveToolsByName(tools);
   }
   setCodemodeEnabled(enabled: boolean): void {
@@ -421,10 +434,42 @@ export class AgentSessionWrapper {
    * session) and `peekState()` (which does not, since the caller is only
    * observing).
    */
+  /**
+   * Sum reasoning/thinking tokens across all session entries, mirroring the
+   * SDK's `getSessionStats()` traversal (usage entries, compaction/branch
+   * summaries, and assistant/toolResult message usage all carry `reasoning`).
+   * `reasoning` is a subset of `output`, so it is reported separately and
+   * never added to `total`.
+   */
+  private sumReasoningTokens(): number {
+    const sessionManager = this.inner.sessionManager as
+      | { getEntries?: () => SessionEntry[] }
+      | undefined;
+    const entries = sessionManager?.getEntries?.() ?? [];
+    let reasoning = 0;
+    const add = (usage: { reasoning?: number } | undefined) => {
+      if (usage && typeof usage.reasoning === "number") reasoning += usage.reasoning;
+    };
+    for (const entry of entries) {
+      if (entry.type === "usage") {
+        add(entry.usage);
+      } else if (entry.type === "branch_summary" || entry.type === "compaction") {
+        add(entry.usage);
+      }
+      if (entry.type !== "message") continue;
+      const message = entry.message;
+      if (message.role === "assistant" || message.role === "toolResult") {
+        add(message.usage);
+      }
+    }
+    return reasoning;
+  }
+
   private buildStateSnapshot(): Record<string, unknown> {
     const model = this.inner.model;
     const contextUsage = this.inner.getContextUsage();
     const sessionStats = this.inner.getSessionStats?.();
+    const reasoningTokens = this.sumReasoningTokens();
     const followUpQueue = this.followUpQueue.snapshot();
     return {
       sessionId: this.inner.sessionId,
@@ -442,7 +487,10 @@ export class AgentSessionWrapper {
         : null,
       sessionStats: sessionStats
         ? {
-            tokens: sessionStats.tokens,
+            tokens: {
+              ...sessionStats.tokens,
+              ...(reasoningTokens > 0 ? { reasoning: reasoningTokens } : {}),
+            },
             cost: sessionStats.cost,
             cacheHitRate:
               sessionStats.tokens.input + sessionStats.tokens.cacheRead + sessionStats.tokens.cacheWrite > 0
@@ -636,12 +684,21 @@ export class AgentSessionWrapper {
           cwd: this.inner.sessionManager.getHeader()?.cwd ?? process.cwd(),
           messagesText: branchEntriesToMessagesText(pathEntries),
         });
-        const result = await this.inner.compact(command.customInstructions as string | undefined);
+        const result = await this.inner.compact(
+          (command.customInstructions as string | undefined) ?? compactionSummaryInstructions(),
+        );
         return result;
       }
 
       case "set_auto_compaction": {
         this.inner.setAutoCompactionEnabled(command.enabled as boolean);
+        return null;
+      }
+
+      case "reload_resources": {
+        if (this.inner.isStreaming) throw new Error("Session is streaming");
+        this.requestResourceReload();
+        await this.reloadResources();
         return null;
       }
 
@@ -937,7 +994,18 @@ export async function startRpcSession(
       agentMode
     );
 
-    const modeRef: AgentModeRef = { current: agentMode, toolPreset, codemodeEnabled: desktop.codemodeEnabled ?? false };
+    const modeRef: AgentModeRef = {
+      current: agentMode,
+      toolPreset,
+      codemodeEnabled: desktop.codemodeEnabled ?? false,
+      /** cwd 只用于用户消息的 <context> 块，不进 system prompt。 */
+      getCwd: () => cwd,
+    };
+    /**
+     * 历史压缩扩展必须在 resourceLoader 之前注册，但它要读的分支 / 模型
+     * 只有 session 建好之后才有 —— 用一个可变引用接上。
+     */
+    let sessionForCompaction: AgentSessionLike | null = null;
     const resourceLoader = new DefaultResourceLoader({
       cwd,
       agentDir,
@@ -946,9 +1014,21 @@ export async function startRpcSession(
         createToolSearchExtension(),
         createMcpExtension({ loadConfig: (ctx) => loadDesktopMcpConfig(agentDir, ctx.cwd, ctx.isProjectTrusted()) }),
         desktopApprovalInlineExtension(modeRef),
+        desktopCompactionInlineExtension({
+          getEntries: () => (sessionForCompaction?.sessionManager.getBranch() ?? []) as never,
+          getTarget: () => ({
+            model: sessionForCompaction?.model,
+            modelRuntime: sessionForCompaction?.modelRuntime as never,
+          }),
+          log:
+            process.env.PIFORGE_DEBUG_COMPACT === "1"
+              ? (message, detail) => console.log(message, detail ?? "")
+              : undefined,
+        }),
         desktopLtmInlineExtension({ getCwd: () => cwd }),
         desktopProcessInlineExtension({ getCwd: () => cwd }),
         desktopPowerShellInlineExtension(() => cwd),
+        desktopShellGuidanceInlineExtension(),
         desktopBrowserInlineExtension(),
         desktopTerminalInlineExtension({ getCwd: () => cwd }),
         desktopImageInlineExtension(),
@@ -962,18 +1042,35 @@ export async function startRpcSession(
     });
     await resourceLoader.reload();
 
+    /**
+     * Windows 中文乱码修复：pi 的 bash 工具在 Windows 上走 Git Bash，
+     * `ping` 这类 System32 程序按 ANSI 代码页（GBK）输出，被当成 UTF-8 解码后
+     * 变成 U+FFFD（不可逆）。这里注册一个同名 bash 覆盖，执行前先 `chcp 65001`，
+     * 让子进程按 UTF-8 输出（实测 ping 输出不再含乱码）。
+     */
+    const WIN_UTF8_PREFIX = "chcp.com 65001 > /dev/null 2>&1 || true";
+    const customTools: ToolDefinition[] =
+      process.platform === "win32"
+        ? [
+            createBashTool(cwd, { commandPrefix: WIN_UTF8_PREFIX }) as unknown as ToolDefinition,
+          ]
+        : [];
+
     const { session: inner } = await createHostAgentSession({
       cwd,
       agentDir,
       sessionManager,
       resourceLoader,
+      customTools,
       // Keep the registry open for MCP tools discovered after session_start.
       // Desktop policy selects declarations and checks every execution.
       noTools: "builtin",
     });
 
+    sessionForCompaction = inner as unknown as AgentSessionLike;
+
     if (effectiveTools.length > 0) {
-      inner.setActiveToolsByName([...effectiveTools, ...inner.getActiveToolNames()]);
+      inner.setActiveToolsByName(canonicalToolOrder([...effectiveTools, ...inner.getActiveToolNames()]));
     }
 
     // Pi 0.87+ systemPrompt is read-only. The desktop before_agent_start hook

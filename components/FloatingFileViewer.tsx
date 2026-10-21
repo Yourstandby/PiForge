@@ -7,6 +7,7 @@ import remarkGfm from "remark-gfm";
 import { Eye, EyeOff, Loader2, Pencil, Save, WrapText, X } from "lucide-react";
 import { syntaxThemeFor } from "@/lib/syntax-theme";
 import { encodeFilePathForApi, getFileName, getRelativeFilePath } from "@/lib/file-paths";
+import { ErrorNotice } from "./ErrorNotice";
 
 export interface FloatingFileTarget {
   filePath: string;
@@ -295,7 +296,7 @@ export function FloatingFileViewer({
             <Loader2 size={11} className="animate-spin" aria-hidden="true" /> 读取文件…
           </p>
         ) : error ? (
-          <p className="px-3 py-2 text-[11px] text-danger">{error}</p>
+          <ErrorNotice message={error} className="block px-3 py-2 text-[11px] text-danger" />
         ) : target.diff ? (
           <pre className="m-0 py-1 font-mono text-[11.5px] leading-5">
             {(diff ?? "").split(/\r?\n/).map((line, index) => {

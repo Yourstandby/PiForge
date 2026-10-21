@@ -93,7 +93,7 @@ function TreeNodeView({ node, activePathIds, depth, isLast, parentLines, onSelec
   const { node: rep, skipped } = compress(node);
   const isActive = activePathIds.has(rep.entry.id);
   const isOnPath = activePathIds.has(node.entry.id) || activePathIds.has(rep.entry.id);
-  const label = getLabel(rep.entry);
+  const label = rep.label ?? getLabel(rep.entry);
   const role = rep.entry.type === "message" && "message" in rep.entry
     ? (rep.entry.message as { role: string }).role
     : null;
@@ -225,16 +225,31 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, onBranch, on
 
   useEffect(() => {
     if (!open || !inline) return;
-    const anchor = containerRef?.current ?? btnRef.current;
+    const anchor = btnRef.current ?? containerRef?.current ?? null;
     if (!anchor) return;
+    const DROPDOWN_MIN_WIDTH = 280;
+    const DROPDOWN_MAX_WIDTH = 420;
     const update = () => {
       const rect = anchor.getBoundingClientRect();
-      setDropdownPos({ top: rect.bottom, left: rect.left, width: rect.width });
+      const width = Math.min(DROPDOWN_MAX_WIDTH, Math.max(DROPDOWN_MIN_WIDTH, rect.width));
+      // Anchor precisely under the button, clamped inside the viewport so the
+      // menu never drifts sideways or overflows the window edge.
+      const left = Math.min(
+        Math.max(8, rect.left),
+        Math.max(8, window.innerWidth - width - 8),
+      );
+      setDropdownPos({ top: rect.bottom + 4, left, width });
     };
     update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
     const ro = new ResizeObserver(update);
     ro.observe(anchor);
-    return () => ro.disconnect();
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+      ro.disconnect();
+    };
   }, [open, inline, containerRef]);
 
   const activePathIds = useMemo(
@@ -309,8 +324,10 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, onBranch, on
             left: dropdownPos.left,
             width: dropdownPos.width,
             background: "var(--material-popover)",
-            borderBottom: "1px solid var(--divider)",
+            borderRadius: "var(--radius-panel)",
+            border: "1px solid var(--border)",
             boxShadow: "var(--shadow-popover)",
+            overflow: "hidden",
             zIndex: 500,
           }}>
             {(onBranch || onClone) && (
@@ -377,7 +394,16 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, onBranch, on
   }
 
   return (
-    <div style={{ borderBottom: "1px solid var(--border)", background: "var(--bg)", flexShrink: 0, position: "relative" }}>
+    <div
+      style={{
+        borderBottom: "1px solid var(--border)",
+        background: "var(--bg)",
+        flexShrink: 0,
+        position: "relative",
+        // 高于聊天消息区与左侧栏悬浮按钮，避免按钮被盖住、下拉被压在消息下面
+        zIndex: 30,
+      }}
+    >
       {/* Header toggle */}
       <button
         onClick={() => setOpenInternal((v) => !v)}
@@ -400,20 +426,27 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, onBranch, on
         {chevron}
       </button>
 
-      {/* Tree panel - overlay */}
+      {/* Tree panel - opens directly under the header button */}
       {open && (
         <div className="t-dropdown is-open material-popover" data-origin="top-left" style={{
           position: "absolute",
-          top: "100%",
-          left: 0,
-          right: 0,
+          top: "calc(100% + 4px)",
+          left: 4,
+          width: "max-content",
+          minWidth: 280,
+          maxWidth: "min(420px, calc(100% - 8px))",
+          maxHeight: "min(320px, 60vh)",
+          display: "flex",
+          flexDirection: "column",
           background: "var(--material-popover)",
-          borderBottom: "1px solid var(--border)",
-          boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
-          zIndex: 100,
+          borderRadius: "var(--radius-panel)",
+          border: "1px solid var(--border)",
+          boxShadow: "var(--shadow-popover)",
+          overflow: "hidden",
+          zIndex: 120,
         }}>
           {(onBranch || onClone) && (
-            <div className="flex items-center gap-2 px-3 py-1.5 border-b border-divider bg-bg-panel">
+            <div className="flex shrink-0 items-center gap-2 px-3 py-1.5 border-b border-divider bg-bg-panel">
               {onBranch && (
                 <button
                   onClick={() => {
@@ -451,7 +484,7 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, onBranch, on
             </div>
           )}
           {hasContent && firstNode ? (
-            <div style={{ padding: "4px 12px 8px 12px", maxHeight: 260, overflowY: "auto" }}>
+            <div style={{ padding: "4px 12px 8px 12px", flex: 1, minHeight: 0, overflowY: "auto" }}>
               {firstNode.children.map((child, idx) => (
                 <TreeNodeView
                   key={child.entry.id}
@@ -465,7 +498,7 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, onBranch, on
               ))}
             </div>
           ) : (
-            <div style={{ padding: "10px 16px", fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
+            <div style={{ padding: "10px 16px", fontSize: 12, color: "var(--text-muted)", fontStyle: "italic", flexShrink: 0 }}>
               {noBranchReason ?? t("branch.noSession")}
             </div>
           )}

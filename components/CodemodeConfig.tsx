@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { apiJson } from "./apiJson";
 import { useI18n } from "./I18nProvider";
+import { ErrorNotice } from "./ErrorNotice";
 
 export function CodemodeConfig() {
   const { t } = useI18n();
@@ -53,7 +54,7 @@ export function CodemodeConfig() {
           </button>
         </div>
         <p id="codemode-timing" className="mt-3 text-[12px] leading-relaxed text-text-muted">{t("codemode.timing")}</p>
-        {error && <p role="alert" className="mt-3 text-red-400">{error}</p>}
+        {error && <ErrorNotice className="mt-3 block text-red-400" message={error} />}
       </section>
       <section className="p-4 rounded-panel border border-border leading-relaxed">
         <h4 className="font-semibold text-text">{t("codemode.what")}</h4>

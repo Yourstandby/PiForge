@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
+import { isHostTransportError, visibleErrorMessage } from "@/lib/ui-error";
 import { AtSign, ChevronRight, Loader2 } from "lucide-react";
 import { FILE_DRAG_MIME } from "@/lib/file-drag";
 import { getFileIcon, FolderIcon } from "./FileIcons";
@@ -300,6 +301,9 @@ export function FileExplorer({ cwd, onOpenFile, onOpenDiff, refreshKey, onAtMent
   const [roots, setRoots] = useState<FileNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Agent Host 还没起来时（管道 ENOENT）自动重试，避免永远停在「等待引擎」。
+  const [retryTick, setRetryTick] = useState(0);
+  const retryCountRef = useRef(0);
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
   const [gitStatus, setGitStatus] = useState<GitStatusMap>({});
   const prevCwdRef = useRef<string | null>(null);
@@ -348,10 +352,25 @@ export function FileExplorer({ cwd, onOpenFile, onOpenDiff, refreshKey, onAtMent
     setLoading(cwdChanged);
     setError(null);
     fetchEntries(cwd)
-      .then((entries) => setRoots(entries))
+      .then((entries) => {
+        setRoots(entries);
+        retryCountRef.current = 0;
+      })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false));
-  }, [cwd, refreshKey]);
+  }, [cwd, refreshKey, retryTick]);
+
+  // 传输层错误（Host 管道未就绪）→ 每 2s 自动重试一次，最多 15 次；
+  // 引擎起来后文件树会自己恢复，不需要用户手动刷新。
+  useEffect(() => {
+    if (!error || !isHostTransportError(error)) return;
+    if (retryCountRef.current >= 15) return;
+    const timer = setTimeout(() => {
+      retryCountRef.current += 1;
+      setRetryTick((tick) => tick + 1);
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [error]);
 
   if (loading) {
     return (
@@ -362,9 +381,39 @@ export function FileExplorer({ cwd, onOpenFile, onOpenDiff, refreshKey, onAtMent
   }
 
   if (error) {
+    const detail = visibleErrorMessage(error);
+    if (!detail) {
+      // Transport noise (Agent Host pipe not up yet, socket reset while the
+      // engine restarts) must not leak into the UI as a red crash line.
+      const exhausted = retryCountRef.current >= 15;
+      return (
+        <div style={{ padding: "8px 12px", fontSize: 11, color: "var(--text-dim)" }}>
+          <div>{exhausted ? "本地引擎仍未就绪，请重启应用。" : "正在等待本地引擎就绪…（自动重试中）"}</div>
+          <button
+            type="button"
+            onClick={() => {
+              retryCountRef.current = 0;
+              setRetryTick((tick) => tick + 1);
+            }}
+            style={{
+              marginTop: 6,
+              border: "1px solid var(--border)",
+              borderRadius: 6,
+              background: "transparent",
+              color: "var(--text-dim)",
+              fontSize: 11,
+              padding: "2px 8px",
+              cursor: "pointer",
+            }}
+          >
+            立即重试
+          </button>
+        </div>
+      );
+    }
     return (
       <div style={{ padding: "8px 12px", fontSize: 11, color: "var(--danger)" }}>
-        {error}
+        {detail}
       </div>
     );
   }

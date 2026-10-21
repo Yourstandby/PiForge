@@ -119,10 +119,10 @@ export function Composer({
   value: string;
   onValueChange: (value: string) => void;
   onSubmit?: (value: string, images?: AttachedImage[]) => void;
-  /** Enter while the agent is streaming: interrupt and deliver immediately. */
-  onSteer?: (value: string, images?: AttachedImage[]) => void;
-  /** Alt+Enter while the agent is streaming: append to the follow-up queue. */
+  /** Enter while the agent is streaming: append to the follow-up queue (default, non-interrupting). */
   onFollowUp?: (value: string, images?: AttachedImage[]) => void;
+  /** Ctrl/Cmd+Enter while the agent is streaming: interrupt and deliver immediately. */
+  onSteer?: (value: string, images?: AttachedImage[]) => void;
   onStop?: () => void;
   busy?: boolean;
   disabled?: boolean;
@@ -536,10 +536,10 @@ export function Composer({
         setDragActive(false);
         void handleFiles(Array.from(event.dataTransfer.files));
       }}
-      className={`relative w-full rounded-2xl border-none bg-white p-2.5 shadow-[0_8px_30px_rgb(0,0,0,0.04)] ring-1 transition-all duration-200 ease-in-out focus-within:ring-2 focus-within:shadow-[0_10px_38px_rgb(0,0,0,0.07)] ${
+      className={`relative w-full shrink-0 rounded-2xl bg-white p-2.5 shadow-[0_2px_12px_rgba(17,17,17,0.05)] ring-1 transition-all duration-200 ease-in-out focus-within:ring-2 ${
         dragActive
           ? "ring-2 ring-accent/40 bg-[#F7FAFF]"
-          : "ring-black/[0.03] focus-within:ring-accent/15"
+          : "ring-black/[0.05] focus-within:ring-accent/20"
       }`}
     >
       {dragActive && (
@@ -628,7 +628,7 @@ export function Composer({
           ))}
         </div>
       )}
-      <div className="relative">
+      <div className="relative min-h-0">
         {slashMenuOpen && (
           <div
             role="listbox"
@@ -786,7 +786,8 @@ export function Composer({
             }
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
-              submit(busy && e.altKey ? "follow-up" : "send");
+              // 默认排队不打断：busy 时 Enter = 加入队列，Ctrl/Cmd+Enter = 打断并发送。
+              submit(busy ? (e.ctrlKey || e.metaKey ? "steer" : "follow-up") : "send");
             }
           }}
           onPaste={(e) => {
@@ -799,18 +800,18 @@ export function Composer({
           rows={1}
           placeholder="问点什么，或者描述你想构建的东西…（@ 引用文件）"
           aria-label="输入消息"
-          className="block w-full resize-none bg-transparent px-2 pt-1.5 text-[15px] leading-6 text-ink caret-accent outline-none placeholder:text-ink-faint"
+          className="block min-h-6 w-full resize-none bg-transparent px-2 pt-1 text-[15px] leading-6 text-ink caret-accent outline-none placeholder:text-ink-faint"
         />
       </div>
-      <div className="mt-1 flex items-center justify-between px-1">
-        <div className="flex items-center gap-1">
+      <div className="mt-1 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 px-1">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
             disabled={disabled}
             aria-label="添加附件"
             title="添加附件（图片或文件引用）"
-            className="flex h-7 w-7 items-center justify-center rounded-md text-ink-faint transition-colors duration-150 hover:bg-[#ECECEF] hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-faint transition-colors duration-150 hover:bg-[#ECECEF] hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Paperclip size={15} strokeWidth={1.5} />
           </button>
@@ -823,17 +824,18 @@ export function Composer({
             disabled={disabled}
             aria-label="生成图片"
             title="生成图片（/imagine 描述）"
-            className="flex h-7 w-7 items-center justify-center rounded-md text-ink-faint transition-colors duration-150 hover:bg-[#ECECEF] hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-faint transition-colors duration-150 hover:bg-[#ECECEF] hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
           >
             <ImagePlus size={15} strokeWidth={1.5} />
           </button>
-          <span className="text-[11px] text-ink-faint">
+          {/* 快捷键提示：可伸缩 + 省略号，宽度不够时被截断而不是压住发送按钮 */}
+          <span className="hidden min-w-0 flex-1 truncate text-[11px] text-ink-faint sm:block">
             {busy
-              ? "Enter 打断并发送 · Alt + Enter 加入队列"
+              ? "Enter 加入队列 · Ctrl + Enter 打断并发送"
               : "Enter 发送 · Shift + Enter 换行 · @ 引用文件 · 拖拽添加"}
           </span>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="ml-auto flex shrink-0 items-center gap-1">
           {busy && canSend && onSteer && (
             <button
               type="button"

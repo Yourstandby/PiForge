@@ -6,6 +6,7 @@ import type { McpAuthState, McpScope } from "@contract/domains/mcp";
 import { useI18n } from "./I18nProvider";
 import { apiJson } from "./apiJson";
 import { McpResourceBrowser } from "./McpResourceBrowser";
+import { ErrorNotice } from "./ErrorNotice";
 
 export interface McpConfigContentProps {
   cwd?: string;
@@ -526,7 +527,7 @@ export function McpConfigContent({ cwd }: McpConfigContentProps) {
 
       {error && (
         <div className="mx-4 mt-3 px-3 py-2 rounded-control bg-red-500/10 border border-red-500/20 text-red-400 text-[12px] flex items-center justify-between">
-          <span>{error}</span>
+          <ErrorNotice message={error} className="min-w-0 flex-1 break-words" />
           <button onClick={() => setError(null)} className="text-red-400 font-bold ml-2">
             ×
           </button>

@@ -4,6 +4,7 @@ import { useId, type ReactNode } from "react";
 import { useI18n } from "../I18nProvider";
 import type { SidebarProject } from "./projects";
 import { SidebarIcon } from "./SidebarIcon";
+import { ProjectTintDot } from "../ProjectTintDot";
 
 export function ProjectGroup({ project, expanded, active, duplicateName, onToggle, onNewSession, children, dragHandle, dragging = false }: {
   project: SidebarProject;
@@ -37,6 +38,8 @@ export function ProjectGroup({ project, expanded, active, duplicateName, onToggl
         >
           <SidebarIcon name="chevron" size={10} className="sidebar-project-chevron" style={{ transform: expanded ? "rotate(90deg)" : undefined }} />
           <SidebarIcon name={expanded ? "folder-open" : "folder"} size={17} className="sidebar-project-folder" />
+          {/* 与顶部标签完全一致的微胶囊 */}
+          <ProjectTintDot cwd={project.cwd} className="mr-1" />
           <span className="sidebar-project-name">{project.name || t("sidebar.otherSessions")}</span>
           {duplicateName && <span className="sidebar-project-path">{project.parentPath}</span>}
         </button>

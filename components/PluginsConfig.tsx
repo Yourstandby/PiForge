@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { PluginView } from "@/contract/domains/plugins";
 import type { HostTransportInfo } from "@/contract/domains/providers";
+import { ErrorNotice } from "./ErrorNotice";
 
 interface PluginsResponse {
   plugins?: PluginView[];
@@ -82,7 +83,13 @@ export function PluginsConfig({ onClose }: { onClose: () => void }) {
             <div style={{ marginLeft: "auto" }}><strong>WS</strong> · {transport?.wsUrl ?? "未启动"} · {transport?.wsClients ?? 0} 客户端</div>
           </div>
 
-          {error && <div style={{ color: "#b91c1c", fontSize: 12, marginBottom: 12 }}>{error}</div>}
+          {error && (
+          <ErrorNotice
+            message={error}
+            style={{ display: "block", color: "#b91c1c", fontSize: 12, marginBottom: 12 }}
+            fallback={<span style={{ display: "block", fontSize: 12, color: "#9ca3af", marginBottom: 12 }}>正在等待本地引擎就绪…</span>}
+          />
+        )}
           {loading && <div style={{ color: "#6b7280", fontSize: 12 }}>加载中…</div>}
           {!loading && plugins.length === 0 && (
             <div style={{ padding: 22, textAlign: "center", border: "1px dashed #dbe3ee", borderRadius: 10, color: "#6b7280", fontSize: 12, lineHeight: 1.8 }}>

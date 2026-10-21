@@ -2,8 +2,16 @@ import { useEffect, useRef, type RefObject } from "react";
 
 export type DismissReason = "outside" | "escape";
 
+type RefLike = RefObject<HTMLElement | null>;
+
+/**
+ * Close on outside pointerdown / Escape.
+ *
+ * Accepts several refs so a dropdown rendered through a portal (whose DOM is
+ * outside the trigger's subtree) can still count as "inside".
+ */
 export function useDismissOnOutsideClick(
-  ref: RefObject<HTMLElement | null>,
+  ref: RefLike | RefLike[],
   open: boolean,
   onClose: (reason: DismissReason) => void,
 ): void {
@@ -13,10 +21,11 @@ export function useDismissOnOutsideClick(
   useEffect(() => {
     if (!open) return;
 
+    const refs = Array.isArray(ref) ? ref : [ref];
     const handlePointerDown = (event: PointerEvent) => {
-      if (ref.current && !ref.current.contains(event.target as Node)) {
-        onCloseRef.current("outside");
-      }
+      const target = event.target as Node;
+      const inside = refs.some((item) => item.current?.contains(target));
+      if (!inside) onCloseRef.current("outside");
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;

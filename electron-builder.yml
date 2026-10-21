@@ -14,8 +14,11 @@ electronDownload:
 
 files:
   - package.json
+  # Runtime brand icons: BrowserWindow / tray resolve them from the asar
+  # (electron/app-icon.ts). Keep every platform's file here.
   - build/icon.ico
   - build/icon.icns
+  - build/icon.png
   - electron/dist/**/*
   - "!electron/**/*.ts"
   - "!electron/tsconfig.json"
@@ -97,7 +100,12 @@ win:
         - x64
   artifactName: "PiForge-${version}-win-${arch}.${ext}"
   icon: build/icon.ico
-  signAndEditExecutable: false
+  # electron-builder 只有在 rcedit 这一步（signAndEditExecutable）运行时，
+  # 才会把 build/icon.ico 与版本信息写进 PiForge.exe。之前这里是 false，
+  # 结果 win-unpacked/PiForge.exe 一直停留在默认 Electron 图标。
+  # 首次打包需要下载 winCodeSign（含 rcedit）；国内网络请先设置：
+  #   PowerShell: $env:ELECTRON_BUILDER_BINARIES_MIRROR="https://npmmirror.com/mirrors/electron-builder-binaries/"
+  signAndEditExecutable: true
 
 nsis:
   oneClick: false

@@ -13,7 +13,7 @@
 // The SVG copies embed the raster as a data URI: some managed Windows machines
 // run endpoint encryption that mangles `.png` files at rest, so the web UI
 // loads the SVG twin while packaging keeps using the PNG/ICO files.
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
@@ -117,6 +117,35 @@ writeFileSync(join(root, "public", "logo.png"), await png(256));
 const svgPng = await png(256);
 writeFileSync(join(root, "public", "logo.svg"), svgFrom(svgPng, 280));
 writeFileSync(join(root, "app", "icon.svg"), svgFrom(svgPng, 280));
+
+// The splash screen inlines the mark as a data URI (its CSP is
+// `default-src 'none'` with `img-src data:`), so the artwork must be baked
+// into electron/startup.html rather than fetched at runtime.
+const splashPng = await sharp(source)
+  .resize(160, 160, {
+    fit: "contain",
+    background: { r: 0, g: 0, b: 0, alpha: 0 },
+    kernel: "lanczos3",
+  })
+  .png({ compressionLevel: 9, palette: true, colours: 200 })
+  .toBuffer();
+const startupHtmlPath = join(root, "electron", "startup.html");
+if (existsSync(startupHtmlPath)) {
+  const html = readFileSync(startupHtmlPath, "utf8");
+  const img =
+    `<img class="mark-logo" alt="" draggable="false" ` +
+    `src="data:image/png;base64,${splashPng.toString("base64")}" />`;
+  const next = html.replace(
+    /(<!-- splash-logo:start -->)[\s\S]*?(<!-- splash-logo:end -->)/,
+    `$1
+            ${img}
+            $2`,
+  );
+  if (next !== html) {
+    writeFileSync(startupHtmlPath, next);
+    console.log(`startup.html splash logo ${splashPng.length} bytes (base64 inlined)`);
+  }
+}
 
 console.log(
   `icon.ico ${ico.length} bytes · icon.icns ${icns.length} bytes · png/svg variants written`,

@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import type { DevEnvironmentReport } from "@contract/domains/dev-environment";
 import { ModalSurface } from "./ModalSurface";
+import { ErrorNotice } from "./ErrorNotice";
 
 type Tab = "environment" | "browser";
 
@@ -245,7 +246,11 @@ export function DevEnvironmentConfig({ onClose }: { onClose: () => void }) {
                 <Loader2 size={12} className="animate-spin" aria-hidden="true" /> 正在检测开发工具…
               </p>
             ) : error ? (
-              <p className="py-4 text-[12px] text-danger">{error}</p>
+              <ErrorNotice
+                message={error}
+                className="block py-4 text-[12px] text-danger"
+                fallback={<span className="block py-4 text-[12px] text-ink-faint">正在等待本地引擎就绪…</span>}
+              />
             ) : (
               <div className="overflow-hidden rounded-lg border border-border">
                 {(report?.tools ?? []).map((tool, index) => (
@@ -316,9 +321,7 @@ export function DevEnvironmentConfig({ onClose }: { onClose: () => void }) {
               </p>
             )}
             {error && (
-              <p role="alert" className="text-[12px] text-danger">
-                {error}
-              </p>
+              <ErrorNotice className="block text-[12px] text-danger" message={error} />
             )}
           </div>
         )}

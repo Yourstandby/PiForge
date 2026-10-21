@@ -11,6 +11,7 @@ import {
 import type { SessionInfo, SessionTreeNode, UserMessage } from "@/lib/types";
 import type { FollowUpQueueSnapshot } from "@/lib/follow-up-queue";
 import {
+  calculateSessionActivity,
   calculateSessionStats,
   type SessionStats,
 } from "./agent-session/session-stats";
@@ -117,6 +118,8 @@ export interface UseAgentSessionOptions {
   /** Fired when pi renames the session (auto title or manual rename). */
   onSessionRenamed?: (name: string | undefined) => void;
   onSystemPromptChange?: (prompt: string | null) => void;
+  /** 当前标签页是否可见：用于滚动位置记忆与首次贴底。 */
+  active?: boolean;
 }
 
 export function useAgentSession(opts: UseAgentSessionOptions) {
@@ -132,6 +135,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     onBranchDataChange,
     onSystemPromptChange,
     onSessionRenamed,
+    active = true,
   } = opts;
 
   const isNew = session === null && newSessionCwd !== null;
@@ -184,6 +188,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [nestedToolExecutions, setNestedToolExecutions] = useState<
     Record<string, NestedToolExecution>
   >({});
+  /**
+   * 执行中工具的实时输出（按工具名索引，最新一次覆盖）。
+   * 来自 pi 的 `tool_execution_update.partialResult`，只保留尾部 8KB，
+   * 让工具卡能像终端一样边跑边刷。
+   */
+  const [liveToolOutput, setLiveToolOutput] = useState<Record<string, string>>({});
   const followUpQueueRef = useRef(followUpQueue);
   followUpQueueRef.current = followUpQueue;
   const pendingSteersRef = useRef<
@@ -291,6 +301,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     messageCount: messages.length,
     agentRunning,
     streamingMessage: streamState.streamingMessage,
+    active,
   });
 
   const sessionIdRef = useRef<string | null>(session?.id ?? null);
@@ -359,6 +370,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     [messages],
   );
   const sessionStats = authoritativeSessionStats ?? calculatedSessionStats;
+  // 回合数 / 工具调用汇总：直接由 transcript 推导，不依赖 host 侧 stats。
+  const sessionActivity = useMemo(
+    () => calculateSessionActivity(messages),
+    [messages],
+  );
 
   const loadSession = useCallback(
     async (sid: string, showLoading = false, includeState = false) => {
@@ -418,6 +434,29 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         reconcileSteeringQueue(event.steering);
       } else if (event.type === "session_info_changed") {
         onSessionRenamed?.(event.name);
+      }
+
+      if (event.type === "tool_execution_update") {
+        const text = nestedOutputText(event.partialResult);
+        // 开发期确认"工具日志真的在流"：F12 Console 会源源不断刷 [Tool Stream]。
+        if (process.env.NODE_ENV !== "production") {
+          console.log("[Tool Stream]", event.toolName, text.slice(-200));
+        }
+        setLiveToolOutput((previous) => ({
+          ...previous,
+          [event.toolName]: text.slice(-8000),
+        }));
+      }
+      if (event.type === "tool_execution_end") {
+        const finishedName = event.toolName;
+        if (finishedName) {
+          setLiveToolOutput((previous) => {
+            if (!(finishedName in previous)) return previous;
+            const next = { ...previous };
+            delete next[finishedName];
+            return next;
+          });
+        }
       }
 
       // Nested tool results are not persisted by pi (only name/args/status).
@@ -744,6 +783,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     followUpQueueRef.current = EMPTY_FOLLOW_UP_QUEUE;
     setFollowUpQueue(EMPTY_FOLLOW_UP_QUEUE);
     setNestedToolExecutions({});
+    setLiveToolOutput({});
     setFollowUpQueueBusy(false);
     pendingSteersRef.current = [];
     pendingPromptsRef.current = [];
@@ -862,10 +902,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     compactError,
     displayModel,
     sessionStats,
+    sessionActivity,
+    /** 手动重试会话加载（错误卡片上的「重试」按钮）。 */
+    loadSession,
     agentPhase,
     followUpQueue,
     followUpQueueBusy,
     nestedToolExecutions,
+    liveToolOutput,
     isNew,
     // Refs
     messagesEndRef,

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { SkillSearchResult } from "@/app/api/skills/search/route";
 import { useI18n } from "./I18nProvider";
+import { ErrorNotice } from "./ErrorNotice";
 
 interface Skill {
   name: string;
@@ -698,7 +699,7 @@ export function SkillsConfig({
                     color: "var(--danger)",
                   }}
                 >
-                  {error}
+                  <ErrorNotice message={error} />
                 </div>
               ) : skills.length === 0 ? (
                 <div

@@ -6,6 +6,7 @@ import type {
   CustomProviderView,
   HostTransportInfo,
 } from "@/contract/domains/providers";
+import { ErrorNotice } from "./ErrorNotice";
 
 interface ProvidersResponse {
   providers?: CustomProviderView[];
@@ -229,7 +230,12 @@ export function CustomProvidersConfig({ onClose }: { onClose: () => void }) {
                 <div style={{ fontSize: 11, color: "#6b7280", lineHeight: 1.6 }}>
                   本地 Ollama 通常需要任意非空密钥（例如 ollama）才会被 Pi 识别为可用模型；自建网关请填写真实密钥。
                 </div>
-                {error && <div style={{ color: "#b91c1c", fontSize: 12 }}>{error}</div>}
+                {error && (
+                  <ErrorNotice
+                    message={error}
+                    style={{ display: "block", color: "#b91c1c", fontSize: 12 }}
+                  />
+                )}
                 {notice && <div style={{ color: "#047857", fontSize: 12 }}>{notice}</div>}
                 <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                   {providers.some((provider) => provider.id === draft.id) && (
@@ -242,7 +248,12 @@ export function CustomProvidersConfig({ onClose }: { onClose: () => void }) {
                 </div>
               </div>
             )}
-            {!editing && error && <div style={{ color: "#b91c1c", fontSize: 12, marginTop: 12 }}>{error}</div>}
+            {!editing && error && (
+              <ErrorNotice
+                message={error}
+                style={{ display: "block", color: "#b91c1c", fontSize: 12, marginTop: 12 }}
+              />
+            )}
             {!editing && notice && <div style={{ color: "#047857", fontSize: 12, marginTop: 12 }}>{notice}</div>}
           </section>
         </div>

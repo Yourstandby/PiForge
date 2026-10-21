@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { GitBranch, Loader2, Network, Square } from "lucide-react";
 import type { OrchestratorTaskView } from "@contract/domains/orchestrator";
+import { ErrorNotice } from "./ErrorNotice";
 
 const STATUS_COLOR: Record<string, string> = {
   starting: "#9A6B1F",
@@ -78,7 +79,12 @@ function Node({ node, depth, stopping, onStop }: { node: TreeNode; depth: number
           {task.workerPid && <span>pid {task.workerPid}</span>}
         </div>
         <p className="mt-1 truncate pl-5 font-mono text-[9.5px] text-ink-muted" title={task.cwd}>{task.cwd}</p>
-        {task.error && <p className="mt-1 pl-5 text-[10px] text-danger">{task.error}</p>}
+        {task.error && (
+          <ErrorNotice
+            message={task.error}
+            className="mt-1 block pl-5 text-[10px] text-danger"
+          />
+        )}
         {task.output && <p className="mt-1 line-clamp-2 pl-5 text-[10px] leading-4 text-ink-faint" title={task.output}>{task.output}</p>}
       </div>
       {expanded && node.children.map((child) => (
@@ -141,7 +147,13 @@ export function OrchestratorPanel() {
 
   return (
     <div className="flex flex-col gap-1 px-1.5 py-1" data-testid="orchestrator-panel">
-      {error && <p className="px-1.5 text-[11px] text-danger">{error}</p>}
+      {error && (
+        <ErrorNotice
+          message={error}
+          className="block px-1.5 text-[11px] text-danger"
+          fallback={<span className="block px-1.5 py-1 text-[11px] text-ink-faint">正在等待本地引擎就绪…</span>}
+        />
+      )}
       {tasks.length === 0 ? (
         <p className="px-1.5 py-2 text-[11px] leading-5 text-ink-faint">
           <Network size={12} className="mr-1 inline" aria-hidden="true" />

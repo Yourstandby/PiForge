@@ -9,6 +9,7 @@ import {
 } from "./aux-tool-names.ts";
 import { TOOL_HISTORY_TOOL_NAME } from "./tool-outputs.ts";
 import { PROCESS_READ_TOOL_NAME, PROCESS_WAIT_TOOL_NAME } from "./process-tool-names.ts";
+import { TOOL_USE_TOOL_NAME } from "./tool-stubs.ts";
 
 /** Auxiliary model tools are only declared once the user configured them. */
 export interface AuxToolAvailability {
@@ -31,6 +32,8 @@ export function desktopRuntimeTools(mode: AgentMode, preset: ToolPreset, codemod
       (active.includes(tool.name) && ["deferred", "codemode"].includes(tool.exposure ?? "")))) names.push(tool.name);
   }
   if (registered.some((tool) => tool.name === "tool_search")) names.push("tool_search");
+  // 存根的点名加载通道（MCP 直曝 / 插件工具只能靠它拉回来）。
+  if (registered.some((tool) => tool.name === TOOL_USE_TOOL_NAME)) names.push(TOOL_USE_TOOL_NAME);
   // PowerShell is a first-class Windows shell when the host registered it.
   if (platform === "win32" && registered.some((tool) => tool.name === "powershell")) names.push("powershell");
   // Background processes are a desktop capability registered by our inline

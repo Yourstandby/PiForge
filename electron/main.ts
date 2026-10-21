@@ -8,7 +8,7 @@ import net from "net";
 import { createTray } from "./tray";
 import { waitForNextServerReady } from "./server-wait";
 import { killProcessDescendants, killProcessTree } from "./process-tree";
-import { pickApiKeys } from "./env-filter";
+import { childProcessEnv } from "./env-filter";
 import { choosePort } from "./port-selection";
 import { getNextRestartState, type ServerState } from "./restart-policy";
 import { getNextCrashReloadState } from "./crash-recovery";
@@ -166,6 +166,31 @@ function showStartupState(state: "starting" | "error" | "stopped", message?: str
 
 let startupStartedAt = Date.now();
 
+/**
+ * 启动页淡出：真正的应用 URL 加载前，先让 startup.html 把画面淡完，
+ * 避免从品牌动画硬切到白屏。启动页里的动画在等待期间一直循环。
+ */
+async function fadeOutStartupPage(window: BrowserWindow, timeoutMs = 360): Promise<void> {
+  if (window.isDestroyed() || window.webContents.isDestroyed()) {
+    return;
+  }
+  if (!window.webContents.getURL().includes("startup.html")) {
+    return;
+  }
+  try {
+    await Promise.race([
+      window.webContents.executeJavaScript(
+        "window.__piforgeFadeOut ? window.__piforgeFadeOut() : Promise.resolve()",
+        true,
+      ),
+      new Promise((resolve) => setTimeout(resolve, timeoutMs)),
+    ]);
+  } catch (error) {
+    // A dead renderer must never block startup; just load the app URL.
+    logError("Startup page fade-out failed", error);
+  }
+}
+
 function logStartupTiming(stage: string, detail?: unknown) {
   logInfo(`Startup timing: ${stage}`, { elapsedMs: Date.now() - startupStartedAt, detail });
 }
@@ -214,7 +239,7 @@ function agentHostEnvVars(): Record<string, string> {
 
 function agentHostProcessEnv(): Record<string, string> {
   const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(pickApiKeys(process.env))) {
+  for (const [key, value] of Object.entries(childProcessEnv(process.env))) {
     if (value !== undefined) env[key] = value;
   }
   return { ...env, ...agentHostEnvVars() };
@@ -388,7 +413,7 @@ function startNextServer(port: number): ServerProcess {
     const proc = spawn("node", [nextBin, "dev", "-p", String(port)], {
       cwd: app.getAppPath(),
       env: {
-        ...pickApiKeys(process.env),
+        ...childProcessEnv(process.env),
         ...agentHostEnvVars(),
         NODE_ENV: process.env.NODE_ENV ?? "development",
         PORT: String(port),
@@ -408,7 +433,7 @@ function startNextServer(port: number): ServerProcess {
   const standaloneDir = path.join(process.resourcesPath, "standalone");
   const serverScript = path.join(standaloneDir, "server.js");
   const serverEnv = {
-    ...pickApiKeys(process.env),
+    ...childProcessEnv(process.env),
     ...agentHostEnvVars(),
     NODE_ENV: process.env.NODE_ENV ?? "production",
     PORT: String(port),
@@ -539,9 +564,38 @@ function cleanup() {
 // ---------------------------------------------------------------------------
 // Window
 // ---------------------------------------------------------------------------
+/**
+ * BrowserWindow / 任务栏图标。
+ *
+ * macOS 由 .app bundle 接管（不用 window icon），Windows 与 Linux 显式指向
+ * `build/icon.ico` / `build/icon.png`。打包后这两个文件在 app.asar 里（
+ * electron-builder.yml 的 `files:` 含 build/*），开发时就是仓库根目录。
+ * 加载失败时回退到不给 icon，避免把空 NativeImage 传给窗口。
+ */
+function loadWindowIcon(): Electron.NativeImage | undefined {
+  if (process.platform === "darwin") return undefined;
+  const iconPath = getAppIconPath(app.getAppPath());
+  try {
+    if (!existsSync(iconPath)) {
+      logError("App icon file is missing", iconPath);
+      return undefined;
+    }
+    const image = nativeImage.createFromPath(iconPath);
+    if (image.isEmpty()) {
+      logError("App icon could not be decoded", iconPath);
+      return undefined;
+    }
+    return image;
+  } catch (error) {
+    logError("App icon could not be loaded", error);
+    return undefined;
+  }
+}
+
 function createWindow(options: { initialPath?: string; showStartup?: boolean } = {}): BrowserWindow {
   const initialPath = normalizeWindowPath(options.initialPath);
   const showStartup = options.showStartup ?? true;
+  const windowIcon = loadWindowIcon();
   const window = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -550,7 +604,7 @@ function createWindow(options: { initialPath?: string; showStartup?: boolean } =
     titleBarStyle: "hidden",
     titleBarOverlay: titleBarOverlayOptions(),
     title: "PiForge",
-    icon: nativeImage.createFromPath(getAppIconPath(app.getAppPath())),
+    ...(windowIcon ? { icon: windowIcon } : {}),
     show: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -563,6 +617,9 @@ function createWindow(options: { initialPath?: string; showStartup?: boolean } =
       // The built-in browser is a Main-owned WebContentsView (stage 9).
       // Renderer webviews are disabled so Next/Renderer cannot instantiate one.
       webviewTag: false,
+      // 窗口失焦/切到后台时不降帧：流式输出 + 打字机在后台依然按 60fps 跑，
+      // 回到前台不会出现"补帧式"的暴走重绘。
+      backgroundThrottling: false,
     },
   });
 
@@ -681,6 +738,8 @@ async function loadAppUrl(window: BrowserWindow, port: number, appPath: string):
     await loadPageWithRetry(
       `http://127.0.0.1:${port}${appPath}`,
       async (url) => {
+        assertCurrentNavigation();
+        await fadeOutStartupPage(window);
         assertCurrentNavigation();
         await window.loadURL(url);
       },
@@ -1141,17 +1200,20 @@ app.whenReady().then(async () => {
     createTray(mainWindow!, { onNewWindow: () => { openNewWindow(); } });
     startupUiReady = true;
 
-    // The Agent Host is forked before the Next.js server so the server is
-    // launched with a live endpoint in its environment. A failed host start is
-    // non-fatal in this phase: the UI still boots and reports the host state.
-    await startAgentHost();
-    logStartupTiming("agent host startup finished", { ready: agentHostReady });
-
+    // The agent host and the Next.js server are independent once the endpoint
+    // token exists (minted synchronously), so spawn both at once. Waiting for
+    // host readiness first added up to 10s of dead time on the startup path.
+    agentHostEndpoint ??= createAgentHostEndpoint();
+    agentHostToken ??= randomBytes(32).toString("hex");
+    const agentHostStart = startAgentHost();
     nextProcess = startNextServer(port);
     logStartupTiming("next process spawned");
     logInfo("Waiting for Next.js server...");
 
-    await waitForNextServerReady(port, nextProcess, { requireHttpHealth: app.isPackaged });
+    const nextReady = waitForNextServerReady(port, nextProcess, { requireHttpHealth: app.isPackaged });
+    await agentHostStart;
+    logStartupTiming("agent host startup finished", { ready: agentHostReady });
+    await nextReady;
     logStartupTiming("next server ready");
     logInfo("Next.js server is ready");
     await showApp(port);

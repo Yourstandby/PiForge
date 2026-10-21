@@ -12,6 +12,8 @@ interface ModelSelectorProps {
   modelNames?: Record<string, string>;
   modelList?: { id: string; name: string; provider: string; input?: string[] }[];
   onModelChange?: (provider: string, modelId: string) => void;
+  /** 底部工具栏收窄时只给模型名更小的宽度上限。 */
+  compact?: boolean;
 }
 
 export function ModelSelector({
@@ -20,6 +22,7 @@ export function ModelSelector({
   modelNames,
   modelList,
   onModelChange,
+  compact = false,
 }: ModelSelectorProps) {
   const { t } = useI18n();
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
@@ -79,6 +82,7 @@ export function ModelSelector({
           display: "flex", alignItems: "center", justifyContent: "center",
           width: "auto", padding: "0 7px", gap: 5,
           height: "var(--control-height)",
+          flexShrink: 0,
           background: modelDropdownOpen ? "var(--bg-hover)" : "none",
           border: "none",
           borderRadius: "var(--radius-control)",
@@ -89,11 +93,14 @@ export function ModelSelector({
         }}
         className={isStreaming ? "" : "hover:bg-[var(--bg-hover)] hover:text-[var(--text)] active:scale-95 transition-[background-color,color,transform] duration-150"}
       >
-        <Cpu size={13} strokeWidth={1.75} aria-hidden="true" />
-        <span style={{ maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <Cpu size={13} strokeWidth={1.75} aria-hidden="true" style={{ flexShrink: 0 }} />
+        {/* 模型名在窄宽度下缩短并省略，不把底部工具栏撑爆 */}
+        <span
+          className={`min-w-0 truncate ${compact ? "max-w-[96px]" : "max-w-[150px]"}`}
+        >
           {currentName}
         </span>
-        <ChevronDown size={11} strokeWidth={2} aria-hidden="true" />
+        <ChevronDown size={11} strokeWidth={2} aria-hidden="true" style={{ flexShrink: 0 }} />
       </button>
       {modelDropdownOpen && modelDropdownRect && (() => {
         const viewportHeight = window.visualViewport?.height ?? window.innerHeight;

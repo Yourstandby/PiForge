@@ -11,6 +11,7 @@ import {
   SquareArrowOutUpRight,
 } from "lucide-react";
 import { getElectronApi, type BrowserState } from "@/lib/electron-api";
+import { ErrorNotice } from "./ErrorNotice";
 
 /**
  * Built-in browser (right panel).
@@ -48,7 +49,17 @@ export function BrowserPanel({
   onBeforeCapture?: () => Promise<(() => void) | undefined>;
 }) {
   const api = useMemo(() => getElectronApi(), []);
-  const supported = Boolean(api?.browserNavigate && api.browserSetBounds);
+  /**
+   * SSR 时拿不到 preload 的 electron API（`api` 为 null），客户端首帧也可能在
+   * preload 之前就渲染 → `disabled` 在两端不一致，React 会报 hydration mismatch。
+   * 这里用 mounted 闸门：首帧（服务端 + 客户端首次水合）都按"不支持"渲染，
+   * 挂载后再切到真实值，避免属性不一致。
+   */
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  const supported = mounted && Boolean(api?.browserNavigate && api.browserSetBounds);
   const hostRef = useRef<HTMLDivElement | null>(null);
 
   const [address, setAddress] = useState("");
@@ -204,6 +215,7 @@ export function BrowserPanel({
             aria-label="地址栏"
             spellCheck={false}
             disabled={!supported}
+            suppressHydrationWarning
             className="min-w-0 flex-1 bg-transparent font-mono text-[11px] text-ink outline-none placeholder:text-ink-faint disabled:opacity-50"
           />
         </div>
@@ -239,7 +251,12 @@ export function BrowserPanel({
         </div>
       )}
 
-      {error && <p className="shrink-0 border-b border-red-100 bg-red-50 px-2 py-1 text-[10.5px] text-red-600">{error}</p>}
+      {error && (
+        <ErrorNotice
+          message={error}
+          className="block shrink-0 border-b border-red-100 bg-red-50 px-2 py-1 text-[10.5px] text-red-600"
+        />
+      )}
 
       <div ref={hostRef} className="relative min-h-0 flex-1 overflow-hidden bg-white">
         {!supported && (

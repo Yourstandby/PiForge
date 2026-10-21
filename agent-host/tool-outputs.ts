@@ -10,10 +10,19 @@ import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeF
 import { createInterface } from "node:readline";
 import { dirname, join, resolve, sep } from "node:path";
 import { getAgentDir } from "./sdk-adapter.ts";
+import {
+  DEFAULT_TOOL_OUTPUT_BUDGET,
+  TRUNCATION_HINT,
+  countTextLines,
+  truncationNotice,
+} from "./tool-output-budget.ts";
 
-/** Persist when either limit is exceeded (10 KB / 2000 lines). */
-export const TOOL_OUTPUT_MAX_BYTES = 10 * 1024;
-export const TOOL_OUTPUT_MAX_LINES = 2_000;
+/**
+ * 落盘阈值 = 工具输出预算（100 行 / 8KB）。
+ * 超过它就换成「头尾预览 + 指针」，剩下的交给 `tool_history_get` 按页读。
+ */
+export const TOOL_OUTPUT_MAX_BYTES = DEFAULT_TOOL_OUTPUT_BUDGET.maxBytes;
+export const TOOL_OUTPUT_MAX_LINES = DEFAULT_TOOL_OUTPUT_BUDGET.maxLines;
 export const PREVIEW_HEAD_LINES = 40;
 export const PREVIEW_TAIL_LINES = 40;
 export const HISTORY_DEFAULT_LIMIT = 200;
@@ -58,9 +67,7 @@ export interface PersistResult {
 }
 
 export function countLines(text: string): number {
-  if (!text) return 0;
-  const newlines = (text.match(/\n/g) ?? []).length;
-  return text.endsWith("\n") ? newlines : newlines + 1;
+  return countTextLines(text);
 }
 
 export function shouldPersistToolOutput(text: string): boolean {
@@ -93,7 +100,10 @@ export function buildToolOutputPreview(fullText: string, toolCallId: string): Pr
     const head = lines.slice(0, PREVIEW_HEAD_LINES).join("\n");
     const tail = lines.slice(-PREVIEW_TAIL_LINES).join("\n");
     const omittedLines = totalLines - PREVIEW_HEAD_LINES - PREVIEW_TAIL_LINES;
-    const text = `${head}\n\n… 【已省略 ${omittedLines} 行】 …\n\n${tail}\n\n${hint}`;
+    const text = `${head}\n\n… 【已省略 ${omittedLines} 行】 …\n${truncationNotice(
+      totalLines,
+      DEFAULT_TOOL_OUTPUT_BUDGET,
+    )}\n${TRUNCATION_HINT}\n\n${tail}\n\n${hint}`;
     if (Buffer.byteLength(text, "utf8") > MAX_PREVIEW_BYTES) {
       return charPreview(fullText, totalLines, hint);
     }
@@ -112,7 +122,7 @@ export function buildToolOutputPreview(fullText: string, toolCallId: string): Pr
 function charPreview(fullText: string, totalLines: number, hint: string): PreviewResult {
   if (Buffer.byteLength(fullText, "utf8") <= MAX_PREVIEW_BYTES) {
     return {
-      text: `${fullText}\n\n${hint}`,
+      text: `${fullText}\n\n${truncationNotice(totalLines, DEFAULT_TOOL_OUTPUT_BUDGET)}\n${TRUNCATION_HINT}\n\n${hint}`,
       totalLines,
       previewLines: totalLines,
       omittedLines: 0,
@@ -122,7 +132,10 @@ function charPreview(fullText: string, totalLines: number, hint: string): Previe
   const tail = fullText.slice(-PREVIEW_TAIL_CHARS);
   const omittedChars = Math.max(0, fullText.length - head.length - tail.length);
   return {
-    text: `${head}\n\n… 【已省略 ${omittedChars} 个字符】 …\n\n${tail}\n\n${hint}`,
+    text: `${head}\n\n… 【已省略 ${omittedChars} 个字符】 …\n${truncationNotice(
+      totalLines,
+      DEFAULT_TOOL_OUTPUT_BUDGET,
+    )}\n${TRUNCATION_HINT}\n\n${tail}\n\n${hint}`,
     totalLines,
     // Long single-line outputs do not map cleanly to line counts.
     previewLines: Math.min(totalLines, PREVIEW_HEAD_LINES + PREVIEW_TAIL_LINES),
