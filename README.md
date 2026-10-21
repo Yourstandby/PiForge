@@ -30,6 +30,7 @@ Electron Main ──spawn──▶ Next.js server ──HTTP/SSE──▶ Render
                                │
                                ├──127.0.0.1 WebSocket（自动端口）──▶ 插件 / UI 流式总线
                                └──独立 OS Worker 进程 ──▶ 每个 Worker 独占 Git worktree
+```
 
 Agent Host 关闭时会先排空会话 JSONL、终止所有受管进程树与编排 Worker；Next 侧不持有任何 Agent 会话状态。会话 RPC 仍走命名管道 / Unix Socket；v0.7.0 新增的 localhost WebSocket 只用于插件总线、事件中继和后续多模态流，不替代 Host 控制面。
 
