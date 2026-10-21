@@ -21,7 +21,7 @@ PiForge 不是又一个「聊天框套壳」。它把 Agent 真正需要的东�
 
 底层复用官方 [`@earendil-works/pi-coding-agent`](https://github.com/earendil-works/pi-coding-agent)（当前锁定 `1.1.0`）。**我们不 fork SDK，也不在中间加代理层**：整个 Pi 只经过一个文件——`agent-host/sdk-adapter.ts`。上游升级只改这一层，并用 CI 脚本强制这条边界。
 
-## ✨ v0.8.0 你立刻能感受到的六件事
+## ✨ 你立刻能感受到的六件事
 
 | | 能力 | 说明 |
 | --- | --- | --- |
@@ -32,7 +32,9 @@ PiForge 不是又一个「聊天框套壳」。它把 Agent 真正需要的东�
 | 🐚 | **PowerShell 一等公民** | Windows 默认 `pwsh` 7（回退 5.1），统一 `-NoProfile -NonInteractive` 与 UTF-8，中文/多行/引号都不再乱码 |
 | ⚡ | **启动提速** | Host 与 Next 并行拉起，首屏不再等会话扫盘，记住上次项目秒开 |
 
-> 更早的版本（v0.4 三进程隔离 → v0.5 多智能体 → v0.6 worktree/浏览器/舰队 → v0.7 自定义 Provider/沙箱插件/编排）见 [`docs/releases`](./docs/releases)。
+> **v0.8.1 新增**：Agents 面板实时同步（子 Agent + 舰队双 SSE）、手动派驻常驻舰队 Agent（配置持久化）、以及 Agent 省钱阀门（3 轮上限 / 强制摘要 / 10k tokens 熔断）。
+>
+> 更早的版本（v0.4 三进程隔离 → v0.5 多智能体 → v0.6 worktree/浏览器/舰队 → v0.7 自定义 Provider/沙箱插件/编排 → v0.8.0 设置中心/上下文压缩/启动提速）见 [`docs/releases`](./docs/releases)。
 
 ## 🧱 架构：三进程，一条管道，零内部端口
 
