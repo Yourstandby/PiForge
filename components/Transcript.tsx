@@ -854,7 +854,7 @@ function writeStickyOpen(key: string | undefined, value: boolean): void {
 
 /** 一轮对话（用户提问 → 若干条 assistant 消息）里的过程数据。 */
 export interface RoundProcess {
-  thinking: Array<{ text: string; usage?: AssistantMessage["usage"] }>;
+  thinking: Array<{ text: string; usage?: AssistantMessage["usage"]; entryId?: string }>;
   tools: Array<{ block: Extract<TurnBlock, { kind: "tool" }>; usage?: AssistantMessage["usage"] }>;
 }
 
@@ -1316,13 +1316,31 @@ function ThinkingSection({
   tokensPerSecond,
   currencySymbol,
   stateKey,
+  onBranch,
+  onFork,
+  forkingEntryId,
 }: {
-  items: Array<{ text: string; usage?: AssistantMessage["usage"] }>;
+  items: Array<{ text: string; usage?: AssistantMessage["usage"]; entryId?: string }>;
   live: boolean;
   tokensPerSecond?: number;
   currencySymbol: string;
   stateKey?: string;
+  onBranch?: (entryId: string) => void | Promise<void>;
+  onFork?: (entryId: string) => void;
+  forkingEntryId?: string | null;
 }) {
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  const copyItem = (text: string, index: number) => {
+    void (async () => {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        /* 剪贴板不可用时静默 */
+      }
+    })();
+    setCopiedIndex(index);
+    window.setTimeout(() => setCopiedIndex((cur) => (cur === index ? null : cur)), 1200);
+  };
   // 默认收起；但用户手动点开过就记住（跨重挂载恢复）
   const [open, setOpen] = useState(() => readStickyOpen(stateKey) ?? false);
   const toggle = () => {
@@ -1383,20 +1401,60 @@ function ThinkingSection({
         <div className="mt-1 space-y-1.5 border-l-2 border-[#EDEBE4] pl-3">
           {items.map((item, index) => {
             const usage = blockUsage(item.text, item.usage);
+            const money = usage ? formatMoney(usage.cost, currencySymbol) : null;
+            const entryId = item.entryId;
             return (
-              <div key={`thinking-${index}`}>
+              <div key={`thinking-${index}`} className="group/think">
                 <div className="whitespace-pre-wrap break-words text-[12px] leading-6 text-ink-faint">
                   {item.text}
                 </div>
-                {usage && (
-                  <p className="mt-0.5 text-right text-[10px] tabular-nums text-ink-faint">
-                    {usage.tokens.toLocaleString()} tokens
-                    {(() => {
-                      const money = formatMoney(usage.cost, currencySymbol);
-                      return money ? ` · ${money}` : "";
-                    })()}
-                  </p>
-                )}
+                <div className="mt-0.5 flex items-center justify-end gap-1 text-[10px]">
+                  {usage && (
+                    <span className="tabular-nums text-ink-faint">
+                      {usage.tokens.toLocaleString()} tokens{money ? ` · ${money}` : ""}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => copyItem(item.text, index)}
+                    title={copiedIndex === index ? "已复制" : "复制这段思考"}
+                    className="flex items-center gap-1 rounded-md px-1 py-0.5 text-ink-faint opacity-0 transition-colors hover:bg-[#ECECEF] hover:text-ink focus:opacity-100 group-hover/think:opacity-100"
+                  >
+                    {copiedIndex === index ? (
+                      <Check size={10} strokeWidth={2.2} className="text-[#3E8A63]" aria-hidden="true" />
+                    ) : (
+                      <Copy size={10} strokeWidth={1.9} aria-hidden="true" />
+                    )}
+                    {copiedIndex === index ? "已复制" : "复制"}
+                  </button>
+                  {entryId && onBranch && (
+                    <button
+                      type="button"
+                      onClick={() => void onBranch(entryId)}
+                      title="从此消息开启新分支"
+                      className="flex items-center gap-1 rounded-md px-1 py-0.5 text-ink-faint opacity-0 transition-colors hover:bg-[#ECECEF] hover:text-accent-strong focus:opacity-100 group-hover/think:opacity-100"
+                    >
+                      <GitBranch size={10} strokeWidth={1.9} aria-hidden="true" />
+                      分支
+                    </button>
+                  )}
+                  {entryId && onFork && (
+                    <button
+                      type="button"
+                      onClick={() => onFork(entryId)}
+                      disabled={forkingEntryId === entryId}
+                      title={forkingEntryId === entryId ? "正在创建会话…" : "从此处派生新会话"}
+                      className={`flex items-center gap-1 rounded-md px-1 py-0.5 transition-colors disabled:cursor-not-allowed ${
+                        forkingEntryId === entryId
+                          ? "text-accent opacity-100"
+                          : "text-ink-faint opacity-0 hover:bg-[#ECECEF] hover:text-accent-strong focus:opacity-100 group-hover/think:opacity-100"
+                      }`}
+                    >
+                      <GitFork size={10} strokeWidth={1.9} aria-hidden="true" />
+                      {forkingEntryId === entryId ? "创建中…" : "派生"}
+                    </button>
+                  )}
+                </div>
               </div>
             );
           })}
@@ -1606,6 +1664,9 @@ function AssistantBlocks({
   liveToolOutputs,
   liveOutputFor,
   roundKey,
+  onBranch,
+  onFork,
+  forkingEntryId,
 }: {
   blocks: TurnBlock[];
   nestedExecutions?: Record<string, NestedExecutionView>;
@@ -1631,6 +1692,10 @@ function AssistantBlocks({
   liveOutputFor?: (toolName: string) => string | undefined;
   /** 本轮唯一标识：用于记忆折叠面板的用户选择。 */
   roundKey?: number;
+  /** 思考段的 复制 / 分支 / 派生 回调。 */
+  onBranch?: (entryId: string) => void | Promise<void>;
+  onFork?: (entryId: string) => void;
+  forkingEntryId?: string | null;
 }) {
   if (blocks.length === 0) {
     return (
@@ -1720,6 +1785,9 @@ function AssistantBlocks({
           tokensPerSecond={tokensPerSecond}
           currencySymbol={currencySymbol}
           stateKey={roundKey !== undefined ? `round:${roundKey}:thinking` : undefined}
+          onBranch={onBranch}
+          onFork={onFork}
+          forkingEntryId={forkingEntryId}
         />
       )}
       {showProcess && tools.length > 0 && (
@@ -2217,6 +2285,9 @@ function TurnRowImpl({
             tokensPerSecond={tokensPerSecond}
             messageUsage={usage}
             currencySymbol={currencySymbol}
+            onBranch={onBranch}
+            onFork={onFork}
+            forkingEntryId={forking ? entryId : null}
           />
         </div>
       )}
@@ -2641,8 +2712,9 @@ export function Transcript({
       const value: RoundProcess = { thinking: [], tools: [] };
       for (const turn of group) {
         const usage = (messages[turn.messageIndex] as AssistantMessage | undefined)?.usage;
+        const entryId = entryIds?.[turn.messageIndex];
         for (const block of turn.blocks) {
-          if (block.kind === "thinking") value.thinking.push({ text: block.text, usage });
+          if (block.kind === "thinking") value.thinking.push({ text: block.text, usage, entryId });
           else if (block.kind === "tool") value.tools.push({ block, usage });
         }
       }
@@ -2708,7 +2780,7 @@ export function Transcript({
     cache.totals = nextTotalsCache;
 
     return { roundKeyOf, processes, lastAssistantOfRound, totals };
-  }, [turns, messages]);
+  }, [turns, messages, entryIds]);
 
   /**
    * 开发期渲染基线：每帧 / 每次 turns 变化打一行，配合 `TurnRow` 内部的

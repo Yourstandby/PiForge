@@ -1016,6 +1016,7 @@ ${fenced}`
           <div className="h-full" style={{ width: rightPanelWidth }}>
             <FilePanel
               cwd={activeCwd}
+              sessionId={activeTab?.session?.id ?? null}
               explorerRefreshKey={explorerRefreshKey}
               viewerRefreshKey={fileViewerRefreshKey}
               openFile={openFile}

@@ -126,6 +126,7 @@ test("prefix purity: identical state yields byte-identical tools and prompt", as
     { name: "browser_read", description: "Read the built-in browser page text" },
     { name: "run_bg", description: "Run a command in the background" },
     { name: "spawn_agent", description: "Delegate to a sub-agent" },
+    { name: "herdr_spawn", description: "Spawn a fleet agent" },
     { name: "tool_history_get", description: "Read oversized tool output" },
     { name: "tool_search", description: "Search deferred tools" },
   ];
@@ -146,6 +147,7 @@ test("prefix purity: identical state yields byte-identical tools and prompt", as
   assert.deepEqual(activeTools[0], [
     "bash",
     "edit",
+    "herdr_spawn",
     "read",
     "spawn_agent",
     "tool_search",
@@ -153,6 +155,7 @@ test("prefix purity: identical state yields byte-identical tools and prompt", as
   ]);
   // 回归护栏：spawn_agent 一旦被存根掉，模型就再也派不出子 Agent（Agents 面板永远空）。
   assert.ok(activeTools[0].includes("spawn_agent"), "spawn_agent 必须常驻声明");
+  assert.ok(activeTools[0].includes("herdr_spawn"), "herdr_spawn 必须常驻声明");
   const addendum = (first.systemPromptOptions as { appendSystemPrompt?: string }).appendSystemPrompt ?? "";
   assert.match(addendum, /\[未加载的工具\]/);
   assert.match(addendum, /browser_read: Read the built-in browser page text/);

@@ -697,19 +697,14 @@ function ChatSession({
   }, [messages.length, chat.streamState.streamingMessage, chat.agentRunning]);
 
   /**
-   * bash 工具开始执行时，顺手把右侧面板切到「终端」Tab：
-   * 终端本来就由 host 的 desktop-terminal-extension 推流，这里只负责点亮入口，
-   * 不弹面板、不打断当前输入。
+   * bash 执行期间只在终端图标上点亮一个小绿点（不自动切 Tab、不抢当前视图）。
+   * 终端内容本来就由 host 的 desktop-terminal-extension 推流，用户想看图时自己点。
    */
-  const seenBashToolsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const phase = chat.agentPhase;
-    if (phase?.kind !== "running_tools") return;
-    for (const tool of phase.tools) {
-      if (tool.name !== "bash" || seenBashToolsRef.current.has(tool.id)) continue;
-      seenBashToolsRef.current.add(tool.id);
-      window.dispatchEvent(new CustomEvent("piforge:panel-tab", { detail: "terminal" }));
-    }
+    const running =
+      phase?.kind === "running_tools" && phase.tools.some((tool) => tool.name === "bash");
+    window.dispatchEvent(new CustomEvent("piforge:terminal-running", { detail: running }));
   }, [chat.agentPhase]);
 
   // ------------------------------------------------------------------ 对话导航
@@ -1197,31 +1192,37 @@ function ChatSession({
         const phase = chat.agentPhase;
         if (phase?.kind !== "running_tools" || phase.tools.length === 0) return null;
         const names = Array.from(new Set(phase.tools.map((tool) => tool.name)));
-        const color = (name: string) => {
+        // 每个工具一套色：文字色 + 徽章底色 + 跳动光条色。
+        const tone = (name: string): { text: string; badge: string; bar: string } => {
           const n = name.toLowerCase();
-          if (n === "edit" || n === "write" || n === "apply_patch") return "text-[#3E8A63]";
-          if (n === "read") return "text-[#9A6B1F]";
-          if (n === "powershell" || n === "pwsh") return "text-[#C2661A]";
-          if (n === "bash" || n === "terminal" || n === "cmd") return "text-accent-strong";
-          return "text-ink-muted";
+          if (n === "edit" || n === "write" || n === "apply_patch") {
+            return { text: "text-[#3E8A63]", badge: "bg-[#EAF4EE]", bar: "bg-[#4E9F76]" };
+          }
+          if (n === "read") {
+            return { text: "text-[#9A6B1F]", badge: "bg-[#FBF3E4]", bar: "bg-[#B98A3C]" };
+          }
+          if (n === "powershell" || n === "pwsh") {
+            return { text: "text-[#C2661A]", badge: "bg-[#FDF3E8]", bar: "bg-[#D9843A]" };
+          }
+          if (n === "bash" || n === "terminal" || n === "cmd") {
+            return { text: "text-accent-strong", badge: "bg-[#F1F7FF]", bar: "bg-accent" };
+          }
+          return { text: "text-ink-muted", badge: "bg-[#F4F4F5]", bar: "bg-[#9CA3AF]" };
         };
         const shown = names.slice(0, 3);
-        // 徽章整体色调跟随「第一个」工具（PowerShell 橘色），其余工具名各自保留
-        // 自己的文字颜色，不被第一个的样式覆盖。
-        const lead = shown[0]?.toLowerCase() ?? "";
-        const leadIsPowerShell = lead === "powershell" || lead === "pwsh";
+        // 徽章整体色调（底色 + 光条 + running: 文字）跟随「第一个」工具；
+        // 后面并列的工具名各自保留自己的颜色，不被第一个的样式覆盖。
+        const leadTone = tone(shown[0] ?? "");
         return (
           <div
-            className={`mb-1 flex shrink-0 items-center gap-1 self-start rounded-md px-1.5 py-0.5 text-[10px] ${
-              leadIsPowerShell ? "bg-[#FDF3E8] text-[#C2661A]" : "bg-[#F1F7FF] text-accent-strong"
-            }`}
+            className={`mb-1 flex shrink-0 items-center gap-1 self-start rounded-md px-1.5 py-0.5 text-[10px] ${leadTone.badge} ${leadTone.text}`}
             title={`正在执行：${phase.tools.map((tool) => tool.name).join(" · ")}`}
           >
             <span className="flex h-2.5 items-end gap-[2px]" aria-hidden="true">
               {[0, 1, 2].map((index) => (
                 <span
                   key={index}
-                  className={`beat-bar w-[2px] rounded-sm ${leadIsPowerShell ? "bg-[#D9843A]" : "bg-accent"}`}
+                  className={`beat-bar w-[2px] rounded-sm ${leadTone.bar}`}
                   style={{ height: "10px", animationDelay: `${index * 0.15}s` }}
                 />
               ))}
@@ -1229,7 +1230,7 @@ function ChatSession({
             <span className="max-w-[200px] truncate font-mono">
               running:{" "}
               {shown.map((name, index) => (
-                <span key={name} className={color(name)}>
+                <span key={name} className={tone(name).text}>
                   {index > 0 ? ", " : ""}
                   {name}
                 </span>

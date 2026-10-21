@@ -19,6 +19,7 @@ import type {
 import type { DevEnvironmentReport } from "./domains/dev-environment.ts";
 import type { SessionBranches, SessionBranchSwitchResult } from "./domains/sessions.ts";
 import type { SubagentView } from "./domains/subagents.ts";
+import type { FleetAgentProfile } from "./domains/fleet.ts";
 import type { ToolOutputPageDto } from "./domains/tool-outputs.ts";
 import type {
   AuxModelCatalogue,
@@ -82,6 +83,15 @@ export interface HostHealth {
 export type TrustGateResult =
   | { action: "proceed"; trusted: boolean }
   | { action: "prompt"; payload: NeedsTrustPayload };
+
+/** 舰队配置的输入草稿（保存 / 导入都接受不完整字段，服务端会校验）。 */
+export interface FleetProfileInput {
+  id?: string;
+  name: string;
+  systemPrompt: string;
+  tools?: string[];
+  persistent?: boolean;
+}
 
 export interface AgentHostMethods {
   "host.health": {
@@ -372,6 +382,32 @@ export interface AgentHostMethods {
     result: { ok: boolean };
   };
 
+  // ---- fleet agent profiles (persistent, manually managed) ----
+  "fleet.list": {
+    params: Record<string, never>;
+    result: { profiles: FleetAgentProfile[]; agents: HerdrAgentView[] };
+  };
+  "fleet.save": {
+    params: { profile: FleetProfileInput };
+    result: { profile: FleetAgentProfile };
+  };
+  "fleet.delete": {
+    params: { id: string };
+    result: { ok: boolean };
+  };
+  "fleet.import": {
+    params: { payload: unknown };
+    result: { profiles: FleetAgentProfile[] };
+  };
+  "fleet.wake": {
+    params: { id: string; cwd?: string; parentSessionId?: string };
+    result: { agent: HerdrAgentView };
+  };
+  "fleet.message": {
+    params: { id: string; message: string };
+    result: { ok: boolean; agent: HerdrAgentView; text: string };
+  };
+
   // ---- Host-owned workspace / Git worktree clone ----
   "workspace.cloneSession": {
     params: {
@@ -574,6 +610,12 @@ export const IMPLEMENTED_HOST_METHODS = [
   "workspace.cloneSession",
   "herdr.list",
   "herdr.stop",
+  "fleet.list",
+  "fleet.save",
+  "fleet.delete",
+  "fleet.import",
+  "fleet.wake",
+  "fleet.message",
   "sessions.locate",
   "sessions.state",
   "sessions.rename",

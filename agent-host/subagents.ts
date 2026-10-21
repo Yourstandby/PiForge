@@ -26,6 +26,12 @@ import type {
 } from "../contract/domains/subagents.ts";
 import { getSharedAuxRuntime } from "./aux-models.ts";
 import { checkSubagentVerification } from "./subagent-verification.ts";
+import {
+  checkContextBreaker,
+  checkTurnBudget,
+  condenseReport,
+  guardFailureText,
+} from "./agent-guards.ts";
 
 const MAX_RUNNING = 4;
 const MAX_FINISHED = 20;
@@ -47,6 +53,12 @@ interface SubagentRecord {
   abort: AbortController;
   timedOut: boolean;
   lastAssistantText: string;
+  /** 省钱阀门：子 Agent 自己的对话轮数（最多 3 轮）。 */
+  assistantTurns: number;
+  /** 省钱阀门：最近一次观测到的上下文 token。 */
+  contextTokens: number | null;
+  /** 熔断原因（命中后立刻中断，并把原因回给主 Agent）。 */
+  guardTrip: "context" | null;
 }
 
 const records = new Map<string, SubagentRecord>();
@@ -227,6 +239,9 @@ export async function spawnSubagent(input: SpawnSubagentInput): Promise<SpawnSub
     abort,
     timedOut: false,
     lastAssistantText: "",
+    assistantTurns: 0,
+    contextTokens: null,
+    guardTrip: null,
   };
   records.set(id, record);
   notify({ type: "subagent_started", agent: snapshotView(record), timestamp: Date.now() });
@@ -275,6 +290,36 @@ export async function spawnSubagent(input: SpawnSubagentInput): Promise<SpawnSub
 
     unsubscribe = session.subscribe((event) => {
       if (event.type === "message_end" && event.message.role === "assistant") {
+        const nextTurn = record.assistantTurns + 1;
+        /**
+         * 省钱阀门一：单次请求-响应制。子 Agent 超过 3 轮还没收口，直接中断 ——
+         * 主 Agent 想要更多，就新建一个子 Agent，别在同一个上下文里反复加价。
+         */
+        const budget = checkTurnBudget(nextTurn);
+        if (!budget.allowed) {
+          record.guardTrip = record.guardTrip ?? "context";
+          record.view.error = guardFailureText("turns", budget.reason ?? "超过轮数上限");
+          abort.abort();
+          void session.abort().catch(() => undefined);
+          notify({ type: "subagent_output", id: record.view.id, name: record.view.name, text: record.view.error, timestamp: Date.now() });
+          return;
+        }
+        record.assistantTurns = nextTurn;
+        /** 省钱阀门二：单轮上下文熔断。 */
+        const usage = event.message.usage;
+        const contextTokens = usage
+          ? (usage.input ?? 0) + (usage.cacheRead ?? 0) + (usage.output ?? 0)
+          : record.contextTokens;
+        record.contextTokens = contextTokens ?? null;
+        const breach = checkContextBreaker(record.contextTokens);
+        if (breach.breached) {
+          record.guardTrip = "context";
+          record.view.error = guardFailureText("context", breach.reason ?? "上下文超限");
+          abort.abort();
+          void session.abort().catch(() => undefined);
+          notify({ type: "subagent_output", id: record.view.id, name: record.view.name, text: record.view.error, timestamp: Date.now() });
+          return;
+        }
         const text = textOfContent(event.message.content);
         record.lastAssistantText = text.trim() || record.lastAssistantText;
         appendOutput(record, text);
@@ -367,6 +412,11 @@ export async function spawnSubagent(input: SpawnSubagentInput): Promise<SpawnSub
 
   const agent = snapshotView(record);
   if (ok) {
+    /**
+     * 省钱阀门三：回给主 Agent 的永远是极简摘要（原始输出只在面板里）。
+     * 几千行日志直接回灌主上下文，会让后面每一轮都变贵。
+     */
+    const report = condenseReport(finalText || "(no text output)");
     const verification = agent.verification;
     const verificationLine = verification?.verified
       ? `Verification: test/build evidence found (${verification.reason}).`
@@ -376,7 +426,7 @@ export async function spawnSubagent(input: SpawnSubagentInput): Promise<SpawnSub
       ok: true,
       text: `Sub-agent "${name}" completed.
 
-${finalText || "(no text output)"}
+${report.text}
 
 ${verificationLine}`,
     };

@@ -12,8 +12,8 @@ import type { TerminalBlock, TerminalBlockStatus } from "@/lib/terminal-log";
  *   - `run_bg` processes  → SSE /api/processes/events (streamed stdout/stderr)
  *   - `bash` / `powershell` tool calls → SSE /api/terminal/events
  *
- * ANSI SGR sequences are rendered as colors (lib/ansi.ts) and the viewport
- * sticks to the bottom while the user has not scrolled up.
+ * ANSI SGR sequences are rendered as colors (lib/ansi.ts). 默认**不跟随**：
+ * 新输出不会把视图拽走；只有在用户自己滚到底部时才恢复跟随。
  */
 
 interface ManagedProcessSummary {
@@ -137,7 +137,9 @@ function toDisplayBlocks(
 export function TerminalPanel() {
   const [shells, setShells] = useState<TerminalBlock[]>([]);
   const [processes, setProcesses] = useState<ManagedProcessSummary[]>([]);
-  const [stick, setStick] = useState(true);
+  const [stick, setStick] = useState(false);
+  const [pending, setPending] = useState(false);
+  const autoScrolledRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -187,18 +189,31 @@ export function TerminalPanel() {
     element.scrollTop = element.scrollHeight;
   }, []);
 
-  // Follow new output only while the user is parked at the bottom.
+  // 默认不自动跳：只在第一次收到输出时滚到最新一行，之后交给用户。
   useEffect(() => {
-    if (!stick) return;
+    if (autoScrolledRef.current || blocks.length === 0) return;
+    autoScrolledRef.current = true;
     const frame = window.requestAnimationFrame(() => scrollToBottom());
     return () => window.cancelAnimationFrame(frame);
+  }, [blocks.length, scrollToBottom]);
+
+  // 跟随模式：仅当用户自己滚到了底部，新输出才继续滚到底。
+  useEffect(() => {
+    if (stick) {
+      const frame = window.requestAnimationFrame(() => scrollToBottom());
+      return () => window.cancelAnimationFrame(frame);
+    }
+    if (blocks.length > 0) setPending(true);
   }, [stick, last?.id, last?.text, blocks.length, scrollToBottom]);
 
   const handleScroll = useCallback(() => {
     const element = scrollRef.current;
     if (!element) return;
     const distance = element.scrollHeight - element.scrollTop - element.clientHeight;
-    setStick(distance < 48);
+    // 阈值收窄到 8px：轻微上滚不再被当成“贴底”而强行拉回。
+    const atBottom = distance < 8;
+    setStick(atBottom);
+    if (atBottom) setPending(false);
   }, []);
 
   const clearLog = useCallback(async () => {
@@ -256,12 +271,17 @@ export function TerminalPanel() {
             type="button"
             onClick={() => {
               setStick(true);
+              setPending(false);
               scrollToBottom();
             }}
-            className="absolute bottom-2 right-2 flex h-6 items-center gap-1 rounded-full border border-[#DCE3EE] bg-white/95 px-2 text-[10.5px] text-ink-muted shadow-[0_2px_8px_rgba(0,0,0,0.08)] backdrop-blur transition-colors hover:text-ink"
+            className={`absolute bottom-2 right-2 flex h-6 items-center gap-1 rounded-full border px-2 text-[10.5px] shadow-[0_2px_8px_rgba(0,0,0,0.08)] backdrop-blur transition-colors ${
+              pending
+                ? "border-[#F0C59A] bg-[#FDF3E8] text-[#C2661A]"
+                : "border-[#DCE3EE] bg-white/95 text-ink-muted hover:text-ink"
+            }`}
           >
             <ArrowDown size={11} strokeWidth={2} aria-hidden="true" />
-            底部
+            {pending ? "新输出" : "底部"}
           </button>
         )}
       </div>

@@ -44,7 +44,30 @@ export function HerdrPanel() {
 
   useEffect(() => {
     void load();
-    const id = window.setInterval(() => void load(), 2_000);
+    // 舰队有事件主题：优先实时推送，轮询只做断线兜底（原先是 2s 死轮询）。
+    const source = new EventSource("/api/fleet/events");
+    let live = false;
+    source.onopen = () => {
+      live = true;
+    };
+    source.onerror = () => {
+      live = false;
+    };
+    source.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data) as { type?: string; agents?: HerdrAgentView[] };
+        if (data.type !== "fleet" || !data.agents) return;
+        live = true;
+        setAgents(data.agents);
+        setError(null);
+        setLastLoadedAt(Date.now());
+      } catch {
+        /* ignore malformed frame */
+      }
+    };
+    const id = window.setInterval(() => {
+      if (!live) void load();
+    }, 5_000);
     // Chromium throttles timers in hidden/minimized windows. Refresh as soon
     // as the window becomes visible/focused again instead of waiting.
     const refresh = () => void load();
@@ -55,6 +78,7 @@ export function HerdrPanel() {
     window.addEventListener("focus", refresh);
     window.addEventListener("pageshow", refresh);
     return () => {
+      source.close();
       window.clearInterval(id);
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("focus", refresh);

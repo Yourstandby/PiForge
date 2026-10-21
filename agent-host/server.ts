@@ -20,6 +20,7 @@ import {
   type HostEventTopic,
 } from "../contract/events.ts";
 import { parseClientFrame } from "../contract/guards.ts";
+import { getAgentDir } from "./sdk-adapter.ts";
 import type { HostHealth } from "../contract/methods.ts";
 import type { McpConnectionConfig } from "../contract/domains/mcp.ts";
 import type { DecisionQuestion } from "../contract/domains/aux-models.ts";
@@ -121,7 +122,21 @@ import {
   stopSubagent,
 } from "./subagents.ts";
 import type { SubagentLifecycleEvent } from "../contract/domains/subagents.ts";
-import { listHerdrAgents, stopAllHerdrAgents, stopHerdrAgent } from "./herdr-manager.ts";
+import {
+  listHerdrAgents,
+  onHerdrChange,
+  sendHerdrMessage,
+  stopAllHerdrAgents,
+  stopHerdrAgent,
+  wakeFleetAgent,
+} from "./herdr-manager.ts";
+import {
+  deleteFleetProfile,
+  getFleetProfile,
+  importFleetProfiles,
+  listFleetProfiles,
+  saveFleetProfile,
+} from "./fleet-store.ts";
 import { applyCodeToFile, FileApplyError } from "./file-apply.ts";
 import {
   getSessionBranches,
@@ -217,7 +232,7 @@ const DEFAULT_LOG = (message: string) => {
 /** Coalesce chatty process/terminal output into at most ~4 events/second. */
 const BROADCAST_INTERVAL_MS = 250;
 
-const GLOBAL_TOPICS: readonly GlobalTopic[] = ["processes", "terminal", "subagents"];
+const GLOBAL_TOPICS: readonly GlobalTopic[] = ["processes", "terminal", "subagents", "fleet"];
 
 function tokensMatch(actual: string, expected: string): boolean {
   const actualBytes = Buffer.from(actual, "utf8");
@@ -321,6 +336,8 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
   const offOrchestratorChange = onOrchestratorChange((task) => {
     wsServer.publish("orchestrator.changed", { task });
   });
+  // 常驻舰队的实时状态：面板靠这条主题同步（herdr 不再靠 2s 轮询）。
+  const offHerdrChange = onHerdrChange(() => scheduleBroadcast("fleet"));
   const offSubagentsChange = onSubagentsChange((event) => {
     if (event) {
       lastSubagentEvent = event;
@@ -503,6 +520,11 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       for (const subscription of targets) sendEvent(subscription, topic, payload);
       return;
     }
+    if (topic === "fleet") {
+      const payload: HostEventPayloads["fleet.changed"] = { agents: listHerdrAgents() };
+      for (const subscription of targets) sendEvent(subscription, topic, payload);
+      return;
+    }
     const payload: HostEventPayloads["terminal.changed"] = {
       blocks: listTerminalBlocks(),
     };
@@ -657,6 +679,10 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
         agents: listSubagents(),
         ...(lastSubagentEvent ? { event: lastSubagentEvent } : {}),
       });
+      return;
+    }
+    if (topic === "fleet") {
+      sendEvent(subscription, topic, { agents: listHerdrAgents() });
       return;
     }
     sendEvent(subscription, topic, { blocks: listTerminalBlocks() });
@@ -1376,6 +1402,78 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
         result(state, frame.id, { agents: listHerdrAgents() });
         return;
       }
+      /**
+       * 常驻舰队配置。配置存在 `<agentDir>/fleet/agents.json`，
+       * 重启后 `fleet.list` 原样回显；唤醒才会真正建会话（且不烧首轮 token）。
+       */
+      case "fleet.list": {
+        result(state, frame.id, {
+          profiles: listFleetProfiles(getAgentDir()),
+          agents: listHerdrAgents(),
+        });
+        return;
+      }
+      case "fleet.save": {
+        try {
+          const profile = saveFleetProfile(getAgentDir(), params.profile);
+          result(state, frame.id, { profile });
+        } catch (error) {
+          fail(state, frame.id, "E_INVALID_PARAMS", errorText(error));
+        }
+        return;
+      }
+      case "fleet.delete": {
+        result(state, frame.id, { ok: deleteFleetProfile(getAgentDir(), readString(params, "id") ?? "") });
+        return;
+      }
+      case "fleet.import": {
+        try {
+          const profiles = importFleetProfiles(getAgentDir(), params.payload);
+          result(state, frame.id, { profiles });
+        } catch (error) {
+          fail(state, frame.id, "E_INVALID_PARAMS", errorText(error));
+        }
+        return;
+      }
+      case "fleet.wake": {
+        const id = readString(params, "id");
+        const profile = id ? getFleetProfile(getAgentDir(), id) : null;
+        if (!profile) {
+          fail(state, frame.id, "E_INVALID_PARAMS", `No fleet profile with id "${id ?? ""}"`);
+          return;
+        }
+        try {
+          const agent = wakeFleetAgent({
+            name: profile.name,
+            cwd: readString(params, "cwd") ?? process.cwd(),
+            parentSessionId: readString(params, "parentSessionId") ?? "desktop",
+            systemPrompt: profile.systemPrompt,
+            tools: profile.tools,
+          });
+          result(state, frame.id, { agent });
+        } catch (error) {
+          fail(state, frame.id, "INTERNAL", errorText(error));
+        }
+        return;
+      }
+      case "fleet.message": {
+        const id = readString(params, "id");
+        const message = readString(params, "message");
+        if (!id || !message) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "id and message are required");
+          return;
+        }
+        void sendHerdrMessage(id, message)
+          .then((outcome) =>
+            result(state, frame.id, {
+              ok: outcome.ok,
+              agent: outcome.agent,
+              text: outcome.text,
+            }),
+          )
+          .catch((error: unknown) => fail(state, frame.id, "INTERNAL", errorText(error)));
+        return;
+      }
       case "herdr.stop": {
         const id = readString(params, "id");
         if (!id) {
@@ -1883,6 +1981,7 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
     if (closing) return closing;
     closing = (async () => {
       listenersDetached = true;
+  offHerdrChange();
       offProcessesChange();
       offTerminalChange();
       offSubagentsChange();
