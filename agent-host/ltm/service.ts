@@ -1,4 +1,4 @@
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "../sdk-adapter.ts";
 import type { MemoryBackend } from "./backend.ts";
 import { getLtmConfig, type LtmConfig } from "./config.ts";
 import { LTM_DISABLED, LTM_STATS_NOT_SUPPORTED } from "./http.ts";

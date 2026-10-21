@@ -822,7 +822,7 @@ test("send set_agent_mode appends custom entry to sessionManager", async () => {
 });
 
 test("startRpcSession restores historical agentMode from session entries when not explicitly specified", async () => {
-  const { SessionManager } = await import("@earendil-works/pi-coding-agent");
+  const { SessionManager } = await import("./sdk-adapter.ts");
   const { mkdtempSync, rmSync } = await import("fs");
   const { tmpdir } = await import("os");
   const { join } = await import("path");
@@ -883,7 +883,7 @@ test("send compact is rejected while streaming (P2-1)", async () => {
 // awaiting abort/unsubscribe).
 
 test("destroy of a replaced wrapper does not unregister the new wrapper (P2-4)", async () => {
-  const { SessionManager } = await import("@earendil-works/pi-coding-agent");
+  const { SessionManager } = await import("./sdk-adapter.ts");
   const { mkdtempSync, rmSync } = await import("fs");
   const { tmpdir } = await import("os");
   const { join } = await import("path");

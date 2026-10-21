@@ -11,7 +11,7 @@ import {
   type ExtensionAPI,
   type ExtensionFactory,
   type InlineExtension,
-} from "@earendil-works/pi-coding-agent";
+} from "./sdk-adapter.ts";
 
 export function createDesktopPowerShellFactory(
   getCwd: () => string,

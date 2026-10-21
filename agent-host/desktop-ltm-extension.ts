@@ -7,7 +7,7 @@ import type {
   ExtensionAPI,
   ExtensionFactory,
   InlineExtension,
-} from "@earendil-works/pi-coding-agent";
+} from "./sdk-adapter.ts";
 import { isLtmDisabledError, isMemoryType, LTM_DISABLED } from "./ltm/http.ts";
 import { getMemoryService } from "./ltm/service.ts";
 import type { AgentMode } from "../lib/approval-policy.ts";

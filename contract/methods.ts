@@ -45,6 +45,16 @@ import type {
 } from "./domains/memory.ts";
 import type { ManagedProcessView } from "./domains/processes.ts";
 import type { HerdrAgentView } from "./domains/herdr.ts";
+import type {
+  OrchestratorSpawnInput,
+  OrchestratorTaskView,
+} from "./domains/orchestrator.ts";
+import type { PluginView } from "./domains/plugins.ts";
+import type {
+  CustomProviderInput,
+  CustomProviderView,
+  HostTransportInfo,
+} from "./domains/providers.ts";
 import type { TerminalBlock, TerminalBlockStatus } from "./domains/terminal.ts";
 import type {
   NeedsTrustPayload,
@@ -89,6 +99,52 @@ export interface AgentHostMethods {
   "host.unsubscribe": {
     params: { subscriptionId: string };
     result: { ok: true };
+  };
+  "host.transport": {
+    params: Record<string, never>;
+    result: HostTransportInfo;
+  };
+
+  // ---- model-agnostic custom providers ----
+  "models.providers.list": {
+    params: Record<string, never>;
+    result: { providers: CustomProviderView[] };
+  };
+  "models.providers.save": {
+    params: CustomProviderInput;
+    result: { provider: CustomProviderView };
+  };
+  "models.providers.remove": {
+    params: { id: string };
+    result: { ok: true };
+  };
+
+  // ---- sandboxed plugins ----
+  "plugins.list": {
+    params: Record<string, never>;
+    result: { plugins: PluginView[]; transport: HostTransportInfo };
+  };
+  "plugins.setEnabled": {
+    params: { id: string; enabled: boolean };
+    result: { plugin: PluginView };
+  };
+  "plugins.reload": {
+    params: Record<string, never>;
+    result: { plugins: PluginView[] };
+  };
+
+  // ---- process-isolated orchestration workers ----
+  "orchestrator.spawn": {
+    params: OrchestratorSpawnInput;
+    result: { task: OrchestratorTaskView };
+  };
+  "orchestrator.list": {
+    params: Record<string, never>;
+    result: { tasks: OrchestratorTaskView[] };
+  };
+  "orchestrator.stop": {
+    params: { id: string };
+    result: { ok: boolean };
   };
 
   // ---- managed background processes ----
@@ -463,6 +519,16 @@ export const IMPLEMENTED_HOST_METHODS = [
   "host.shutdown",
   "host.subscribe",
   "host.unsubscribe",
+  "host.transport",
+  "models.providers.list",
+  "models.providers.save",
+  "models.providers.remove",
+  "plugins.list",
+  "plugins.setEnabled",
+  "plugins.reload",
+  "orchestrator.spawn",
+  "orchestrator.list",
+  "orchestrator.stop",
   "processes.list",
   "processes.start",
   "processes.stop",

@@ -20,8 +20,8 @@ import {
   StreamableHttpTransport,
   type AuthProvider,
   type McpTransport,
-  type Tool as McpTool,
-} from "@earendil-works/pi-mcp";
+  type McpTool,
+} from "./sdk-adapter.ts";
 import {
   McpOAuthAuthorizationRequiredError,
   McpOAuthProvider,
@@ -31,13 +31,13 @@ import {
   type McpOAuthState,
   type McpOAuthStateStore,
   type OAuthChallenge,
-} from "@earendil-works/pi-mcp/oauth";
+} from "./sdk-adapter.ts";
 import {
   getAgentDir,
   type LoadedMcpConfig,
   type McpServerConfig,
   type McpServerEntry,
-} from "@earendil-works/pi-coding-agent";
+} from "./sdk-adapter.ts";
 import { writeFileAtomic } from "../lib/atomic-write.ts";
 import { loadDesktopMcpConfig } from "../lib/mcp-config.ts";
 import { evaluateProjectTrust } from "../lib/project-trust-desktop.ts";

@@ -10,7 +10,7 @@
  * choices, so the settings panel and the agent tools read the same source.
  */
 import { join } from "node:path";
-import { ModelRuntime, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime, getAgentDir } from "./sdk-adapter.ts";
 import type {
   ClassifierAnswer,
   ClassifierContext,
@@ -19,7 +19,7 @@ import type {
   ImageContent,
   ImageModel,
   TextContent,
-} from "@earendil-works/pi-ai";
+} from "./sdk-adapter.ts";
 import {
   readDesktopSettings,
   writeDesktopSettings,

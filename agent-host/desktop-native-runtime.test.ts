@@ -6,7 +6,7 @@ import { join } from "node:path";
 import {
   createAgentSession, createCodemodeExtension, createMcpExtension,
   createToolSearchExtension, DefaultResourceLoader, SessionManager,
-} from "@earendil-works/pi-coding-agent";
+} from "./sdk-adapter.ts";
 import { desktopApprovalInlineExtension, type AgentModeRef } from "./desktop-approval-extension.ts";
 import { desktopRuntimeTools } from "./desktop-runtime-tools.ts";
 import { loadDesktopMcpConfig, saveMcpServer, writeMcpConfig } from "../lib/mcp-config.ts";

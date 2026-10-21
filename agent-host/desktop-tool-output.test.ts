@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "./sdk-adapter.ts";
 import { createDesktopToolOutputFactory } from "./desktop-tool-output-extension.ts";
 import { TOOL_HISTORY_TOOL_NAME } from "./tool-outputs.ts";
 

@@ -37,6 +37,9 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
+      - name: SDK adapter boundary
+        run: npm run check:sdk-imports
+
       - name: Test
         timeout-minutes: 5
         run: npm test

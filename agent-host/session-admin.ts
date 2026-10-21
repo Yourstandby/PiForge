@@ -9,7 +9,7 @@
 import { existsSync } from "node:fs";
 import { readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
-import { getAgentDir, SessionManager } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, SessionManager } from "./sdk-adapter.ts";
 import { rewriteChildHeader } from "../lib/session-cascade.ts";
 import { withFileLock } from "../lib/session-lock.ts";
 import { getRpcSession } from "./rpc-manager.ts";

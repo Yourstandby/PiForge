@@ -144,6 +144,29 @@ import {
   readAuxConfig,
   setAuxConfig,
 } from "./aux-models.ts";
+import {
+  CustomProviderError,
+  listCustomProviders,
+  removeCustomProvider,
+  saveCustomProvider,
+  syncCustomProvidersToModels,
+} from "./custom-providers.ts";
+import { createHostWebSocketServer, type HostWebSocketServer } from "./ws-server.ts";
+import {
+  initPlugins,
+  listPlugins,
+  PluginManagerError,
+  setPluginEnabled,
+  stopPlugins,
+} from "./plugin-manager.ts";
+import {
+  listOrchestratorTasks,
+  onOrchestratorChange,
+  OrchestratorError,
+  spawnOrchestratorTask,
+  stopAllOrchestratorTasks,
+  stopOrchestratorTask,
+} from "./orchestrator.ts";
 
 export interface AgentHostServerOptions {
   /** Named pipe path (Windows) or Unix domain socket path. */
@@ -252,11 +275,52 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
   let handshaked = 0;
   let requests = 0;
   let listenersDetached = false;
+  const wsServer: HostWebSocketServer = createHostWebSocketServer({
+    token: options.token,
+    log,
+    onCall: async (request) => {
+      // Privileged operations requested by plugins go through this narrow
+      // Host RPC surface. A plugin never gets fs/child_process itself.
+      switch (request.method) {
+        case "host.health":
+          return health();
+        case "host.transport":
+          return wsServer.info();
+        case "plugins.list":
+          return { plugins: listPlugins() };
+        case "orchestrator.list":
+          return { tasks: listOrchestratorTasks() };
+        case "files.authorize": {
+          const target = request.params.path;
+          const mode = request.params.mode;
+          if (typeof target !== "string" || (mode !== "read" && mode !== "write")) {
+            throw new Error("files.authorize requires path and mode=read|write");
+          }
+          return { path: await authorizePath(target, mode) };
+        }
+        case "processes.start": {
+          const cwd = request.params.cwd;
+          const command = request.params.command;
+          if (typeof cwd !== "string" || typeof command !== "string") {
+            throw new Error("processes.start requires cwd and command");
+          }
+          return { process: startManagedProcess({ cwd, command, owner: "agent" }) };
+        }
+        case "mcp.probe":
+          return probeMcpServer(request.params as never);
+        default:
+          throw new Error(`Unsupported WebSocket method: ${request.method}`);
+      }
+    },
+  });
 
   const offProcessesChange = onManagedProcessesChange(() => scheduleBroadcast("processes"));
   const offTerminalChange = onTerminalLogChange(() => scheduleBroadcast("terminal"));
   let lastSubagentEvent: SubagentLifecycleEvent | undefined;
   let pendingSubagentEvents: SubagentLifecycleEvent[] = [];
+  const offOrchestratorChange = onOrchestratorChange((task) => {
+    wsServer.publish("orchestrator.changed", { task });
+  });
   const offSubagentsChange = onSubagentsChange((event) => {
     if (event) {
       lastSubagentEvent = event;
@@ -363,6 +427,14 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
   function failBranch(state: ConnectionState, id: number, error: unknown): void {
     if (error instanceof SessionBranchError) {
       fail(state, id, error.code, error.message);
+      return;
+    }
+    fail(state, id, "INTERNAL", errorText(error));
+  }
+
+  function failCustomProvider(state: ConnectionState, id: number, error: unknown): void {
+    if (error instanceof CustomProviderError) {
+      fail(state, id, error.code === "E_INVALID_PARAMS" ? "E_INVALID_PARAMS" : "INTERNAL", error.message);
       return;
     }
     fail(state, id, "INTERNAL", errorText(error));
@@ -616,6 +688,112 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       }
       case "host.subscribe": {
         registerSubscription(state, frame.id, params);
+        return;
+      }
+      case "host.transport": {
+        result(state, frame.id, wsServer.info());
+        return;
+      }
+      case "plugins.list": {
+        result(state, frame.id, { plugins: listPlugins(), transport: wsServer.info() });
+        return;
+      }
+      case "plugins.setEnabled": {
+        const id = readString(params, "id");
+        if (!id || typeof params.enabled !== "boolean") {
+          fail(state, frame.id, "E_INVALID_PARAMS", "id and enabled are required");
+          return;
+        }
+        void setPluginEnabled(id, params.enabled)
+          .then((plugin) => {
+            requestSessionResourceReload();
+            wsServer.publish("plugins.changed", { plugin });
+            result(state, frame.id, { plugin });
+          })
+          .catch((error: unknown) => {
+            fail(state, frame.id, error instanceof PluginManagerError ? "E_INVALID_PARAMS" : "INTERNAL", errorText(error));
+          });
+        return;
+      }
+      case "orchestrator.spawn": {
+        const input = params as unknown as Parameters<typeof spawnOrchestratorTask>[0];
+        void spawnOrchestratorTask(input)
+          .then((task) => {
+            requestSessionResourceReload();
+            result(state, frame.id, { task });
+          })
+          .catch((error: unknown) => {
+            const message = errorText(error);
+            if (error instanceof OrchestratorError && error.code === "E_LIMIT") {
+              fail(state, frame.id, "E_BACKPRESSURE", message);
+            } else {
+              fail(state, frame.id, "INTERNAL", message);
+            }
+          });
+        return;
+      }
+      case "orchestrator.list": {
+        result(state, frame.id, { tasks: listOrchestratorTasks() });
+        return;
+      }
+      case "orchestrator.stop": {
+        const id = readString(params, "id");
+        if (!id) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "id is required");
+          return;
+        }
+        void stopOrchestratorTask(id).then((ok) => result(state, frame.id, { ok }));
+        return;
+      }
+      case "plugins.reload": {
+        void initPlugins({
+          wsUrl: wsServer.info().wsUrl,
+          token: options.token,
+        })
+          .then((plugins) => {
+            requestSessionResourceReload();
+            wsServer.publish("plugins.changed", { plugins });
+            result(state, frame.id, { plugins });
+          })
+          .catch((error: unknown) => fail(state, frame.id, "INTERNAL", errorText(error)));
+        return;
+      }
+      case "models.providers.list": {
+        try {
+          result(state, frame.id, { providers: listCustomProviders() });
+        } catch (error) {
+          failCustomProvider(state, frame.id, error);
+        }
+        return;
+      }
+      case "models.providers.save": {
+        try {
+          const input = params as unknown as Parameters<typeof saveCustomProvider>[0];
+          const provider = saveCustomProvider(input);
+          invalidateAuxRuntime();
+          requestSessionResourceReload();
+          wsServer.publish("models.providers.changed", { provider });
+          result(state, frame.id, { provider });
+        } catch (error) {
+          failCustomProvider(state, frame.id, error);
+        }
+        return;
+      }
+      case "models.providers.remove": {
+        const id = readString(params, "id");
+        if (!id) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "id is required");
+          return;
+        }
+        try {
+          removeCustomProvider(id);
+          invalidateAuxRuntime();
+          requestSessionResourceReload();
+          wsServer.publish("models.providers.changed", { removed: id });
+          result(state, frame.id, { ok: true });
+        } catch (error) {
+          failCustomProvider(state, frame.id, error);
+        }
         return;
       }
       case "host.unsubscribe": {
@@ -1719,6 +1897,23 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       }
       subscriptions.clear();
 
+      try {
+        await stopAllOrchestratorTasks();
+      } catch (error) {
+        log(`failed to stop orchestrator workers: ${errorText(error)}`);
+      }
+      offOrchestratorChange();
+      try {
+        stopPlugins();
+      } catch (error) {
+        log(`failed to stop plugins: ${errorText(error)}`);
+      }
+      try {
+        await wsServer.close();
+      } catch (error) {
+        log(`failed to close websocket bus: ${errorText(error)}`);
+      }
+
       for (const subscriptionId of [...agentSubscriptions.keys()]) {
         removeAgentSubscription(subscriptionId);
       }
@@ -1788,6 +1983,11 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
   }
 
   async function start(): Promise<void> {
+    try {
+      syncCustomProvidersToModels();
+    } catch (error) {
+      log(`custom provider sync failed: ${errorText(error)}`);
+    }
     prepareEndpoint(options.endpoint);
     server = createServer(handleConnection);
     await new Promise<void>((resolve, reject) => {
@@ -1823,6 +2023,23 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
         }
       })
       .catch((error: unknown) => log(`crash reaper failed: ${errorText(error)}`));
+
+    try {
+      await wsServer.start();
+    } catch (error) {
+      log(`websocket bus failed to start: ${errorText(error)}`);
+      throw error;
+    }
+
+    try {
+      await initPlugins({
+        wsUrl: wsServer.info().wsUrl,
+        token: options.token,
+        log,
+      });
+    } catch (error) {
+      log(`plugin manager failed to initialize: ${errorText(error)}`);
+    }
 
     options.onReady?.(options.endpoint);
   }

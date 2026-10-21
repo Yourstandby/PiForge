@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "./sdk-adapter.ts";
 import { createDesktopPowerShellFactory } from "./desktop-powershell-extension.ts";
 import { resolvePowerShell } from "./powershell.ts";
 

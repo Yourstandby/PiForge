@@ -9,7 +9,7 @@
 import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { dirname, join, resolve, sep } from "node:path";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "./sdk-adapter.ts";
 
 /** Persist when either limit is exceeded (10 KB / 2000 lines). */
 export const TOOL_OUTPUT_MAX_BYTES = 10 * 1024;

@@ -11,7 +11,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { basename, join } from "node:path";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "./sdk-adapter.ts";
 import type { ManagedProcessRecord } from "../contract/domains/processes.ts";
 import { writeFileAtomic } from "../lib/atomic-write.ts";
 

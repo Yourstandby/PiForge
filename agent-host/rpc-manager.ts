@@ -1,7 +1,7 @@
 import { existsSync } from "fs";
 import { unlink } from "fs/promises";
 import { randomUUID } from "node:crypto";
-import { createAgentSession, createCodemodeExtension, createMcpExtension, createToolSearchExtension, SessionManager } from "@earendil-works/pi-coding-agent";
+import { createHostAgentSession, createCodemodeExtension, createMcpExtension, createToolSearchExtension, SessionManager } from "./sdk-adapter.ts";
 import type { AgentSessionLike, ToolInfo } from "../lib/pi-types.ts";
 import {
   DEFAULT_AGENT_MODE,
@@ -30,6 +30,8 @@ import { desktopDecisionInlineExtension } from "./desktop-decision-extension.ts"
 import { desktopToolOutputInlineExtension } from "./desktop-tool-output-extension.ts";
 import { desktopSubagentInlineExtension } from "./desktop-subagent-extension.ts";
 import { desktopHerdrInlineExtension } from "./desktop-herdr-extension.ts";
+import { desktopPluginInlineExtension } from "./desktop-plugin-extension.ts";
+import { desktopOrchestratorInlineExtension } from "./desktop-orchestrator-extension.ts";
 import { auxToolAvailability } from "./aux-models.ts";
 import { loadDesktopMcpConfig } from "../lib/mcp-config.ts";
 import { findLastAgentMode } from "./agent-mode-persistence.ts";
@@ -615,7 +617,7 @@ export class AgentSessionWrapper {
         if (this.inner.isStreaming) throw new Error("Session is streaming");
         // pi's compact() does not guard against empty messagesToSummarize — use findCutPoint
         // to pre-check and throw a clean error instead of generating a useless empty summary.
-        const { findCutPoint, DEFAULT_COMPACTION_SETTINGS } = await import("@earendil-works/pi-coding-agent");
+        const { findCutPoint, DEFAULT_COMPACTION_SETTINGS } = await import("./sdk-adapter.ts");
         const pathEntries = this.inner.sessionManager.getBranch() as Array<{ type: string }>;
         const settings = { ...DEFAULT_COMPACTION_SETTINGS, ...this.inner.settingsManager.getCompactionSettings() };
         let prevCompactionIndex = -1;
@@ -903,7 +905,7 @@ export async function startRpcSession(
       SessionManager,
       getAgentDir,
       DefaultResourceLoader,
-    } = await import("@earendil-works/pi-coding-agent");
+    } = await import("./sdk-adapter.ts");
     const agentDir = getAgentDir();
     const desktop = readDesktopSettings(agentDir);
 
@@ -954,11 +956,13 @@ export async function startRpcSession(
         desktopToolOutputInlineExtension(),
         desktopSubagentInlineExtension(),
         desktopHerdrInlineExtension(),
+        desktopPluginInlineExtension(),
+        desktopOrchestratorInlineExtension(),
       ],
     });
     await resourceLoader.reload();
 
-    const { session: inner } = await createAgentSession({
+    const { session: inner } = await createHostAgentSession({
       cwd,
       agentDir,
       sessionManager,

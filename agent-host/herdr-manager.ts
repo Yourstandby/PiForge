@@ -11,14 +11,14 @@
  * terminal state.
  */
 import { randomUUID } from "node:crypto";
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Model } from "@earendil-works/pi-ai";
+import type { ThinkingLevel } from "./sdk-adapter.ts";
+import type { Model } from "./sdk-adapter.ts";
 import {
   DefaultResourceLoader,
   SessionManager,
-  createAgentSession,
+  createHostAgentSession,
   getAgentDir,
-} from "@earendil-works/pi-coding-agent";
+} from "./sdk-adapter.ts";
 import type { HerdrAgentView, HerdrActivity } from "../contract/domains/herdr.ts";
 import type { ManagedProcessStatus } from "../contract/domains/processes.ts";
 import type {
@@ -37,7 +37,7 @@ const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"];
 
 interface HerdrRecord {
   view: HerdrAgentView;
-  session: Awaited<ReturnType<typeof createAgentSession>>["session"] | null;
+  session: Awaited<ReturnType<typeof createHostAgentSession>>["session"] | null;
   model?: Model<string>;
   thinkingLevel?: ThinkingLevel;
   cwd: string;
@@ -172,7 +172,7 @@ async function initialize(record: HerdrRecord, initialTask: string): Promise<voi
       systemPrompt: fleetSystemPrompt(record.cwd),
     });
     await resourceLoader.reload();
-    const { session } = await createAgentSession({
+    const { session } = await createHostAgentSession({
       cwd: record.cwd,
       agentDir,
       modelRuntime: await getSharedAuxRuntime(),

@@ -13,7 +13,7 @@ import {
   getAgentDir,
   type SessionEntry,
   type SessionTreeNode,
-} from "@earendil-works/pi-coding-agent";
+} from "./sdk-adapter.ts";
 import type {
   SessionBranches,
   SessionBranchNode,

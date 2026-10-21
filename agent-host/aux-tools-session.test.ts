@@ -7,7 +7,7 @@ import {
   createAgentSession,
   DefaultResourceLoader,
   SessionManager,
-} from "@earendil-works/pi-coding-agent";
+} from "./sdk-adapter.ts";
 import { desktopApprovalInlineExtension, type AgentModeRef } from "./desktop-approval-extension.ts";
 import { desktopImageInlineExtension } from "./desktop-image-extension.ts";
 import { desktopDecisionInlineExtension } from "./desktop-decision-extension.ts";

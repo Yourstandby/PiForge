@@ -6,13 +6,13 @@
  * report comes back as this tool's result. Everything runs in the Agent Host.
  */
 import { Type } from "typebox";
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { ThinkingLevel } from "./sdk-adapter.ts";
 import type {
   ExtensionAPI,
   ExtensionFactory,
   InlineExtension,
-} from "@earendil-works/pi-coding-agent";
-import type { Model } from "@earendil-works/pi-ai";
+} from "./sdk-adapter.ts";
+import type { Model } from "./sdk-adapter.ts";
 import { SPAWN_AGENT_TOOL_NAME } from "./aux-tool-names.ts";
 import { SubagentError, spawnSubagent } from "./subagents.ts";
 

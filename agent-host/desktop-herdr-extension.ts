@@ -6,9 +6,9 @@
  * guardrail (verified: false when no test/build evidence exists).
  */
 import { Type } from "typebox";
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { ExtensionAPI, ExtensionFactory, InlineExtension } from "@earendil-works/pi-coding-agent";
-import type { Model } from "@earendil-works/pi-ai";
+import type { ThinkingLevel } from "./sdk-adapter.ts";
+import type { ExtensionAPI, ExtensionFactory, InlineExtension } from "./sdk-adapter.ts";
+import type { Model } from "./sdk-adapter.ts";
 import {
   getHerdrAgent,
   listHerdrAgents,

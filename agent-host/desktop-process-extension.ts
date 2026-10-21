@@ -15,7 +15,7 @@ import type {
   ExtensionAPI,
   ExtensionFactory,
   InlineExtension,
-} from "@earendil-works/pi-coding-agent";
+} from "./sdk-adapter.ts";
 import type { ManagedProcessView } from "../contract/domains/processes.ts";
 import {
   getManagedProcess,

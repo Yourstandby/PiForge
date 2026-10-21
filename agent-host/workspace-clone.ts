@@ -11,7 +11,7 @@
 import { randomUUID } from "node:crypto";
 import { readdirSync, rmSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { getAgentDir, SessionManager } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, SessionManager } from "./sdk-adapter.ts";
 import {
   GitWorktreeError,
   withGitWorktree,

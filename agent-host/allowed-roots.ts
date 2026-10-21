@@ -9,7 +9,7 @@
 import { readdir, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { SessionManager } from "./sdk-adapter.ts";
 import { validateAgentCwd, validateWritablePath } from "../lib/path-policy.ts";
 import { isWindowsAbsolutePath } from "../lib/path-text.ts";
 
