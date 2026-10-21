@@ -13,6 +13,7 @@ import {
 } from "../lib/approval-policy.ts";
 import { desktopRuntimeTools, isMcpTool } from "./desktop-runtime-tools.ts";
 import { SPAWN_AGENT_TOOL_NAME } from "./aux-tool-names.ts";
+import { HERDR_SPAWN_TOOL_NAME } from "./desktop-herdr-extension.ts";
 import {
   STATIC_CWD_SECTION,
   buildPrefixSnapshot,
@@ -135,13 +136,14 @@ export function createDesktopApprovalFactory(modeRef: AgentModeRef): ExtensionFa
       /**
        * 常驻工具：永远声明。
        * - `tool_search` / `desktop_use_tool`：存根的激活通道，不声明就是死路；
-       * - `spawn_agent`：唯一的并行化原语。它一被存根，模型就再也派不出子 Agent
-       *   （只能串行 bash），而「Agents 面板没反应」正是这个后果。
+       * - `spawn_agent` / `herdr_spawn`：两个 Agent 派生原语。它们一被存根，模型就再也
+       *   派不出子 Agent / 舰队（只能串行 bash），而「Agents 面板没反应」正是这个后果。
        */
       const pinnedTools = [
         ...(registered.some((tool) => tool.name === "tool_search") ? ["tool_search"] : []),
         ...(registered.some((tool) => tool.name === TOOL_USE_TOOL_NAME) ? [TOOL_USE_TOOL_NAME] : []),
         ...(registered.some((tool) => tool.name === SPAWN_AGENT_TOOL_NAME) ? [SPAWN_AGENT_TOOL_NAME] : []),
+        ...(registered.some((tool) => tool.name === HERDR_SPAWN_TOOL_NAME) ? [HERDR_SPAWN_TOOL_NAME] : []),
       ];
       const extensionTools = available.filter(
         (name) => !CORE_TOOLS.includes(name) && !pinnedTools.includes(name),

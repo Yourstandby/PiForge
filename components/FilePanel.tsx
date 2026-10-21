@@ -74,6 +74,7 @@ export function FilePanel({
   onOpenDiff,
   onCloseFile,
   onCollapse,
+  sessionId,
 }: {
   cwd: string | null;
   openFile: FloatingFileTarget | null;
@@ -87,8 +88,12 @@ export function FilePanel({
   onOpenDiff?: (filePath: string, fileName: string) => void;
   onCloseFile?: () => void;
   onCollapse?: () => void;
+  /** 当前会话 id：Agents 面板只显示本会话派生的临时子 Agent。 */
+  sessionId?: string | null;
 }) {
   const [tab, setTab] = useState<PanelTab>("files");
+  /** bash 正在执行：只在终端图标上亮一个小绿点，不抢当前视图。 */
+  const [terminalRunning, setTerminalRunning] = useState(false);
   // 内容区极窄时给一个折叠提示（垂直图标栏永远保留）
   const contentRef = useRef<HTMLDivElement>(null);
   const [contentWidth, setContentWidth] = useState(0);
@@ -146,6 +151,15 @@ export function FilePanel({
     };
     window.addEventListener("piforge:panel-tab", onPanelTab);
     return () => window.removeEventListener("piforge:panel-tab", onPanelTab);
+  }, []);
+
+  // bash 执行中：终端图标右上角常驻小绿点（不自动切 Tab）。
+  useEffect(() => {
+    const onTerminalRunning = (event: Event) => {
+      setTerminalRunning(Boolean((event as CustomEvent).detail));
+    };
+    window.addEventListener("piforge:terminal-running", onTerminalRunning);
+    return () => window.removeEventListener("piforge:terminal-running", onTerminalRunning);
   }, []);
 
   const handleOpenFile = useCallback(
@@ -216,6 +230,12 @@ export function FilePanel({
                 <span
                   aria-hidden="true"
                   className="absolute -left-1 top-1.5 bottom-1.5 w-[2px] rounded-full bg-accent"
+                />
+              )}
+              {id === "terminal" && terminalRunning && (
+                <span
+                  aria-hidden="true"
+                  className="absolute right-0.5 top-0.5 h-1.5 w-1.5 animate-pulse rounded-full bg-[#22c55e]"
                 />
               )}
               <Icon size={15} strokeWidth={1.9} aria-hidden="true" />
@@ -341,7 +361,7 @@ export function FilePanel({
 
         {tab === "agents" && (
           <div className="h-full overflow-y-auto py-1">
-            <SubagentPanel />
+            <SubagentPanel sessionId={sessionId} cwd={cwd} />
           </div>
         )}
 

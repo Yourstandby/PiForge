@@ -8,11 +8,13 @@ import {
   assertHerdrMessageAllowed,
   getHerdrAgent,
   listHerdrAgents,
+  onHerdrChange,
   resetHerdrForTest,
   sendHerdrMessage,
   spawnHerdrAgent,
   stopAllHerdrAgents,
   stopHerdrAgent,
+  wakeFleetAgent,
 } from "./herdr-manager.ts";
 import { getSharedAuxRuntime, invalidateAuxRuntime } from "./aux-models.ts";
 
@@ -166,3 +168,93 @@ test("Herdr enforces the fleet limit", { timeout: 30000 }, async () => {
     await env.cleanup();
   }
 });
+
+test("a fleet agent refuses the 4th message (3-round money valve)", { timeout: 30000 }, async () => {
+  const env = setupEnv();
+  try {
+    const faux = await registerFaux("herdr-turns-fixture", ["r1", "r2", "r3"]);
+    const agent = spawnHerdrAgent({
+      name: "turn-capped",
+      task: "first task",
+      cwd: env.dir,
+      parentSessionId: "parent",
+      model: faux.getModel(),
+    });
+    // 第 1 轮由 spawn 的初始任务占用；再发 2 轮 → 共 3 轮，已达上限。
+    const second = await sendHerdrMessage(agent.id, "second");
+    assert.match(second.text, /r2|r3/);
+    const third = await sendHerdrMessage(agent.id, "third");
+    assert.match(third.text, /r3/);
+    await assert.rejects(
+      () => sendHerdrMessage(agent.id, "fourth"),
+      (error: unknown) => error instanceof Error && /轮数上限|3 轮/.test(error.message),
+    );
+    assert.equal(getHerdrAgent(agent.id)?.turns, 3);
+  } finally {
+    await env.cleanup();
+  }
+});
+
+test("a woken fleet profile builds a session without burning a first turn", { timeout: 30000 }, async () => {
+  const env = setupEnv();
+  try {
+    const faux = await registerFaux("herdr-wake-fixture", ["answer after wake"]);
+    const agent = wakeFleetAgent({
+      name: "woken-profile",
+      cwd: env.dir,
+      parentSessionId: "desktop",
+      systemPrompt: "You are an auditor.",
+      tools: ["read", "grep"],
+      model: faux.getModel(),
+    });
+    assert.equal(agent.name, "woken-profile");
+    const live = await waitForStatus(agent.id, (status) => status === "running", 5_000);
+    assert.equal(live.status, "running");
+    assert.equal(live.turns, 0, "唤醒不跑首轮");
+
+    const reply = await sendHerdrMessage(agent.id, "look at src/index.ts");
+    assert.match(reply.text, /answer after wake/);
+    assert.equal(getHerdrAgent(agent.id)?.turns, 1);
+  } finally {
+    await env.cleanup();
+  }
+});
+
+test("fleet changes are broadcast so the panel can update without polling", { timeout: 30000 }, async () => {
+  const env = setupEnv();
+  try {
+    const faux = await registerFaux("herdr-events-fixture", ["done"]);
+    const seen: string[] = [];
+    const off = onHerdrChange((agents) => seen.push(agents.map((agent) => agent.status).join(",")));
+    try {
+      const agent = spawnHerdrAgent({
+        name: "broadcast",
+        task: "do it",
+        cwd: env.dir,
+        parentSessionId: "parent",
+        model: faux.getModel(),
+      });
+      await waitForStatus(agent.id, (status) => status === "running", 5_000);
+      assert.ok(seen.length > 0, "必须广播 herdr 变更");
+      assert.ok(seen.some((entry) => entry.includes("running") || entry.includes("starting")));
+    } finally {
+      off();
+    }
+  } finally {
+    await env.cleanup();
+  }
+});
+
+async function waitForStatus(
+  id: string,
+  predicate: (status: string) => boolean,
+  timeoutMs: number,
+): Promise<NonNullable<ReturnType<typeof getHerdrAgent>>> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const agent = getHerdrAgent(id);
+    if (agent && predicate(agent.status)) return agent;
+    if (Date.now() > deadline) throw new Error(`timed out waiting for status (last: ${agent?.status})`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}

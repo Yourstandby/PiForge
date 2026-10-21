@@ -28,6 +28,12 @@ import type {
 import { getSharedAuxRuntime } from "./aux-models.ts";
 import { assertTransition, isTerminalStatus } from "./process-state.ts";
 import { checkSubagentVerification } from "./subagent-verification.ts";
+import {
+  checkContextBreaker,
+  checkTurnBudget,
+  condenseReport,
+  guardFailureText,
+} from "./agent-guards.ts";
 
 const MAX_FLEET = 4;
 const MAX_RETAINED = 20;
@@ -43,6 +49,31 @@ interface HerdrRecord {
   cwd: string;
   tail: Promise<void>;
   lastTurnText: string;
+  /** 舰队 Agent 的自定义 System Prompt / 工具集（来自配置或 herdr_spawn）。 */
+  systemPrompt?: string;
+  tools: string[];
+  /** 省钱阀门：单轮上下文熔断标记。 */
+  contextBreakerTripped: boolean;
+  contextTokens: number | null;
+}
+
+const listeners = new Set<(agents: HerdrAgentView[]) => void>();
+
+/** 常驻舰队的变更广播：面板靠它做实时同步（不再轮询 2s）。 */
+export function onHerdrChange(listener: (agents: HerdrAgentView[]) => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+function notifyHerdr(): void {
+  const snapshotAgents = listHerdrAgents();
+  for (const listener of listeners) {
+    try {
+      listener(snapshotAgents);
+    } catch (error) {
+      console.error("herdr listener failed:", error);
+    }
+  }
 }
 
 const records = new Map<string, HerdrRecord>();
@@ -73,7 +104,15 @@ function snapshot(record: HerdrRecord): HerdrAgentView {
 }
 
 export function listHerdrAgents(): HerdrAgentView[] {
-  return [...records.values()].map(snapshot).sort((a, b) => b.startedAt - a.startedAt);
+  // 运行中（含 starting）优先，其次按开始时间倒序：新拉起的永远在最上面。
+  return [...records.values()]
+    .map(snapshot)
+    .sort((a, b) => {
+      const rank = (view: HerdrAgentView) => (isTerminalStatus(view.status) ? 1 : 0);
+      const delta = rank(a) - rank(b);
+      if (delta !== 0) return delta;
+      return b.startedAt - a.startedAt;
+    });
 }
 
 export function getHerdrAgent(id: string): HerdrAgentView | null {
@@ -134,6 +173,15 @@ function refreshVerification(record: HerdrRecord): void {
 async function runTurn(record: HerdrRecord, text: string): Promise<void> {
   const session = record.session;
   if (!session) throw new Error("Fleet agent is not running");
+  /** 省钱阀门：熔断过就不再接受新指令，必须重新唤醒 / 新建。 */
+  if (record.contextBreakerTripped) {
+    throw new Error(
+      guardFailureText(
+        "context",
+        `上下文已熔断（${record.contextTokens ?? "?"} tokens），请新建一个舰队 Agent 重新开始。`,
+      ),
+    );
+  }
   record.view.turns += 1;
   record.view.error = undefined;
   record.lastTurnText = "";
@@ -155,10 +203,11 @@ async function runTurn(record: HerdrRecord, text: string): Promise<void> {
       setStatus(record, "stopped");
       record.view.endedAt = Date.now();
     }
+    notifyHerdr();
   }
 }
 
-async function initialize(record: HerdrRecord, initialTask: string): Promise<void> {
+async function initialize(record: HerdrRecord, initialTask: string | null): Promise<void> {
   try {
     const agentDir = getAgentDir();
     const resourceLoader = new DefaultResourceLoader({
@@ -169,7 +218,7 @@ async function initialize(record: HerdrRecord, initialTask: string): Promise<voi
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
-      systemPrompt: fleetSystemPrompt(record.cwd),
+      systemPrompt: record.systemPrompt?.trim() || fleetSystemPrompt(record.cwd),
     });
     await resourceLoader.reload();
     const { session } = await createHostAgentSession({
@@ -180,7 +229,7 @@ async function initialize(record: HerdrRecord, initialTask: string): Promise<voi
       resourceLoader,
       ...(record.model ? { model: record.model } : {}),
       ...(record.thinkingLevel ? { thinkingLevel: record.thinkingLevel } : {}),
-      tools: READ_ONLY_TOOLS,
+      tools: record.tools.length > 0 ? record.tools : READ_ONLY_TOOLS,
     });
     if (record.view.status === "stopping" || isTerminalStatus(record.view.status)) {
       session.dispose();
@@ -188,12 +237,29 @@ async function initialize(record: HerdrRecord, initialTask: string): Promise<voi
     }
     record.session = session;
     if (record.view.status === "starting") setStatus(record, "running");
+    notifyHerdr();
 
     session.subscribe((event) => {
       if (event.type === "message_end" && event.message.role === "assistant") {
+        /** 省钱阀门：单轮上下文熔断（舰队 Agent 常驻，更要防止越聊越贵）。 */
+        const usage = event.message.usage;
+        const tokens = usage
+          ? (usage.input ?? 0) + (usage.cacheRead ?? 0) + (usage.output ?? 0)
+          : record.contextTokens;
+        record.contextTokens = tokens ?? null;
+        const breach = checkContextBreaker(record.contextTokens);
+        if (breach.breached) {
+          record.contextBreakerTripped = true;
+          record.view.error = guardFailureText("context", breach.reason ?? "上下文超限");
+          setActivity(record, "idle");
+          void session.abort().catch(() => undefined);
+          notifyHerdr();
+          return;
+        }
         const text = textOfContent(event.message.content).trim();
         record.lastTurnText = text || record.lastTurnText;
         appendOutput(record, text);
+        notifyHerdr();
         return;
       }
       if (event.type === "tool_execution_start") {
@@ -208,6 +274,7 @@ async function initialize(record: HerdrRecord, initialTask: string): Promise<voi
           ...(typeof raw === "string" ? { detail: raw.slice(0, 500) } : {}),
         };
         record.view.toolCalls.push(call);
+        notifyHerdr();
         return;
       }
       if (event.type === "tool_execution_end") {
@@ -215,11 +282,14 @@ async function initialize(record: HerdrRecord, initialTask: string): Promise<voi
         if (call) {
           call.status = event.isError ? "error" : "ok";
           call.endedAt = Date.now();
+          notifyHerdr();
         }
       }
     });
 
-    await runTurn(record, initialTask);
+    // 常驻配置唤醒：只建会话，等用户 / 主 Agent 的第一条消息（不烧首轮 token）。
+    if (initialTask !== null) await runTurn(record, initialTask);
+    else notifyHerdr();
   } catch (error) {
     record.view.error = error instanceof Error ? error.message : String(error);
     if (!isTerminalStatus(record.view.status)) {
@@ -233,6 +303,7 @@ async function initialize(record: HerdrRecord, initialTask: string): Promise<voi
       // already gone
     }
     record.session = null;
+    notifyHerdr();
   }
 }
 
@@ -243,13 +314,20 @@ export interface SpawnHerdrInput {
   parentSessionId: string;
   model?: Model<string>;
   thinkingLevel?: ThinkingLevel;
+  /** 舰队配置里的自定义 System Prompt（不填用内置模板）。 */
+  systemPrompt?: string;
+  /** 舰队配置里的工具白名单（只读工具）。 */
+  tools?: string[];
+  /** 唤醒常驻配置：只建会话，不跑首轮。 */
+  idle?: boolean;
 }
 
 export function spawnHerdrAgent(input: SpawnHerdrInput): HerdrAgentView {
   const name = input.name?.trim();
-  const task = input.task?.trim();
+  const task = (input.task ?? "").trim();
   if (!name) throw new Error("name is required");
-  if (!task) throw new Error("taskPrompt is required");
+  // idle 唤醒（常驻配置）允许没有首轮任务；其它情况仍然要求 taskPrompt。
+  if (!task && input.idle !== true) throw new Error("taskPrompt is required");
   if (workingCount() >= MAX_FLEET) {
     throw new Error(`Fleet is full (limit ${MAX_FLEET}); stop an agent before spawning another.`);
   }
@@ -284,10 +362,42 @@ export function spawnHerdrAgent(input: SpawnHerdrInput): HerdrAgentView {
     cwd: input.cwd,
     tail: Promise.resolve(),
     lastTurnText: "",
+    ...(input.systemPrompt ? { systemPrompt: input.systemPrompt } : {}),
+    tools: input.tools && input.tools.length > 0 ? [...input.tools] : [...READ_ONLY_TOOLS],
+    contextBreakerTripped: false,
+    contextTokens: null,
   };
   records.set(id, record);
-  record.tail = initialize(record, task);
+  record.tail = initialize(record, input.idle === true ? null : task);
+  notifyHerdr();
   return snapshot(record);
+}
+
+/** 从常驻配置唤醒一个舰队 Agent（不跑首轮，等人 / 主 Agent 给指令）。 */
+export function wakeFleetAgent(input: {
+  name: string;
+  cwd: string;
+  parentSessionId: string;
+  systemPrompt: string;
+  tools?: string[];
+  model?: Model<string>;
+  thinkingLevel?: ThinkingLevel;
+}): HerdrAgentView {
+  const existing = [...records.values()].find(
+    (record) => record.view.name === input.name && !isTerminalStatus(record.view.status),
+  );
+  if (existing) return snapshot(existing);
+  return spawnHerdrAgent({
+    name: input.name,
+    task: "",
+    cwd: input.cwd,
+    parentSessionId: input.parentSessionId,
+    systemPrompt: input.systemPrompt,
+    ...(input.model ? { model: input.model } : {}),
+    ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),
+    ...(input.tools ? { tools: input.tools } : {}),
+    idle: true,
+  });
 }
 
 /** State-machine guard used by both the manager and its unit test. */
@@ -310,6 +420,22 @@ export async function sendHerdrMessage(id: string, message: string): Promise<Her
   assertHerdrMessageAllowed(record.view.status);
   const trimmed = message?.trim();
   if (!trimmed) throw new Error("message is required");
+  /**
+   * 省钱阀门：主 Agent ↔ 子 Agent 只能「单次请求-响应」，最多 3 轮。
+   * 第 4 轮直接被拒（不是软提醒），避免在同一段上下文里反复加价。
+   */
+  const postTurn = checkTurnBudget(record.view.turns);
+  if (!postTurn.allowed) {
+    throw new Error(guardFailureText("turns", postTurn.reason ?? "超过轮数上限"));
+  }
+  if (record.contextBreakerTripped) {
+    throw new Error(
+      guardFailureText(
+        "context",
+        `上下文已熔断（${record.contextTokens ?? "?"} tokens），请新建一个舰队 Agent。`,
+      ),
+    );
+  }
   await record.tail;
   if (isTerminalStatus(record.view.status) || !record.session) {
     throw new Error("Fleet agent is no longer running");
@@ -318,10 +444,13 @@ export async function sendHerdrMessage(id: string, message: string): Promise<Her
   record.tail = next;
   await next;
   const agent = getHerdrAgent(id)!;
+  /** 回给调用方的永远是极简摘要，原始输出留在面板。 */
+  const report = condenseReport(record.lastTurnText || "(no text output)");
+  notifyHerdr();
   return {
     ok: !agent.error,
     agent,
-    text: record.lastTurnText || "(no text output)",
+    text: report.text,
     ...(agent.error ? { error: agent.error } : {}),
   };
 }
@@ -341,6 +470,7 @@ export async function stopHerdrAgent(id: string): Promise<boolean> {
   setStatus(record, "stopped");
   record.view.endedAt = Date.now();
   refreshVerification(record);
+  notifyHerdr();
   return true;
 }
 
