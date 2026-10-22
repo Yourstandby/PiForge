@@ -15,6 +15,7 @@ import type {
 import type { Model } from "./sdk-adapter.ts";
 import { SPAWN_AGENT_TOOL_NAME } from "./aux-tool-names.ts";
 import { SubagentError, spawnSubagent } from "./subagents.ts";
+import { ToolGrantError } from "./tool-grants.ts";
 
 export { SPAWN_AGENT_TOOL_NAME };
 
@@ -26,6 +27,12 @@ const SpawnAgentParams = Type.Object({
     description:
       "Complete, self-contained instructions. The sub-agent cannot see the parent conversation, so include paths, goals, and what the final report must contain.",
   }),
+  tools: Type.Optional(
+    Type.Array(Type.String(), {
+      description:
+        "Extra tools the child must be able to use (e.g. [\"bash\"]). The child already inherits your active tools plus bash/read/write/edit, so only list what you need additionally. Recursion/UI tools are never granted.",
+    }),
+  ),
 });
 
 function summaryOfTask(task: string): string {
@@ -39,8 +46,8 @@ export function createDesktopSubagentFactory(): ExtensionFactory {
       name: SPAWN_AGENT_TOOL_NAME,
       label: "Spawn Sub-agent",
       description:
-        "Delegate one independent, read-only research task to a sub-agent with its own context. " +
-        "The sub-agent can inspect files (read/grep/find/ls) but cannot edit files or run shell commands. " +
+        "Delegate one independent task to a sub-agent with its own context. " +
+        "The sub-agent inherits your active tools (always including bash/read/write/edit) and can run commands, read and edit files, but never spawn further agents. " +
         "Its concise report comes back as this tool's result. Spawn several in one turn for independent areas; " +
         "do not use it for work you can finish with one or two tool calls.",
       promptSnippet: "Delegate a read-only research task to an isolated sub-agent",
@@ -59,6 +66,9 @@ export function createDesktopSubagentFactory(): ExtensionFactory {
             task,
             cwd: ctx.cwd,
             parentSessionId: ctx.sessionManager.getSessionId(),
+            ...(params.tools && params.tools.length > 0 ? { tools: [...params.tools] } : {}),
+            parentActiveTools: pi.getActiveTools(),
+            availableTools: pi.getAllTools().map((tool) => tool.name),
             ...(ctx.model ? { model: ctx.model as Model<string> } : {}),
             ...(ctx.thinkingLevel ? { thinkingLevel: ctx.thinkingLevel as ThinkingLevel } : {}),
             ...(signal ? { signal } : {}),
@@ -87,9 +97,11 @@ export function createDesktopSubagentFactory(): ExtensionFactory {
             content: [
               {
                 type: "text" as const,
-                text: error instanceof SubagentError
-                  ? `Could not start a sub-agent: ${message}`
-                  : `Sub-agent failed to start: ${message}`,
+                text: error instanceof ToolGrantError
+                  ? message
+                  : error instanceof SubagentError
+                    ? `Could not start a sub-agent: ${message}`
+                    : `Sub-agent failed to start: ${message}`,
               },
             ],
             details: {

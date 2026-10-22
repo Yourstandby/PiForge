@@ -110,13 +110,26 @@ test("bounds generation and loading readiness are independent", async () => {
   assert.equal(manager.getState().boundsGeneration, generation, "invalid bounds must not bump generation");
 });
 
-test("hidden views cannot be captured", async () => {
+test("hidden views stay capturable: visibility is UI state, not data state", async () => {
+  // 回归：用户切到聊天面板（visible=false）时 agent 仍要能截图/读页，
+  // 以前这里被 visible 卡住，直接回 BROWSER_NOT_READY。
   const { manager } = setup();
   manager.setBounds({ x: 0, y: 0, width: 800, height: 600 }, false);
   await manager.navigate("http://localhost:3000");
   const shot = await manager.executeCommand({ id: "hidden", kind: "screenshot" });
-  assert.equal(shot.ok, false);
-  assert.equal(shot.code, "BROWSER_NOT_READY");
+  assert.equal(shot.ok, true);
+  assert.equal(shot.image?.mimeType, "image/png");
+  const read = await manager.executeCommand({ id: "hidden-read", kind: "read" });
+  assert.equal(read.ok, true);
+});
+
+test("captures use a fallback viewport when the renderer never reported bounds", async () => {
+  // 回归：从没打开过浏览器面板时 bounds 是 0×0，以前连视图都抓不到。
+  const { manager } = setup();
+  await manager.navigate("http://localhost:3000");
+  assert.ok(manager.getState().boundsGeneration > 0, "兼底视口必须计一代，否则调用方会以为没尺寸");
+  const shot = await manager.executeCommand({ id: "fallback", kind: "screenshot" });
+  assert.equal(shot.ok, true);
 });
 
 test("Main browser manager rejects non-http navigation", async () => {

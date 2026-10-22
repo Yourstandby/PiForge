@@ -21,6 +21,8 @@ interface SessionTreeItemProps {
   onExportSession?: (session: SessionInfo) => void;
   depth: number;
   searching?: boolean;
+  /** 已经在标签页里打开的会话 id：左栏要给个标记，否则分不清"打开过"和"没打开"。 */
+  openSessionIds?: ReadonlySet<string>;
 }
 
 function containsSession(nodes: SessionTreeNode[], id: string | null): boolean {
@@ -49,9 +51,11 @@ export function SessionTreeItem(props: SessionTreeItemProps) {
 function SessionItem({
   node, selectedSessionId, onSelectSession, onRenamed, onSessionDeleted,
   onBranchSession, onCloneSession, onExportSession, depth, collapsed, onToggleCollapse,
+  openSessionIds,
 }: SessionTreeItemProps & { collapsed: boolean; onToggleCollapse: () => void }) {
   const session = node.session;
   const isSelected = session.id === selectedSessionId;
+  const isOpen = openSessionIds?.has(session.id) ?? false;
   const { locale, t } = useI18n();
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -146,7 +150,7 @@ function SessionItem({
 
   return (
     <>
-      <div className="sidebar-session-row" data-selected={isSelected || undefined} data-menu-open={menuOpen || undefined} data-confirming={confirmDelete || undefined} aria-busy={deleting} style={{ paddingLeft: Math.min(depth, 6) * 12 + 22 }} onContextMenu={(event) => {
+      <div className="sidebar-session-row" data-selected={isSelected || undefined} data-open={(isOpen && !isSelected) || undefined} data-menu-open={menuOpen || undefined} data-confirming={confirmDelete || undefined} aria-busy={deleting} style={{ paddingLeft: Math.min(depth, 6) * 12 + 22 }} onContextMenu={(event) => {
         if (renaming || confirmDelete) return;
         event.preventDefault();
         openMenu(event.clientX, event.clientY);
@@ -158,6 +162,13 @@ function SessionItem({
           {node.children.length > 0 ? <button className="sidebar-fork-toggle" onClick={onToggleCollapse} aria-expanded={!collapsed} aria-label={t(collapsed ? "sidebar.expandForks" : "sidebar.collapseForks")} title={t(collapsed ? "sidebar.expandForks" : "sidebar.collapseForks")}><SidebarIcon name="chevron" size={10} style={{ transform: collapsed ? undefined : "rotate(90deg)" }} /></button> : <span className="sidebar-fork-spacer" />}
           <button ref={selectRef} className="sidebar-session-select" aria-current={isSelected ? "page" : undefined} onClick={() => onSelectSession(session)} disabled={deleting} title={title + "\n" + formatRelativeTime(session.modified, locale) + " · " + t("common.messages", { count: session.messageCount })}>
             {depth > 0 && <SidebarIcon name="branch" size={11} className="sidebar-fork-icon" />}
+            {isOpen && !isSelected && (
+              <span
+                className="sidebar-session-open-dot"
+                aria-hidden="true"
+                title={t("sidebar.openTab")}
+              />
+            )}
             <span className="sidebar-session-title">{title}</span>
             <time className="sidebar-session-time" dateTime={session.modified}>{formatRelativeTime(session.modified, locale, true)}</time>
           </button>

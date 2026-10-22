@@ -10,6 +10,7 @@
  * native window buttons sit at the right edge on Windows and at the left edge
  * on macOS, and the browser dev preview needs neither.
  */
+import { SystemStatusMenu } from "./SystemStatusMenu";
 
 export function TitleBar() {
   return (
@@ -29,6 +30,10 @@ export function TitleBar() {
         <span className="shrink-0 text-[12px] font-semibold tracking-[0.08em] text-ink-soft">
           PiForge
         </span>
+        {/* 引擎状态 + pi 核心版本：低频系统信息，放这里不再和底栏余额抢宽度。 */}
+        <div className="ml-auto flex shrink-0 items-center">
+          <SystemStatusMenu />
+        </div>
       </div>
     </header>
   );

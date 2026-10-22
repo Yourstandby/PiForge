@@ -1,7 +1,17 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import type { SkillSearchResult } from "@/app/api/skills/search/route";
+import {
+  SKILL_CATEGORY_ORDER,
+  readCategoryOverrides,
+  resolveSkillCategory,
+  summarizeSkill,
+  writeCategoryOverride,
+  type SkillCategoryId,
+  type SkillCategoryOverrides,
+} from "@/lib/skill-category";
+import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import { useI18n } from "./I18nProvider";
 import { ErrorNotice } from "./ErrorNotice";
 
@@ -11,10 +21,32 @@ interface Skill {
   filePath: string;
   baseDir: string;
   disableModelInvocation: boolean;
+  /** 由 /api/skills 归一：user → global，project → project */
+  scope?: "global" | "project";
+  origin?: "agents" | "pi" | "package" | "other";
   sourceInfo: {
     source?: string;
     scope?: string;
   };
+}
+
+/** 分类 id → i18n key（字面量，保持 t() 的类型安全）。 */
+const CATEGORY_LABEL_KEY: Record<SkillCategoryId, TranslationKey> = {
+  design: "skills.category.design",
+  frontend: "skills.category.frontend",
+  backend: "skills.category.backend",
+  testing: "skills.category.testing",
+  docs: "skills.category.docs",
+  release: "skills.category.release",
+  workflow: "skills.category.workflow",
+  meta: "skills.category.meta",
+  other: "skills.category.other",
+};
+
+/** 面板分区：优先用后端归一的 scope，老数据回退到 sourceInfo。 */
+function panelScope(skill: Skill): "global" | "project" {
+  if (skill.scope === "project" || skill.scope === "global") return skill.scope;
+  return sourceLabel(skill) === "project" ? "project" : "global";
 }
 
 function shortenPath(p: string): string {
@@ -85,12 +117,16 @@ function SkillDetail({
   onToggle,
   toggling,
   saveError,
+  category,
+  onCategoryChange,
 }: {
   skill: Skill;
   cwd: string;
   onToggle: (skill: Skill) => void;
   toggling: boolean;
   saveError: string | null;
+  category: { id: SkillCategoryId; manual: boolean };
+  onCategoryChange: (id: SkillCategoryId | null) => void;
 }) {
   const { t } = useI18n();
   const label = sourceLabel(skill);
@@ -164,6 +200,41 @@ function SkillDetail({
         >
           {skill.name}
         </span>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+        <span
+          style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}
+        >
+          {t("skills.category")}
+        </span>
+        <select
+          value={category.manual ? category.id : ""}
+          onChange={(e) =>
+            onCategoryChange((e.target.value || null) as SkillCategoryId | null)
+          }
+          aria-label={t("skills.category")}
+          style={{
+            width: "100%",
+            maxWidth: 240,
+            padding: "5px 8px",
+            fontSize: 13,
+            color: "var(--text)",
+            background: "var(--material-popover)",
+            border: "1px solid var(--border)",
+            borderRadius: 6,
+            cursor: "pointer",
+          }}
+        >
+          <option value="">
+            {t("skills.category.auto")} · {t(CATEGORY_LABEL_KEY[category.id])}
+          </option>
+          {SKILL_CATEGORY_ORDER.map((id) => (
+            <option key={id} value={id}>
+              {t(CATEGORY_LABEL_KEY[id])}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
@@ -525,11 +596,45 @@ export function SkillsConfig({
   const [toggling, setToggling] = useState<Set<string>>(new Set());
   const [saveError, setSaveError] = useState<string | null>(null);
   const [addMode, setAddMode] = useState(false);
+  const [overrides, setOverrides] = useState<SkillCategoryOverrides>({});
 
-  const loadSkills = useCallback(() => {
+  // localStorage 里的手动分类：挂载后读一次（避免 hydration 不一致）。
+  useEffect(() => {
+    setOverrides(readCategoryOverrides());
+  }, []);
+
+  const setSkillCategory = useCallback(
+    (filePath: string, id: SkillCategoryId | null) => {
+      setOverrides((prev) => writeCategoryOverride(prev, filePath, id));
+    },
+    [],
+  );
+
+  // 分区 → 分类 → 技能；重启排序与前 25 字概述都在这里算好（渲染时零计算）。
+  const sections = useMemo(() => {
+    const enriched = skills.map((skill) => ({
+      skill,
+      category: resolveSkillCategory(skill, overrides),
+    }));
+    const build = (scope: "project" | "global") => {
+      const items = enriched.filter((entry) => panelScope(entry.skill) === scope);
+      return {
+        scope,
+        count: items.length,
+        categories: SKILL_CATEGORY_ORDER.map((id) => ({
+          id,
+          items: items.filter((entry) => entry.category.id === id),
+        })).filter((entry) => entry.items.length > 0),
+      };
+    };
+    return [build("project"), build("global")];
+  }, [skills, overrides]);
+
+  const loadSkills = useCallback((options?: { refresh?: boolean }) => {
     setLoading(true);
     setError(null);
-    fetch(`/api/skills?cwd=${encodeURIComponent(cwd)}`)
+    const refresh = options?.refresh ? "&refresh=1" : "";
+    fetch(`/api/skills?cwd=${encodeURIComponent(cwd)}${refresh}`)
       .then((r) => r.json())
       .then((d: { skills?: Skill[]; error?: string }) => {
         if (d.error) {
@@ -672,7 +777,7 @@ export function SkillsConfig({
           {/* Left: skill list */}
           <div
             style={{
-              width: 210,
+              width: 250,
               borderRight: "1px solid var(--border)",
               display: "flex",
               flexDirection: "column",
@@ -712,101 +817,180 @@ export function SkillsConfig({
                   {t("skills.none")}
                 </div>
               ) : (
-                (() => {
-                  const groups: { label: string; skills: typeof skills }[] = [];
-                  for (const grpLabel of ["project", "global", "path"]) {
-                    const grpSkills = skills.filter(
-                      (s) => sourceLabel(s) === grpLabel,
-                    );
-                    if (grpSkills.length > 0)
-                      groups.push({ label: grpLabel, skills: grpSkills });
-                  }
-                  return groups.map(
-                    ({ label: grpLabel, skills: grpSkills }) => (
-                      <div key={grpLabel} style={{ marginBottom: 6 }}>
-                        <div
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {sections.map((section) => (
+                    <div key={section.scope}>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          padding: "8px 8px 5px",
+                          marginBottom: 2,
+                          borderBottom: "1px solid var(--border)",
+                        }}
+                      >
+                        <span
                           style={{
-                            padding: "4px 8px 3px",
-                            fontSize: 10,
-                            fontWeight: 600,
-                            color: "var(--text-dim)",
-                            textTransform: "uppercase",
-                            letterSpacing: "0.06em",
+                            fontSize: 12,
+                            fontWeight: 700,
+                            color: "var(--text)",
+                            letterSpacing: "0.02em",
                           }}
                         >
-                          {grpLabel}
+                          {t(
+                            section.scope === "project"
+                              ? "skills.scope.project"
+                              : "skills.scope.global",
+                          )}
+                        </span>
+                        <span
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 600,
+                            lineHeight: "16px",
+                            padding: "0 6px",
+                            borderRadius: 999,
+                            background: "var(--bg-selected)",
+                            color:
+                              section.count > 0
+                                ? "var(--accent)"
+                                : "var(--text-dim)",
+                          }}
+                        >
+                          {section.count}
+                        </span>
+                      </div>
+                      {section.count === 0 ? (
+                        <div
+                          style={{
+                            padding: "2px 8px 6px",
+                            fontSize: 10.5,
+                            color: "var(--text-dim)",
+                          }}
+                        >
+                          {t("skills.projectEmpty")}
                         </div>
-                        {grpSkills.map((skill) => {
-                          const isSelected =
-                            !addMode && selected === skill.filePath;
-                          const disabled = skill.disableModelInvocation;
-                          return (
+                      ) : (
+                        section.categories.map(({ id: catId, items }) => (
+                          <div key={catId} style={{ marginBottom: 3 }}>
                             <div
-                              key={skill.filePath}
-                              onClick={() => {
-                                setSelected(skill.filePath);
-                                setAddMode(false);
-                              }}
                               style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 7,
-                                padding: "8px 8px",
-                                borderRadius: 5,
-                                cursor: "pointer",
-                                background: isSelected
-                                  ? "var(--bg-selected)"
-                                  : "none",
-                              }}
-                              onMouseEnter={(e) => {
-                                if (!isSelected)
-                                  e.currentTarget.style.background =
-                                    "var(--bg-hover)";
-                              }}
-                              onMouseLeave={(e) => {
-                                if (!isSelected)
-                                  e.currentTarget.style.background = "none";
+                                padding: "2px 8px",
+                                fontSize: 10,
+                                color: "var(--text-dim)",
                               }}
                             >
-                              <span
-                                style={{
-                                  flexShrink: 0,
-                                  width: 7,
-                                  height: 7,
-                                  borderRadius: "50%",
-                                  background: disabled
-                                    ? "var(--border)"
-                                    : "var(--accent)",
-                                  boxShadow: disabled
-                                    ? "none"
-                                    : "0 0 4px var(--accent)",
-                                  transition:
-                                    "background 0.15s, box-shadow 0.15s",
-                                }}
-                              />
-                              <span
-                                style={{
-                                  fontSize: 12,
-                                  fontWeight: isSelected ? 600 : 400,
-                                  color: disabled
-                                    ? "var(--text-dim)"
-                                    : "var(--text)",
-                                  fontFamily: "var(--font-mono)",
-                                  flex: 1,
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                  whiteSpace: "nowrap",
-                                }}
-                              >
-                                {skill.name}
-                              </span>
+                              {t(CATEGORY_LABEL_KEY[catId])}
                             </div>
-                          );
-                        })}
-                      </div>
-                    ),
-                  );
-                })()
+                            {items.map(({ skill, category }) => {
+                              const isSelected =
+                                !addMode && selected === skill.filePath;
+                              const disabled = skill.disableModelInvocation;
+                              return (
+                                <div
+                                  key={skill.filePath}
+                                  onClick={() => {
+                                    setSelected(skill.filePath);
+                                    setAddMode(false);
+                                  }}
+                                  title={skill.description}
+                                  style={{
+                                    display: "flex",
+                                    alignItems: "flex-start",
+                                    gap: 7,
+                                    padding: "6px 8px",
+                                    borderRadius: 5,
+                                    cursor: "pointer",
+                                    background: isSelected
+                                      ? "var(--bg-selected)"
+                                      : "none",
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    if (!isSelected)
+                                      e.currentTarget.style.background =
+                                        "var(--bg-hover)";
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    if (!isSelected)
+                                      e.currentTarget.style.background = "none";
+                                  }}
+                                >
+                                  <span
+                                    style={{
+                                      marginTop: 5,
+                                      flexShrink: 0,
+                                      width: 7,
+                                      height: 7,
+                                      borderRadius: "50%",
+                                      background: disabled
+                                        ? "var(--border)"
+                                        : "var(--accent)",
+                                      boxShadow: disabled
+                                        ? "none"
+                                        : "0 0 4px var(--accent)",
+                                      transition:
+                                        "background 0.15s, box-shadow 0.15s",
+                                    }}
+                                  />
+                                  <span
+                                    style={{
+                                      flex: 1,
+                                      minWidth: 0,
+                                      display: "flex",
+                                      flexDirection: "column",
+                                      gap: 1,
+                                    }}
+                                  >
+                                    <span
+                                      style={{
+                                        fontSize: 12,
+                                        fontWeight: isSelected ? 600 : 400,
+                                        color: disabled
+                                          ? "var(--text-dim)"
+                                          : "var(--text)",
+                                        fontFamily: "var(--font-mono)",
+                                        overflow: "hidden",
+                                        textOverflow: "ellipsis",
+                                        whiteSpace: "nowrap",
+                                      }}
+                                    >
+                                      {skill.name}
+                                      {category.manual ? (
+                                        <span
+                                          title={t("skills.category.manualHint")}
+                                          style={{
+                                            marginLeft: 4,
+                                            color: "var(--accent)",
+                                            fontFamily: "inherit",
+                                          }}
+                                        >
+                                          ·
+                                        </span>
+                                      ) : null}
+                                    </span>
+                                    <span
+                                      style={{
+                                        fontSize: 10.5,
+                                        lineHeight: "15px",
+                                        color: "var(--text-dim)",
+                                        overflow: "hidden",
+                                        textOverflow: "ellipsis",
+                                        whiteSpace: "nowrap",
+                                      }}
+                                    >
+                                      {summarizeSkill(skill.description)}
+                                    </span>
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
             {/* Add skill button */}
@@ -862,7 +1046,7 @@ export function SkillsConfig({
               <AddSkillPanel
                 cwd={cwd}
                 onInstalled={() => {
-                  loadSkills();
+                  loadSkills({ refresh: true });
                 }}
               />
             ) : loading ? null : selectedSkill ? (
@@ -873,6 +1057,10 @@ export function SkillsConfig({
                 onToggle={toggle}
                 toggling={toggling.has(selectedSkill.filePath)}
                 saveError={saveError}
+                category={resolveSkillCategory(selectedSkill, overrides)}
+                onCategoryChange={(id) =>
+                  setSkillCategory(selectedSkill.filePath, id)
+                }
               />
             ) : (
               <div

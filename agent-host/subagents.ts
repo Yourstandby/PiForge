@@ -32,13 +32,17 @@ import {
   condenseReport,
   guardFailureText,
 } from "./agent-guards.ts";
+import { childToolSummary, resolveChildTools, type ResolvedChildTools } from "./tool-grants.ts";
 
 const MAX_RUNNING = 4;
 const MAX_FINISHED = 20;
 const MAX_OUTPUT_CHARS = 20_000;
 const SUBAGENT_TIMEOUT_MS = 15 * 60_000;
-/** Read-only work keeps children away from writes and the shell. */
-const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"];
+/**
+ * 运行时没有提供工具清单时的兜底（老调用点 / 单测）。
+ * 默认按「核心工具可下放」处理，不再退回只读：只读会让子 Agent 变瞎子。
+ */
+const DEFAULT_CHILD_TOOLS = ["bash", "edit", "find", "grep", "ls", "read", "write"];
 
 export class SubagentError extends Error {
   constructor(message: string) {
@@ -180,10 +184,10 @@ function appendOutput(record: SubagentRecord, text: string): void {
     : combined;
 }
 
-function childSystemPrompt(cwd: string): string {
+function childSystemPrompt(cwd: string, grants: ResolvedChildTools): string {
   return [
     "You are a focused PiForge sub-agent. Work independently on the task you are given.",
-    "You have only read-only tools: read, grep, find, ls. You cannot edit files, run shell commands, or ask follow-up questions.",
+    childToolSummary(grants.tools, grants.denied),
     "Investigate thoroughly but stay on task. When finished, answer with a concise, self-contained report",
     "(findings, file paths with line numbers, and a recommendation) that the parent agent can use directly.",
     `Working directory: ${cwd}`,
@@ -198,6 +202,12 @@ export interface SpawnSubagentInput {
   model?: Model<string>;
   thinkingLevel?: ThinkingLevel;
   signal?: AbortSignal;
+  /** 父 Agent 显式要求的工具（按需放开，取并集）。 */
+  tools?: string[];
+  /** 父 Agent 当前 activeTools：默认继承，不再"只读阉割"。 */
+  parentActiveTools?: string[];
+  /** 运行时全量工具注册表（不是存根目录）。 */
+  availableTools?: string[];
 }
 
 export interface SpawnSubagentResult {
@@ -213,6 +223,18 @@ export async function spawnSubagent(input: SpawnSubagentInput): Promise<SpawnSub
   if (!name) throw new SubagentError("name is required");
   if (!task) throw new SubagentError("taskPrompt is required");
   if (input.signal?.aborted) throw new SubagentError("The parent turn was aborted");
+  /**
+   * 工具授权：缺权限的请求**在这里**就抛出去（spawn_agent 会把它变成工具错误），
+   * 子 Agent 不会带着残缺工具跑到熔断再报「我没法执行」。
+   */
+  const grants = resolveChildTools({
+    name,
+    requested: input.tools,
+    parentActive: input.parentActiveTools,
+    available: input.availableTools && input.availableTools.length > 0
+      ? input.availableTools
+      : DEFAULT_CHILD_TOOLS,
+  });
   if (runningCount() >= MAX_RUNNING) {
     throw new SubagentError(
       `Too many sub-agents are already running (limit ${MAX_RUNNING}). Wait for one to finish or split the work into fewer tasks.`,
@@ -228,6 +250,7 @@ export async function spawnSubagent(input: SpawnSubagentInput): Promise<SpawnSub
       name,
       task,
       parentSessionId: input.parentSessionId,
+      cwd: input.cwd,
       status: "running",
       startedAt: Date.now(),
       endedAt: null,
@@ -271,7 +294,7 @@ export async function spawnSubagent(input: SpawnSubagentInput): Promise<SpawnSub
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
-      systemPrompt: childSystemPrompt(input.cwd),
+      systemPrompt: childSystemPrompt(input.cwd, grants),
     });
     await resourceLoader.reload();
 
@@ -284,7 +307,7 @@ export async function spawnSubagent(input: SpawnSubagentInput): Promise<SpawnSub
       resourceLoader,
       ...(input.model ? { model: input.model } : {}),
       ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),
-      tools: READ_ONLY_TOOLS,
+      tools: grants.tools,
     });
     record.session = session;
 

@@ -40,6 +40,7 @@ function herdrAgent(
     status,
     activity: status === "running" ? "idle" : "idle",
     startedAt,
+    lastActivityAt: startedAt,
     endedAt: status === "running" || status === "starting" ? null : startedAt + 10,
     durationMs: 10,
     finishedAt: null,
@@ -67,6 +68,7 @@ test("profiles pair with their live agent by name", () => {
   assert.equal(auditor?.dormant, false);
   assert.equal(researcher?.agent, null);
   assert.equal(researcher?.dormant, true, "没唤醒的配置要显示为待唤醒");
+  assert.equal(auditor?.persisted, true, "有落盘配置的行才算 persisted");
 });
 
 test("a herdr agent without a saved profile still shows up", () => {
@@ -74,6 +76,8 @@ test("a herdr agent without a saved profile still shows up", () => {
   assert.equal(rows.length, 1);
   assert.equal(rows[0].agent?.id, "h9");
   assert.equal(rows[0].profile.persistent, false);
+  // 回归：运行时合成的行没有落盘配置，删除必须走 stop 而不是 fleet.delete。
+  assert.equal(rows[0].persisted, false);
 });
 
 test("stopped agents do not claim their profile (shows as dormant)", () => {

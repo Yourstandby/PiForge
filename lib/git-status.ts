@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { scanGitStatusInWorker } from "./git-status-worker.ts";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -127,13 +128,32 @@ export async function readGitStatus(
   cwd: string,
   runner: GitRunner = runGitProcess,
 ): Promise<GitStatusResult> {
-  const repoRoot = await resolveGitRepoRoot(cwd, runner);
-  const result = await runner(
-    // `-uall` lists untracked *files* instead of collapsing new directories
-    // into a single `dir/` entry — the Git panel diffs one file at a time.
-    ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-    { cwd: repoRoot },
-  );
+  let repoRoot: string | null = null;
+  let result: GitCommandResult | null = null;
+
+  // 默认 runner：整个 `rev-parse` + `status` 扫描进 worker，主线程不碰管道缓冲。
+  // 注入 runner 的调用（测试/替身）仍走原来的内联路径。
+  if (runner === runGitProcess) {
+    const scanned = await scanGitStatusInWorker(cwd).catch(() => null);
+    if (scanned) {
+      if (!scanned.ok) {
+        if (scanned.missing) throw new GitStatusError("GIT_UNAVAILABLE", "Git is not installed or not on PATH");
+        throw new GitStatusError("NOT_GIT_REPOSITORY", "Not a Git repository");
+      }
+      repoRoot = scanned.scan.repoRoot;
+      result = { code: scanned.scan.code, stdout: scanned.scan.stdout, stderr: scanned.scan.stderr };
+    }
+  }
+
+  if (!repoRoot || !result) {
+    repoRoot = await resolveGitRepoRoot(cwd, runner);
+    result = await runner(
+      // `-uall` lists untracked *files* instead of collapsing new directories
+      // into a single `dir/` entry — the Git panel diffs one file at a time.
+      ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+      { cwd: repoRoot },
+    );
+  }
   if (result.code !== 0) {
     throw new GitStatusError(
       "NOT_GIT_REPOSITORY",

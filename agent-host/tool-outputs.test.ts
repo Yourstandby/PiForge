@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   HISTORY_DEFAULT_LIMIT,
   TOOL_OUTPUT_MAX_BYTES,
+  TOOL_OUTPUT_MAX_CHARS,
   TOOL_OUTPUT_MAX_LINES,
   buildToolOutputPreview,
   countLines,
@@ -26,7 +27,7 @@ function lines(count: number, prefix = "line"): string {
 
 test("thresholds cover bytes and lines", () => {
   assert.equal(shouldPersistToolOutput("short output"), false);
-  assert.equal(shouldPersistToolOutput("x".repeat(TOOL_OUTPUT_MAX_BYTES + 1)), true);
+  assert.equal(shouldPersistToolOutput("x".repeat(TOOL_OUTPUT_MAX_CHARS + 1)), true);
   assert.equal(shouldPersistToolOutput(lines(TOOL_OUTPUT_MAX_LINES + 1)), true);
   assert.equal(countLines("a\nb\n"), 2);
   assert.equal(countLines("a\nb"), 2);

@@ -14,6 +14,7 @@ import type { ExtensionAPI, ExtensionFactory, InlineExtension } from "./sdk-adap
 import { contentToText } from "./ltm/observe-hooks.ts";
 import {
   CONTEXT_BUDGET_RATIO,
+  MAX_CONTEXT_TOKENS,
   KEEP_RECENT_ROUNDS,
   MIN_DROPPABLE_TOKENS,
   MIN_ROUNDS_TO_DROP,
@@ -44,6 +45,8 @@ export interface HistoryCompactionOptions {
   keepRounds?: number;
   minDropRounds?: number;
   budgetRatio?: number;
+  /** 上下文硬顶（默认 MAX_CONTEXT_TOKENS）：超过就压，不看会话年龄。 */
+  maxContextTokens?: number;
   minDroppableTokens?: number;
   /** 测试注入：直接产出摘要正文（不传则真调模型）。 */
   summarize?: (input: {
@@ -61,7 +64,19 @@ const SUMMARY_SYSTEM_PROMPT =
   "Follow the requested section structure exactly. Output only the checkpoint, no preamble.";
 
 /** 摘要输出上限：够写四段，又不会变成新的包袱。 */
-const SUMMARY_MAX_TOKENS = 1_200;
+const SUMMARY_MAX_TOKENS = 1_600;
+
+/** 会话已存活时长（取最早一条带时间戳的条目）；拿不到就返回 undefined（保持旧行为）。 */
+function sessionAgeOf(entries: readonly SessionEntryLike[]): number | undefined {
+  let earliest = Number.POSITIVE_INFINITY;
+  for (const entry of entries) {
+    const raw = (entry as { timestamp?: unknown }).timestamp;
+    const parsed = typeof raw === "string" ? Date.parse(raw) : typeof raw === "number" ? raw : Number.NaN;
+    if (Number.isFinite(parsed) && parsed < earliest) earliest = parsed;
+  }
+  if (!Number.isFinite(earliest)) return undefined;
+  return Math.max(0, Date.now() - earliest);
+}
 
 function entriesToMessages(entries: readonly SessionEntryLike[], cut: { from: number; to: number }): MessageLike[] {
   const messages: MessageLike[] = [];
@@ -194,14 +209,19 @@ export function createDesktopCompactionFactory(options: HistoryCompactionOptions
         rounds: window.roundStarts.length,
         tokens: usage?.tokens ?? null,
         contextWindow: usage?.contextWindow ?? 0,
+        // 短会话（<2h）不主动压窗口：保留服务端 prompt cache 的命中率。
+        sessionAgeMs: sessionAgeOf(entries),
         droppableTokens: cut ? estimateMessagesTokens(cut.messages) : 0,
         keepRounds,
         minDropRounds: options.minDropRounds ?? MIN_ROUNDS_TO_DROP,
         budgetRatio: options.budgetRatio ?? CONTEXT_BUDGET_RATIO,
+        maxContextTokens: options.maxContextTokens ?? MAX_CONTEXT_TOKENS,
         minDroppableTokens: options.minDroppableTokens ?? MIN_DROPPABLE_TOKENS,
       });
       if (!decision.trigger) return;
-      if (window.roundStarts.length === lastTriggeredRounds) return;
+      // 同轮数不重复触发（onComplete 可能不回调）；但**越过硬顶**时必须允许重试，
+      // 否则一次失败就把会话钉死在超限状态里（读数一直红着压不下去）。
+      if (decision.reason !== "ceiling" && window.roundStarts.length === lastTriggeredRounds) return;
 
       lastTriggeredRounds = window.roundStarts.length;
       pendingCompaction = true;

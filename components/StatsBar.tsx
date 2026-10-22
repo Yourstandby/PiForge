@@ -63,10 +63,12 @@ export const StatsBar = React.memo(function StatsBar({
   }, []);
   // 0 = 尚未测量：先按最完整的内容渲染，测完再收敛。
   // 小屏（compact）阈值更狠：只留「金额 + 回合」这两个核心数字。
-  const tokenThreshold = compact ? 320 : 210;
+  // 注意：额度/余额已经拆到右侧固定区，不再是这个 chip 的一部分（宽约 112px），
+  // 所以阈值相应下调，保证同样的面板宽度下展示的指标与以前一致。
+  const tokenThreshold = compact ? 180 : 150;
   const showTokens = chipWidth === 0 ? !compact : chipWidth >= tokenThreshold;
-  const showCache = chipWidth === 0 ? !compact : chipWidth >= (compact ? 380 : 290);
-  const showContext = chipWidth === 0 ? !compact : chipWidth >= (compact ? 420 : 330);
+  const showCache = chipWidth === 0 ? !compact : chipWidth >= (compact ? 240 : 225);
+  const showContext = chipWidth === 0 ? !compact : chipWidth >= (compact ? 280 : 265);
 
   /**
    * 流式期间让「↓ 输出」「费用」数字原地跳动：
@@ -219,6 +221,15 @@ export const StatsBar = React.memo(function StatsBar({
         (currentUsage.planType && /sub|plus|pro|team|enterprise/i.test(currentUsage.planType)))
   );
 
+  /** 右侧额度/余额区是否有内容：决定它是否占住固定的 min-w（不跳宽）。 */
+  const hasQuota = Boolean(
+    currentUsage &&
+      ((currentUsage.windows?.length ?? 0) > 0 ||
+        (currentUsage.balance?.length ?? 0) > 0 ||
+        currentUsage.rawLimit?.remaining != null ||
+        isSubOrOAuth),
+  );
+
   return (
     <div ref={containerRef} className="relative flex min-w-0 items-stretch [-webkit-app-region:no-drag]">
       <button
@@ -229,7 +240,7 @@ export const StatsBar = React.memo(function StatsBar({
         aria-label={t("usage.title")}
         aria-haspopup="dialog"
         aria-expanded={popoverOpen}
-        className={`flex min-h-7 min-w-0 max-w-full flex-nowrap items-center justify-end gap-x-2 overflow-hidden whitespace-nowrap px-2.5 py-0.5 text-[11px] font-mono tabular-nums select-none cursor-pointer border-none border-l border-divider transition-colors duration-150 ${
+        className={`flex min-h-7 min-w-0 max-w-full flex-nowrap items-center justify-end gap-x-2 overflow-hidden whitespace-nowrap border-none px-2.5 py-0.5 font-mono text-[11px] tabular-nums select-none cursor-pointer transition-colors duration-150 ${
           popoverOpen
             ? "bg-bg-selected text-text border-t-2 border-t-accent"
             : "bg-transparent text-text-muted hover:text-text hover:bg-bg-hover/60 border-t-2 border-t-transparent"
@@ -316,6 +327,27 @@ export const StatsBar = React.memo(function StatsBar({
           </span>
         )}
 
+        {/* Token / 费用 / 回合 / 工具明细。这一块允许被压缩：宽度不足时先隐掉
+            次要指标（见 showTokens/showCache/showContext），金额与回合不裁不换行。 */}
+      </button>
+
+      {/* 额度 / 余额：固定宽度右侧区（B 方案）。shrink-0 + min-w + tabular-nums，
+          右边永远对齐、数字变化不拉宽整行，也不会再把余额挤到末尾。 */}
+      <button
+        type="button"
+        onClick={togglePopover}
+        title={tooltip}
+        aria-label={t("usage.title")}
+        aria-haspopup="dialog"
+        aria-expanded={popoverOpen}
+        className={`flex min-h-7 shrink-0 items-center justify-end gap-1 whitespace-nowrap border-none border-l border-divider py-0.5 font-mono text-[11px] tabular-nums select-none cursor-pointer transition-colors duration-150 ${
+          hasQuota ? "min-w-[112px] pl-2 pr-1.5" : "px-1.5"
+        } ${
+          popoverOpen
+            ? "bg-bg-selected text-text border-t-2 border-t-accent"
+            : "bg-transparent text-text-muted hover:text-text hover:bg-bg-hover/60 border-t-2 border-t-transparent"
+        }`}
+      >
         {/* Upstream Quota Mini Pill */}
         {currentUsage && currentUsage.windows && currentUsage.windows.length > 0 && (
           <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-control bg-bg-elevated border border-border text-[10px] text-text-muted font-normal">

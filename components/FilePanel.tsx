@@ -20,7 +20,7 @@ import { FloatingFileViewer, type FloatingFileTarget } from "./FloatingFileViewe
 import { GitPanel } from "./GitPanel";
 import { ProcessPanel } from "./ProcessPanel";
 import { TerminalPanel } from "./TerminalPanel";
-import { SubagentPanel } from "./SubagentPanel";
+import { AgentRailPanel, type AgentRailDoneEvent } from "./AgentRailPanel";
 import { HerdrPanel } from "./HerdrPanel";
 import { PluginPanel } from "./PluginPanel";
 import { OrchestratorPanel } from "./OrchestratorPanel";
@@ -75,6 +75,8 @@ export function FilePanel({
   onCloseFile,
   onCollapse,
   sessionId,
+  onOpenSession,
+  onAgentDone,
 }: {
   cwd: string | null;
   openFile: FloatingFileTarget | null;
@@ -90,8 +92,20 @@ export function FilePanel({
   onCollapse?: () => void;
   /** 当前会话 id：Agents 面板只显示本会话派生的临时子 Agent。 */
   sessionId?: string | null;
+  /** 点 Agents 卡片：切到派生它的那个会话。 */
+  onOpenSession?: (sessionId: string) => void;
+  /** 子 Agent 进入终态：交给 Workbench 弹右下角完成卡片。 */
+  onAgentDone?: (event: AgentRailDoneEvent) => void;
 }) {
   const [tab, setTab] = useState<PanelTab>("files");
+  /** setTab 的最新值（事件回调里读，避免闭包里的旧 tab）。 */
+  const tabRef = useRef<PanelTab>("files");
+  tabRef.current = tab;
+  /**
+   * Agent 调浏览器会把面板顶到 browser 视图：这里记住「用户原来的视图」，
+   * 等这轮任务结束（piforge:agent-idle）再还回去，别让文件树/已打开文件凭空消失。
+   */
+  const agentRevealRef = useRef<{ previous: PanelTab; userTookOver: boolean } | null>(null);
   /** bash 正在执行：只在终端图标上亮一个小绿点，不抢当前视图。 */
   const [terminalRunning, setTerminalRunning] = useState(false);
   // 内容区极窄时给一个折叠提示（垂直图标栏永远保留）
@@ -107,6 +121,14 @@ export function FilePanel({
     return () => observer.disconnect();
   }, []);
   const contentTooNarrow = contentWidth > 0 && contentWidth < 180;
+
+  /** 用户亲手点的标签：浏览器一旦被手动打开，就不再自动还回去。 */
+  const selectTab = useCallback((next: PanelTab) => {
+    if (next === "browser" && agentRevealRef.current) {
+      agentRevealRef.current.userTookOver = true;
+    }
+    setTab(next);
+  }, []);
 
   // 「插件 / Agents」是二级视图：进入时隐藏 Tab 栏，返回时回到进来之前的标签。
   const hiddenView = HIDDEN_TAB_LABELS[tab] ?? null;
@@ -130,9 +152,25 @@ export function FilePanel({
   // The agent navigating the built-in browser should be visible, not hidden
   // behind whichever tab the user is currently on.
   useEffect(() => {
-    const revealBrowser = () => setTab("browser");
+    const revealBrowser = () => {
+      if (tabRef.current === "browser") return;
+      agentRevealRef.current = { previous: tabRef.current, userTookOver: false };
+      setTab("browser");
+    };
+    // 任务结束：Agent 用完浏览器就把视图还给用户，不长期霸占右栏。
+    const restoreAfterAgent = () => {
+      const saved = agentRevealRef.current;
+      agentRevealRef.current = null;
+      if (!saved || saved.userTookOver) return;
+      if (tabRef.current !== "browser") return;
+      setTab(saved.previous);
+    };
     window.addEventListener("piforge:browser-open", revealBrowser);
-    return () => window.removeEventListener("piforge:browser-open", revealBrowser);
+    window.addEventListener("piforge:agent-idle", restoreAfterAgent);
+    return () => {
+      window.removeEventListener("piforge:browser-open", revealBrowser);
+      window.removeEventListener("piforge:agent-idle", restoreAfterAgent);
+    };
   }, []);
 
   // The spawn_agent tool card links here.
@@ -218,7 +256,7 @@ export function FilePanel({
               title={label}
               aria-label={label}
               aria-current={selected ? "page" : undefined}
-              onClick={() => setTab(id)}
+              onClick={() => selectTab(id)}
               className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-md transition-colors duration-150 ${
                 selected
                   ? "bg-[#E8EFFB] text-accent-strong"
@@ -255,7 +293,7 @@ export function FilePanel({
               title={label}
               aria-label={label}
               aria-current={selected ? "page" : undefined}
-              onClick={() => setTab(id)}
+              onClick={() => selectTab(id)}
               className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-md transition-colors duration-150 ${
                 selected
                   ? "bg-[#E8EFFB] text-accent-strong"
@@ -310,7 +348,9 @@ export function FilePanel({
         )}
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
-        {tab === "files" && (
+        {/* Files 也必须常驻（和 Git 一样）：Agent 调浏览器会切走 tab，
+            卸载就会丢掉已打开的文件、树的滚动位置等状态。 */}
+        <div className={tab === "files" ? "relative h-full" : "hidden"}>
           <>
             <div className="h-full overflow-y-auto py-1" style={explorerTokens}>
               {cwd ? (
@@ -334,7 +374,7 @@ export function FilePanel({
               />
             ) : null}
           </>
-        )}
+        </div>
 
         {/* Git stays mounted so its list/diff state survives tab switches. */}
         <div className={tab === "git" ? "h-full" : "hidden"}>
@@ -360,8 +400,13 @@ export function FilePanel({
         )}
 
         {tab === "agents" && (
-          <div className="h-full overflow-y-auto py-1">
-            <SubagentPanel sessionId={sessionId} cwd={cwd} />
+          <div className="h-full overflow-hidden">
+            <AgentRailPanel
+              activeCwd={cwd}
+              activeSessionId={sessionId ?? null}
+              onOpenSession={onOpenSession ?? (() => undefined)}
+              {...(onAgentDone ? { onAgentDone } : {})}
+            />
           </div>
         )}
 

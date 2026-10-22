@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { ExtensionAPI } from "./sdk-adapter.ts";
-import { PLAN_MODE_SYSTEM_PROMPT } from "../lib/approval-policy.ts";
+import { PLAN_MODE_SYSTEM_PROMPT, RESPONSE_LANGUAGE_PROMPT } from "../lib/approval-policy.ts";
 import { createDesktopApprovalFactory } from "./desktop-approval-extension.ts";
 import { STATIC_CWD_SECTION } from "./prompt-prefix.ts";
 
@@ -43,7 +43,13 @@ test("plan mode appends the plan prompt and keeps only read tools", async () => 
   const result = await handlers.get("before_agent_start")?.(event);
 
   assert.equal(result, undefined, "no forced prompt: pi keeps rendering its own sections");
-  assert.equal(event.systemPromptOptions.appendSystemPrompt, PLAN_MODE_SYSTEM_PROMPT);
+  // 语言约束固定在最前，计划模式在其后追加。
+  assert.equal(
+    event.systemPromptOptions.appendSystemPrompt,
+    `${RESPONSE_LANGUAGE_PROMPT}
+
+${PLAN_MODE_SYSTEM_PROMPT}`,
+  );
   // memory_recall is appended by withMemoryTools for plan mode.
   assert.deepEqual(activeTools[0].slice().sort(), ["find", "grep", "ls", "memory_recall", "read", "tool_history_get"]);
 });
@@ -52,15 +58,25 @@ test("plan mode appends after an existing append prompt", async () => {
   const { handlers } = setup("plan");
   const event = beforeAgentStartEvent("CUSTOM");
   await handlers.get("before_agent_start")?.(event);
-  assert.equal(event.systemPromptOptions.appendSystemPrompt, `CUSTOM\n\n${PLAN_MODE_SYSTEM_PROMPT}`);
+  assert.equal(
+    event.systemPromptOptions.appendSystemPrompt,
+    `CUSTOM\n\n${RESPONSE_LANGUAGE_PROMPT}\n\n${PLAN_MODE_SYSTEM_PROMPT}`,
+  );
 });
 
-test("full mode leaves the prompt untouched", async () => {
+test("full mode keeps the custom prompt and only adds the language rule", async () => {
   const { handlers } = setup("full");
   const event = beforeAgentStartEvent("CUSTOM");
   const result = await handlers.get("before_agent_start")?.(event);
   assert.equal(result, undefined);
-  assert.equal(event.systemPromptOptions.appendSystemPrompt, "CUSTOM");
+  assert.equal(
+    event.systemPromptOptions.appendSystemPrompt,
+    `CUSTOM
+
+${RESPONSE_LANGUAGE_PROMPT}`,
+    "语言约束与模式无关，必须始终存在",
+  );
+  assert.match(RESPONSE_LANGUAGE_PROMPT, /进度说明/);
 });
 
 type RegisteredTool = { name: string; description?: string; parameters?: unknown; exposure?: string };

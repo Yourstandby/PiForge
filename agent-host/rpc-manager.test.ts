@@ -631,6 +631,60 @@ test("follow_up waits for the pending settled boundary after agent_end", async (
   await w.destroy();
 });
 
+test("agent_end without agent_settled is settled by the silence watchdog", async () => {
+  mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  const originalSilence = AgentSessionWrapper.settleSilenceMs;
+  AgentSessionWrapper.settleSilenceMs = 0;
+  try {
+    const events: Array<{ type?: string }> = [];
+    const prompts: string[] = [];
+    let emitInner: ((event: unknown) => void) | null = null;
+    const inner = makeStubInner({
+      isStreaming: true,
+      sessionManager: {
+        getBranch: () => [],
+        getHeader: () => ({ cwd: "D:/project" }),
+      },
+      subscribe: (cb) => {
+        emitInner = cb;
+        return () => {};
+      },
+      prompt: async (message) => {
+        prompts.push(message);
+      },
+    });
+    const w = new AgentSessionWrapper(inner);
+    w.onEvent((event) => { events.push(event as { type?: string }); });
+    w.start();
+
+    emitInner!({ type: "agent_end", messages: [] });
+    assert.equal(
+      events.some((event) => event.type === "agent_end"),
+      false,
+      "agent_end stays held until the settled boundary",
+    );
+
+    // 队列里排一条；settled 丢了就没人 drain，这条会永远卡住。
+    const queued = await w.send({ type: "follow_up", message: "stuck" }) as { items: unknown[] };
+    assert.equal(queued.items.length, 1);
+    assert.deepEqual(prompts, []);
+
+    (inner as unknown as { isStreaming: boolean }).isStreaming = false;
+    mock.timers.tick(1000);
+    await flushMicrotasks();
+
+    assert.ok(
+      events.some((event) => event.type === "agent_end"),
+      "watchdog releases the held agent_end so the client stops spinning",
+    );
+    assert.deepEqual(prompts, ["stuck"]);
+    await w.destroy();
+  } finally {
+    AgentSessionWrapper.settleSilenceMs = originalSilence;
+    mock.timers.reset();
+  }
+});
+
 test("queued follow-ups are reordered and dispatched one at each settled boundary", async () => {
   let emitInner: ((event: unknown) => void) | null = null;
   const prompts: string[] = [];
@@ -686,7 +740,9 @@ test("queued follow-ups are reordered and dispatched one at each settled boundar
   emit({ type: "agent_end", messages: [] });
   emit({ type: "agent_settled" });
   await flushMicrotasks();
-  assert.equal(events.filter((event) => event.type === "agent_end").length, 1);
+  // 每一轮都要把 agent_end 送到前端（包括队列非空的那几轮），
+  // 否则 UI 会一直卡在 agentRunning，排队的消息看起来从没发出去。
+  assert.equal(events.filter((event) => event.type === "agent_end").length, 3);
   await w.destroy();
 });
 

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, ChevronDown, ChevronUp, File, Folder, GripVertical, ImagePlus, Paperclip, Square } from "lucide-react";
 import type { AttachedImage } from "./chat-input/types";
+import { processImageFile } from "@/lib/image-attachment";
 import { AttachmentPreview } from "./chat-input/AttachmentPreview";
 import { buildReferenceInsertion, isImageFileLike } from "@/lib/composer-files";
 import { FILE_DRAG_MIME } from "@/lib/file-drag";
@@ -46,23 +47,21 @@ function detectMention(text: string, caret: number): MentionToken | null {
   return { start: at, caret, query };
 }
 
-function fileToAttachment(file: File): Promise<AttachedImage> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = String(reader.result);
-      const comma = dataUrl.indexOf(",");
-      const meta = dataUrl.slice(0, comma);
-      const mimeType = meta.slice(meta.indexOf(":") + 1, meta.indexOf(";")) || file.type;
-      resolve({
-        data: dataUrl.slice(comma + 1),
-        mimeType,
-        previewUrl: URL.createObjectURL(file),
-      });
-    };
-    reader.onerror = () => reject(reader.error ?? new Error("Failed to read image"));
-    reader.readAsDataURL(file);
-  });
+/**
+ * 图片附件：先缩到视觉模型的长边上限（1568），再交给会话。
+ * 模型看到的信息不变，上传体积与图片 token 数可以降一个量级。
+ */
+async function fileToAttachment(file: File): Promise<AttachedImage> {
+  const processed = await processImageFile(file);
+  return {
+    data: processed.data,
+    mimeType: processed.mimeType,
+    previewUrl: URL.createObjectURL(file),
+    width: processed.width,
+    height: processed.height,
+    bytes: processed.bytes,
+    originalBytes: processed.originalBytes,
+  };
 }
 
 /** Drag payload carries files (not a reorder drag of the follow-up queue). */
@@ -408,7 +407,12 @@ export function Composer({
 
   const clearInput = () => {
     onValueChange("");
-    setImages([]);
+    // 发出去之后附件只会以 base64 进会话，缩略图的 Blob URL 必须立刻回收，
+    // 否则每贴一张图就永久漏一份整图内存（贴十几张后输入框会明显变卡）。
+    setImages((current) => {
+      for (const image of current) URL.revokeObjectURL(image.previewUrl);
+      return [];
+    });
     setMention(null);
     setHistoryIndex(null);
     historyDraftRef.current = "";

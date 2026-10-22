@@ -6,6 +6,7 @@
  * copy never produces a megabyte-sized clipboard entry.
  */
 import type { AgentMessage, ToolResultMessage } from "./types.ts";
+import { stripImageDimensionNotes } from "./image-dimension-note.ts";
 
 export interface MarkdownExportOptions {
   /** Characters of tool output kept per result (default 2000). */
@@ -72,7 +73,7 @@ export function conversationToMarkdown(
 
   for (const message of messages) {
     if (message.role === "user") {
-      const text = textOf(message.content).trim();
+      const text = stripImageDimensionNotes(textOf(message.content)).trim();
       const images = imageCount(message.content);
       if (!text && images === 0) continue;
       blocks.push("## 用户", "");

@@ -7,6 +7,7 @@ import {
   getSessionsDir,
   resolveSessionPath,
   cacheSessionPath,
+  invalidateSessionIndex,
   invalidateSessionPathCache,
 } from "../../../../../lib/session-reader.ts";
 import { validateClonePayload } from "../../../../../lib/session-branch-clone.ts";
@@ -157,6 +158,7 @@ export async function POST(
       const newSessionId = forkedSm.getSessionId();
       cacheSessionPath(newSessionId, newSessionFile);
       cachedSessionId = newSessionId;
+      invalidateSessionIndex();
 
       return NextResponse.json(
         {

@@ -94,7 +94,7 @@ test("window full triggers exactly one compaction", async () => {
   const { handlers, compactions, ctx, logs } = setup({ entries });
   await handlers.get("agent_settled")?.({ type: "agent_settled", aborted: false }, ctx);
   assert.equal(compactions.length, 1);
-  assert.match(compactions[0].customInstructions ?? "", /用户核心意图/);
+  assert.match(compactions[0].customInstructions ?? "", /核心任务目标/);
   assert.ok(logs.some((line) => line.includes("trigger")));
 
   // 同一状态再来一次（onComplete 没回调）也不应重复触发

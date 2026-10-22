@@ -3,6 +3,7 @@ import { stat } from "fs/promises";
 import type { Result } from "@contract/methods";
 import {
   resolveSessionPath,
+  invalidateSessionIndex,
   invalidateSessionPathCache,
   buildSessionContext,
   getSessionEntriesAsync,
@@ -137,7 +138,7 @@ export async function GET(
       modified = fileStat.mtime.toISOString();
     } catch { /* use header timestamp */ }
     // 父会话 id 只用于左侧会话树（数据来自 /api/sessions 列表）。单会话加载
-    // 不需要，也不再为它跑一次全目录扫描（listAllSessions 会 stat 并读每个
+    // 不需要，也不再为它跑一次全目录扫描（那会 stat 并读每个
     // 会话文件，是打开历史会话 2-3s 的主要固定开销）。
     const info = header ? {
       path: filePath,
@@ -208,6 +209,7 @@ export async function PATCH(
       return jsonError(req, 404, "Session not found");
     }
     await getAgentHostClient().call("sessions.rename", { sessionId: id, filePath, name });
+    invalidateSessionIndex();
     return NextResponse.json({ ok: true });
   } catch (error) {
     return jsonAgentHostError(req, error, { route: "/api/sessions/[id]", method: "PATCH" });
@@ -227,6 +229,7 @@ export async function DELETE(
     }
     await getAgentHostClient().call("sessions.delete", { sessionId: id, filePath });
     invalidateSessionPathCache(id);
+    invalidateSessionIndex();
     return NextResponse.json({ ok: true });
   } catch (error) {
     return jsonAgentHostError(req, error, { route: "/api/sessions/[id]", method: "DELETE" });

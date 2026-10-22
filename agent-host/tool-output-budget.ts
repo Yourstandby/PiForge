@@ -13,21 +13,33 @@
  */
 
 export interface ToolOutputBudget {
-  /** 硬上限：行数。 */
+  /** 硬上限：行数（防止成千上万行短日志）。 */
   maxLines: number;
-  /** 硬上限：字节数（UTF-8）。两者先到先截。 */
+  /** 硬上限：字符数。**主预算**：4000 字符 ≈ 1000 tokens。 */
+  maxChars: number;
+  /** 保留头部字符数。 */
+  headChars: number;
+  /** 保留尾部字符数（head-only 策略为 0）。 */
+  tailChars: number;
+  /** 兼容旧调用：按字节判定的上限，保留字段不再作为主阈值。 */
   maxBytes: number;
-  /** 保留头部行数。 */
+  /** 保留头部行数（仅用于提示文案）。 */
   headLines: number;
-  /** 保留尾部行数（head-only 策略为 0）。 */
+  /** 保留尾部行数（仅用于提示文案）。 */
   tailLines: number;
   strategy: "head-tail" | "head-only";
 }
 
-/** 默认预算：100 行 / 8KB ≈ 2–3k tokens，够看清结论，不够淹没上下文。 */
+/**
+ * 默认预算：4000 字符（≈1000 tokens）+ 60 行兜底。
+ * 超出后只留**前 1500 + 后 1500 字符**，中间用明确的截断说明代替。
+ */
 export const DEFAULT_TOOL_OUTPUT_BUDGET: ToolOutputBudget = {
-  maxLines: 100,
-  maxBytes: 8 * 1024,
+  maxLines: 60,
+  maxChars: 4_000,
+  headChars: 1_500,
+  tailChars: 1_500,
+  maxBytes: 4_000,
   headLines: 40,
   tailLines: 40,
   strategy: "head-tail",
@@ -38,11 +50,16 @@ export const DEFAULT_TOOL_OUTPUT_BUDGET: ToolOutputBudget = {
  * 行数放宽到 300 行；超出部分用 `offset` / `grep` 续读。
  */
 export const READ_TOOL_OUTPUT_BUDGET: ToolOutputBudget = {
-  maxLines: 300,
-  maxBytes: 16 * 1024,
+  maxLines: 120,
+  maxChars: 4_000,
+  // read 的重点是「从上往下能直接改代码」，所以头部配额更大；
+  // 尾部保留一段用于看函数收尾，中间靠 offset / grep 续读。
+  headChars: 3_000,
+  tailChars: 1_000,
+  maxBytes: 4_000,
   headLines: 300,
   tailLines: 0,
-  strategy: "head-only",
+  strategy: "head-tail",
 };
 
 /** 文件内容型工具：按 `read` 的预算裁剪。 */
@@ -57,13 +74,14 @@ export function toolOutputBudget(toolName: string | undefined): ToolOutputBudget
 /** pi 自己给的分页提示，截断时必须原样保留在末尾。 */
 const PAGINATION_HINT = /^\[.*(?:Use offset=|more lines in file).*\]$/i;
 
-/** 要求的统一截断说明。 */
-export function truncationNotice(totalLines: number, budget: ToolOutputBudget): string {
+/** 要求的统一截断说明：明确写出截断了多少行 / 多少字符。 */
+export function truncationNotice(totalLines: number, budget: ToolOutputBudget, omittedChars = 0): string {
   const kept =
-    budget.strategy === "head-tail"
-      ? `已保留前 ${budget.headLines} 行与后 ${budget.tailLines} 行`
-      : `已保留前 ${budget.headLines} 行`;
-  return `[输出过长已截断，共 ${totalLines} 行]（${kept}）`;
+    budget.strategy === "head-tail" && budget.tailChars > 0
+      ? `已保留前 ${budget.headChars} 字符 + 后 ${budget.tailChars} 字符`
+      : `已保留前 ${budget.headChars} 字符`;
+  const omitted = omittedChars > 0 ? ` / ${omittedChars} 字符` : "";
+  return `[...已截断 ${totalLines} 行${omitted}...]（${kept}）`;
 }
 
 /** 要求的续读引导。 */
@@ -78,7 +96,7 @@ export interface ToolOutputTruncation {
   /** 实际保留的内容行数（不含说明行）。 */
   keptLines: number;
   /** 是否命中行数上限（否则是字节上限）。 */
-  truncatedBy: "lines" | "bytes" | null;
+  truncatedBy: "lines" | "chars" | null;
 }
 
 export function countTextLines(text: string): number {
@@ -91,9 +109,7 @@ export function exceedsToolOutputBudget(
   text: string,
   budget: ToolOutputBudget = DEFAULT_TOOL_OUTPUT_BUDGET,
 ): boolean {
-  return (
-    Buffer.byteLength(text, "utf8") > budget.maxBytes || countTextLines(text) > budget.maxLines
-  );
+  return text.length > budget.maxChars || countTextLines(text) > budget.maxLines;
 }
 
 /**
@@ -104,8 +120,7 @@ export function truncateToolOutput(
   budget: ToolOutputBudget = DEFAULT_TOOL_OUTPUT_BUDGET,
 ): ToolOutputTruncation {
   const totalLines = countTextLines(text);
-  const totalBytes = Buffer.byteLength(text, "utf8");
-  if (totalLines <= budget.maxLines && totalBytes <= budget.maxBytes) {
+  if (text.length <= budget.maxChars && totalLines <= budget.maxLines) {
     return {
       text,
       truncated: false,
@@ -114,7 +129,7 @@ export function truncateToolOutput(
       truncatedBy: null,
     };
   }
-  const truncatedBy: "lines" | "bytes" = totalLines > budget.maxLines ? "lines" : "bytes";
+  const truncatedBy: "lines" | "chars" = text.length > budget.maxChars ? "chars" : "lines";
 
   const all = text.split(/\r?\n/);
   // 末尾换行会 split 出一个空串，别把它当内容行。
@@ -131,28 +146,15 @@ export function truncateToolOutput(
     }
   }
 
-  const headLines = all.slice(0, Math.max(0, budget.headLines));
-  const tailLines =
-    budget.strategy === "head-tail" && budget.tailLines > 0
-      ? all.slice(Math.max(headLines.length, all.length - budget.tailLines))
-      : [];
+  const body = all.join("\n");
+  const headChars = Math.max(0, budget.headChars);
+  const tailChars = budget.strategy === "head-tail" ? Math.max(0, budget.tailChars) : 0;
+  const omittedChars = Math.max(0, body.length - headChars - tailChars);
 
-  /**
-   * 先给说明块留出字节，再按剩余额度裁正文。
-   * 顺序很重要：单行超长（例如一行 40KB 的压缩 JSON）时，若先拼接再整体按字节截，
-   * 被切掉的恰好是尾部的说明块 —— 模型只看到一坨没有解释的片段。
-   */
-  const notice = `${truncationNotice(totalLines, budget)}\n${TRUNCATION_HINT}`;
-  const contentBudget = Math.max(256, budget.maxBytes - Buffer.byteLength(notice, "utf8") - 8);
-  const tailShare = tailLines.length > 0 ? 0.4 : 0;
-  const headText = clipByBytes(
-    headLines.join("\n"),
-    Math.max(128, Math.floor(contentBudget * (1 - tailShare))),
-  );
-  const tailText =
-    tailLines.length > 0
-      ? clipByBytes(tailLines.join("\n"), Math.max(128, Math.floor(contentBudget * tailShare)))
-      : "";
+  // 说明块固定占位，正文按剩余额度取；单行超长（一行 40KB 的 JSON）也不会把说明切没。
+  const notice = `${truncationNotice(totalLines, budget, omittedChars)}\n${TRUNCATION_HINT}`;
+  const headText = lineAlignedSlice(body, 0, headChars);
+  const tailText = tailChars > 0 ? lineAlignedSlice(body, Math.max(0, body.length - tailChars), body.length) : "";
 
   const blocks: string[] = [headText, notice];
   if (paginationHint) blocks.push(paginationHint);
@@ -163,19 +165,25 @@ export function truncateToolOutput(
     text: composed,
     truncated: true,
     totalLines,
-    keptLines: headLines.length + tailLines.length,
+    keptLines: countTextLines(headText) + (tailText ? countTextLines(tailText) : 0),
     truncatedBy,
   };
 }
 
-/** 按 UTF-8 字节窗口裁剪，且不切坏多字节字符。 */
-function clipByBytes(text: string, maxBytes: number): string {
-  if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
-  const buffer = Buffer.from(text, "utf8");
-  let end = Math.max(0, maxBytes);
-  // 回退到字符边界（UTF-8 续字节形如 10xxxxxx）。
-  while (end > 0 && (buffer[end] & 0b1100_0000) === 0b1000_0000) end -= 1;
-  return buffer.subarray(0, end).toString("utf8");
+/** 按字符窗口取子串，并向行边界回退（避免把一行代码切两半）。 */
+function lineAlignedSlice(text: string, start: number, end: number): string {
+  if (start <= 0 && end >= text.length) return text;
+  let from = Math.min(start, text.length);
+  if (from > 0) {
+    const newline = text.indexOf("\n", from);
+    if (newline >= 0) from = newline + 1;
+  }
+  let to = Math.min(end, text.length);
+  if (to < text.length) {
+    const newline = text.lastIndexOf("\n", to);
+    if (newline > from) to = newline;
+  }
+  return text.slice(from, Math.max(from, to));
 }
 
 /** 供 `tool-outputs.ts` 复用：判断是否需要走"落盘 + 预览"路径。 */
