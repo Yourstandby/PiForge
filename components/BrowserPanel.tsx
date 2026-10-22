@@ -108,11 +108,27 @@ export function BrowserPanel({
     if (!supported || !api?.browserSetBounds) return;
     const host = hostRef.current;
     if (!host) return;
+    /** 上一次已上报的几何；重复值不再跨进程打一遍。 */
+    let lastSent = "";
+    const push = (bounds: { x: number; y: number; width: number; height: number }, visible: boolean) => {
+      const key = `${visible ? 1 : 0}|${bounds.x},${bounds.y},${bounds.width},${bounds.height}`;
+      if (key === lastSent) return;
+      lastSent = key;
+      void api.browserSetBounds!(bounds, visible);
+    };
     const apply = () => {
       const rect = host.getBoundingClientRect();
-      if (rect.width < 1 || rect.height < 1) return;
-      void api.browserSetBounds!(
-        { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+      // 占位区被折叠/隐藏/移出视口（收起右栏、切到文件或 Git 页、窗口太窄）时
+      // 必须显式告知 Main 隐藏，**不能直接 return** —— 否则原生视图会停在
+      // 上一次的位置，盖在界面上了。这是“收起右栏后浏览器没收回去”的根因。
+      const usable =
+        rect.width >= 1 && rect.height >= 1 && rect.bottom > 0 && rect.right > 0;
+      if (!usable) {
+        push({ x: 0, y: 0, width: 0, height: 0 }, false);
+        return;
+      }
+      push(
+        { x: Math.round(rect.left), y: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) },
         active,
       );
     };
@@ -120,8 +136,14 @@ export function BrowserPanel({
     const observer = new ResizeObserver(apply);
     observer.observe(host);
     window.addEventListener("resize", apply);
+    // display:none / 父级 overflow 裁剪不会改尺寸时，交叉观察能兜住。
+    const intersection = typeof IntersectionObserver === "function"
+      ? new IntersectionObserver(() => apply(), { threshold: [0, 1] })
+      : null;
+    intersection?.observe(host);
     return () => {
       observer.disconnect();
+      intersection?.disconnect();
       window.removeEventListener("resize", apply);
       void api.browserSetBounds!({ x: 0, y: 0, width: 0, height: 0 }, false);
     };

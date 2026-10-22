@@ -16,9 +16,11 @@ function lines(count: number): string {
 }
 
 test("budgets are the documented hard caps", () => {
-  assert.equal(DEFAULT_TOOL_OUTPUT_BUDGET.maxLines, 100);
-  assert.equal(DEFAULT_TOOL_OUTPUT_BUDGET.maxBytes, 8 * 1024);
-  assert.equal(READ_TOOL_OUTPUT_BUDGET.maxLines, 300);
+  assert.equal(DEFAULT_TOOL_OUTPUT_BUDGET.maxChars, 4_000);
+  assert.equal(DEFAULT_TOOL_OUTPUT_BUDGET.headChars, 1_500);
+  assert.equal(DEFAULT_TOOL_OUTPUT_BUDGET.tailChars, 1_500);
+  assert.equal(READ_TOOL_OUTPUT_BUDGET.maxChars, 4_000);
+  assert.equal(READ_TOOL_OUTPUT_BUDGET.headChars, 3_000);
   assert.equal(toolOutputBudget("read"), READ_TOOL_OUTPUT_BUDGET);
   assert.equal(toolOutputBudget("bash"), DEFAULT_TOOL_OUTPUT_BUDGET);
   assert.equal(toolOutputBudget(undefined), DEFAULT_TOOL_OUTPUT_BUDGET);
@@ -32,46 +34,48 @@ test("countTextLines matches the trailing-newline convention", () => {
 });
 
 test("text under the budget is returned untouched", () => {
-  const text = lines(100);
+  const text = lines(20);
   const result = truncateToolOutput(text);
   assert.equal(result.truncated, false);
   assert.equal(result.text, text);
-  assert.equal(result.totalLines, 100);
+  assert.equal(result.totalLines, 20);
 });
 
 test("over-long output keeps head and tail and states the real total", () => {
   const text = lines(1_000);
   const result = truncateToolOutput(text);
   assert.equal(result.truncated, true);
-  assert.equal(result.truncatedBy, "lines");
+  assert.equal(result.truncatedBy, "chars");
   assert.equal(result.totalLines, 1_000);
   assert.match(result.text, /^line 1\n/);
-  assert.match(result.text, /\[输出过长已截断，共 1000 行\]/);
+  assert.match(result.text, /\[\.\.\.已截断 1000 行/);
   assert.ok(result.text.includes(TRUNCATION_HINT), "必须带上 grep/sed 的续读引导");
   assert.match(result.text, /line 1000$/);
   assert.doesNotMatch(result.text, /line 500/);
   assert.ok(
-    Buffer.byteLength(result.text, "utf8") < Buffer.byteLength(text, "utf8") / 4,
+    Buffer.byteLength(result.text, "utf8") < Buffer.byteLength(text, "utf8") / 2,
     "截断后应显著小于原文",
   );
 });
 
-test("byte cap wins even when the line count is small", () => {
+test("char cap wins even when the line count is small", () => {
   const oneLongLine = "x".repeat(40 * 1024);
   const result = truncateToolOutput(oneLongLine);
   assert.equal(result.truncated, true);
-  assert.equal(result.truncatedBy, "bytes");
-  assert.ok(Buffer.byteLength(result.text, "utf8") <= DEFAULT_TOOL_OUTPUT_BUDGET.maxBytes + 64);
-  assert.match(result.text, /输出过长已截断/);
+  assert.equal(result.truncatedBy, "chars");
+  assert.ok(
+    result.text.length <= DEFAULT_TOOL_OUTPUT_BUDGET.headChars + DEFAULT_TOOL_OUTPUT_BUDGET.tailChars + 400,
+    "头尾窗口 + 说明块之外不应再留正文",
+  );
+  assert.match(result.text, /已截断/);
 });
 
-test("read budget keeps the head only and stays continuous", () => {
+test("read budget keeps a long head plus a short tail", () => {
   const text = lines(1_000);
   const result = truncateToolOutput(text, READ_TOOL_OUTPUT_BUDGET);
   assert.match(result.text, /^line 1\n/);
-  assert.match(result.text, /line 300/);
-  assert.doesNotMatch(result.text, /line 900/);
-  assert.match(result.text, /共 1000 行/);
+  assert.match(result.text, /已截断 1000 行/);
+  assert.match(result.text, /line 1000$/);
 });
 
 test("pi's pagination hint survives truncation", () => {
@@ -80,7 +84,7 @@ test("pi's pagination hint survives truncation", () => {
   assert.equal(result.totalLines, 802);
   assert.match(result.text, /Use offset=801 to continue/);
   // 提示必须还在正文之后，不能被截掉。
-  assert.ok(result.text.indexOf("Use offset=801") > result.text.indexOf("输出过长已截断"));
+  assert.ok(result.text.indexOf("Use offset=801") > result.text.indexOf("已截断"));
 });
 
 test("truncation is idempotent", () => {
@@ -92,26 +96,26 @@ test("truncation is idempotent", () => {
     tailLines: 5,
   });
   assert.equal(
-    (twice.text.match(/输出过长已截断/g) ?? []).length,
+    (twice.text.match(/已截断/g) ?? []).length,
     1,
     "二次裁剪不应叠加说明块",
   );
 });
 
 test("exceedsToolOutputBudget mirrors the two limits", () => {
-  assert.equal(exceedsToolOutputBudget(lines(99)), false);
-  assert.equal(exceedsToolOutputBudget(lines(101)), true);
-  assert.equal(exceedsToolOutputBudget("y".repeat(9 * 1024)), true);
+  assert.equal(exceedsToolOutputBudget(lines(59)), false);
+  assert.equal(exceedsToolOutputBudget(lines(61)), true);
+  assert.equal(exceedsToolOutputBudget("y".repeat(4_001)), true);
 });
 
 test("truncation notice wording is stable", () => {
   assert.equal(
     truncationNotice(1_234, DEFAULT_TOOL_OUTPUT_BUDGET),
-    "[输出过长已截断，共 1234 行]（已保留前 40 行与后 40 行）",
+    "[...已截断 1234 行...]（已保留前 1500 字符 + 后 1500 字符）",
   );
   assert.equal(
-    truncationNotice(1_234, READ_TOOL_OUTPUT_BUDGET),
-    "[输出过长已截断，共 1234 行]（已保留前 300 行）",
+    truncationNotice(1_234, READ_TOOL_OUTPUT_BUDGET, 900),
+    "[...已截断 1234 行 / 900 字符...]（已保留前 3000 字符 + 后 1000 字符）",
   );
   assert.match(TRUNCATION_HINT, /如需查看完整内容，请使用 grep、sed 等工具分段读取/);
 });

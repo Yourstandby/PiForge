@@ -16,6 +16,7 @@ import type { HerdrAgentView } from "@contract/domains/herdr";
 import type { FleetAgentProfile } from "@contract/domains/fleet";
 import { mergeSubagentFrame, sortSubagents } from "@/lib/subagent-view";
 import {
+  fleetIdleMs,
   fleetStatusLabel,
   pairFleetRows,
   sortFleetRows,
@@ -180,7 +181,7 @@ function FleetCard({
   busy: boolean;
   onWake: (profile: FleetAgentProfile) => void;
   onSleep: (agentId: string) => void;
-  onDelete: (profile: FleetAgentProfile) => void;
+  onDelete: (row: FleetRow) => void;
   onEdit: (profile: FleetAgentProfile) => void;
   onSend: (agentId: string, message: string) => Promise<void>;
 }) {
@@ -197,6 +198,8 @@ function FleetCard({
     : 0;
   const turns = agent?.turns ?? 0;
   const exhausted = turns >= 3;
+  // 空闲时长：把"跑了 1 小时"和"在干活 1 小时"一眼分开。
+  const idleMs = agent ? fleetIdleMs(agent, now) : null;
 
   const submit = async () => {
     const message = draft.trim();
@@ -239,6 +242,12 @@ function FleetCard({
           <span className="shrink-0 tabular-nums text-[10px] text-ink-faint">{formatDuration(duration)}</span>
         )}
       </div>
+
+      {idleMs !== null && (
+        <p className="mt-1 text-[10px] text-[#8A6A2F]" title="空闲 5 分钟会被自动休眠">
+          已空闲 {formatDuration(idleMs)} · 超 5 分钟自动休眠
+        </p>
+      )}
 
       <p className="mt-1 line-clamp-2 text-[10.5px] leading-4 text-ink-faint" title={row.profile.systemPrompt}>
         {agent?.task?.trim() || row.profile.systemPrompt.split("\n")[0]}
@@ -292,8 +301,8 @@ function FleetCard({
         <button
           type="button"
           disabled={busy}
-          onClick={() => onDelete(row.profile)}
-          title="删除常驻配置"
+          onClick={() => onDelete(row)}
+          title={row.persisted === false ? "停止并移除这个舰队 Agent" : "删除常驻配置"}
           className="ml-auto flex h-4 w-4 items-center justify-center rounded text-ink-faint transition-colors hover:bg-[#FDF6F5] hover:text-[#B0443C] disabled:opacity-40"
         >
           <Trash2 size={10} strokeWidth={1.9} aria-hidden="true" />
@@ -619,10 +628,20 @@ export function SubagentPanel({
     }
   };
 
-  const handleDelete = async (profile: FleetAgentProfile) => {
+  const handleDelete = async (row: FleetRow) => {
+    const { profile, agent } = row;
     setBusy(true);
+    setError(null);
     try {
-      await postFleet({ action: "delete", id: profile.id });
+      // 先停掉正在跑的运行时 Agent，再删配置：只删配置会让视图里那一条继续存在。
+      if (agent && agent.status !== "exited" && agent.status !== "crashed") {
+        await postFleet({ action: "stop", id: agent.id });
+      }
+      if (row.persisted !== false) {
+        const result = (await postFleet({ action: "delete", id: profile.id })) as { ok?: boolean };
+        // Host 在找不到配置时返回 ok:false（不是 error），以前这里直接吞掉，点了像没反应。
+        if (result.ok === false) throw new Error(`没有找到配置「${profile.name}」，已尝试停止运行时 Agent`);
+      }
       await loadFleet();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

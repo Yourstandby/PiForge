@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, ArrowDown, CheckCircle2, ListTodo } from "lucide-react";
 import type { AgentMessage, SessionInfo, SessionTreeNode } from "@/lib/types";
+import type { ContextBudget } from "@/lib/pi-types";
 import { useAgentSession } from "@/hooks/useAgentSession";
 import { useSmoothTypewriter } from "@/hooks/useSmoothTypewriter";
 import { useAudio } from "@/hooks/useAudio";
 import { useHostHealth } from "@/hooks/useHostHealth";
+import { useSessionScope } from "@/hooks/useSessionScope";
 import { conversationToMarkdown } from "@/lib/conversation-markdown";
 import { buildBranchSwitchMap } from "@/lib/session-branches-view";
 import { buildImagineMessage } from "@/lib/imagine-command";
@@ -19,7 +21,36 @@ import { ExtensionUiDialog } from "./ExtensionUiDialog";
 import { ModalSurface } from "./ModalSurface";
 import { StatusBar, type ThinkingLevel } from "./StatusBar";
 import { buildTranscriptTurns, Transcript } from "./Transcript";
+import { savedScrollTop } from "@/lib/chat-scroll-memory";
 import { TranscriptNav } from "./TranscriptNav";
+
+const DONE_SUMMARY_LIMIT = 1200;
+
+/** 最后一条 assistant 的纯文本（截断），用于「任务结束」提示卡。 */
+function lastAssistantText(messages: AgentMessage[]): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (message.role !== "assistant") continue;
+    const content = message.content as unknown;
+    const text =
+      typeof content === "string"
+        ? content
+        : Array.isArray(content)
+          ? content
+              .filter((block): block is { type: "text"; text: string } =>
+                Boolean(block) && (block as { type?: string }).type === "text",
+              )
+              .map((block) => block.text)
+              .join("")
+          : "";
+    const trimmed = text.trim();
+    if (!trimmed) continue;
+    return trimmed.length > DONE_SUMMARY_LIMIT
+      ? `${trimmed.slice(0, DONE_SUMMARY_LIMIT)}…`
+      : trimmed;
+  }
+  return undefined;
+}
 
 interface Props {
   session: SessionInfo | null;
@@ -44,7 +75,7 @@ interface Props {
    * 上报本标签的实时状态，供标签栏显示状态指示灯。
    * running = 正在生成/调用工具；waiting = 需要用户处理；idle = 空闲。
    */
-  onActivityChange?: (activity: "idle" | "running" | "waiting") => void;
+  onActivityChange?: (activity: "idle" | "running" | "waiting", summary?: string) => void;
   /** Insert a rendered Markdown code block into the composer. */
   onInsertCode?: (code: string, language?: string) => void;
   /** File currently open in the right panel; empty when nothing is open. */
@@ -92,6 +123,73 @@ function navPreview(message: AgentMessage): string {
 const LIVE_COST_PER_TOKEN = 0.000004;
 
 /** 右侧导航的刻度数量上限：永远是 9 个（DeepSeek 式「动态滚动窗口」）。 */
+/** 上下文徽章：120_000 → "120.0k"，硬顶整千不补小数。 */
+function formatContextTokens(tokens: number): string {
+  return tokens >= 1_000 ? `${(tokens / 1_000).toFixed(1)}k` : String(tokens);
+}
+
+function formatContextCeiling(ceiling: number): string {
+  if (ceiling < 1_000) return String(ceiling);
+  const k = ceiling / 1_000;
+  return `${Number.isInteger(k) ? k : k.toFixed(1)}k`;
+}
+
+/** 环形描边色：同一份阈值，只换颜色不换判定。 */
+function contextBudgetStroke(level: ContextBudget["level"]): string {
+  if (level === "critical") return "#DC2626";
+  if (level === "warn") return "#D97706";
+  return "#94A3B8";
+}
+
+/** 迷你环的半径 / 周长：14px 视觉尺寸，笔画 2px。 */
+const CONTEXT_RING_RADIUS = 5;
+const CONTEXT_RING_CIRCUMFERENCE = 2 * Math.PI * CONTEXT_RING_RADIUS;
+
+/**
+ * 上下文占用指示器：只画一个 14px 的环，不写任何文字。
+ *
+ * 图形比「上下文 102.4k / 硬顶 48k」可读：环走满 = 贴到硬顶，变红 = 已经越顶
+ * （配脉冲），具体数字全部收进 tooltip。
+ */
+function ContextRing({ budget, compacting }: { budget: ContextBudget; compacting?: boolean }) {
+  const filled = Math.max(0, Math.min(1, budget.ratioToCeiling));
+  const stroke = contextBudgetStroke(budget.level);
+  /** 悬停只给人话；精确数字留给屏幕阅读器（视觉用户不需要 8.8k/48k 这种单位）。 */
+  const precise =
+    budget.tokens === null
+      ? "用量未知"
+      : `上下文 ${formatContextTokens(budget.tokens)} / 硬顶 ${formatContextCeiling(budget.ceiling)}`;
+  return (
+    <span
+      className={`inline-flex items-center ${budget.overshoot ? "context-ring-alert" : ""}`}
+      title={budget.hint}
+      aria-label={`${budget.hint}（${precise}）`}
+      role="img"
+    >
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 14 14"
+        className={compacting ? "animate-spin" : undefined}
+        aria-hidden="true"
+      >
+        <circle cx="7" cy="7" r={CONTEXT_RING_RADIUS} fill="none" stroke="#E2E8F0" strokeWidth="2" />
+        <circle
+          cx="7"
+          cy="7"
+          r={CONTEXT_RING_RADIUS}
+          fill="none"
+          stroke={stroke}
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeDasharray={`${(filled * CONTEXT_RING_CIRCUMFERENCE).toFixed(2)} ${CONTEXT_RING_CIRCUMFERENCE.toFixed(2)}`}
+          transform="rotate(-90 7 7)"
+        />
+      </svg>
+    </span>
+  );
+}
+
 const MAX_NAV_TICKS = 9;
 /** 回弹后蓝条落回的位置：第 5 格（0 基下标 4）。 */
 const NAV_WINDOW_CENTER = Math.floor(MAX_NAV_TICKS / 2);
@@ -180,8 +278,19 @@ function ChatSession({
   const activity = needsUser ? "waiting" : escAgentRunning ? "running" : "idle";
   const onActivityChangeRef = useRef(onActivityChange);
   onActivityChangeRef.current = onActivityChange;
+  const messagesRef = useRef(chat.messages);
+  messagesRef.current = chat.messages;
+  const previousActivityRef = useRef(activity);
   useEffect(() => {
-    onActivityChangeRef.current?.(activity);
+    const previous = previousActivityRef.current;
+    previousActivityRef.current = activity;
+    // 忙 → 空闲视为一轮结束：带上最后一条 assistant 文本，供完成提示卡预览。
+    const finished = (previous === "running" || previous === "waiting") && activity === "idle";
+    if (finished) {
+      // 一轮任务结束：右栏如果被 Agent 的浏览器临时占用，可以还回给用户了。
+      window.dispatchEvent(new Event("piforge:agent-idle"));
+    }
+    onActivityChangeRef.current?.(activity, finished ? lastAssistantText(messagesRef.current) : undefined);
   }, [activity]);
 
   // Esc = hard interrupt while the agent is generating. Menus/dialogs consume
@@ -466,13 +575,16 @@ function ChatSession({
   /** 真·加载失败（没有任何消息可显示）：用极简卡片替代整个对话界面。 */
   const loadFailed = Boolean(chat.error) && messages.length === 0;
 
+  /** 会话作用域：切会话时把上一个会话残留的定时器/观察者一次性清掉。 */
+  const scoped = useSessionScope(session?.id ?? null);
+
   // Reconcile with the server when the run ends without us seeing agent_end.
   useEffect(() => {
     if (!chat.agentRunning || !session) return;
     let cancelled = false;
     let idleReads = 0;
 
-    const timer = setInterval(async () => {
+    const stop = scoped.setInterval(async () => {
       try {
         const res = await fetch(`/api/agent/${encodeURIComponent(session.id)}`);
         if (!res.ok) return;
@@ -484,7 +596,7 @@ function ChatSession({
         }
         idleReads += 1;
         if (idleReads >= 2) {
-          clearInterval(timer);
+          stop();
           onReload();
         }
       } catch {
@@ -494,9 +606,9 @@ function ChatSession({
 
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      stop();
     };
-  }, [chat.agentRunning, session, onReload]);
+  }, [chat.agentRunning, session, onReload, scoped]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerContainerRef = useRef<HTMLDivElement>(null);
@@ -584,7 +696,63 @@ function ChatSession({
   const needsInitialBottomRef = useRef(true);
   /** 标签切走时记住滚动位置；切回时恢复（离开时贴底则继续贴底）。 */
   const savedScrollRef = useRef<{ top: number; atBottom: boolean } | null>(null);
+  /**
+   * 滚动过程中持续记录的位置。切标签时容器可能已经是 `display:none`
+   * （scrollTop 读出来是 0），只能靠这份记录；没有它就会"切回来停在第一条消息"。
+   */
+  const lastKnownTopRef = useRef(0);
   const wasActiveRef = useRef(true);
+  /**
+   * 还没挂到屏幕上的标签（Workbench 用 display:none 隐藏非活动面板）：
+   * 隐藏时 `clientHeight === 0`，此时写 scrollTop 等于写 0，切回来就会停在
+   * 最开头。所以贴底改走「记账」：等面板真正可见那一帧再补。
+   */
+  const pendingBottomRef = useRef(false);
+  /** 首次进入 / 切会话后的一小段时间内，内容继续长高也要贴住底部。 */
+  const pinBottomUntilRef = useRef(0);
+  const pinToBottom = useCallback((el: HTMLDivElement | null, settleMs = 0) => {
+    if (!el) return;
+    if (el.clientHeight === 0) {
+      pendingBottomRef.current = true;
+      return;
+    }
+    pendingBottomRef.current = false;
+    if (settleMs > 0) pinBottomUntilRef.current = performance.now() + settleMs;
+    el.scrollTop = el.scrollHeight;
+  }, []);
+
+  /**
+   * 「用户亲手发消息 / 点回到最新」：无条件恢复跟随并贴底。
+   *
+   * 与自动跟随分开：自动跟随只看是否贴底（用户上翻就停），
+   * 而发送是明确意图 —— 哪怕翻到几屏之前，也要立刻跳回最新。
+   */
+  const resumeFollow = useCallback(() => {
+    userPausedRef.current = false;
+    followOutputRef.current = true;
+    isNearBottomRef.current = true;
+    needsInitialBottomRef.current = false;
+    pinToBottom(scrollRef.current, 1500);
+  }, [pinToBottom]);
+
+  /**
+   * 异步撑高（markdown 高亮、代码块、图片解码）会把"刚贴好底"的内容顶上去，
+   * 一次 scrollTop 赋值不够。首屏贴底窗口内，内容每长高一次就再贴一次；
+   * 窗口结束后交还给原来的「贴底才跟随」逻辑，不动用户手动上翻的位置。
+   */
+  useEffect(() => {
+    const el = scrollRef.current;
+    const inner = el?.firstElementChild;
+    if (!el || !inner || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (userPausedRef.current) return;
+      if (performance.now() > pinBottomUntilRef.current) return;
+      if (el.clientHeight === 0) return;
+      el.scrollTop = el.scrollHeight;
+    });
+    observer.observe(inner);
+    return () => observer.disconnect();
+  }, []);
 
   /**
    * 切换标签页的滚动记忆。注意：实际滚动容器是本地 `scrollRef`
@@ -593,16 +761,30 @@ function ChatSession({
    * 离开时在底部则继续贴底。首次进入不恢复，交给 needsInitialBottom 贴底。
    */
   useLayoutEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
     const wasActive = wasActiveRef.current;
     wasActiveRef.current = active;
+    const el = scrollRef.current;
+    if (!el) return;
     if (!active) {
-      savedScrollRef.current = { top: el.scrollTop, atBottom: isNearBottomRef.current };
+      // 隐藏后再读 scrollTop 一定是 0：优先用滚动过程中记录的位置。
+      savedScrollRef.current = {
+        top: savedScrollTop(el.scrollTop, el.clientHeight, lastKnownTopRef.current),
+        atBottom: isNearBottomRef.current,
+      };
       return;
     }
-    if (wasActive || !savedScrollRef.current) return;
+    if (wasActive) return;
+    if (!savedScrollRef.current) {
+      // 隐藏期间加载完的历史：切回来那一刻补一次贴底（否则停在最开头）。
+      if (!pendingBottomRef.current) return;
+      const pin = () => pinToBottom(el, 1500);
+      pin();
+      requestAnimationFrame(pin);
+      const timer = window.setTimeout(pin, 120);
+      return () => window.clearTimeout(timer);
+    }
     const { top, atBottom } = savedScrollRef.current;
+    lastKnownTopRef.current = top;
     followOutputRef.current = atBottom;
     isNearBottomRef.current = atBottom;
     const restore = () => {
@@ -616,13 +798,14 @@ function ChatSession({
       window.clearTimeout(t1);
       window.clearTimeout(t2);
     };
-  }, [active]);
+  }, [active, pinToBottom]);
   useLayoutEffect(() => {
     const el = scrollRef.current;
     needsInitialBottomRef.current = true;
     followOutputRef.current = true;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [session?.id]);
+    isNearBottomRef.current = true;
+    pinToBottom(el, 1500);
+  }, [session?.id, pinToBottom]);
 
   /** 开始输入（draft 变化）：在底部附近则保持贴底。 */
   useEffect(() => {
@@ -644,12 +827,15 @@ function ChatSession({
 
   /** 首次内容到位后（异步 markdown/高亮可能还在撑高）再贴一次，然后关闭"首屏贴底"。 */
   useLayoutEffect(() => {
-    const el = scrollRef.current;
-    if (!el || !needsInitialBottomRef.current) return;
     if (messages.length === 0) return;
-    el.scrollTop = el.scrollHeight;
+    const el = scrollRef.current;
+    // 加载期没有滚动容器（渲染的是"加载会话…"），这时不能把"已贴底"标记清掉，
+    // 否则容器挂上来的那一帧没人接手 —— 用户看到的就是"停在最开头"。
+    if (!el) return;
+    if (!needsInitialBottomRef.current) return;
+    pinToBottom(el, 1500);
     needsInitialBottomRef.current = false;
-  }, [messages.length]);
+  }, [messages.length, showTranscript, pinToBottom]);
 
   /**
    * 内容高度二次变化（代码高亮、图片、折叠动画、折叠面板展开）时：
@@ -910,6 +1096,8 @@ function ChatSession({
 
     const measure = () => {
       raf = 0;
+      // 只在能真正量出高度时记录：隐藏面板的 scrollTop 恒为 0，记它等于没记。
+      if (el.clientHeight > 0) lastKnownTopRef.current = el.scrollTop;
       const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
       // 距底 <150px 视为贴底；只有此时才允许自动跟随
       const near = distance < 150;
@@ -1072,12 +1260,12 @@ function ChatSession({
       const isDown = event.key === "ArrowDown";
       if (!isEnd && !isDown) return;
       event.preventDefault();
-      followOutputRef.current = true;
+      resumeFollow();
       scrollToBottom("smooth");
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [active, scrollToBottom]);
+  }, [active, scrollToBottom, resumeFollow]);
 
   const trust = chat.trustPrompt;
   const trustCard = trust ? (
@@ -1259,7 +1447,21 @@ function ChatSession({
           )}
           <span className="tabular-nums">↓ {tokensPerSecond} tokens/s</span>
           <span className="text-ink-faint">·</span>
-          <span className="tabular-nums">{(turnOutputTokens + liveTokens).toLocaleString()} tokens</span>
+          {/* 这里是**本轮全部模型调用的输出合计**（含思考与每个工具轮次），
+              不是"这一次请求的新增输入"。写清楚口径，免得看起来像凭空涨了几千。 */}
+          <span
+            className="tabular-nums"
+            title="本轮所有模型调用的输出合计（含思考与工具轮次），不是单次请求的输入"
+          >
+            本轮产出 {(turnOutputTokens + liveTokens).toLocaleString()}
+          </span>
+          {/* 上下文：一个环就够了——走满=贴到硬顶，变红脉冲=已越顶，数字只进 tooltip。 */}
+          {chat.contextBudget && (
+            <>
+              <span className="text-ink-faint">·</span>
+              <ContextRing budget={chat.contextBudget} compacting={chat.isCompacting} />
+            </>
+          )}
         </div>
       )}
       <Composer
@@ -1271,6 +1473,9 @@ function ChatSession({
           void chat.handleAbort();
         }}
         onSubmit={(text, images) => {
+          // 用户亲手发消息 = 想看后续：无条件解除"用户接管"并贴底，
+          // 不管之前翻到多远（这不是自动跟随，是显式意图）。
+          resumeFollow();
           void prepareOutgoing(text).then((outgoing) => {
             if (!outgoing.cancel) void chat.handleSend(outgoing.text, images);
           });
@@ -1278,6 +1483,7 @@ function ChatSession({
         onSteer={(text, images) => {
           void prepareOutgoing(text).then((outgoing) => {
             if (outgoing.cancel) return;
+            resumeFollow();
             void chat.handleSteer(outgoing.text, images).catch((error) => {
               setCompactToast({
                 ok: false,
@@ -1289,6 +1495,7 @@ function ChatSession({
         onFollowUp={(text, images) => {
           void prepareOutgoing(text).then((outgoing) => {
             if (outgoing.cancel) return;
+            resumeFollow();
             void chat.handleFollowUp(outgoing.text, images).catch((error) => {
               setCompactToast({
                 ok: false,
@@ -1329,12 +1536,6 @@ function ChatSession({
       projectPath={session?.cwd ?? newSessionCwd ?? null}
       currentProvider={currentModel?.provider ?? null}
       runningTools={chat.agentPhase?.kind === "running_tools" ? chat.agentPhase.tools : null}
-      hostState={hostHealth.state}
-      hostTitle={
-        hostHealth.state === "ready" && hostHealth.detail
-          ? `后台引擎正常 · pid ${hostHealth.detail.pid} · uptime ${Math.round(hostHealth.detail.uptimeMs / 1000)}s`
-          : hostHealth.message
-      }
     />
   );
 
@@ -1500,8 +1701,7 @@ function ChatSession({
                 <button
                   type="button"
                   onClick={() => {
-                    userPausedRef.current = false;
-                    followOutputRef.current = true;
+                    resumeFollow();
                     scrollToBottom("auto");
                   }}
                   aria-label="回到最新对话"
@@ -1537,8 +1737,7 @@ function ChatSession({
                 <button
                   type="button"
                   onClick={() => {
-                    userPausedRef.current = false;
-                    followOutputRef.current = true;
+                    resumeFollow();
                     scrollToBottom("auto");
                   }}
                   aria-label="回到最新对话"

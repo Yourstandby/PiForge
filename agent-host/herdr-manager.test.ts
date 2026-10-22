@@ -14,6 +14,8 @@ import {
   spawnHerdrAgent,
   stopAllHerdrAgents,
   stopHerdrAgent,
+  shouldSleepIdle,
+  sweepIdleHerdrAgents,
   wakeFleetAgent,
 } from "./herdr-manager.ts";
 import { getSharedAuxRuntime, invalidateAuxRuntime } from "./aux-models.ts";
@@ -55,7 +57,7 @@ async function waitFor(predicate: () => boolean, label: string, timeoutMs = 10_0
   throw new Error(`timed out waiting for ${label}`);
 }
 
-test("Herdr spawn traverses starting → running and stays idle for messages", { timeout: 30000 }, async () => {
+test("a one-shot fleet task exits as soon as it finishes (no background idling)", { timeout: 30000 }, async () => {
   const env = setupEnv();
   try {
     const faux = await registerFaux("herdr-fixture", ["initial report"]);
@@ -69,15 +71,16 @@ test("Herdr spawn traverses starting → running and stays idle for messages", {
     assert.equal(spawned.status, "starting");
     assert.ok(spawned.id.startsWith("herdr-"));
 
-    await waitFor(() => {
-      const agent = getHerdrAgent(spawned.id);
-      return agent?.status === "running" && agent.activity === "idle" && agent.turns === 1;
-    }, "fleet agent idle");
+    await waitFor(() => getHerdrAgent(spawned.id)?.status === "exited", "fleet agent exited");
 
-    const idle = getHerdrAgent(spawned.id)!;
-    assert.equal(idle.output.includes("initial report"), true);
-    assert.equal(idle.verification.verified, false);
-    assert.match(idle.verification.reason, /未找到/);
+    const done = getHerdrAgent(spawned.id)!;
+    assert.equal(done.turns, 1);
+    assert.equal(done.activity, "idle");
+    assert.ok(done.endedAt, "退出必须带结束时间");
+    assert.equal(done.output.includes("initial report"), true);
+    assert.equal(done.verification.verified, false);
+    assert.match(done.verification.reason, /未找到/);
+    await assert.rejects(() => sendHerdrMessage(spawned.id, "more"), /exited/);
   } finally {
     await env.cleanup();
   }
@@ -96,14 +99,15 @@ test("Herdr message keeps context and applies the verification guardrail", { tim
       cwd: env.dir,
       parentSessionId: "parent",
       model: faux.getModel(),
+      idle: true,
     });
-    await waitFor(() => getHerdrAgent(spawned.id)?.activity === "idle", "initial turn");
+    await waitForStatus(spawned.id, (status) => status === "running", 5_000);
 
     const result = await sendHerdrMessage(spawned.id, "Run the test suite and report.");
     assert.equal(result.ok, true, result.error);
-    assert.equal(result.agent.turns, 2);
+    assert.equal(result.agent.turns, 1);
     assert.equal(result.agent.verification.verified, false);
-    assert.match(result.agent.verification.reason, /只有文本自述/);
+    assert.match(result.agent.verification.reason, /未找到测试执行证据|只有文本自述/);
   } finally {
     await env.cleanup();
   }
@@ -126,8 +130,9 @@ test("Herdr stop follows stopping → stopped and cannot be stopped twice", { ti
       cwd: env.dir,
       parentSessionId: "parent",
       model: faux.getModel(),
+      idle: true,
     });
-    await waitFor(() => getHerdrAgent(spawned.id)?.activity === "idle", "idle before stop");
+    await waitForStatus(spawned.id, (status) => status === "running", 5_000);
     assert.equal(await stopHerdrAgent(spawned.id), true);
     const stopped = getHerdrAgent(spawned.id)!;
     assert.equal(stopped.status, "stopped");
@@ -179,10 +184,13 @@ test("a fleet agent refuses the 4th message (3-round money valve)", { timeout: 3
       cwd: env.dir,
       parentSessionId: "parent",
       model: faux.getModel(),
+      idle: true,
     });
-    // 第 1 轮由 spawn 的初始任务占用；再发 2 轮 → 共 3 轮，已达上限。
+    await waitForStatus(agent.id, (status) => status === "running", 5_000);
+    const first = await sendHerdrMessage(agent.id, "first");
+    assert.match(first.text, /r1/);
     const second = await sendHerdrMessage(agent.id, "second");
-    assert.match(second.text, /r2|r3/);
+    assert.match(second.text, /r2/);
     const third = await sendHerdrMessage(agent.id, "third");
     assert.match(third.text, /r3/);
     await assert.rejects(
@@ -234,12 +242,86 @@ test("fleet changes are broadcast so the panel can update without polling", { ti
         parentSessionId: "parent",
         model: faux.getModel(),
       });
-      await waitForStatus(agent.id, (status) => status === "running", 5_000);
+      await waitForStatus(agent.id, (status) => status !== "starting", 5_000);
       assert.ok(seen.length > 0, "必须广播 herdr 变更");
-      assert.ok(seen.some((entry) => entry.includes("running") || entry.includes("starting")));
+      assert.ok(
+        seen.some((entry) => entry.includes("running") || entry.includes("starting") || entry.includes("exited")),
+      );
     } finally {
       off();
     }
+  } finally {
+    await env.cleanup();
+  }
+});
+
+test("idle reaper sleeps an idle fleet agent but never a working one", { timeout: 30000 }, async () => {
+  const env = setupEnv();
+  try {
+    const faux = await registerFaux("herdr-idle-fixture", ["done"]);
+    const idle = spawnHerdrAgent({
+      name: "idle-one",
+      task: "reply",
+      cwd: env.dir,
+      parentSessionId: "parent",
+      model: faux.getModel(),
+      idle: true,
+    });
+    await waitForStatus(idle.id, (status) => status === "running", 5_000);
+
+    // 刚建好：还在宽限期内，不该被休眠。
+    assert.deepEqual(sweepIdleHerdrAgents({ now: Date.now(), maxIdleMs: 5 * 60_000 }), []);
+
+    // 把空闲时间点推到 11 分钟前 → 扫到就休眠，并记下原因。
+    const record = getHerdrAgent(idle.id)!;
+    assert.equal(typeof record.lastActivityAt, "number");
+    const slept = sweepIdleHerdrAgents({ now: record.lastActivityAt + 6 * 60_000, maxIdleMs: 5 * 60_000 });
+    assert.deepEqual(slept, [idle.id]);
+    const after = getHerdrAgent(idle.id)!;
+    assert.equal(after.status, "stopped");
+    assert.match(after.error ?? "", /自动休眠/);
+    assert.equal(after.finishedAt !== null, true);
+  } finally {
+    await env.cleanup();
+  }
+});
+
+test("the idle decision never touches a working or starting agent", () => {
+  const idleView = { status: "running" as const, activity: "idle" as const, lastActivityAt: 1_000 };
+  const workingView = { ...idleView, activity: "working" as const };
+  const startingView = { ...idleView, status: "starting" as const };
+  const stoppedView = { ...idleView, status: "stopped" as const };
+  assert.equal(shouldSleepIdle(idleView, 1_000 + 11 * 60_000, 10 * 60_000), true);
+  assert.equal(shouldSleepIdle(idleView, 1_000 + 9 * 60_000, 10 * 60_000), false);
+  assert.equal(shouldSleepIdle(workingView, 1_000 + 60 * 60_000, 10 * 60_000), false);
+  assert.equal(shouldSleepIdle(startingView, 1_000 + 60 * 60_000, 10 * 60_000), false);
+  assert.equal(shouldSleepIdle(stoppedView, 1_000 + 60 * 60_000, 10 * 60_000), false);
+});
+
+test("a dispatched turn is killed on timeout instead of hanging", { timeout: 30000 }, async () => {
+  const env = setupEnv();
+  try {
+    const runtime = await getSharedAuxRuntime();
+    const hanging = fauxProvider({ provider: "herdr-hang-fixture", api: "herdr-hang-api" });
+    runtime.registerNativeProvider(hanging.provider);
+    // 永远不 resolve 的响应：只能靠超时收割。
+    hanging.setResponses([() => new Promise(() => {})]);
+    const agent = spawnHerdrAgent({
+      name: "hangs",
+      task: "never answers",
+      cwd: env.dir,
+      parentSessionId: "parent",
+      model: hanging.getModel(),
+      idle: true,
+    });
+    await waitForStatus(agent.id, (status) => status === "running", 5_000);
+
+    void sendHerdrMessage(agent.id, "hang please", 1_000).catch(() => undefined);
+    await waitFor(() => getHerdrAgent(agent.id)?.status === "stopped", "timeout kill", 8_000);
+    const after = getHerdrAgent(agent.id)!;
+    assert.equal(after.status, "stopped");
+    assert.match(after.error ?? "", /强制终止/);
+    assert.ok(after.finishedAt, "被收割也要有结束时间");
   } finally {
     await env.cleanup();
   }

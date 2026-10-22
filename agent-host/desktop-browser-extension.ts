@@ -103,11 +103,6 @@ function browserNotReadyResult(): ReturnType<typeof textResult> {
   );
 }
 
-function browserReadyForRead(): boolean {
-  const snapshot = getBrowserSnapshot();
-  return Boolean(snapshot?.ready === true && (snapshot.boundsGeneration ?? 0) > 0);
-}
-
 function textResult(text: string, details: Record<string, unknown> = {}, isError = false) {
   return {
     content: [{ type: "text" as const, text }],
@@ -356,7 +351,6 @@ export function createDesktopBrowserFactory(): ExtensionFactory {
           const opened = await requestBrowserCommand({ kind: "open", url }, OPEN_TIMEOUT_MS);
           if (!opened.ok) return textResult(`Could not open ${url}: ${opened.error ?? "unknown error"}`, { error: opened.error }, true);
         }
-        if (!browserReadyForRead()) return browserNotReadyResult();
         if (action === "screenshot") {
           const shot = await requestBrowserCommand({ kind: "screenshot" }, SCREENSHOT_TIMEOUT_MS);
           if (!shot.ok || !shot.image?.data) return textResult(`Screenshot failed: ${shot.error ?? "no image returned"}`, { error: shot.error }, true);
@@ -399,7 +393,6 @@ export function createDesktopBrowserFactory(): ExtensionFactory {
       async execute(_toolCallId, params) {
         const url = typeof params.url === "string" && params.url.trim() ? normalizeBrowserUrl(params.url) : undefined;
         if (params.action === "open" && !url) return textResult("`open` needs a `url` parameter.", { error: "missing url" }, true);
-        if (params.action !== "open" && !browserReadyForRead()) return browserNotReadyResult();
         const command = params.action === "open"
           ? { kind: "open" as const, url }
           : { kind: params.action };

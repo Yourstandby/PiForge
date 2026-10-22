@@ -4,6 +4,7 @@ import { useCallback, useRef, useState } from "react";
 import type { AgentMessage, SessionTreeNode } from "../../lib/types";
 import type { SessionBranches } from "@contract/domains/sessions";
 import type { FollowUpQueueSnapshot } from "../../lib/follow-up-queue";
+import type { ContextBudget } from "../../lib/pi-types";
 import type { SessionStats } from "./session-stats.ts";
 import { fetchSession, fetchContext, fetchBranches } from "./session-loader-api.ts";
 
@@ -32,6 +33,7 @@ export interface LoadedAgentState {
     isStreaming?: boolean;
     isCompacting?: boolean;
     contextUsage?: { percent: number | null; contextWindow: number; tokens: number | null } | null;
+    contextBudget?: ContextBudget | null;
     sessionStats?: SessionStats | null;
     systemPrompt?: string;
     thinkingLevel?: string;

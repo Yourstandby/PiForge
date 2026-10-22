@@ -22,6 +22,8 @@ import {
  * 超过它就换成「头尾预览 + 指针」，剩下的交给 `tool_history_get` 按页读。
  */
 export const TOOL_OUTPUT_MAX_BYTES = DEFAULT_TOOL_OUTPUT_BUDGET.maxBytes;
+/** 主阈值：超过 4000 字符就走「落盘 + 头尾预览」。 */
+export const TOOL_OUTPUT_MAX_CHARS = DEFAULT_TOOL_OUTPUT_BUDGET.maxChars;
 export const TOOL_OUTPUT_MAX_LINES = DEFAULT_TOOL_OUTPUT_BUDGET.maxLines;
 export const PREVIEW_HEAD_LINES = 40;
 export const PREVIEW_TAIL_LINES = 40;
@@ -32,8 +34,8 @@ export const HISTORY_MAX_LIMIT = 2_000;
 const MAX_FULL_TEXT_BYTES = 32 * 1024 * 1024;
 /** A single preview should never be bigger than this, even with long lines. */
 const MAX_PREVIEW_BYTES = 16 * 1024;
-const PREVIEW_HEAD_CHARS = 8_000;
-const PREVIEW_TAIL_CHARS = 6_000;
+const PREVIEW_HEAD_CHARS = 1_500;
+const PREVIEW_TAIL_CHARS = 1_500;
 /** Defensive cap while counting lines for pagination. */
 const MAX_SCAN_LINES = 1_000_000;
 
@@ -71,7 +73,7 @@ export function countLines(text: string): number {
 }
 
 export function shouldPersistToolOutput(text: string): boolean {
-  return Buffer.byteLength(text, "utf8") > TOOL_OUTPUT_MAX_BYTES || countLines(text) > TOOL_OUTPUT_MAX_LINES;
+  return text.length > TOOL_OUTPUT_MAX_CHARS || countLines(text) > TOOL_OUTPUT_MAX_LINES;
 }
 
 /** Tool call ids may contain `/` for nested calls; keep the name filesystem-safe. */

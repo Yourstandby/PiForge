@@ -699,6 +699,19 @@ span.linenumber { color: var(--text-dim) !important; font-style: normal !importa
 .sidebar-session-row[data-selected]:hover {
   background: rgb(59 130 246 / 0.14);
 }
+/* 已在标签页打开的会话：标题前一颗小蓝点（选中行已有左侧蓝条，不再重复标）。 */
+.sidebar-session-open-dot {
+  flex: 0 0 auto;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: #9dbcf2;
+  box-shadow: 0 0 0 2px rgb(157 188 242 / 0.18);
+}
+.sidebar-session-row:hover .sidebar-session-open-dot {
+  background: #6d97e0;
+}
+
 .sidebar-session-row[data-selected]::before {
   content: "";
   position: absolute;
@@ -833,6 +846,23 @@ body,
 .tool-running {
   animation: piforge-tool-running 1.6s ease-in-out infinite;
 }
+/* 上下文越硬顶：环外面呼吸一圈红晕，不用文字也能看见「该压了」 */
+@keyframes piforge-context-alert {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgb(220 38 38 / 0.35);
+    opacity: 1;
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgb(220 38 38 / 0.14);
+    opacity: 0.6;
+  }
+}
+.context-ring-alert {
+  border-radius: 9999px;
+  animation: piforge-context-alert 1.4s ease-in-out infinite;
+}
+
 @keyframes piforge-diff-flash {
   from {
     background-color: rgb(22 163 74 / 0.16);

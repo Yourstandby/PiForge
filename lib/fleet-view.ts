@@ -35,6 +35,13 @@ export interface FleetRow {
   agent: HerdrAgentView | null;
   /** 还没唤醒的常驻配置（面板里显示"待唤醒"）。 */
   dormant: boolean;
+  /**
+   * 这行是否真有落盘的配置。
+   * 模型用 `herdr_spawn` 直接拉的 Agent 没有配置，行是从运行时合成的；
+   * 对它们点「删除」必须走 stop，而不是 `fleet.delete`（后者会静默 ok:false）。
+   * 缺省视为 true（历史调用点只传了三字段）。
+   */
+  persisted?: boolean;
 }
 
 const LIVE_STATUSES = new Set(["starting", "running", "working", "stopping"]);
@@ -62,6 +69,12 @@ export function subagentRow(agent: {
     startedAt: agent.startedAt,
     ...(agent.error ? { error: agent.error } : {}),
   };
+}
+
+/** 空闲多久了（ms）：挂在"待命"徽章旁边，用户能看出这个子 Agent 是在干活还是在耗槽位。 */
+export function fleetIdleMs(agent: HerdrAgentView, now = Date.now()): number | null {
+  if (agent.status !== "running" || agent.activity === "working") return null;
+  return Math.max(0, now - agent.lastActivityAt);
 }
 
 /** 舰队 Agent → 行（带轮数）。 */
@@ -94,7 +107,7 @@ export function pairFleetRows(
       (agent) => !claimed.has(agent.id) && agent.name === profile.name && isFleetAgentActive(agent),
     );
     if (live) claimed.add(live.id);
-    rows.push({ profile, agent: live ?? null, dormant: !live });
+    rows.push({ profile, agent: live ?? null, dormant: !live, persisted: true });
   }
   // 没有配置的活跃舰队 Agent（例如模型用 herdr_spawn 直接拉的）也要显示。
   for (const agent of agents) {
@@ -111,6 +124,7 @@ export function pairFleetRows(
       },
       agent,
       dormant: false,
+      persisted: false,
     });
   }
   return rows;
@@ -143,7 +157,9 @@ export function fleetStatusLabel(agent: HerdrAgentView | null): string {
   if (agent.status === "starting") return "启动中";
   if (agent.status === "running") {
     if (agent.activity === "working") return "运行中";
-    return agent.error ? "出错" : "待命";
+    if (agent.error) return "出错";
+    // 空闲超过 5 分钟会被 Host 自动休眠；这里提前告诉用户还剩多久。
+    return "待命";
   }
   if (agent.status === "crashed") return "已崩溃";
   if (agent.status === "stopped") return "已停止";

@@ -35,6 +35,8 @@ export interface SubagentView {
   task: string;
   /** Parent agent session that spawned it. */
   parentSessionId: string;
+  /** Working directory of the parent session (project attribution in the rail). */
+  cwd?: string;
   status: SubagentStatus;
   startedAt: number;
   endedAt: number | null;

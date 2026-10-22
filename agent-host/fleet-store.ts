@@ -12,7 +12,13 @@ import { dirname, join } from "node:path";
 import type { FleetAgentProfile } from "../contract/domains/fleet.ts";
 
 /** 允许舰队 Agent 申请的工具：与只读子 Agent 同一套白名单。 */
-export const FLEET_ALLOWED_TOOLS = ["read", "grep", "find", "ls"] as const;
+/**
+ * 舰队 Agent 允许的持久化工具白名单。
+ *
+ * 和 sub-agent 一样，只读阉割会让常驻 Agent 在「跑测试 / 看 diff」这类任务上
+ * 空转；这里放开核心工具，递归与 UI 副作用工具仍由 tool-grants 拦截。
+ */
+export const FLEET_ALLOWED_TOOLS = ["bash", "edit", "find", "grep", "ls", "read", "write"] as const;
 /** 舰队规模上限（与 herdr 的 MAX_FLEET 一致，避免 UI 里能建但起不来）。 */
 export const MAX_FLEET_PROFILES = 12;
 export const MAX_SYSTEM_PROMPT_CHARS = 4_000;

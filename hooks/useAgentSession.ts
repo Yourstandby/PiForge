@@ -44,8 +44,10 @@ import type { AgentMode } from "@/lib/approval-policy";
 import { DEFAULT_AGENT_MODE } from "@/lib/approval-policy";
 import type { ExtensionUiRequestEvent } from "./agent-session/agent-events-manager";
 import type { NeedsTrustPayload } from "@/lib/trust-types";
+import type { ContextBudget } from "@/lib/pi-types";
 import { sendAgentCommand } from "@/lib/agent-client";
 import { reconcileOrAppendPendingUserMessage } from "./agent-session/user-message-reconciliation";
+import { normalizeUserTextForMatch } from "../lib/image-dimension-note";
 
 export type { ThinkingLevelOption, AttachedImage, ChatInputHandle };
 
@@ -163,6 +165,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [agentRunning, setAgentRunning] = useState(false);
   const [retryInfo, setRetryInfo] = useState<RetryInfo | null>(null);
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
+  const [contextBudget, setContextBudget] = useState<ContextBudget | null>(null);
   const [authoritativeSessionStats, setAuthoritativeSessionStats] =
     useState<SessionStats | null>(null);
   const [systemPrompt, setSystemPrompt] = useState<string | null>(null);
@@ -481,17 +484,17 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       let reconciledSteerId: string | null = null;
       let reconciledPromptId: string | null = null;
       if (event.type === "message_end" && event.message.role === "user") {
-        const canonicalText = userMessageText(event.message);
-        const pendingIndex = pendingSteersRef.current.findIndex(
-          (item) => item.message === canonicalText,
-        );
+        // 带图消息落盘时 pi 会在文本尾部追加坐标说明，直接比原文会匹配不上，
+        // 于是乐观气泡留着、落盘消息又插一条 —— 界面出现两条相同的用户消息。
+        const canonicalText = normalizeUserTextForMatch(userMessageText(event.message));
+        const sameAs = (item: { message: string }) =>
+          normalizeUserTextForMatch(item.message) === canonicalText;
+        const pendingIndex = pendingSteersRef.current.findIndex(sameAs);
         if (pendingIndex !== -1) {
           reconciledSteerId = pendingSteersRef.current[pendingIndex].id;
           pendingSteersRef.current.splice(pendingIndex, 1);
         } else {
-          const promptIndex = pendingPromptsRef.current.findIndex(
-            (item) => item.message === canonicalText,
-          );
+          const promptIndex = pendingPromptsRef.current.findIndex(sameAs);
           if (promptIndex !== -1) {
             reconciledPromptId = pendingPromptsRef.current[promptIndex].id;
             pendingPromptsRef.current.splice(promptIndex, 1);
@@ -810,6 +813,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (patch.connectEvents) connectEvents(sid);
       if (patch.isCompacting !== undefined) setIsCompacting(patch.isCompacting);
       if (patch.contextUsage !== undefined) setContextUsage(patch.contextUsage);
+      if (patch.contextBudget !== undefined) setContextBudget(patch.contextBudget);
       if (loaded?.agentState?.state?.sessionStats !== undefined) {
         setAuthoritativeSessionStats(loaded.agentState.state.sessionStats ?? null);
       }
@@ -896,6 +900,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     thinkingLevel,
     retryInfo,
     contextUsage,
+    contextBudget,
     systemPrompt,
     forkingEntryId,
     isCompacting,

@@ -167,11 +167,13 @@ test("read output is capped by the file-content budget instead of being exempt",
     )) as { content: Array<{ type: string; text?: string }>; details: Record<string, unknown> };
     assert.ok(result, "a 3000-line read must be trimmed");
     const text = result.content[0]?.text ?? "";
-    assert.match(text, /\[输出过长已截断，共 3000 行\]/);
+    assert.match(text, /\[\.\.\.已截断 3000 行/);
     assert.match(text, /请使用 grep、sed 等工具分段读取/);
     assert.match(text, /offset=301/);
     assert.match(text, /output line 1\n/);
-    assert.doesNotMatch(text, /output line 3000/);
+    // 头 + 尾窗口：尾部保留（收尾代码/最终报错常在这里），中段被裁掉。
+    assert.match(text, /output line 3000/);
+    assert.doesNotMatch(text, /output line 1500\n/);
     // 源文件就在磁盘上：read 只裁剪，不落盘。
     assert.equal(existsSync(join(sessionDir, "tool-outputs")), false);
   } finally {
@@ -200,7 +202,7 @@ test("read keeps pi's own pagination hint after truncation", async () => {
     };
     const text = result.content[0]?.text ?? "";
     assert.match(text, /Use offset=1001 to continue/);
-    assert.match(text, /\[输出过长已截断，共 1002 行\]/);
+    assert.match(text, /\[\.\.\.已截断 1002 行/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

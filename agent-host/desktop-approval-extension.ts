@@ -7,6 +7,7 @@ import {
   needsAskConfirm,
   summarizeToolCall,
   PLAN_MODE_SYSTEM_PROMPT,
+  RESPONSE_LANGUAGE_PROMPT,
   type AgentMode,
   type ToolPreset,
   PLAN_TOOLS,
@@ -89,7 +90,9 @@ export function createDesktopApprovalFactory(modeRef: AgentModeRef): ExtensionFa
         }
         requestedTools.add(name);
         const active = pi.getActiveTools();
-        if (!active.includes(name)) pi.setActiveTools([...active, name]);
+        // 工具列表始终保持字典序 + 去重：工具 schema 的序列化顺序必须稳定，
+        // 否则每次动态加载工具都会把 prompt cache 前缀打散。
+        if (!active.includes(name)) pi.setActiveTools(canonicalToolOrder([...active, name]));
         return {
           content: [
             {
@@ -205,6 +208,18 @@ export function createDesktopApprovalFactory(modeRef: AgentModeRef): ExtensionFa
         event.systemPromptOptions.appendSystemPrompt = current
           ? `${current}\n\n${stubSection}`
           : stubSection;
+      }
+
+      /**
+       * 回复语言：pi 默认 prompt 不约束语言，模型常在工具调用之间用英文复述
+       * 计划（"Now the grouping logic + panel:"），中文对话里看着很割裂。
+       * 静态文本，不含任何易变状态 → 不破坏前缀缓存。
+       */
+      {
+        const current = event.systemPromptOptions.appendSystemPrompt;
+        event.systemPromptOptions.appendSystemPrompt = current
+          ? `${current}\n\n${RESPONSE_LANGUAGE_PROMPT}`
+          : RESPONSE_LANGUAGE_PROMPT;
       }
 
       /**

@@ -9,10 +9,14 @@ export interface HerdrAgentView {
   name: string;
   task: string;
   parentSessionId: string;
+  /** Working directory of the parent session (project attribution in the rail). */
+  cwd?: string;
   /** Reuses the managed-process lifecycle enum; terminal states never resume. */
   status: ManagedProcessStatus;
   activity: HerdrActivity;
   startedAt: number;
+  /** 最近一次「开始/结束一轮」的时间戳：空闲托管按它判超时。 */
+  lastActivityAt: number;
   endedAt: number | null;
   durationMs: number;
   /** Convenience alias of endedAt; null while the agent is still alive. */

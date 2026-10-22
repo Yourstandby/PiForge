@@ -119,6 +119,60 @@ test("double trigger: window first, then token budget", () => {
   });
   assert.equal(windowHit.trigger, true);
   assert.equal(windowHit.reason, "window");
+
+  // 2 小时内的会话只靠预算触发，不主动压窗口（保住 prompt cache 前缀）。
+  const young = decideCompaction({
+    rounds: 9,
+    tokens: null,
+    contextWindow: 0,
+    droppableTokens: 10_000,
+    sessionAgeMs: 30 * 60 * 1000,
+  });
+  assert.equal(young.trigger, false);
+  // 硬顶：即使在 2 小时内的年轻会话，12 万 token 的上下文也必须压。
+  // （模型窗口声明成 1M 时，"45% 预算"永远够不着，这就是单轮吃掉上万 token 的坑。）
+  const youngCeiling = decideCompaction({
+    rounds: 9,
+    tokens: 120_000,
+    contextWindow: 1_000_000,
+    droppableTokens: 10_000,
+    sessionAgeMs: 30 * 60 * 1000,
+  });
+  assert.equal(youngCeiling.trigger, true);
+  assert.equal(youngCeiling.reason, "ceiling");
+
+  // 硬顶之下、预算之内、且会话年轻 → 不压（保住 prompt cache 前缀）。
+  const youngSmall = decideCompaction({
+    rounds: 9,
+    tokens: 30_000,
+    contextWindow: 1_000_000,
+    droppableTokens: 10_000,
+    sessionAgeMs: 30 * 60 * 1000,
+  });
+  assert.equal(youngSmall.trigger, false);
+
+  const youngOverBudget = decideCompaction({
+    rounds: 9,
+    tokens: 90_000,
+    contextWindow: 100_000,
+    droppableTokens: 10_000,
+    sessionAgeMs: 30 * 60 * 1000,
+  });
+  assert.equal(youngOverBudget.trigger, true);
+  // 同时越过硬顶与预算时，理由是更硬的"ceiling"。
+  assert.equal(youngOverBudget.reason, "ceiling");
+
+  // 关掉硬顶后，年轻会话仍然有"预算分支"兜底。
+  const youngBudgetOnly = decideCompaction({
+    rounds: 9,
+    tokens: 90_000,
+    contextWindow: 100_000,
+    droppableTokens: 10_000,
+    sessionAgeMs: 30 * 60 * 1000,
+    maxContextTokens: 500_000,
+  });
+  assert.equal(youngBudgetOnly.trigger, true);
+  assert.equal(youngBudgetOnly.reason, "budget");
   assert.equal(windowHit.droppableRounds, 9 - KEEP_RECENT_ROUNDS);
 
   const twoRounds = decideCompaction({
@@ -136,7 +190,7 @@ test("double trigger: window first, then token budget", () => {
     droppableTokens: 10_000,
   });
   assert.equal(budgetHit.trigger, true);
-  assert.equal(budgetHit.reason, "budget");
+  assert.ok(["budget", "ceiling"].includes(String(budgetHit.reason)));
 
   const noRoundsToDrop = decideCompaction({
     rounds: KEEP_RECENT_ROUNDS,
@@ -156,9 +210,10 @@ test("double trigger: window first, then token budget", () => {
   assert.equal(calm.reason, null);
 
   // 被压区间太小：压了也省不回一次摘要调用的成本，还不如不压。
+  // （未越硬顶时用小阈值；越顶后阈值降到 1k，见下一条用例。）
   const tiny = decideCompaction({
     rounds: 20,
-    tokens: 199_000,
+    tokens: 20_000,
     contextWindow: 200_000,
     droppableTokens: 800,
   });
@@ -166,17 +221,38 @@ test("double trigger: window first, then token budget", () => {
   assert.equal(tiny.droppableTokens, 800);
 });
 
+test("越过硬顶后即使区间很小也压，不把会话锁在超限状态", () => {
+  const overCeiling = decideCompaction({
+    rounds: 20,
+    tokens: 199_000,
+    contextWindow: 200_000,
+    droppableTokens: 1_200,
+  });
+  assert.equal(overCeiling.trigger, true);
+  assert.equal(overCeiling.reason, "ceiling");
+
+  // 真的什么都搜不出来（< 1k）时仍然不硬来，交给 pi 的溢出兑底。
+  const nothing = decideCompaction({
+    rounds: 20,
+    tokens: 199_000,
+    contextWindow: 200_000,
+    droppableTokens: 400,
+  });
+  assert.equal(nothing.trigger, false);
+});
+
 test("summary instructions demand the four required sections", () => {
   const instructions = compactionSummaryInstructions();
   for (const heading of [
-    "用户核心意图",
-    "修改过的文件",
-    "关键报错 / 事实",
-    "最终决策",
+    "核心任务目标",
+    "已确定的技术架构 / 方案",
+    "当前报错或卡点",
+    "用户明确偏好 / 限制条件",
   ]) {
     assert.ok(instructions.includes(heading), `缺少必需段落：${heading}`);
   }
-  assert.match(instructions, /不要复述工具输出原文/);
+  assert.match(instructions, /800–1500 token/);
+  assert.match(instructions, /不要复述大段工具输出/);
 });
 
 test("file paths are extracted from write/read tool calls", () => {

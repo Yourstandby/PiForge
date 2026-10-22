@@ -34,6 +34,7 @@ import { canonicalToolOrder } from "./prompt-prefix.ts";
 import { desktopProcessInlineExtension } from "./desktop-process-extension.ts";
 import { desktopPowerShellInlineExtension } from "./desktop-powershell-extension.ts";
 import { desktopShellGuidanceInlineExtension } from "./desktop-shell-guidance-extension.ts";
+import { desktopOutputStyleInlineExtension } from "./desktop-output-style-extension.ts";
 import { desktopBrowserInlineExtension } from "./desktop-browser-extension.ts";
 import { desktopTerminalInlineExtension } from "./desktop-terminal-extension.ts";
 import { desktopImageInlineExtension } from "./desktop-image-extension.ts";
@@ -45,6 +46,7 @@ import { desktopPluginInlineExtension } from "./desktop-plugin-extension.ts";
 import { desktopOrchestratorInlineExtension } from "./desktop-orchestrator-extension.ts";
 import { desktopCompactionInlineExtension } from "./desktop-compaction-extension.ts";
 import { compactionSummaryInstructions } from "./compaction-plan.ts";
+import { describeContextBudget } from "./context-budget.ts";
 import { auxToolAvailability } from "./aux-models.ts";
 import { loadDesktopMcpConfig } from "../lib/mcp-config.ts";
 import { findLastAgentMode } from "./agent-mode-persistence.ts";
@@ -114,6 +116,18 @@ export class AgentSessionWrapper {
   private followUpQueue = new FollowUpQueue();
   private titleGenerationStarted = false;
   private pendingAgentEnd: AgentEvent | null = null;
+  private queuedDispatchRetries = 0;
+  /**
+   * `agent_end` → `agent_settled` 之间不允许无限期挂起。
+   * 正常情况下两个事件前后脚到达；只要 settled 丢失（扩展抛错、压缩卡住、
+   * wrapper 中途 abort），`agent_end` 就会被永久扣在 pendingAgentEnd 里：
+   * 前端一直忙、工具反馈不刷新、follow-up 队列也永远不 drain。
+   * 这里用「事件静默」做兜底：超过阈值仍无任何事件就当作已经 settled。
+   */
+  private settleWatchdog: ReturnType<typeof setInterval> | null = null;
+  private lastAgentEventAt = 0;
+  /** 静默多久判定 settled 丢失。测试里会调小。 */
+  static settleSilenceMs = 20_000;
   private suppressQueuedDispatchOnSettled = false;
   private resourcesChanged = false;
   private reloadingResources = false;
@@ -249,6 +263,7 @@ export class AgentSessionWrapper {
 
   start(): void {
     this.unsubscribe = this.inner.subscribe((event: AgentEvent) => {
+      this.lastAgentEventAt = Date.now();
       this.resetIdleTimer();
       // Best-effort LTM observe when an agent loop settles.
       if (event.type === "agent_end") {
@@ -268,6 +283,7 @@ export class AgentSessionWrapper {
       }
       if (event.type === "agent_end") {
         this.pendingAgentEnd = event;
+        this.startSettleWatchdog();
         return;
       }
       if (event.type === "agent_settled") {
@@ -288,28 +304,88 @@ export class AgentSessionWrapper {
     this.emitFollowUpQueue(this.followUpQueue.restoreFront(item));
     if (completedEvent) this.emitEvent(completedEvent);
     this.emitAgentError(error instanceof Error ? error.message : String(error));
+    // 失败后没人会再唤醒队列（同一轮不会再有 agent_settled），
+    // 不重试的话这条消息会永远停在队列里不发出去。
+    this.scheduleQueuedDispatchRetry();
+  }
+
+  /** 队列派发失败后的有限重试（最多 2 次，3s 一次），避免压住消息又不成死循环。 */
+  private scheduleQueuedDispatchRetry(): void {
+    if (this.queuedDispatchRetries >= 2) return;
+    this.queuedDispatchRetries += 1;
+    const timer = setTimeout(() => {
+      if (this.followUpQueue.snapshot().items.length === 0) return;
+      if (this.pendingAgentEnd) return;
+      let streaming = true;
+      try {
+        streaming = this.inner.isStreaming;
+      } catch {
+        streaming = false;
+      }
+      if (streaming) return;
+      this.dispatchNextFollowUp(null);
+    }, 3000);
+    (timer as { unref?: () => void }).unref?.();
   }
 
   private dispatchNextFollowUp(completedEvent: AgentEvent | null): FollowUpQueueSnapshot {
     const claimed = this.followUpQueue.shift();
-    if (!claimed) {
-      if (completedEvent) this.emitEvent(completedEvent);
-      return this.followUpQueue.snapshot();
-    }
+    // 上一轮的 agent_end 必须先进前端，再开下一轮。
+    // 以前只在「队列为空」时才 emit，于是一旦队列非空，agent_end 就永久丢失：
+    // UI 一直停在 agentRunning，排队的消息看起来「发不出去」。
+    if (completedEvent) this.emitEvent(completedEvent);
+    if (!claimed) return this.followUpQueue.snapshot();
 
     const snapshot = this.emitFollowUpQueue(claimed.snapshot);
     const { item } = claimed;
     try {
       const run = () => this.inner.prompt(item.message, item.images?.length ? { images: item.images } : undefined);
       const prompt = this.resourcesChanged ? this.reloadResources().then(run) : run();
-      void prompt.catch((error) => this.handleQueuedPromptFailure(item, completedEvent, error));
+      void prompt.then(
+        () => {
+          this.queuedDispatchRetries = 0;
+        },
+        (error) => this.handleQueuedPromptFailure(item, completedEvent, error),
+      );
     } catch (error) {
       this.handleQueuedPromptFailure(item, completedEvent, error);
     }
     return snapshot;
   }
 
+  /** 启动/复用一个 1s 轮询：静默太久就把 pendingAgentEnd 当作已 settled 收尾。 */
+  private startSettleWatchdog(): void {
+    this.lastAgentEventAt = Date.now();
+    if (this.settleWatchdog) return;
+    this.settleWatchdog = setInterval(() => {
+      if (!this.pendingAgentEnd) {
+        this.stopSettleWatchdog();
+        return;
+      }
+      let streaming = true;
+      try {
+        streaming = this.inner.isStreaming;
+      } catch {
+        streaming = false;
+      }
+      // 还在跑就别抢跑：只是 settled 迟到，不是丢了。
+      if (streaming) return;
+      if (Date.now() - this.lastAgentEventAt < AgentSessionWrapper.settleSilenceMs) return;
+      console.warn("[agent-host] agent_settled missing; settling after silence", this.sessionId);
+      this.handleAgentSettled();
+    }, 1000);
+    // 别让兜底轮询把进程钉死（打包后 Node 环境下存在 unref）。
+    (this.settleWatchdog as { unref?: () => void }).unref?.();
+  }
+
+  private stopSettleWatchdog(): void {
+    if (!this.settleWatchdog) return;
+    clearInterval(this.settleWatchdog);
+    this.settleWatchdog = null;
+  }
+
   private handleAgentSettled(): void {
+    this.stopSettleWatchdog();
     if (this.pendingCodemode !== undefined) {
       this._modeRef.codemodeEnabled = this.pendingCodemode;
       this.pendingCodemode = undefined;
@@ -468,6 +544,12 @@ export class AgentSessionWrapper {
   private buildStateSnapshot(): Record<string, unknown> {
     const model = this.inner.model;
     const contextUsage = this.inner.getContextUsage();
+    // 预算挂在已有的 state 上：前端拿 get_state 就能知道离硬顶多远，
+    // 不需要新路由、也不改命名管道协议。
+    const contextBudget = describeContextBudget({
+      tokens: contextUsage?.tokens ?? null,
+      contextWindow: contextUsage?.contextWindow ?? 0,
+    });
     const sessionStats = this.inner.getSessionStats?.();
     const reasoningTokens = this.sumReasoningTokens();
     const followUpQueue = this.followUpQueue.snapshot();
@@ -485,6 +567,7 @@ export class AgentSessionWrapper {
       contextUsage: contextUsage
         ? { percent: contextUsage.percent, contextWindow: contextUsage.contextWindow, tokens: contextUsage.tokens }
         : null,
+      contextBudget,
       sessionStats: sessionStats
         ? {
             tokens: {
@@ -825,6 +908,7 @@ export class AgentSessionWrapper {
   async destroy(): Promise<void> {
     if (!this._alive) return;
     this._alive = false;
+    this.stopSettleWatchdog();
     if (this.idleTimer) clearTimeout(this.idleTimer);
     // Unsubscribe BEFORE aborting. abort() emits terminal events (agent_end,
     // agent_error, …) as it tears down the loop; with the SSE listener still
@@ -1029,6 +1113,7 @@ export async function startRpcSession(
         desktopProcessInlineExtension({ getCwd: () => cwd }),
         desktopPowerShellInlineExtension(() => cwd),
         desktopShellGuidanceInlineExtension(),
+        desktopOutputStyleInlineExtension(),
         desktopBrowserInlineExtension(),
         desktopTerminalInlineExtension({ getCwd: () => cwd }),
         desktopImageInlineExtension(),

@@ -24,7 +24,6 @@ import type { SessionActivity } from "@/hooks/agent-session/session-stats";
 import { useDismissOnOutsideClick } from "@/hooks/useDismissOnOutsideClick";
 import type { AgentMode } from "@/lib/approval-policy";
 import { projectNameFromCwd } from "@/lib/project-name";
-import { UpstreamVersionBadge } from "./UpstreamVersionBadge";
 
 export type ThinkingLevel =
   | "auto"
@@ -119,9 +118,6 @@ interface Props {
   /** 当前会话所属项目目录：在工具栏最左侧显示极简项目标识。 */
   projectPath?: string | null;
   currentProvider?: string | null;
-  /** Agent Host transport state; rendered as a minimal engine dot. */
-  hostState?: "unknown" | "ready" | "reconnecting" | "offline";
-  hostTitle?: string;
   /** 正在执行的工具（来自 agentPhase）；有值时显示心跳条 + `running: bash`。 */
   runningTools?: Array<{ id: string; name: string }> | null;
 }
@@ -363,25 +359,7 @@ export function StatusBar({
   activity = null,
   projectPath = null,
   currentProvider,
-  hostState = "unknown",
-  hostTitle,
 }: Props) {
-  const hostColor =
-    hostState === "ready"
-      ? "#22C55E"
-      : hostState === "reconnecting"
-        ? "#F59E0B"
-        : hostState === "offline"
-          ? "#EF4444"
-          : "#9CA3AF";
-  const hostLabel =
-    hostState === "ready"
-      ? "引擎正常"
-      : hostState === "reconnecting"
-        ? "引擎重连中"
-        : hostState === "offline"
-          ? "引擎离线"
-          : "引擎状态未知";
   // 底部工具栏按聊天面板自身宽度（而非视口宽度）响应：窄于 640px 时收起按钮文字，
   // 只留图标，给 Token / 费用 / 回合留出单行空间。用 ResizeObserver 而不是 CSS
   // container query——container-type 会变成 fixed 子孙的包含块，让模型下拉框 /
@@ -421,20 +399,6 @@ export function StatusBar({
               </span>
             </span>
           )}
-          <UpstreamVersionBadge compact={compact} />
-          <span
-            role="status"
-            aria-label={hostLabel}
-            title={hostTitle ?? hostLabel}
-            className="mr-1 flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-1 py-0.5 text-[10px] text-ink-muted"
-          >
-            <span
-              aria-hidden="true"
-              className="h-[6px] w-[6px] shrink-0 rounded-full"
-              style={{ backgroundColor: hostColor }}
-            />
-            {!compact && <span>引擎</span>}
-          </span>
           <ModelSelector
             isStreaming={isStreaming}
             model={model}

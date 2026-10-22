@@ -47,6 +47,20 @@ export const PLAN_MODE_SYSTEM_PROMPT = [
   "计划写完就停下等待批准；用户批准后会切到执行模式，你才开始改代码。",
 ].join("\n");
 
+/**
+ * 回复语言：跟随用户当前使用的语言。
+ *
+ * pi 自带的 prompt 不约束语言，模型在长任务里经常用英文复述下一步
+ * （"Now the grouping logic + panel:"），中文对话中间夹这些很割裂。
+ * 这里明确要求**包括工具调用之间的进度说明**也用用户语言，代码/路径/命令不翻译。
+ */
+export const RESPONSE_LANGUAGE_PROMPT = [
+  "## 回复语言",
+  "始终使用用户当前使用的语言回复（用户用中文就用中文，用英文就用英文）。",
+  "工具调用之间的简短进度说明、步骤复述、总结也必须用同一语言——不要用英文写这些过渡句。",
+  "代码、标识符、命令、文件路径保持原样，不要翻译。",
+].join("\n");
+
 export function isAgentMode(value: unknown): value is AgentMode {
   return value === "plan" || value === "ask" || value === "full";
 }

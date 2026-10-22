@@ -3,6 +3,7 @@
 import { memo, startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SessionInfo } from "@/lib/types";
 import { fetchSessions, invalidateSessions } from "@/lib/sessions-cache";
+import { sessionScope } from "@/lib/session-scope";
 import { parseCwdParam } from "@/lib/project-window";
 import { Bot, CircleHelp, Puzzle, Settings } from "lucide-react";
 import { getElectronApi } from "@/lib/electron-api";
@@ -28,6 +29,10 @@ import type { FloatingFileTarget } from "./FloatingFileViewer";
 import { SkillsConfig } from "./SkillsConfig";
 import { HelpModal } from "./HelpModal";
 import { TitleBar } from "./TitleBar";
+import { TaskDoneToasts, type DoneTaskItem } from "./TaskDoneToasts";
+import type { AgentRailDoneEvent } from "./AgentRailPanel";
+import { projectNameOf } from "@/lib/agent-rail";
+import { getSessionTitleEntry } from "@/lib/session-titles";
 
 /** 上次使用的项目目录：决定首屏能否跳过等待会话列表 */
 const LAST_CWD_KEY = "piforge.lastCwd";
@@ -123,7 +128,7 @@ interface PaneHandlers {
   onDraftChange: (value: string) => void;
   onSessionCreated: (session: SessionInfo) => void;
   onNewSession: () => void;
-  onActivityChange: (activity: "idle" | "running" | "waiting") => void;
+  onActivityChange: (activity: "idle" | "running" | "waiting", summary?: string) => void;
 }
 
 export function Workbench() {
@@ -292,7 +297,12 @@ export function Workbench() {
       setActiveKey(key);
       // 切回前台即视为已读，清掉「后台已完成」绿点
       setTabActivity((previous) =>
-        previous[key]?.done ? { ...previous, [key]: { ...previous[key], done: false } } : previous,
+        previous[key]?.done
+          ? {
+              ...previous,
+              [key]: { ...previous[key], done: false, doneAt: undefined, summary: undefined },
+            }
+          : previous,
       );
     });
   }, []);
@@ -364,6 +374,9 @@ export function Workbench() {
       const index = prev.findIndex((tab) => tab.key === key);
       if (index < 0) return;
       const next = prev.filter((tab) => tab.key !== key);
+      // 关标签 = 会话作用域结束：清掉它登记的定时器 / 观察者，防止泄漏。
+      const closingSessionId = prev[index].session?.id;
+      if (closingSessionId) sessionScope.disposeSession(closingSessionId);
       // 关掉的标签不再需要状态指示灯数据
       setTabActivity((activity) => {
         if (!activity[key]) return activity;
@@ -621,13 +634,19 @@ ${fenced}`
       // The background auto-title finishes a few seconds into the first turn.
       // If its SSE event raced the sidebar's first refresh (or the stream was
       // reconnected), this one-shot refetch still picks the name up.
-      window.setTimeout(() => {
-        invalidateSessions();
-        void loadSessions(true);
-        setSessionsVersion((version) => version + 1);
-      }, 6000);
+      // 会话作用域定时器：标签关掉就自动取消，别让孤儿回调继续拉列表。
+      sessionScope.setTimeout(
+        created.id,
+        () => {
+          // 侧栏只认 sessionsVersion：单纯 fetch 一次没人用，标题/时间就永远不更新。
+          // 只 bump 一次（不传 showLoading），列表不会被卸载重挂，也不会抖两下。
+          invalidateSessions();
+          setSessionsVersion((version) => version + 1);
+        },
+        6_000,
+      );
     },
-    [commitTabs, loadSessions, rememberDraft],
+    [commitTabs, rememberDraft],
   );
 
   /** Keep tab titles in sync with auto-title / rename events. */
@@ -710,26 +729,69 @@ ${fenced}`
    * 只在真正变化时才 setState，避免流式事件把 Workbench 也一起重渲染。
    */
   const [tabActivity, setTabActivity] = useState<
-    Record<string, { live: "idle" | "running" | "waiting"; done: boolean }>
+    Record<
+      string,
+      { live: "idle" | "running" | "waiting"; done: boolean; doneAt?: number; summary?: string }
+    >
   >({});
 
+  /** 侧栏刷新节流：一轮结束后最多补一次列表刷新，避免每个工具回合都扫盘。 */
+  const sessionsRefreshTimerRef = useRef<number | null>(null);
+  const scheduleSessionsRefresh = useCallback(() => {
+    if (sessionsRefreshTimerRef.current !== null) return;
+    sessionsRefreshTimerRef.current = window.setTimeout(() => {
+      sessionsRefreshTimerRef.current = null;
+      invalidateSessions();
+      setSessionsVersion((version) => version + 1);
+    }, 1_200);
+  }, []);
+
+  /** 镜像每个标签的实时活动，用来判断"忙 → 空闲"这一跳。 */
+  const liveActivityRef = useRef<Record<string, "idle" | "running" | "waiting">>({});
+
   const reportTabActivity = useCallback(
-    (key: string, activity: "idle" | "running" | "waiting") => {
+    (key: string, activity: "idle" | "running" | "waiting", summary?: string) => {
+      const previousLive = liveActivityRef.current[key];
+      liveActivityRef.current[key] = activity;
+      const busyNow = activity === "running" || activity === "waiting";
+      // 忙 → 空闲 = 这一轮真的跑完了：侧栏的消息数/时间/自动标题都变了，补一次刷新。
+      if (!busyNow && (previousLive === "running" || previousLive === "waiting")) {
+        scheduleSessionsRefresh();
+      }
       setTabActivity((previous) => {
         const current = previous[key];
         const busy = activity === "running" || activity === "waiting";
         // 从忙 → 空闲，且当时不是前台标签 → 记为「后台已完成未读」
+        const finishedForeground = current && (current.live === "running" || current.live === "waiting");
         const done = busy
           ? false
-          : current && (current.live === "running" || current.live === "waiting")
+          : finishedForeground
             ? activeKeyRef.current !== key
             : (current?.done ?? false);
-        if (current && current.live === activity && current.done === done) return previous;
-        return { ...previous, [key]: { live: activity, done } };
+        const doneAt = done ? (current?.doneAt ?? Date.now()) : undefined;
+        const nextSummary = done ? summary : undefined;
+        if (
+          current &&
+          current.live === activity &&
+          current.done === done &&
+          current.summary === nextSummary
+        ) {
+          return previous;
+        }
+        return { ...previous, [key]: { live: activity, done, doneAt, summary: nextSummary } };
       });
     },
-    [],
+    [scheduleSessionsRefresh],
   );
+
+  /** 已读：清掉完成状态（切到该标签 / 点「已读」/ 卡片自动淡出后都走这里）。 */
+  const markTabRead = useCallback((key: string) => {
+    setTabActivity((previous) => {
+      const current = previous[key];
+      if (!current?.done) return previous;
+      return { ...previous, [key]: { ...current, done: false, doneAt: undefined, summary: undefined } };
+    });
+  }, []);
 
   const paneActionsRef = useRef({
     setDraftForTab,
@@ -769,7 +831,8 @@ ${fenced}`
             const targetCwd = current?.session?.cwd ?? current?.newSessionCwd ?? undefined;
             void paneActionsRef.current.handleNewSession(targetCwd);
           },
-          onActivityChange: (activity) => paneActionsRef.current.reportActivity(key, activity),
+          onActivityChange: (activity, summary) =>
+            paneActionsRef.current.reportActivity(key, activity, summary),
         };
         cache.set(key, handlers);
       }
@@ -781,6 +844,103 @@ ${fenced}`
     }
     return map;
   }, [tabs]);
+
+  /** 标签页里打开的会话 id：传给左栏，用来标出"哪些会话是打开的"。 */
+  const openSessionIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const tab of tabs) if (tab.session?.id) ids.add(tab.session.id);
+    return ids;
+  }, [tabs]);
+
+  // 后台完成的任务：提示条的数据源（顺序沿用标签顺序，时间用于排序/自动淡出）
+  /**
+   * 子 Agent 完成卡片：与对话标签的完成卡片共用同一个栈（最多 3 张）。
+   * key = `agent:<kind>:<id>`，目标任务存在 ref 里（卡片只需要展示，不需要 sessionId）。
+   */
+  const [agentDone, setAgentDone] = useState<DoneTaskItem[]>([]);
+  const agentDoneTargets = useRef(new Map<string, string>());
+
+  const handleAgentDone = useCallback((event: AgentRailDoneEvent) => {
+    const key = `agent:${event.id}`;
+    agentDoneTargets.current.set(key, event.parentSessionId);
+    const entry = getSessionTitleEntry(event.parentSessionId);
+    const project = projectNameOf(event.cwd || entry?.cwd);
+    const sessionLabel = entry?.title?.trim() || "会话";
+    const title = `${project} › ${sessionLabel} · ${event.name}`;
+    const summary = event.unverified
+      ? "已完成（无测试证据：未验证）"
+      : event.status === "failed" || event.status === "crashed"
+        ? "执行失败，点开看原因"
+        : "已完成，点开切换到该对话";
+    setAgentDone((current) => {
+      const rest = current.filter((item) => item.key !== key);
+      return [...rest, { key, title, doneAt: Date.now(), summary }].slice(-6);
+    });
+  }, []);
+
+  /** 按 sessionId 打开（已在标签里就直接激活，否则按 id 取一次元数据再开）。 */
+  const openSessionById = useCallback(
+    (sessionId: string) => {
+      const existing = tabsRef.current.find((tab) => tab.session?.id === sessionId);
+      if (existing) {
+        activateTab(existing.key);
+        return;
+      }
+      void (async () => {
+        try {
+          const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`);
+          if (!res.ok) return;
+          const data = (await res.json()) as { info?: SessionInfo | null };
+          if (data.info) handleSelect(data.info);
+        } catch {
+          /* 打不开就算了：不弹错误，别打断当前对话 */
+        }
+      })();
+    },
+    [activateTab, handleSelect],
+  );
+
+  /** 点完成卡片：agent 卡片切到派生会话，普通卡片切标签。 */
+  const handleDoneOpen = useCallback(
+    (key: string) => {
+      const sessionId = agentDoneTargets.current.get(key);
+      if (!sessionId) {
+        activateTab(key);
+        return;
+      }
+      agentDoneTargets.current.delete(key);
+      setAgentDone((current) => current.filter((item) => item.key !== key));
+      openSessionById(sessionId);
+    },
+    [activateTab, openSessionById],
+  );
+
+  const handleDoneRead = useCallback(
+    (key: string) => {
+      if (agentDoneTargets.current.has(key)) {
+        agentDoneTargets.current.delete(key);
+        setAgentDone((current) => current.filter((item) => item.key !== key));
+        return;
+      }
+      markTabRead(key);
+    },
+    [markTabRead],
+  );
+
+  const doneTasks = useMemo<DoneTaskItem[]>(() => {
+    const list: DoneTaskItem[] = [...agentDone];
+    for (const tab of tabs) {
+      const activity = tabActivity[tab.key];
+      if (!activity?.done) continue;
+      list.push({
+        key: tab.key,
+        title: tab.title,
+        doneAt: activity.doneAt ?? 0,
+        summary: activity.summary,
+      });
+    }
+    return list;
+  }, [tabs, tabActivity, agentDone]);
 
   // 唯一的活动视图：activeKey 失效时退回到第一个标签
   const visibleKey = useMemo(() => {
@@ -808,6 +968,7 @@ ${fenced}`
               void handleNewSession(targetCwd);
             }}
             refreshKey={sessionsVersion}
+            openSessionIds={openSessionIds}
             onSessionDeleted={handleSessionDeleted}
             onExportSession={(session) => setExportSessionId(session.id)}
             selectedCwd={activeCwd}
@@ -1025,10 +1186,14 @@ ${fenced}`
               onOpenDiff={handleOpenDiff}
               onCloseFile={handleCloseFile}
               onCollapse={() => setRightPanelOpen(false)}
+              onOpenSession={openSessionById}
+              onAgentDone={handleAgentDone}
             />
           </div>
         </div>
       </div>
+
+      <TaskDoneToasts items={doneTasks} onOpen={handleDoneOpen} onRead={handleDoneRead} />
 
       {settingsModal === "general" && (
         <GeneralSettingsModal

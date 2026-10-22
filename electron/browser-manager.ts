@@ -124,6 +124,12 @@ export class BrowserManager {
   private ready = false;
   private boundsGeneration = 0;
   private bounds: BrowserBounds = { x: 0, y: 0, width: 0, height: 0 };
+  /**
+   * 渲染端还没报过尺寸时的兼底视口。
+   * 以前这种情况下 bounds 是 0×0，Main 直接回 BROWSER_NOT_READY —— agent 明明
+   * 已经把页面打开并加载完，却因为“用户当前没切到浏览器面板”而拿不到截图。
+   */
+  private readonly fallbackBounds: BrowserBounds = { x: 0, y: 0, width: 1280, height: 800 };
   private listeners = new Set<(state: BrowserState) => void>();
   private readonly isAllowedUrl: (url: string) => boolean;
 
@@ -176,7 +182,13 @@ export class BrowserManager {
       return { action: "deny" };
     });
     contents.setBackgroundThrottling?.(false);
-    surface.setBounds(this.bounds);
+    // 首次创建就用可用尺寸：没有渲染端尺寸时用兼底视口，避免 0×0 视图抓不到图。
+    const usable = this.effectiveBounds();
+    if (usable !== this.bounds) {
+      this.bounds = usable;
+      this.boundsGeneration = Math.max(1, this.boundsGeneration);
+    }
+    surface.setBounds(usable);
     surface.setVisible(this.visible);
     this.emitState();
     return surface;
@@ -216,9 +228,36 @@ export class BrowserManager {
     this.emitState();
   }
 
+  /** 实际可用于渲染/抓图的边界（渲染端未报尺寸时退到兼底视口）。 */
+  private effectiveBounds(): BrowserBounds {
+    const { width, height } = this.bounds;
+    return width > 0 && height > 0 ? this.bounds : this.fallbackBounds;
+  }
+
+  /**
+   * 可读/可截图判定：**不再要求 visible**。
+   * 面板是否被用户切到前台是 UI 状态，不是数据状态；agent 驱动的读页/截图
+   * 应该在后台视图上正常完成（截的是同一个 WebContentsView）。
+   */
   private isReady(): boolean {
-    return this.ready && this.visible && this.boundsGeneration > 0 &&
-      this.bounds.width > 0 && this.bounds.height > 0;
+    const bounds = this.effectiveBounds();
+    return this.ready && bounds.width > 0 && bounds.height > 0;
+  }
+
+  /** 页面还在加载时等一会儿（Next dev 首次编译常 2–5s），而不是立刻报错。 */
+  private async waitForReady(timeoutMs = 6_000): Promise<boolean> {
+    if (this.isReady()) return true;
+    // 没有 surface / 没在加载 / 没载过任何页面：不必等，直接报未就绪。
+    if (!this.surface) return false;
+    const url = this.surface.webContents.getURL();
+    const blank = !url || url === "about:blank";
+    if (!this.loading && blank) return false;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      if (this.isReady()) return true;
+    }
+    return this.isReady();
   }
 
   private notReadyResult(id: string): BrowserCommandResult {
@@ -268,7 +307,7 @@ export class BrowserManager {
           };
         }
         case "read": {
-          if (!this.isReady()) return this.notReadyResult(command.id);
+          if (!(await this.waitForReady())) return this.notReadyResult(command.id);
           const raw = (await contents.executeJavaScript(SNAPSHOT_SCRIPT)) as {
             text?: string;
             url?: string;
@@ -283,7 +322,7 @@ export class BrowserManager {
           };
         }
         case "screenshot": {
-          if (!this.isReady()) return this.notReadyResult(command.id);
+          if (!(await this.waitForReady())) return this.notReadyResult(command.id);
           if (contents.isDestroyed?.()) return { id: command.id, ok: false, error: "browser destroyed" };
           const image = await contents.capturePage();
           if (image.isEmpty?.()) return { id: command.id, ok: false, error: "empty screenshot" };

@@ -24,6 +24,14 @@ export const MIN_ROUNDS_TO_DROP = 3;
 /** 上下文占用超过窗口的这个比例就压，不看轮数。 */
 export const CONTEXT_BUDGET_RATIO = 0.45;
 /**
+ * 已越过硬顶时的「值不值得压」下限。
+ *
+ * 常态下 3k 以下不压（省一次摘要调用）；但一旦越过硬顶，每一轮都要把 48k+
+ * 重新回放一遍，这时压掉 1k 也是纯赚——否则会出现「读数一路涨到 100k 却永远
+ * 不压缩」的假死状态。
+ */
+export const MIN_CEILING_DROPPABLE_TOKENS = 1_000;
+/**
  * 被压区间至少要有这么多 token 才值得压。
  * 否则 pi 的 `prepareCompaction` 会直接返回 undefined（没东西可压）——
  * 那一次 `ctx.compact()` 白费不算，还会把当前回合 abort 掉。
@@ -98,8 +106,8 @@ export function readRoundWindow(entries: readonly SessionEntryLike[]): RoundWind
 
 export interface CompactionDecision {
   trigger: boolean;
-  /** 触发原因：窗口满 / Token 预算超限。 */
-  reason: "window" | "budget" | null;
+  /** 触发原因：窗口满 / Token 预算超限 / 上下文硬顶。 */
+  reason: "window" | "budget" | "ceiling" | null;
   /** 窗口外可压缩的轮数。 */
   droppableRounds: number;
   /** 被压缩区间的体积估算（token）。 */
@@ -114,6 +122,29 @@ export interface CompactionDecision {
  * - `budget`：上下文占用 ≥ `budgetRatio`（默认 60%）且至少还有 1 轮可压。
  * 两者都要求被压区间够大（`minDroppableTokens`，默认 3k tokens）。
  */
+/**
+ * 短会话免压窗口（默认 2 小时）。
+ *
+ * 服务端 prompt cache 的收益在短会话里远大于"压缩省下的 token"：压一次就等于把
+ * 前缀全部重写，之后每轮都按全价重算。所以 2 小时内的会话只在**真的超出上下文
+ * 预算**时才压缩，窗口触发一律不动。
+ */
+export const MIN_SESSION_AGE_FOR_WINDOW_COMPACTION_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * 上下文硬顶（与模型声明的窗口无关）。
+ *
+ * 坑：年轻会话刻意不按"窗口满"压缩（保 prompt cache），而预算分支用的是
+ * `tokens / contextWindow` —— 模型窗口一旦声明成 1M，`45%` 就是 450k，
+ * 于是 12 万 token 的上下文永远不触发压缩。结果每轮每个工具轮次都要把
+ * 12 万 token 的上下文重读一遍（cacheRead 12 万 × 单轮 30 次调用），
+ * 这就是"突然吃掉上万 token"的真实来源。
+ *
+ * 硬顶取一个**工作区舒适值**：压完只留 4 轮 + 四段式摘要（800–1500 token），
+ * 该有的技术细节都在，模型不会变傻，但每轮回放量直接砍掉一大截。
+ */
+export const MAX_CONTEXT_TOKENS = 48_000;
+
 export function decideCompaction(input: {
   rounds: number;
   tokens: number | null;
@@ -123,6 +154,11 @@ export function decideCompaction(input: {
   minDropRounds?: number;
   budgetRatio?: number;
   minDroppableTokens?: number;
+  /** 会话已存活时长；未知则视为足够长（保持旧行为）。 */
+  sessionAgeMs?: number;
+  minSessionAgeMs?: number;
+  /** 上下文硬顶：超过就压，不看会话年龄、不看模型窗口。 */
+  maxContextTokens?: number;
 }): CompactionDecision {
   const keepRounds = input.keepRounds ?? KEEP_RECENT_ROUNDS;
   const minDropRounds = input.minDropRounds ?? MIN_ROUNDS_TO_DROP;
@@ -136,15 +172,33 @@ export function decideCompaction(input: {
     tokens: input.tokens ?? null,
     contextWindow: input.contextWindow,
   };
-  /** 区间太小时任何原因都不值。 */
-  if (droppableTokens < minDroppableTokens) {
+  const minAgeMs = input.minSessionAgeMs ?? MIN_SESSION_AGE_FOR_WINDOW_COMPACTION_MS;
+  const youngSession = typeof input.sessionAgeMs === "number" && input.sessionAgeMs < minAgeMs;
+  const maxContextTokens = input.maxContextTokens ?? MAX_CONTEXT_TOKENS;
+  const tokens = input.tokens ?? null;
+  /** 已越过硬顶：阈值下调，避免「区间略小」把压缩永久锁死。 */
+  const overCeiling = tokens !== null && tokens >= maxContextTokens;
+  const effectiveMinDroppable = overCeiling
+    ? Math.min(minDroppableTokens, MIN_CEILING_DROPPABLE_TOKENS)
+    : minDroppableTokens;
+
+  /** 区间太小时任何原因都不值（越硬顶时下限已下调）。 */
+  if (droppableTokens < effectiveMinDroppable) {
     return { trigger: false, reason: null, ...base };
   }
 
-  if (droppableRounds >= minDropRounds) {
+  /**
+   * 硬顶优先于一切：年轻会话也不能放任上下文无限长。
+   * 压一次（约 1–2k token 的摘要）换掉后续每次调用对 4 万+ 上下文的回放，
+   * 三条轮次之后就回本。
+   */
+  if (overCeiling && droppableRounds >= 1) {
+    return { trigger: true, reason: "ceiling", ...base };
+  }
+
+  if (droppableRounds >= minDropRounds && !youngSession) {
     return { trigger: true, reason: "window", ...base };
   }
-  const tokens = input.tokens ?? null;
   const overBudget =
     tokens !== null &&
     input.contextWindow > 0 &&
@@ -208,22 +262,31 @@ export function planCompactionCut(
 /* 摘要生成                                                                    */
 /* -------------------------------------------------------------------------- */
 
-/** 摘要模型必须遵守的结构（也用于 `/compact` 手动压缩）。 */
+/**
+ * 摘要模型必须遵守的结构（也用于 `/compact` 手动压缩）。
+ *
+ * 四段固定：核心任务目标 / 技术架构方案 / 当前报错卡点 / 用户偏好限制。
+ * 目标长度 800–1500 token：够装下接口签名、文件路径、约束条件这些"隔夜还想得起
+ * 来"的细节，又不会变成新的上下文包袱。刻意**不**压缩掉技术细节。
+ */
 export function compactionSummaryInstructions(): string {
   return [
-    "把上面的较早对话压缩成一份上下文检查点，**只用下面四段**，总长尽量 ≤ 400 字：",
+    "把上面的较早对话压缩成一份上下文检查点，**必须用下面四个二级标题**，顺序不变：",
     "",
-    "## 1. 用户核心意图",
-    "- 用户到底要做什么 + 验收标准。意图变过就只写当前有效的那一版。",
-    "## 2. 修改过的文件",
-    "- 每行 `路径` + 一句话说明改了什么；没有就写「无」。",
-    "## 3. 关键报错 / 事实",
-    "- 仍然有效的报错原文（最多 3 条）、接口签名、环境约束；已修好的中间报错不要留。",
-    "## 4. 最终决策",
-    "- 已定下来的方案与理由；未决事项单独一行以 `TODO:` 开头。",
+    "## 核心任务目标",
+    "- 用户要达成的最终结果 + 验收标准；意图变过就只写当前有效的那一版。",
+    "## 已确定的技术架构 / 方案",
+    "- 已拍板的方案、关键文件路径、函数/接口签名、数据流走向、依赖版本与命令。",
+    "## 当前报错或卡点",
+    "- 仍然有效的报错原文（最多 3 条）+ 复现命令；已修掉的中间报错不要留。",
+    "- 未决事项单独一行以 `TODO:` 开头。",
+    "## 用户明确偏好 / 限制条件",
+    "- 用户明说过的风格、库、平台、禁止事项、验收口径（逐条列，别概括掉）。",
     "",
     "硬性要求：",
-    "- 不要复述工具输出原文，不要贴大段代码（最多保留 1–2 行关键签名）。",
+    "- 目标长度 800–1500 token：宁可写细一点，也不要丢掉技术细节（路径、签名、报错原文）。",
+    "- 丢弃试错废话（被推翻的方案、重复的寒暄、无结论的探索），但保留结论与理由。",
+    "- 不要复述大段工具输出，不要贴整段代码（最多保留 1–2 行关键签名）。",
     "- 不要写「总结如下」「希望有帮助」这类客套话。",
     "- 有 <previous-summary> 时，把旧摘要里仍然有效的信息合并进来，不要丢掉已确认的决策。",
   ].join("\n");
@@ -305,16 +368,16 @@ export function assembleCompactionSummary(
             : previous,
         ].join("\n")
       : [
-          "## 1. 用户核心意图",
+          "## 核心任务目标",
           "（自动摘要不可用，只保留代码提取的改动清单；更早的细节已不可用）",
           "",
-          "## 2. 修改过的文件",
+          "## 已确定的技术架构 / 方案",
           "（见下方自动提取清单）",
           "",
-          "## 3. 关键报错 / 事实",
+          "## 当前报错或卡点",
           "（无）",
           "",
-          "## 4. 最终决策",
+          "## 用户明确偏好 / 限制条件",
           "（无）",
         ].join("\n");
 

@@ -1,9 +1,13 @@
-import { SessionManager, buildSessionProjection, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { buildSessionProjection, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getAgentHostClient } from "./agent-host-client.ts";
 import type { SessionEntry, SessionInfo, SessionContext, SessionTreeNode, AssistantMessage, SessionHeader } from "./types.ts";
-import type { SessionEntry as PiSessionEntry, SessionInfo as PiSessionInfo } from "@earendil-works/pi-coding-agent";
+import type { SessionEntry as PiSessionEntry } from "@earendil-works/pi-coding-agent";
 import { normalizeToolCalls } from "./normalize.ts";
-import { readFile, stat } from "fs/promises";
+import { JSONL_WORKER_THRESHOLD_BYTES, parseJsonlFileInWorker } from "./jsonl-worker.ts";
+import { scanSessionDirInWorker } from "./session-scan-worker.ts";
+import { readFile, readdir, stat } from "fs/promises";
+import { basename, join } from "node:path";
+import { tmpdir } from "node:os";
 import { createReadStream } from "fs";
 import { createInterface } from "node:readline";
 import {
@@ -31,10 +35,6 @@ function getPathCacheState(): SessionPathCacheState {
     globalThis.__piforgeSessionPathCacheState = createSessionPathCacheState();
   }
   return globalThis.__piforgeSessionPathCacheState;
-}
-
-function getPathCache(): Map<string, string> {
-  return getPathCacheState().paths;
 }
 
 export function getSessionsDir(): string {
@@ -66,9 +66,9 @@ function getUserCountCache(): Map<string, UserMessageCountCacheEntry> {
 }
 
 const USER_COUNT_CACHE_LIMIT = 500;
-const USER_COUNT_CONCURRENCY = 32;
 
 /** 数一个会话文件里用户真正发出去的消息条数。 */
+/** 单文件用户消息计数（保留给外部调用；列表分页不再使用）。 */
 export async function countUserMessages(filePath: string): Promise<number> {
   const cache = getUserCountCache();
   let info: { mtimeMs: number; size: number };
@@ -135,37 +135,292 @@ async function mapWithLimit<T, R>(items: T[], limit: number, fn: (item: T) => Pr
   return results;
 }
 
-export async function listAllSessions(): Promise<SessionInfo[]> {
-  const piSessions: PiSessionInfo[] = await SessionManager.listAll();
-  const pathToId = new Map<string, string>();
-  for (const s of piSessions) pathToId.set(s.path, s.id);
+// ---------------------------------------------------------------------------
+// 会话索引（目录扫描结果，只 readdir + stat，不读文件内容）
+//
+// 旧实现走 SessionManager.listAll()：把每个 jsonl 全量流式解析一遍，再为「对话
+// 次数」二次扫描全部文件。历史一多，首屏就是几百次全文件读 —— 启动卡顿的主因。
+// 现在只索引路径 + mtime 排序，内容（name / firstMessage / 用户消息数）只为
+// 当前分页窗口内的文件读取。
+// ---------------------------------------------------------------------------
+export interface SessionFileRef {
+  path: string;
+  mtimeMs: number;
+  size: number;
+}
 
-  // 对话次数 = 用户消息条数（失败时回落 0，不影响列表展示）
-  const userMessageCounts = await mapWithLimit(piSessions, USER_COUNT_CONCURRENCY, (s) =>
-    countUserMessages(s.path).catch(() => 0),
+interface SessionIndexState {
+  files: SessionFileRef[] | null;
+  at: number;
+  inflight: Promise<SessionFileRef[]> | null;
+}
+
+const INDEX_TTL_MS = 10_000;
+const INDEX_SCAN_CONCURRENCY = 8;
+const INFO_READ_CONCURRENCY = 4;
+const INFO_CACHE_LIMIT = 400;
+/** 侧栏首屏一次加载的会话数；后续按批追加（见 SESSION_PAGE_STEP）。 */
+export const SESSION_PAGE_SIZE = 20;
+export const SESSION_PAGE_STEP = 10;
+
+declare global {
+  var __piforgeSessionIndexState: SessionIndexState | undefined;
+  var __piforgeSessionInfoCache: Map<string, InfoCacheEntry> | undefined;
+}
+
+function getIndexState(): SessionIndexState {
+  if (!globalThis.__piforgeSessionIndexState) {
+    globalThis.__piforgeSessionIndexState = { files: null, at: 0, inflight: null };
+  }
+  return globalThis.__piforgeSessionIndexState;
+}
+
+/** 改名 / 删除 / 派生 / 新建会话后调用，避免 10s 内看到旧列表。 */
+export function invalidateSessionIndex(): void {
+  const state = getIndexState();
+  state.files = null;
+  state.at = 0;
+}
+
+async function scanSessionFiles(): Promise<SessionFileRef[]> {
+  const root = getSessionsDir();
+  // 全量 readdir + stat 放 worker 里跑：侧栏刷新时主线程 Event Loop 不能有尖峰。
+  const offThread = await scanSessionDirInWorker(root).catch(() => null);
+  if (offThread) return offThread;
+  return scanSessionFilesInline(root);
+}
+
+/** worker 不可用时的兜底路径（逻辑与 worker 内保持一致）。 */
+async function scanSessionFilesInline(root: string): Promise<SessionFileRef[]> {
+  let dirs: string[] = [];
+  try {
+    const entries = await readdir(root, { withFileTypes: true });
+    dirs = entries
+      .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
+      .map((entry) => join(root, entry.name));
+  } catch {
+    return []; // 目录还不存在：没有任何会话
+  }
+
+  const nested = await mapWithLimit(dirs, INDEX_SCAN_CONCURRENCY, async (dir) => {
+    try {
+      const names = await readdir(dir);
+      return names.filter((name) => name.endsWith(".jsonl")).map((name) => join(dir, name));
+    } catch {
+      return [];
+    }
+  });
+
+  const candidates = nested.flat();
+  const files = await mapWithLimit(candidates, INDEX_SCAN_CONCURRENCY * 2, async (path) => {
+    try {
+      const st = await stat(path);
+      return { path, mtimeMs: st.mtimeMs, size: st.size };
+    } catch {
+      return null;
+    }
+  });
+
+  return files
+    .filter((file): file is SessionFileRef => file !== null)
+    .sort((a, b) => b.mtimeMs - a.mtimeMs || b.path.localeCompare(a.path));
+}
+
+/** 目录索引（最近修改优先）。并发调用共享同一次扫描。 */
+export async function getSessionIndex(options?: { force?: boolean }): Promise<SessionFileRef[]> {
+  const state = getIndexState();
+  if (!options?.force && state.files && Date.now() - state.at < INDEX_TTL_MS) return state.files;
+  if (state.inflight) return state.inflight;
+  const scan = scanSessionFiles()
+    .then((files) => {
+      state.files = files;
+      state.at = Date.now();
+      return files;
+    })
+    .finally(() => {
+      if (state.inflight === scan) state.inflight = null;
+    });
+  state.inflight = scan;
+  return scan;
+}
+
+/**
+ * 后台临时会话（spawn_agent / 探针用的 `%TEMP%/piforge-probe…` 之类）会随任务
+ * 创建、删除；它们一旦混进会话列表，侧栏就会多出一个「项目」再消失，看起来
+ * 像列表在跳。这些不是用户的真实会话，直接不进列表。
+ */
+export function isScratchSessionCwd(cwd: string | undefined | null): boolean {
+  if (!cwd) return false;
+  const normalized = cwd.replace(/\\/g, "/").toLowerCase();
+  const temp = tmpdir().replace(/\\/g, "/").toLowerCase().replace(/\/$/, "");
+  if (!temp) return false;
+  return (
+    normalized === temp ||
+    normalized.startsWith(`${temp}/`) ||
+    normalized.includes("/piforge-probe")
+  );
+}
+
+/** 会话文件名是 `<timestamp>_<sessionId>.jsonl`，id 直接从文件名取，不用读内容。 */
+export function sessionIdFromPath(filePath: string): string {
+  const name = basename(filePath).replace(/\.jsonl$/, "");
+  const cut = name.lastIndexOf("_");
+  return cut >= 0 ? name.slice(cut + 1) : name;
+}
+
+interface InfoCacheEntry {
+  mtimeMs: number;
+  size: number;
+  info: SessionInfo | null;
+}
+
+function getInfoCache(): Map<string, InfoCacheEntry> {
+  if (!globalThis.__piforgeSessionInfoCache) globalThis.__piforgeSessionInfoCache = new Map();
+  return globalThis.__piforgeSessionInfoCache;
+}
+
+function extractMessageText(message: unknown): string {
+  if (!message || typeof message !== "object") return "";
+  const content = (message as { content?: unknown }).content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  const parts: string[] = [];
+  for (const block of content) {
+    if (!block || typeof block !== "object") continue;
+    const record = block as { type?: string; text?: unknown };
+    if (record.type === "text" && typeof record.text === "string") parts.push(record.text);
+  }
+  return parts.join(" ");
+}
+
+/** 读一个会话文件，产出侧栏需要的元数据（name / 首条用户消息 / 对话次数）。 */
+interface SessionHeaderLite {
+  id?: string;
+  cwd?: string;
+  timestamp?: string;
+  parentSession?: string;
+}
+
+async function readSessionInfoFromDisk(ref: SessionFileRef): Promise<SessionInfo | null> {
+  let header: SessionHeaderLite | null = null;
+  let name: string | undefined;
+  let firstMessage = "";
+  let userMessageCount = 0;
+  let leafEntryId: string | undefined;
+
+  const stream = createReadStream(ref.path, { encoding: "utf8" });
+  const reader = createInterface({ input: stream, crlfDelay: Infinity });
+  try {
+    for await (const line of reader) {
+      if (!line.trim()) continue;
+      let entry: Record<string, unknown>;
+      try {
+        entry = JSON.parse(line) as Record<string, unknown>;
+      } catch {
+        continue; // 半写入的最后一行：跳过
+      }
+      if (!header) {
+        if (entry.type !== "session") return null;
+        header = entry as SessionHeaderLite;
+        continue;
+      }
+      if (typeof entry.id === "string") leafEntryId = entry.id;
+      if (entry.type === "session_info") {
+        const raw = typeof entry.name === "string" ? entry.name.trim() : "";
+        name = raw || undefined;
+      }
+      if (entry.type === "message") {
+        const message = entry.message as { role?: string } | undefined;
+        if (message?.role === "user") {
+          userMessageCount += 1;
+          if (!firstMessage) firstMessage = extractMessageText(message).trim();
+        }
+      }
+    }
+  } catch {
+    return null;
+  } finally {
+    reader.close();
+    stream.destroy();
+  }
+
+  if (!header || typeof header.id !== "string") return null;
+  const info: SessionInfo = {
+    path: ref.path,
+    id: header.id,
+    cwd: typeof header.cwd === "string" ? header.cwd : "",
+    name,
+    created: typeof header.timestamp === "string" ? header.timestamp : new Date(ref.mtimeMs).toISOString(),
+    modified: new Date(ref.mtimeMs).toISOString(),
+    messageCount: userMessageCount,
+    firstMessage: firstMessage || "(no messages)",
+    parentSessionId: typeof header.parentSession === "string" ? sessionIdFromPath(header.parentSession) : undefined,
+    leafEntryId,
+  };
+  return info;
+}
+
+async function readSessionInfoCached(ref: SessionFileRef): Promise<SessionInfo | null> {
+  const cache = getInfoCache();
+  const hit = cache.get(ref.path);
+  if (hit && hit.mtimeMs === ref.mtimeMs && hit.size === ref.size) return hit.info;
+  const info = await readSessionInfoFromDisk(ref);
+  // 半写入 / 暂时读不出来时沿用上一次的元数据：否则该会话会从列表里闪一下再
+  // 回来，侧栏里只属于它的项目分组就跟着「出现 → 消失」。
+  const stable = info ?? hit?.info ?? null;
+  cache.set(ref.path, { mtimeMs: ref.mtimeMs, size: ref.size, info: stable });
+  if (cache.size > INFO_CACHE_LIMIT) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+  return stable;
+}
+
+export interface SessionListPage {
+  sessions: SessionInfo[];
+  total: number;
+  hasMore: boolean;
+}
+
+/**
+ * 分页列出会话（最近修改在前）。只读当前窗口内的 jsonl，其余只 stat。
+ * `keep` 用于深链/恢复：命中的会话即使不在窗口内也补进本页。
+ */
+export async function listSessionsPage(options?: {
+  limit?: number;
+  offset?: number;
+  keep?: string | null;
+}): Promise<SessionListPage> {
+  const limit = Math.min(Math.max(1, Math.trunc(options?.limit ?? SESSION_PAGE_SIZE)), 200);
+  const offset = Math.max(0, Math.trunc(options?.offset ?? 0));
+  const files = await getSessionIndex();
+  const window = files.slice(offset, offset + limit);
+  const infos = await mapWithLimit(window, INFO_READ_CONCURRENCY, (file) =>
+    readSessionInfoCached(file).catch(() => null),
+  );
+  const sessions = infos.filter(
+    (info): info is SessionInfo => info !== null && !isScratchSessionCwd(info.cwd),
   );
 
-  const state = getPathCacheState();
-  return piSessions.map((s, index) => {
-    // Populate path cache so resolveSessionPath works without a full scan
-    cacheSessionPathEntry(state, s.id, s.path);
-    const leafEntryId =
-      typeof s === "object" && s !== null && "leafEntryId" in s && typeof s.leafEntryId === "string"
-        ? s.leafEntryId
-        : undefined;
-    return {
-      path: s.path,
-      id: s.id,
-      cwd: s.cwd,
-      name: s.name,
-      created: s.created instanceof Date ? s.created.toISOString() : String(s.created),
-      modified: s.modified instanceof Date ? s.modified.toISOString() : String(s.modified),
-      messageCount: userMessageCounts[index] ?? 0,
-      firstMessage: s.firstMessage || "(no messages)",
-      parentSessionId: s.parentSessionPath ? pathToId.get(s.parentSessionPath) : undefined,
-      leafEntryId,
-    };
-  });
+  const keep = options?.keep ?? null;
+  if (keep && !sessions.some((session) => session.id === keep)) {
+    const extra = files.find((file) => sessionIdFromPath(file.path) === keep);
+    if (extra) {
+      const info = await readSessionInfoCached(extra).catch(() => null);
+      if (info) sessions.push(info);
+    }
+  }
+
+  // 打开会话只需 id → 路径，这里顺手把本页写进路径缓存。
+  for (const session of sessions) cacheSessionPath(session.id, session.path);
+
+  return { sessions, total: files.length, hasMore: offset + window.length < files.length };
+}
+
+/** 只认索引里的文件名，不读内容（用于 resolveSessionPath 的兜底）。 */
+export async function locateSessionPathInIndex(sessionId: string): Promise<string | null> {
+  const files = await getSessionIndex();
+  return files.find((file) => sessionIdFromPath(file.path) === sessionId)?.path ?? null;
 }
 
 export async function resolveSessionPath(sessionId: string): Promise<string | null> {
@@ -185,14 +440,14 @@ export async function resolveSessionPath(sessionId: string): Promise<string | nu
     return livePath;
   }
 
-  // Cache miss: scan all sessions to populate cache, then retry. A failing
+  // Cache miss: consult the directory index (readdir + stat only). A failing
   // scan (unreadable sessions dir, host restarting) must fall through to the
   // host lookup instead of bubbling up as a 500.
-  await listAllSessions().catch(() => undefined);
-  const after = getPathCache().get(sessionId) ?? null;
-  if (after) {
+  const indexed = await locateSessionPathInIndex(sessionId).catch(() => null);
+  if (indexed) {
     state.misses.delete(sessionId);
-    return after;
+    cacheSessionPathEntry(state, sessionId, indexed);
+    return indexed;
   }
 
   const livePath = await locateViaHost(sessionId);
@@ -344,18 +599,31 @@ export async function getSessionEntriesAsync(filePath: string): Promise<SessionE
     // 读不到 stat（文件刚被删/权限）就退回无缓存路径，保持原有容错。
   }
 
-  const content = await readFile(filePath, "utf8");
-  const lines = content.split("\n");
-  const entries: SessionEntry[] = [];
-  for (const line of lines) {
-    if (line.trim()) {
-      try {
-        entries.push(JSON.parse(line) as SessionEntry);
-      } catch (err) {
-        console.error("Failed to parse JSONL line:", line, err);
+  // > 1MB 的会话文件交给 worker 解析：split+JSON.parse 几万个条目会长时间占住
+  // Event Loop（Electron 主进程里就是掉帧）。小文件走内联路径，省掉 worker 启动成本。
+  let parsed: { entries: SessionEntry[]; malformed: number } | null = null;
+  if (info && info.size > JSONL_WORKER_THRESHOLD_BYTES) {
+    const fromWorker = await parseJsonlFileInWorker<SessionEntry>(filePath).catch(() => null);
+    if (fromWorker) parsed = fromWorker;
+  }
+
+  if (!parsed) {
+    const content = await readFile(filePath, "utf8");
+    const lines = content.split("\n");
+    const entries: SessionEntry[] = [];
+    let malformed = 0;
+    for (const line of lines) {
+      if (line.trim()) {
+        try {
+          entries.push(JSON.parse(line) as SessionEntry);
+        } catch {
+          malformed += 1;
+        }
       }
     }
+    parsed = { entries, malformed };
   }
+  const entries = parsed.entries;
 
   if (info) {
     cache.set(filePath, { ...info, entries });

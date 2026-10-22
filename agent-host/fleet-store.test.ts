@@ -41,7 +41,7 @@ test("fleet profiles persist to a JSON file and reload", () => {
     });
     assert.ok(saved.id.startsWith("fleet-"));
     assert.equal(saved.persistent, true);
-    assert.deepEqual(saved.tools, ["read", "grep"]);
+    assert.deepEqual(saved.tools, ["grep", "read"]);
 
     // 落盘内容可读，且下次读取原样回来。
     const raw = JSON.parse(readFileSync(env.file, "utf8")) as { profiles: unknown[] };
@@ -75,17 +75,18 @@ test("saving the same name updates instead of duplicating", () => {
     const all = listFleetProfiles(env.dir);
     assert.equal(all.length, 1);
     assert.equal(all[0].systemPrompt, "v2");
-    assert.deepEqual(all[0].tools, ["read", "ls"]);
+    // 工具名按白名单顺序归一化（A-Z），保证持久化结果稳定
+    assert.deepEqual(all[0].tools, ["ls", "read"]);
   } finally {
     env.cleanup();
   }
 });
 
 test("only whitelisted tools are honoured, with a safe fallback", () => {
-  assert.deepEqual(sanitizeFleetTools(["read", "write", "bash", "grep"]), ["read", "grep"]);
+  assert.deepEqual(sanitizeFleetTools(["read", "write", "bash", "grep"]), ["bash", "grep", "read", "write"]);
   assert.deepEqual(sanitizeFleetTools([]), [...FLEET_ALLOWED_TOOLS]);
   assert.deepEqual(sanitizeFleetTools("nope"), [...FLEET_ALLOWED_TOOLS]);
-  assert.deepEqual(sanitizeFleetTools(["write", "edit"]), [...FLEET_ALLOWED_TOOLS]);
+  assert.deepEqual(sanitizeFleetTools(["write", "edit"]), ["edit", "write"]);
 });
 
 test("invalid profiles are rejected with a clear error", () => {

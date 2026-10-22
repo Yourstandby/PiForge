@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server.js";
 import { existsSync } from "fs";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { resolveSessionPath, cacheSessionPath } from "../../../../../lib/session-reader.ts";
+import { resolveSessionPath, cacheSessionPath, invalidateSessionIndex } from "../../../../../lib/session-reader.ts";
 import { validateBranchPayload } from "../../../../../lib/session-branch-clone.ts";
 import { errorMessage, getRequestId, logApiError } from "../../../../../lib/api-error.ts";
 
@@ -67,6 +67,7 @@ export async function POST(
 
     const newSessionId = sm.getSessionId();
     cacheSessionPath(newSessionId, newSessionFile);
+    invalidateSessionIndex();
 
     return NextResponse.json(
       {

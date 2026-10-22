@@ -59,3 +59,29 @@ test("a stale pending id falls back to appending the canonical event", () => {
     [existing, canonical]
   );
 });
+
+test("image message with pi's dimension note does not create a second bubble", () => {
+  const image = { type: "image" as const, source: { type: "base64" as const, media_type: "image/png", data: "AAA" } };
+  const optimistic = {
+    role: "user" as const,
+    content: [{ type: "text" as const, text: "看看这个界面" }, image],
+    timestamp: 100,
+    clientMessageId: "client-image",
+    deliveryState: "pending" as const,
+  };
+  // pi 落盘时把缩放说明追加进文本，且 id 对不上（模拟事件里丢了 clientMessageId）。
+  const canonical = {
+    role: "user" as const,
+    content: [
+      {
+        type: "text" as const,
+        text: "看看这个界面\n\n[Image: original 2798x1800, displayed at 2000x1287. Multiply coordinates by 1.40 to map to original image.]",
+      },
+      image,
+    ],
+    timestamp: 999,
+  };
+  const next = reconcileOrAppendPendingUserMessage([optimistic] as AgentMessage[], canonical, "client-image");
+  assert.equal(next.length, 1, "同一句话不应出现两条用户消息");
+  assert.equal(next[0].timestamp, 100, "保留乐观气泡的时间戳");
+});

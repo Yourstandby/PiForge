@@ -34,12 +34,28 @@ import {
   condenseReport,
   guardFailureText,
 } from "./agent-guards.ts";
+import { childToolSummary, resolveChildTools } from "./tool-grants.ts";
 
 const MAX_FLEET = 4;
 const MAX_RETAINED = 20;
 const MAX_OUTPUT_CHARS = 30_000;
-const TURN_TIMEOUT_MS = 15 * 60_000;
-const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"];
+/** 单轮超时（可被调用方覆盖）：到点 abort + 强制终止，绝不留挂在后台的 zombie。 */
+const DEFAULT_TURN_TIMEOUT_MS = 5 * 60_000;
+/**
+ * 下限 1s：模型工具 schema 已经把调用方限制在 ≥30s，
+ * 1s 只是为了让"超时收割"能在测试里真跑一遍而不是等半分钟。
+ */
+const MIN_TURN_TIMEOUT_MS = 1_000;
+const MAX_TURN_TIMEOUT_MS = 30 * 60_000;
+/**
+ * 空闲托管：常驻舰队 Agent 跑完一轮就挂着，没人管就会像"跑了 1 小时"那样
+ * 一直占着槽位（MAX_FLEET=4）和会话。空闲 5 分钟就自动休眠（dispose + stopped），
+ * 想继续用重新唤醒即可 —— 省内存、省槽位，也不烧首轮 token。
+ */
+const IDLE_SLEEP_MS = 5 * 60_000;
+const IDLE_SWEEP_INTERVAL_MS = 60_000;
+/** 运行时没提供工具清单时的兜底（核心工具可下放，不再退回只读）。 */
+const DEFAULT_CHILD_TOOLS = ["bash", "edit", "find", "grep", "ls", "read", "write"];
 
 interface HerdrRecord {
   view: HerdrAgentView;
@@ -52,6 +68,10 @@ interface HerdrRecord {
   /** 舰队 Agent 的自定义 System Prompt / 工具集（来自配置或 herdr_spawn）。 */
   systemPrompt?: string;
   tools: string[];
+  /** 完成即退出：一次性任务（herdr_spawn）跑完这一轮就退，不常驻挂机。 */
+  autoExit: boolean;
+  /** 本次派发的超时；到点强制终止。 */
+  turnTimeoutMs: number;
   /** 省钱阀门：单轮上下文熔断标记。 */
   contextBreakerTripped: boolean;
   contextTokens: number | null;
@@ -128,6 +148,7 @@ function setStatus(record: HerdrRecord, next: ManagedProcessStatus): void {
 
 function setActivity(record: HerdrRecord, activity: HerdrActivity): void {
   record.view.activity = activity;
+  record.view.lastActivityAt = Date.now();
 }
 
 function textOfContent(content: unknown): string {
@@ -152,10 +173,10 @@ function appendOutput(record: HerdrRecord, text: string): void {
     : combined;
 }
 
-function fleetSystemPrompt(cwd: string): string {
+function fleetSystemPrompt(cwd: string, tools: readonly string[]): string {
   return [
     "You are a persistent PiForge fleet agent. Work independently on the task you are given.",
-    "You have only read-only tools: read, grep, find, ls. You cannot edit files, run shell commands, or ask follow-up questions.",
+    childToolSummary(tools),
     "You may receive follow-up messages from the main agent; keep context between them.",
     "When finished, answer with a concise, self-contained report (findings, file paths with line numbers, recommendation).",
     `Working directory: ${cwd}`,
@@ -170,7 +191,12 @@ function refreshVerification(record: HerdrRecord): void {
   record.view.verification = verification;
 }
 
-async function runTurn(record: HerdrRecord, text: string): Promise<void> {
+function clampTimeout(value: number | undefined): number {
+  if (!Number.isFinite(value ?? NaN) || !value) return DEFAULT_TURN_TIMEOUT_MS;
+  return Math.min(MAX_TURN_TIMEOUT_MS, Math.max(MIN_TURN_TIMEOUT_MS, Math.round(value)));
+}
+
+async function runTurn(record: HerdrRecord, text: string, timeoutMs?: number): Promise<void> {
   const session = record.session;
   if (!session) throw new Error("Fleet agent is not running");
   /** 省钱阀门：熔断过就不再接受新指令，必须重新唤醒 / 新建。 */
@@ -186,10 +212,14 @@ async function runTurn(record: HerdrRecord, text: string): Promise<void> {
   record.view.error = undefined;
   record.lastTurnText = "";
   setActivity(record, "working");
+  const limit = clampTimeout(timeoutMs ?? record.turnTimeoutMs);
   const timer = setTimeout(() => {
-    record.view.error = "Fleet turn timed out";
-    void session.abort().catch(() => undefined);
-  }, TURN_TIMEOUT_MS);
+    // 主 Agent 超时收割：abort + 强制终止，槽位立刻释放。
+    void stopHerdrAgent(
+      record.view.id,
+      `超过 ${Math.round(limit / 60_000)} 分钟未完成，已强制终止`,
+    );
+  }, limit);
   timer.unref?.();
   try {
     await session.prompt(text);
@@ -199,6 +229,13 @@ async function runTurn(record: HerdrRecord, text: string): Promise<void> {
     clearTimeout(timer);
     setActivity(record, "idle");
     refreshVerification(record);
+    // 完成即退出：一次性任务跑完就退，不再常驻后台挂着烧槽位。
+    if (record.autoExit && record.view.status === "running") {
+      setStatus(record, "exited");
+      record.view.endedAt = Date.now();
+      record.session?.dispose();
+      record.session = null;
+    }
     if (record.view.status === "stopping") {
       setStatus(record, "stopped");
       record.view.endedAt = Date.now();
@@ -218,7 +255,7 @@ async function initialize(record: HerdrRecord, initialTask: string | null): Prom
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
-      systemPrompt: record.systemPrompt?.trim() || fleetSystemPrompt(record.cwd),
+      systemPrompt: record.systemPrompt?.trim() || fleetSystemPrompt(record.cwd, record.tools),
     });
     await resourceLoader.reload();
     const { session } = await createHostAgentSession({
@@ -229,7 +266,7 @@ async function initialize(record: HerdrRecord, initialTask: string | null): Prom
       resourceLoader,
       ...(record.model ? { model: record.model } : {}),
       ...(record.thinkingLevel ? { thinkingLevel: record.thinkingLevel } : {}),
-      tools: record.tools.length > 0 ? record.tools : READ_ONLY_TOOLS,
+      tools: record.tools.length > 0 ? record.tools : DEFAULT_CHILD_TOOLS,
     });
     if (record.view.status === "stopping" || isTerminalStatus(record.view.status)) {
       session.dispose();
@@ -289,7 +326,11 @@ async function initialize(record: HerdrRecord, initialTask: string | null): Prom
 
     // 常驻配置唤醒：只建会话，等用户 / 主 Agent 的第一条消息（不烧首轮 token）。
     if (initialTask !== null) await runTurn(record, initialTask);
-    else notifyHerdr();
+    else {
+      // 空转唤醒：没有在跑任何一轮，标记空闲，否则空闲托管永远扫不到它。
+      setActivity(record, "idle");
+      notifyHerdr();
+    }
   } catch (error) {
     record.view.error = error instanceof Error ? error.message : String(error);
     if (!isTerminalStatus(record.view.status)) {
@@ -316,10 +357,16 @@ export interface SpawnHerdrInput {
   thinkingLevel?: ThinkingLevel;
   /** 舰队配置里的自定义 System Prompt（不填用内置模板）。 */
   systemPrompt?: string;
-  /** 舰队配置里的工具白名单（只读工具）。 */
+  /** 父 Agent / 配置显式要求的工具（按需放开，与继承结果取并集）。 */
   tools?: string[];
+  /** 父 Agent 当前 activeTools：默认继承。 */
+  parentActiveTools?: string[];
+  /** 运行时全量工具注册表（不是存根目录）。 */
+  availableTools?: string[];
   /** 唤醒常驻配置：只建会话，不跑首轮。 */
   idle?: boolean;
+  /** 派发超时（ms）；到点 abort + 强制终止。默认 5 分钟。 */
+  timeoutMs?: number;
 }
 
 export function spawnHerdrAgent(input: SpawnHerdrInput): HerdrAgentView {
@@ -339,9 +386,11 @@ export function spawnHerdrAgent(input: SpawnHerdrInput): HerdrAgentView {
       name,
       task,
       parentSessionId: input.parentSessionId,
+      cwd: input.cwd,
       status: "starting",
       activity: "working",
       startedAt: Date.now(),
+      lastActivityAt: Date.now(),
       endedAt: null,
       durationMs: 0,
       finishedAt: null,
@@ -363,11 +412,21 @@ export function spawnHerdrAgent(input: SpawnHerdrInput): HerdrAgentView {
     tail: Promise.resolve(),
     lastTurnText: "",
     ...(input.systemPrompt ? { systemPrompt: input.systemPrompt } : {}),
-    tools: input.tools && input.tools.length > 0 ? [...input.tools] : [...READ_ONLY_TOOLS],
+    tools: resolveChildTools({
+      name,
+      requested: input.tools,
+      parentActive: input.parentActiveTools,
+      available: input.availableTools && input.availableTools.length > 0
+        ? input.availableTools
+        : DEFAULT_CHILD_TOOLS,
+    }).tools,
+    autoExit: input.idle !== true,
+    turnTimeoutMs: clampTimeout(input.timeoutMs),
     contextBreakerTripped: false,
     contextTokens: null,
   };
   records.set(id, record);
+  ensureIdleReaper();
   record.tail = initialize(record, input.idle === true ? null : task);
   notifyHerdr();
   return snapshot(record);
@@ -414,7 +473,11 @@ export interface HerdrMessageResult {
   error?: string;
 }
 
-export async function sendHerdrMessage(id: string, message: string): Promise<HerdrMessageResult> {
+export async function sendHerdrMessage(
+  id: string,
+  message: string,
+  timeoutMs?: number,
+): Promise<HerdrMessageResult> {
   const record = records.get(id);
   if (!record) throw new Error(`No fleet agent with id "${id}"`);
   assertHerdrMessageAllowed(record.view.status);
@@ -440,7 +503,8 @@ export async function sendHerdrMessage(id: string, message: string): Promise<Her
   if (isTerminalStatus(record.view.status) || !record.session) {
     throw new Error("Fleet agent is no longer running");
   }
-  const next = runTurn(record, trimmed);
+  // 主 Agent 派发即带超时：这一轮超时就收掉，不让它继续挂。
+  const next = runTurn(record, trimmed, timeoutMs ?? record.turnTimeoutMs);
   record.tail = next;
   await next;
   const agent = getHerdrAgent(id)!;
@@ -455,7 +519,7 @@ export async function sendHerdrMessage(id: string, message: string): Promise<Her
   };
 }
 
-export async function stopHerdrAgent(id: string): Promise<boolean> {
+export async function stopHerdrAgent(id: string, reason?: string): Promise<boolean> {
   const record = records.get(id);
   if (!record || isTerminalStatus(record.view.status)) return false;
   setStatus(record, "stopping");
@@ -467,6 +531,7 @@ export async function stopHerdrAgent(id: string): Promise<boolean> {
   }
   record.session = null;
   setActivity(record, "idle");
+  if (reason) record.view.error = reason;
   setStatus(record, "stopped");
   record.view.endedAt = Date.now();
   refreshVerification(record);
@@ -476,6 +541,54 @@ export async function stopHerdrAgent(id: string): Promise<boolean> {
 
 export async function stopAllHerdrAgents(): Promise<void> {
   for (const id of [...records.keys()]) await stopHerdrAgent(id);
+}
+
+/**
+ * 空闲托管扫描：把 `activity === "idle"` 且超过 `maxIdleMs` 没动过的 Agent 休眠掉。
+ * 返回被休眠的 id，方便调用方/测试断言。运行中（working）的一律不动。
+ */
+/** 单条判定（纯函数，便于断言"干活中的绝不回收"）。 */
+export function shouldSleepIdle(
+  view: Pick<HerdrAgentView, "status" | "activity" | "lastActivityAt">,
+  now: number,
+  maxIdleMs: number,
+): boolean {
+  if (view.status === "starting") return false;
+  if (isTerminalStatus(view.status)) return false;
+  if (view.activity === "working") return false;
+  return now - view.lastActivityAt >= maxIdleMs;
+}
+
+export function sweepIdleHerdrAgents(
+  options: { now?: number; maxIdleMs?: number } = {},
+): string[] {
+  const now = options.now ?? Date.now();
+  const maxIdleMs = options.maxIdleMs ?? IDLE_SLEEP_MS;
+  const slept: string[] = [];
+  for (const record of [...records.values()]) {
+    if (!shouldSleepIdle(record.view, now, maxIdleMs)) continue;
+    void stopHerdrAgent(
+      record.view.id,
+      `空闲 ${Math.round(maxIdleMs / 60_000)} 分钟，已自动休眠（省内存/省槽位）`,
+    );
+    slept.push(record.view.id);
+  }
+  return slept;
+}
+
+let idleReaper: ReturnType<typeof setInterval> | null = null;
+
+/** 懒启动的空闲托管定时器：第一次 spawn 才跑，不拖慢 Host 启动。 */
+function ensureIdleReaper(): void {
+  if (idleReaper) return;
+  idleReaper = setInterval(() => {
+    try {
+      sweepIdleHerdrAgents();
+    } catch (error) {
+      console.error("herdr idle reaper failed:", error);
+    }
+  }, IDLE_SWEEP_INTERVAL_MS);
+  idleReaper.unref?.();
 }
 
 /** Test hook. */

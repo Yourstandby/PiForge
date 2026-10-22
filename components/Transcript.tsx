@@ -8,9 +8,12 @@ import rehypeKatex from "rehype-katex";
 import { BrainCircuit, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, CornerDownLeft, GitBranch, GitFork, Loader2, Wrench, X } from "lucide-react";
 import type { AgentMessage, AssistantMessage, ToolResultMessage } from "@/lib/types";
 import { diffStats } from "@/lib/diff-lines";
+import { stripImageDimensionNotes } from "@/lib/image-dimension-note";
+import { buildWithTurnCache, type TurnCacheEntry } from "@/lib/transcript-turn-cache";
 import { estimateTokens } from "@/lib/live-usage";
 import type { BranchSwitchInfo } from "@/lib/session-branches-view";
 import { isEditToolName, toolDiffPath, toolDiffRows } from "@/lib/tool-diff";
+import { ImageLightbox } from "./chat-input/ImageLightbox";
 import { useI18n } from "./I18nProvider";
 import { useTypedText } from "@/hooks/useSmoothTypewriter";
 import { DiffRows } from "./DiffRows";
@@ -320,12 +323,14 @@ function createMarkdownComponents(
 
 function userText(message: AgentMessage): string {
   const content = (message as { content?: unknown }).content;
-  if (typeof content === "string") return content;
+  if (typeof content === "string") return stripImageDimensionNotes(content);
   if (!Array.isArray(content)) return "";
-  return content
+  const text = content
     .filter((block): block is { type: "text"; text: string } => block?.type === "text")
     .map((block) => block.text)
     .join("\n");
+  // 图片缩放说明是给模型看的机器注记，不要混在用户原话里重复一遍。
+  return stripImageDimensionNotes(text);
 }
 
 type TurnBlock =
@@ -355,6 +360,38 @@ function contentImages(content: unknown): string[] {
     .filter((block): block is Record<string, unknown> => Boolean(block) && typeof block === "object" && (block as { type?: unknown }).type === "image")
     .map((block) => imageSrc(block))
     .filter((src): src is string => Boolean(src));
+}
+
+/**
+ * 对话里的图片：点开看大图（缩放/平移/旋转/下载/复制）。
+ * 用一个薄壳包住 `<img>`，本地状态只在点开时有开销。
+ */
+function ClickableImage({
+  src,
+  alt,
+  className,
+}: {
+  src: string;
+  alt: string;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const images = useMemo(() => [{ data: "", mimeType: "", previewUrl: src }], [src]);
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="block cursor-zoom-in border-0 bg-transparent p-0"
+        title={alt}
+        aria-label={alt}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={src} alt={alt} loading="lazy" decoding="async" className={className} />
+      </button>
+      {open && <ImageLightbox images={images} index={0} onClose={() => setOpen(false)} />}
+    </>
+  );
 }
 
 interface DecisionAnswerView {
@@ -890,6 +927,22 @@ function formatMoney(cost: number, currencySymbol: string): string | null {
   return `${currencySymbol}${cost.toFixed(2)}`;
 }
 
+/**
+ * 金额小数位：按“3 位有效数字”取（夹在 2–6 位），小数越小位数越多且不丢有效位。
+ * 例：0.001034 → 6 位（¥0.001034）；0.021 → 5 位（¥0.02070）；0.5 → 4 位；1.234 → 2 位。
+ */
+function moneyDecimals(cost: number): number {
+  if (!Number.isFinite(cost) || cost <= 0) return 2;
+  const digits = 3 - Math.floor(Math.log10(cost));
+  return Math.min(6, Math.max(2, digits));
+}
+
+/** 固定小数位的金额（不进行 `<0.0001` 降级，保证两行位数一致）；没有计价数据时返回 null。 */
+function formatMoneyFixed(cost: number, currencySymbol: string, digits: number): string | null {
+  if (!Number.isFinite(cost) || cost <= 0) return null;
+  return `${currencySymbol}${cost.toFixed(digits)}`;
+}
+
 /** 单个思考段 / 工具卡的估算消耗（tokens + 折算价格）。 */
 export interface BlockUsage {
   tokens: number;
@@ -1174,12 +1227,10 @@ function ToolCallCard({
       {resultImages.length > 0 && (
         <div className="flex flex-wrap gap-2 border-t border-[#EDF1F7] bg-white p-2">
           {resultImages.map((src, index) => (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
+            <ClickableImage
               key={index}
               src={src}
               alt={`工具输出图片 ${index + 1}`}
-              loading="lazy"
               className="max-h-72 rounded-md border border-[#E3E8F2] object-contain"
             />
           ))}
@@ -1550,12 +1601,22 @@ function ToolsSection({
   );
   const totalMoney = formatMoney(totalUsage.cost, currencySymbol);
   // 手风琴：同一时刻只展开一张工具卡；执行中的那张自动展开。
+  /**
+   * 并行调用时自动展开的是**最新**那个（数组末尾的未完成项），不是第一个：
+   * 并行派发下第一个往往早就跑完了，一直盯着它反而看不到正在跑的那个。
+   */
+  const lastPendingIndex = (list: typeof items): number => {
+    for (let index = list.length - 1; index >= 0; index -= 1) {
+      if (!list[index].block.result) return index;
+    }
+    return -1;
+  };
   const [openIndex, setOpenIndex] = useState<number | null>(() => {
     if (!running) return null;
-    const idx = items.findIndex((item) => !item.block.result);
+    const idx = lastPendingIndex(items);
     return idx >= 0 ? idx : null;
   });
-  const runningIndex = items.findIndex((item) => !item.block.result);
+  const runningIndex = lastPendingIndex(items);
   useEffect(() => {
     if (running && runningIndex >= 0) setOpenIndex(runningIndex);
   }, [running, runningIndex]);
@@ -1740,8 +1801,7 @@ function AssistantBlocks({
       <>
         {blocks.map((block, index) =>
           block.kind === "image" ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
+            <ClickableImage
               key={`plain-img-${index}`}
               src={block.src}
               alt="模型输出图片"
@@ -1914,7 +1974,7 @@ function LazyTurnBody({ pin = false, children }: { pin?: boolean; children: Reac
   );
 }
 
-/** 单条回复的用量小结：只在该条消息真正完成后出现。 */
+/** 单条回复的用量小结：灰线 = 本次输出的真实消耗；蓝线 = 本轮叠加。 */
 function TurnUsage({
   usage,
   currencySymbol = "$",
@@ -1922,6 +1982,9 @@ function TurnUsage({
   cost: costOverride,
   breakdown,
   label = "本次新增",
+  tone = "muted",
+  /** 与同一块里另一行对齐的小数位（不传则按月金额大小自适应）。 */
+  decimals,
   locale = "zh-CN",
 }: {
   usage?: AssistantMessage["usage"];
@@ -1932,6 +1995,10 @@ function TurnUsage({
   /** 输入 / 缓存 / 输出的明细（整轮聚合值）。 */
   breakdown?: { input: number; output: number; cacheRead: number; cacheWrite: number };
   label?: string;
+  /** muted = 灰色（单条真实消耗）；round = 蓝色（本轮叠加）。 */
+  tone?: "muted" | "round";
+  /** 固定小数位：让灰色行与蓝色行的小数位数完全对齐。 */
+  decimals?: number;
   locale?: string;
 }) {
   const parts = breakdown ?? {
@@ -1940,21 +2007,25 @@ function TurnUsage({
     cacheRead: usage?.cacheRead ?? 0,
     cacheWrite: usage?.cacheWrite ?? 0,
   };
-  /** 主行只显示"本轮新增"：input + output，不含缓存读写。 */
+  /** 主行只显示"新增"：input + output，不含缓存读写。 */
   const added = parts.input + parts.output;
   /** 悬浮里给出全量口径（含缓存 / 历史上下文）。 */
   const total = tokensOverride ?? added + parts.cacheRead + parts.cacheWrite;
   if (added <= 0 && total <= 0) return null;
   const cost = costOverride ?? usage?.cost?.total ?? 0;
-  const money = formatMoney(cost, currencySymbol);
+  const money = decimals === undefined ? formatMoney(cost, currencySymbol) : formatMoneyFixed(cost, currencySymbol, decimals);
   const cache = parts.cacheRead + parts.cacheWrite;
+  const scope = tone === "round" ? "本轮全部模型调用（含思考与工具轮次）" : "这一条回复";
   const detail = [
     `新增 ${fmt(added)}（输入 ${fmt(parts.input)} + 输出 ${fmt(parts.output)}）`,
     `全量 ${fmt(total)}（缓存命中 ${fmt(cache)}）`,
-    "口径：新增 = 本轮新送入 + 新生成；全量 = 含历史上下文与缓存命中",
+    `口径：新增 = 本轮新送入 + 新生成；全量 = 含历史上下文与缓存命中；统计范围 = ${scope}`,
   ].join(" · ");
   return (
-    <p className="mt-1.5 text-right text-[11px] tabular-nums text-gray-400" title={detail}>
+    <p
+      className={`text-right text-[11px] tabular-nums ${tone === "round" ? "mt-0.5 text-[#2563EB]" : "mt-1.5 text-gray-400"}`}
+      title={detail}
+    >
       {label}: {formatTokenCount(added, locale)} tokens
       {money ? ` · ${money}` : ""}
     </p>
@@ -1963,6 +2034,49 @@ function TurnUsage({
   function fmt(value: number): string {
     return formatTokenCount(value, locale);
   }
+}
+
+/**
+ * 两行用量：灰色 = 本次输出真实消耗（自己的真实小数位），蓝色 = 本轮叠加（与之对齐）。
+ * 纯渲染计算（一次 log10 + 两次 toFixed），不产生任何模型调用。
+ */
+function TurnUsagePair({
+  usage,
+  totals,
+  currencySymbol,
+  locale,
+}: {
+  usage?: AssistantMessage["usage"];
+  totals?: RoundTotals;
+  currencySymbol: string;
+  locale: string;
+}) {
+  const thisCost = usage?.cost?.total ?? 0;
+  // 两行共用位数，但只增不减：谁需要更多位就取谁，本轮的钱永远不会被四舍五入变粗。
+  const digits = Math.max(moneyDecimals(thisCost), moneyDecimals(totals?.cost ?? 0));
+  return (
+    <>
+      <TurnUsage usage={usage} currencySymbol={currencySymbol} decimals={digits} locale={locale} />
+      {totals && (
+        <TurnUsage
+          usage={usage}
+          currencySymbol={currencySymbol}
+          tokens={totals.tokens}
+          cost={totals.cost}
+          breakdown={{
+            input: totals.input,
+            output: totals.output,
+            cacheRead: totals.cacheRead,
+            cacheWrite: totals.cacheWrite,
+          }}
+          label="本轮对话新增"
+          tone="round"
+          decimals={digits}
+          locale={locale}
+        />
+      )}
+    </>
+  );
 }
 
 /** 首屏只挂载最近这么多轮；更早的历史按需展开（长会话切换不再卡顿）。 */
@@ -1996,31 +2110,70 @@ export interface TranscriptTurnView {
  * 生效，更早的轮次根本不在 DOM 里，刻度就只剩零星几个。这里把推导逻辑抽出来，
  * 导航直接遍历完整 messages，与当前挂载了多少 DOM 无关。
  */
+/**
+ * 轮次对象缓存：身份复用逻辑在 `lib/transcript-turn-cache.ts`（有单测覆盖），
+ * 这里只负责把「消息 → 外部引用」和「消息 → 轮次视图」两件事交给它。
+ */
+const turnCacheStore = globalThis as typeof globalThis & {
+  __piforgeTranscriptTurnCache?: WeakMap<AgentMessage, TurnCacheEntry<TranscriptTurnView>>;
+};
+function turnCache() {
+  if (!turnCacheStore.__piforgeTranscriptTurnCache) {
+    turnCacheStore.__piforgeTranscriptTurnCache = new WeakMap();
+  }
+  return turnCacheStore.__piforgeTranscriptTurnCache;
+}
+
+/** 一条 assistant 消息里所有 toolCall 的结果引用（用于判断该轮是否真的变了）。 */
+function toolResultRefsOf(
+  message: AgentMessage,
+  results: Map<string, ToolResultMessage>,
+): readonly unknown[] {
+  if (message.role !== "assistant") return [];
+  const content = (message as { content?: unknown }).content;
+  if (!Array.isArray(content)) return [];
+  const refs: unknown[] = [];
+  for (const block of content as Array<Record<string, unknown>>) {
+    if (block.type === "toolCall" && typeof block.id === "string") {
+      refs.push(results.get(block.id));
+    }
+  }
+  return refs;
+}
+
 export function buildTranscriptTurns(messages: AgentMessage[]): TranscriptTurnView[] {
   const results = toolResultsById(messages);
-  return messages
-    .map((message, messageIndex): TranscriptTurnView | null => {
-      if (message.role === "user") {
-        const text = userText(message).trim();
-        const images = contentImages((message as { content?: unknown }).content);
-        return text || images.length > 0
-          ? { role: "user", text, images, blocks: [], messageIndex }
-          : null;
-      }
-      if (message.role === "assistant") {
-        const blocks = assistantBlocks(message, results);
-        return blocks.length > 0 ? { role: "assistant", text: "", images: [], blocks, messageIndex } : null;
-      }
-      if (message.role === "custom") {
-        // 扩展注入的隐藏上下文（display:false）属于请求侧：只给模型看，不进对话记录。
-        // 例：PIFORGE_PREFIX_STRIP_CWD=1 时的 `<context>cwd: …</context>`。
-        if (!(message as { display?: boolean }).display) return null;
-        const text = userText(message).trim();
-        return text ? { role: "assistant", text, images: [], blocks: [], messageIndex } : null;
-      }
-      return null;
-    })
-    .filter((turn): turn is TranscriptTurnView => turn !== null);
+  return buildWithTurnCache<AgentMessage, TranscriptTurnView>(messages, turnCache(), {
+    refsOf: (message) => toolResultRefsOf(message, results),
+    build: (message, index) => buildTranscriptTurn(message, index, results),
+  }).filter((turn): turn is TranscriptTurnView => turn !== null);
+}
+
+/** 单条消息 → 轮次视图（无缓存版本；供上面的缓存包装调用）。 */
+function buildTranscriptTurn(
+  message: AgentMessage,
+  messageIndex: number,
+  results: Map<string, ToolResultMessage>,
+): TranscriptTurnView | null {
+  if (message.role === "user") {
+    const text = userText(message).trim();
+    const images = contentImages((message as { content?: unknown }).content);
+    return text || images.length > 0
+      ? { role: "user", text, images, blocks: [], messageIndex }
+      : null;
+  }
+  if (message.role === "assistant") {
+    const blocks = assistantBlocks(message, results);
+    return blocks.length > 0 ? { role: "assistant", text: "", images: [], blocks, messageIndex } : null;
+  }
+  if (message.role === "custom") {
+    // 扩展注入的隐藏上下文（display:false）属于请求侧：只给模型看，不进对话记录。
+    // 例：PIFORGE_PREFIX_STRIP_CWD=1 时的 `<context>cwd: …</context>`。
+    if (!(message as { display?: boolean }).display) return null;
+    const text = userText(message).trim();
+    return text ? { role: "assistant", text, images: [], blocks: [], messageIndex } : null;
+  }
+  return null;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -2257,8 +2410,7 @@ function TurnRowImpl({
           {turn.images.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-2">
               {turn.images.map((src, imageIndex) => (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
+                <ClickableImage
                   key={imageIndex}
                   src={src}
                   alt={`用户图片 ${imageIndex + 1}`}
@@ -2292,25 +2444,9 @@ function TurnRowImpl({
         </div>
       )}
       </LazyTurnBody>
-      {/* 每条 AI 回复底部的极简消耗统计：优先用整轮合计（只有末条拿得到），其次单条 usage */}
+      {/* 用量两行：灰色 = 本次输出真实消耗；蓝色 = 本轮叠加（小数位对齐灰行）。 */}
       {turn.role !== "user" && (
-        <TurnUsage
-          usage={usage}
-          currencySymbol={currencySymbol}
-          tokens={usageTotals?.tokens}
-          cost={usageTotals?.cost}
-          breakdown={
-            usageTotals
-              ? {
-                  input: usageTotals.input,
-                  output: usageTotals.output,
-                  cacheRead: usageTotals.cacheRead,
-                  cacheWrite: usageTotals.cacheWrite,
-                }
-              : undefined
-          }
-          locale={locale}
-        />
+        <TurnUsagePair usage={usage} totals={usageTotals} currencySymbol={currencySymbol} locale={locale} />
       )}
     </article>
   );
@@ -2611,6 +2747,9 @@ export function Transcript({
 
     const check = () => {
       if (loadingEarlierRef.current || startRef.current <= 0) return;
+      // 非活动标签被 display:none 隐藏时 clientHeight 为 0：此时补历史没有任何
+      // 视觉意义，只会把整段历史白挂到 DOM 上（切回来还停在最开头）。
+      if (root.clientHeight === 0) return;
       const rootTop = root.getBoundingClientRect().top;
       const sentinelTop = sentinel.getBoundingClientRect().top;
       // 进入视口上方 600px 的预加载区就补历史
@@ -2644,6 +2783,56 @@ export function Transcript({
       loadingEarlierRef.current = false;
     };
   }, [loadEarlier, hasTurns]);
+
+  /**
+   * 首屏贴底的兜底：Transcript 自己知道"内容第一次真的有高度"的时刻。
+   *
+   * 为什么不能只靠 ChatSurface：真实会话常常是「先渲染 loading → 几秒后
+   * JSONL 读完 → markdown/代码高亮再撑高」，任何一次时机错位都让人停在最开头。
+   * 这里用**多帧重试 + 用户上翻即收手**，把"打开就停在开头"这种竞态彻底消掉。
+   */
+  const settledRef = useRef(false);
+  const settleCancelRef = useRef(false);
+  useLayoutEffect(() => {
+    if (settledRef.current || !hasTurns || revealTurn != null) return;
+    const findScroller = (): HTMLElement | null => {
+      if (scrollParentRef.current) return scrollParentRef.current;
+      let node: HTMLElement | null = rootRef.current?.parentElement ?? null;
+      while (node) {
+        if (/(auto|scroll)/.test(getComputedStyle(node).overflowY)) return node;
+        node = node.parentElement;
+      }
+      return null;
+    };
+    const root = findScroller();
+    // 隐藏标签（display:none）尺寸为 0：不算"已贴底"，把一次性机会留给可见那一刻。
+    if (!root || root.clientHeight === 0) return;
+    settledRef.current = true;
+    settleCancelRef.current = false;
+    const timers: number[] = [];
+    let raf = 0;
+    let lastTop = root.scrollTop;
+    const pin = () => {
+      if (settleCancelRef.current) return;
+      // 用户自己在往上滚（scrollTop 变小）：立刻让位。
+      if (root.scrollTop < lastTop - 8) {
+        settleCancelRef.current = true;
+        return;
+      }
+      root.scrollTop = root.scrollHeight;
+      lastTop = root.scrollTop;
+    };
+    pin();
+    raf = requestAnimationFrame(pin);
+    // 异步内容（markdown 高亮 / 图片 / 折叠块）会在不同时间点撑高，逐个补。
+    for (const delay of [50, 150, 400, 900, 1600]) {
+      timers.push(window.setTimeout(pin, delay));
+    }
+    return () => {
+      cancelAnimationFrame(raf);
+      for (const timer of timers) window.clearTimeout(timer);
+    };
+  }, [hasTurns, revealTurn]);
 
   /**
    * 按「一轮对话」聚合过程：

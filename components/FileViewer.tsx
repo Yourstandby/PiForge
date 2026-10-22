@@ -8,6 +8,7 @@ import remarkGfm from "remark-gfm";
 import { encodeFilePathForApi, getFileName, getRelativeFilePath } from "@/lib/file-paths";
 import { getVirtualLineWindow } from "./file-viewer-virtualization";
 import { shouldUseLargeSourceViewer } from "./file-viewer-large-source";
+import { scheduleIdleTask } from "@/lib/idle-task";
 import { useI18n } from "./I18nProvider";
 import { ErrorNotice } from "./ErrorNotice";
 
@@ -923,6 +924,15 @@ function TextFileViewer({ filePath, cwd, line }: Props) {
   );
   const hasDiff = prevContent !== null && prevContent !== content;
 
+  // Prism 的高亮是同步全量分词：中大型文件会占住主线程上百毫秒。
+  // 先出纯文本首帧，等空闲调度器（并发 1 + 2s 超时）再换高亮，打开文件不再掉帧。
+  const [highlightReady, setHighlightReady] = useState(false);
+  useEffect(() => {
+    setHighlightReady(false);
+    if (isLargeSource) return;
+    return scheduleIdleTask(() => setHighlightReady(true));
+  }, [content, data?.language, isLargeSource]);
+
   // Reveal the requested line once the highlighted source is on screen.
   useEffect(() => {
     if (!line || !data || viewMode !== "source" || previewMode || isLargeSource) return;
@@ -1217,6 +1227,8 @@ function TextFileViewer({ filePath, cwd, line }: Props) {
           </div>
         ) : isLargeSource ? (
           <PlainTextViewer content={content} wrapLines={wrapLines} showLargeFileNotice targetLine={line} />
+        ) : !highlightReady ? (
+          <PlainTextViewer content={content} wrapLines={wrapLines} targetLine={line} />
         ) : (
           <SyntaxHighlighter
             language={data.language === "text" ? "plaintext" : data.language}

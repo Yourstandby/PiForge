@@ -14,17 +14,34 @@ import {
   listHerdrAgents,
   sendHerdrMessage,
   spawnHerdrAgent,
+  stopHerdrAgent,
 } from "./herdr-manager.ts";
 
 export const HERDR_SPAWN_TOOL_NAME = "herdr_spawn";
 export const HERDR_STATUS_TOOL_NAME = "herdr_status";
 export const HERDR_MESSAGE_TOOL_NAME = "herdr_message";
+export const HERDR_STOP_TOOL_NAME = "herdr_stop";
+
+const TimeoutParam = Type.Optional(
+  Type.Number({
+    description: "Hard limit for the dispatched task in ms (default 300000 = 5 min). On timeout the fleet agent is killed.",
+    minimum: 30_000,
+    maximum: 1_800_000,
+  }),
+);
 
 const SpawnParams = Type.Object({
   name: Type.String({ description: "Fleet agent name shown in the Fleet panel." }),
   taskPrompt: Type.String({
     description: "Standalone first task. The fleet agent keeps context and can receive follow-up messages.",
   }),
+  tools: Type.Optional(
+    Type.Array(Type.String(), {
+      description:
+        "Extra tools the fleet agent must be able to use (e.g. [\"bash\"]). It already inherits your active tools plus bash/read/write/edit; recursion/UI tools are never granted.",
+    }),
+  ),
+  timeoutMs: TimeoutParam,
 });
 
 const StatusParams = Type.Object({
@@ -34,6 +51,7 @@ const StatusParams = Type.Object({
 const MessageParams = Type.Object({
   id: Type.String({ description: "Fleet agent id returned by herdr_spawn." }),
   message: Type.String({ description: "Follow-up instruction for this fleet agent." }),
+  timeoutMs: TimeoutParam,
 });
 
 function textResult(text: string, details: Record<string, unknown> = {}, isError = false) {
@@ -58,19 +76,26 @@ function statusLine(agent: ReturnType<typeof getHerdrAgent>): string {
   ].filter(Boolean).join("\n");
 }
 
+const StopParams = Type.Object({
+  id: Type.Optional(Type.String({ description: "Fleet agent id to stop. Omit with all=true to stop the whole fleet." })),
+  all: Type.Optional(Type.Boolean({ description: "Stop every running fleet agent (default false)." })),
+});
+
 export function createDesktopHerdrFactory(): ExtensionFactory {
   return (pi: ExtensionAPI) => {
     pi.registerTool({
       name: HERDR_SPAWN_TOOL_NAME,
       label: "Herdr Spawn",
       description:
-        "Spawn a persistent, isolated fleet agent (in-memory session, read-only tools). " +
-        "It keeps context between messages; use herdr_status and herdr_message to work with it. " +
+        "Spawn an isolated fleet agent (in-memory session) that inherits your active tools. " +
+        "It exits as soon as its task finishes (no background idling); herdr_status/herdr_message work while it runs. " +
+        "Pass timeoutMs when the task can hang — it is killed on timeout. " +
         "Results are checked for test evidence and marked verified:false when none exists.",
       promptSnippet: "Spawn a persistent fleet agent",
       promptGuidelines: [
         "Use herdr_spawn for long-running parallel investigations; use subagents for one-shot tasks.",
         "Poll herdr_status instead of spawning duplicate agents.",
+        "Fleet slots are limited (4): a finished or 5-minute-idle agent is released automatically; herdr_stop frees one now.",
       ],
       parameters: SpawnParams,
       defaultActive: false,
@@ -78,9 +103,13 @@ export function createDesktopHerdrFactory(): ExtensionFactory {
         try {
           const agent = spawnHerdrAgent({
             name: params.name,
+            ...(params.timeoutMs ? { timeoutMs: params.timeoutMs } : {}),
             task: params.taskPrompt,
             cwd: ctx.cwd,
             parentSessionId: ctx.sessionManager.getSessionId(),
+            ...(params.tools && params.tools.length > 0 ? { tools: [...params.tools] } : {}),
+            parentActiveTools: pi.getActiveTools(),
+            availableTools: pi.getAllTools().map((tool) => tool.name),
             ...(ctx.model ? { model: ctx.model as Model<string> } : {}),
             ...(ctx.thinkingLevel ? { thinkingLevel: ctx.thinkingLevel as ThinkingLevel } : {}),
           });
@@ -132,14 +161,14 @@ export function createDesktopHerdrFactory(): ExtensionFactory {
     pi.registerTool({
       name: HERDR_MESSAGE_TOOL_NAME,
       label: "Herdr Message",
-      description: "Send a follow-up message to a fleet agent and wait for its response.",
+      description: "Send a follow-up message to a running fleet agent and wait for its response (bounded by timeoutMs).",
       promptSnippet: "Message a fleet agent",
       promptGuidelines: ["Keep messages self-contained; the fleet agent keeps its own context."],
       parameters: MessageParams,
       defaultActive: false,
       async execute(_toolCallId, params) {
         try {
-          const result = await sendHerdrMessage(params.id, params.message);
+          const result = await sendHerdrMessage(params.id, params.message, params.timeoutMs);
           return textResult(
             [
               `Fleet agent "${result.agent.name}" replied (${result.agent.status} / ${result.agent.activity}).`,
@@ -160,6 +189,39 @@ export function createDesktopHerdrFactory(): ExtensionFactory {
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           return textResult(`Herdr message failed: ${message}`, { kind: "herdr", ok: false, error: message }, true);
+        }
+      },
+    });
+    pi.registerTool({
+      name: HERDR_STOP_TOOL_NAME,
+      label: "Herdr Stop",
+      description: "Stop (sleep) a fleet agent or the whole fleet. Frees a fleet slot; the config can be woken again.",
+      promptSnippet: "Stop a fleet agent",
+      promptGuidelines: ["Use it when a worker is done or idle: fleet slots are limited."],
+      parameters: StopParams,
+      defaultActive: false,
+      async execute(_toolCallId, params) {
+        try {
+          if (params.all === true) {
+            const victims = listHerdrAgents().filter(
+              (agent) => agent.status !== "exited" && agent.status !== "stopped" && agent.status !== "crashed",
+            );
+            for (const agent of victims) await stopHerdrAgent(agent.id, "主 Agent 收编：整队停止");
+            return textResult(`Stopped ${victims.length} fleet agent(s).`, {
+              kind: "herdr",
+              ok: true,
+              stopped: victims.map((agent) => agent.id),
+            });
+          }
+          const id = params.id?.trim();
+          if (!id) return textResult("Provide an agent id, or all=true.", { kind: "herdr", ok: false }, true);
+          const stopped = await stopHerdrAgent(id, "主 Agent 收编：手动停止");
+          return stopped
+            ? textResult(`Fleet agent "${id}" stopped.`, { kind: "herdr", ok: true, id })
+            : textResult(`No running fleet agent with id "${id}".`, { kind: "herdr", ok: false, id }, true);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return textResult(`Herdr stop failed: ${message}`, { kind: "herdr", ok: false, error: message }, true);
         }
       },
     });
