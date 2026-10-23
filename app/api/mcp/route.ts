@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server.js";
+import { NextResponse } from "../../../lib/next-server-shim.ts";
 import { errorMessage, getRequestId, jsonError, logApiError } from "../../../lib/api-error.ts";
 import { getMcpServers, removeMcpServer, saveMcpServer, type McpServerConfig } from "../../../lib/mcp-config.ts";
 import { getAgentHostClient } from "../../../lib/agent-host-client.ts";

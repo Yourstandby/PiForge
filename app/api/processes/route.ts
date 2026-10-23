@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server.js";
+import { NextResponse } from "../../../lib/next-server-shim.ts";
 import { jsonError } from "../../../lib/api-error.ts";
 import { authorizeHostPath, hostFileAccessError } from "../../../lib/host-files.ts";
 import { getAgentHostClient } from "../../../lib/agent-host-client.ts";

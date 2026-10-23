@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse } from "../../../lib/next-server-shim.ts";
 
 /**
  * USD → CNY reference rate for the cost readout.

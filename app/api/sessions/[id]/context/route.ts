@@ -1,6 +1,6 @@
-import { NextResponse } from "next/server";
-import { resolveSessionPath, buildSessionContext, getSessionEntriesAsync } from "@/lib/session-reader";
-import { errorMessage, getRequestId, jsonError, logApiError } from "@/lib/api-error";
+import { NextResponse } from "../../../../../lib/next-server-shim.ts";
+import { resolveSessionPath, buildSessionContext, getSessionEntriesAsync } from "../../../../../lib/session-reader.ts";
+import { errorMessage, getRequestId, jsonError, logApiError } from "../../../../../lib/api-error.ts";
 
 export async function GET(
   req: Request,

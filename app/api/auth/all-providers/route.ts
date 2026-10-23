@@ -1,4 +1,4 @@
-import { createPiRuntime } from "@/lib/pi-runtime";
+import { createPiRuntime } from "../../../../lib/pi-runtime.ts";
 
 export const dynamic = "force-dynamic";
 

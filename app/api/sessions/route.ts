@@ -1,6 +1,6 @@
-import { NextResponse } from "next/server";
-import { listSessionsPage, SESSION_PAGE_SIZE } from "@/lib/session-reader";
-import { errorMessage, getRequestId, jsonError, logApiError } from "@/lib/api-error";
+import { NextResponse } from "../../../lib/next-server-shim.ts";
+import { listSessionsPage, SESSION_PAGE_SIZE } from "../../../lib/session-reader.ts";
+import { errorMessage, getRequestId, jsonError, logApiError } from "../../../lib/api-error.ts";
 
 /**
  * GET /api/sessions?offset=0&limit=20&keep=<sessionId>

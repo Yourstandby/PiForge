@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, session, shell, utilityProcess, WebContentsView, webContents } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, protocol, session, shell, utilityProcess, WebContentsView, webContents } from "electron";
 import type { UpdateInfo } from "electron-updater";
 import path from "path";
 import { randomBytes } from "crypto";
@@ -20,7 +20,13 @@ import {
   markUpdateDownloaded,
   type UpdateInstallState,
 } from "./update-install-gate";
-import { buildElectronCspHeader } from "./csp";
+import { buildElectronCspHeader, buildStaticAppCspHeader } from "./csp";
+import { AgentHostApiBridge } from "./api-bridge";
+import {
+  createStaticAppHandler,
+  STATIC_APP_ORIGIN,
+  STATIC_APP_SCHEME,
+} from "./static-app";
 import { getAppIconPath } from "./app-icon";
 import { applyTitleBarOverlayTheme, titleBarOverlayOptions } from "./title-bar-overlay";
 import { normalizeWindowPath } from "./window-path";
@@ -31,6 +37,18 @@ import {
 } from "./server-process";
 import { BrowserManager } from "./browser-manager";
 import { BrowserHostBridge } from "./browser-host-bridge";
+import {
+  AGENT_HOST_HARD_TIMEOUT_MS,
+  AGENT_HOST_READY_TIMEOUT_MS,
+  type AgentHostState,
+  describeHostState,
+  initialHostReadiness,
+  markHostBooting,
+  markHostReady,
+  markHostStopped,
+  onHardTimeout,
+  onSoftTimeout,
+} from "./host-readiness";
 
 // Packaged browser smoke runs Electron without a visible window; software
 // rendering avoids capturePage's UnknownVizError on headless CI.
@@ -38,9 +56,30 @@ if (process.env.SMOKE_BROWSER === "1") {
   app.disableHardwareAcceleration();
 }
 
+/**
+ * 隔离 userData（`PIFORGE_USER_DATA`）。
+ *
+ * 用途：`npm run measure:packaged` 要在**不影响正在使用的实例**的前提下起一个
+ * 干净的 PiForge 采内存/启动数据。单实例锁是跟着 userData 走的，所以必须在
+ * `requestSingleInstanceLock()` 之前改路径。
+ */
+const userDataOverride = process.env.PIFORGE_USER_DATA?.trim();
+if (userDataOverride) {
+  app.setPath("userData", path.resolve(userDataOverride));
+}
+
 // ---------------------------------------------------------------------------
 // Single Instance Lock
 // ---------------------------------------------------------------------------
+// 自定义协议必须在 ready 之前声明：`standard` 让它有同源语义（fetch/相对路径可用），
+// `supportFetchAPI` + `stream` 让 `/api/**` 的 SSE 与二进制下载走同一条路。
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: STATIC_APP_SCHEME,
+    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: false },
+  },
+]);
+
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
@@ -71,11 +110,20 @@ let lastFocusedWindow: BrowserWindow | null = null;
 const appWindows = new Set<BrowserWindow>();
 const windowPaths = new WeakMap<BrowserWindow, string>();
 let sessionCspInstalled = false;
+/**
+ * P1-4：默认**不再启动 Next standalone**，渲染进程加载 `piforge://app/`，
+ * `/api/**` 经命名管道交给 Agent Host。`PIFORGE_USE_NEXT=1` 保留旧路径做回退。
+ */
+const USE_NEXT_SERVER = process.env.PIFORGE_USE_NEXT === "1";
+let apiBridge: AgentHostApiBridge | null = null;
+let staticProtocolInstalled = false;
 let nextProcess: ServerProcess | null = null;
 let agentHostProcess: ReturnType<typeof utilityProcess.fork> | null = null;
 let agentHostEndpoint: string | null = null;
 let agentHostToken: string | null = null;
 let agentHostReady = false;
+let agentHostState: AgentHostState = "off";
+let hostReadiness = initialHostReadiness();
 let agentHostShutdownStarted = false;
 let agentHostShutdownComplete = false;
 let agentHostRestartAttempts: number[] = [];
@@ -85,7 +133,8 @@ let agentHostRestartTimer: ReturnType<typeof setTimeout> | null = null;
 let isQuitting = false;
 let logFilePath: string | null = null;
 const DEFAULT_PORT = 30141;
-const AGENT_HOST_READY_TIMEOUT_MS = 10_000;
+// 冷启动分级超时：软超时（20s）只报告 + 通知 UI，硬超时（60s）才杀进程。
+// 0.9.0 的 10s 直接 kill 会把慢机器上的正常启动变成"挂一次 + 退避重启"。
 const AGENT_HOST_SHUTDOWN_TIMEOUT_MS = 4_000;
 let serverState: ServerState = "starting";
 let activePort: number | null = null;
@@ -263,63 +312,128 @@ async function startAgentHost(): Promise<void> {
         ? "resources/standalone/agent-host/index.js"
         : "agent-host/dist/agent-host/index.js",
     });
+    setHostReadiness(markHostStopped());
     return;
   }
 
   agentHostEndpoint ??= createAgentHostEndpoint();
   agentHostToken ??= randomBytes(32).toString("hex");
 
+  // 诊断：`PIFORGE_HOST_CPU_PROFILE=1` 时给 Host 开 V8 CPU profile，
+  // 用来定位"空闲还烧 CPU"的具体调用栈（产出的 .cpuprofile 可在
+  // chrome://tracing 或 node --cpu-prof 后处理工具里打开）。
+  const profileDir = process.env.PIFORGE_HOST_CPU_PROFILE?.trim();
+  const execArgv = profileDir
+    ? ["--cpu-prof", "--cpu-prof-dir", path.resolve(profileDir), "--cpu-prof-interval", "500"]
+    : undefined;
+
   const child = utilityProcess.fork(entry, [], {
     cwd: app.isPackaged ? path.join(process.resourcesPath, "standalone") : app.getAppPath(),
     env: agentHostProcessEnv(),
     stdio: "pipe",
     serviceName: "PiForge Agent Host",
+    ...(execArgv ? { execArgv } : {}),
   });
   agentHostProcess = child;
   agentHostReady = false;
+  setHostReadiness(markHostBooting());
+  logStartupTiming("agent host spawned", { pid: child.pid });
 
   child.stdout?.on("data", (chunk: Buffer) => logInfo(`[AgentHost] ${chunk.toString().trim()}`));
   child.stderr?.on("data", (chunk: Buffer) => logError(`[AgentHost] ${chunk.toString().trim()}`));
 
   child.once("exit", (code) => {
     agentHostReady = false;
+    setHostReadiness(markHostStopped());
     if (agentHostProcess === child) agentHostProcess = null;
     logError("Agent Host exited", { code });
     scheduleAgentHostRestart();
   });
 
+  /**
+   * 就绪等待：软超时只报告（Host 继续在后面启动），硬超时才杀。
+   * 这个 Promise 永远 resolve —— 调用方（app ready / 重启）不得被 Host 拖住。
+   */
   await new Promise<void>((resolve) => {
     let settled = false;
-    const finish = (ready: boolean, detail?: unknown) => {
+    const clearTimers = () => {
+      clearTimeout(softTimer);
+      if (hardTimer) clearTimeout(hardTimer);
+    };
+    const finish = () => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
-      agentHostReady = ready;
-      if (ready) {
-        logInfo("Agent Host ready", { pid: child.pid, endpoint: agentHostEndpoint, detail });
-        startBrowserHostBridge();
-      } else {
-        logError("Agent Host failed to become ready", detail);
-        // Force the exit handler to run so the restart policy applies to a
-        // hung/dead host instead of leaving the app permanently degraded.
+      clearTimers();
+      resolve();
+    };
+    const succeed = (detail?: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimers();
+      agentHostReady = true;
+      setHostReadiness(markHostReady());
+      logInfo("Agent Host ready", { pid: child.pid, endpoint: agentHostEndpoint, detail });
+      logStartupTiming("agent host ready");
+      startBrowserHostBridge();
+      resolve();
+    };
+
+    let hardTimer: ReturnType<typeof setTimeout> | null = null;
+    const softTimer = setTimeout(() => {
+      const soft = onSoftTimeout(hostReadiness);
+      setHostReadiness(soft.snapshot);
+      if (soft.action !== "report") return;
+      // 注意：这里**不**杀进程。慢机器上 Host 常在 20–60s 内自己就绪。
+      logError("Agent Host still booting after soft timeout", {
+        timeoutMs: AGENT_HOST_READY_TIMEOUT_MS,
+        hardTimeoutMs: AGENT_HOST_HARD_TIMEOUT_MS,
+      });
+      hardTimer = setTimeout(() => {
+        const hard = onHardTimeout(hostReadiness);
+        if (hard.action !== "kill") return;
+        logError("Agent Host failed to become ready; killing hung process", {
+          timeoutMs: AGENT_HOST_HARD_TIMEOUT_MS,
+        });
+        setHostReadiness(markHostStopped());
         try {
           child.kill();
         } catch {
           // Already gone.
         }
-      }
-      resolve();
-    };
-    const timer = setTimeout(
-      () => finish(false, { timeoutMs: AGENT_HOST_READY_TIMEOUT_MS }),
-      AGENT_HOST_READY_TIMEOUT_MS,
-    );
+        finish();
+      }, AGENT_HOST_HARD_TIMEOUT_MS - AGENT_HOST_READY_TIMEOUT_MS);
+    }, AGENT_HOST_READY_TIMEOUT_MS);
+
     child.on("message", (message: unknown) => {
-      if (isHostReadyMessage(message)) finish(true, message);
+      if (isHostReadyMessage(message)) succeed(message);
     });
-    child.once("exit", (code) => finish(false, { code }));
-    child.once("error", (type, location) => finish(false, { type, location }));
+    child.once("exit", (code) => {
+      // 崩溃型失败（0.9.0 实测的 197 次 code=1 就是这条路径）：必须留下可 grep
+      // 的审计行，否则 UI 只说"启动中"，日志里查不到为什么起不来。
+      if (!agentHostReady) logError("Agent Host exited before becoming ready", { code });
+      finish();
+    });
+    child.once("error", (type, location) => {
+      logError("Agent Host process error", { type, location });
+      finish();
+    });
   });
+}
+
+/**
+ * Host 状态广播：渲染进程据此显示"引擎启动中"而不是"引擎断开"。
+ * 空窗口（启动早期）静默忽略 —— 第一个窗口创建后会主动拉一次快照。
+ */
+function setHostReadiness(next: ReturnType<typeof initialHostReadiness>) {
+  hostReadiness = next;
+  agentHostState = next.state;
+  const payload = {
+    state: next.state,
+    ...describeHostState(next.state),
+  };
+  for (const window of appWindows) {
+    if (!window.isDestroyed()) window.webContents.send("host-state", payload);
+  }
 }
 
 function scheduleAgentHostRestart(): void {
@@ -355,6 +469,7 @@ function stopAgentHost(): Promise<void> {
 
   if (!child) {
     agentHostShutdownComplete = true;
+    setHostReadiness(markHostStopped());
     return Promise.resolve();
   }
   if (agentHostShutdownComplete) return Promise.resolve();
@@ -593,12 +708,17 @@ function loadWindowIcon(): Electron.NativeImage | undefined {
 }
 
 function createWindow(options: { initialPath?: string; showStartup?: boolean } = {}): BrowserWindow {
-  const initialPath = normalizeWindowPath(options.initialPath);
+  // 测量钩子：`PIFORGE_OPEN_PATH=/?session=<id>` 让冒烟/采样直接打开一个真实会话
+  // （renderer 的内存只有装了长 transcript 才可比，空界面没有参考价值）。
+  const initialPath = normalizeWindowPath(options.initialPath ?? process.env.PIFORGE_OPEN_PATH);
   const showStartup = options.showStartup ?? true;
   const windowIcon = loadWindowIcon();
+  // 诊断：`PIFORGE_WINDOW_SIZE=800x600` 覆盖默认窗口尺寸，用来判断 GPU 进程
+  // 的 RSS 是否随合成面积变化（B 项"gpu 瘦身"的归因实验）。
+  const sizeOverride = /^(\d+)x(\d+)$/.exec(process.env.PIFORGE_WINDOW_SIZE ?? "");
   const window = new BrowserWindow({
-    width: 1400,
-    height: 900,
+    width: sizeOverride ? Number(sizeOverride[1]) : 1400,
+    height: sizeOverride ? Number(sizeOverride[2]) : 900,
     minWidth: 800,
     minHeight: 600,
     titleBarStyle: "hidden",
@@ -617,9 +737,11 @@ function createWindow(options: { initialPath?: string; showStartup?: boolean } =
       // The built-in browser is a Main-owned WebContentsView (stage 9).
       // Renderer webviews are disabled so Next/Renderer cannot instantiate one.
       webviewTag: false,
-      // 窗口失焦/切到后台时不降帧：流式输出 + 打字机在后台依然按 60fps 跑，
-      // 回到前台不会出现"补帧式"的暴走重绘。
-      backgroundThrottling: false,
+      // 背景节流保持开启（Electron 默认值）：0.9.0 为了"后台也不降帧"把它关掉，
+      // 结果窗口在托盘/被遮挡时合成器仍按 60fps 跑装饰动画，实测空闲渲染进程
+      // 105% CPU。流式期间由渲染进程调 `setStreamingThrottle(true)` 临时关闭，
+      // 流结束或窗口失焦后主进程自动恢复。
+      backgroundThrottling: true,
     },
   });
 
@@ -629,6 +751,18 @@ function createWindow(options: { initialPath?: string; showStartup?: boolean } =
     mainWindow = window;
   }
   lastFocusedWindow = window;
+
+  // 诊断：`PIFORGE_DEBUG_RENDERER=1` 时把渲染进程的 console 转发到主进程日志
+  // （用来定位"谁在定时发请求"这类问题；默认关闭，不影响正常日志体积）。
+  if (process.env.PIFORGE_DEBUG_RENDERER === "1") {
+    window.webContents.on("console-message", (event) => {
+      logInfo(`[renderer] ${event.message}`, {
+        level: event.level,
+        line: event.lineNumber,
+        source: event.sourceId,
+      });
+    });
+  }
 
   installNavigationGuards(window);
   installWebviewSecurity(window);
@@ -662,6 +796,9 @@ function createWindow(options: { initialPath?: string; showStartup?: boolean } =
   }
 
   window.once("ready-to-show", () => {
+    // 诊断：`PIFORGE_WINDOW_HIDDEN=1` 建窗但不显示，用来把"可见窗口的空闲 CPU"
+    // 和"隐藏窗口（Chromium 后台节流）"分开测，避免采样条件不一致。
+    if (process.env.PIFORGE_WINDOW_HIDDEN === "1") return;
     window.show();
   });
 
@@ -769,6 +906,81 @@ async function loadAppUrl(window: BrowserWindow, port: number, appPath: string):
   assertCurrentNavigation();
 }
 
+/**
+ * 解析静态直出的根目录。
+ *   - 打包：`resources/static`（electron-builder 从 `out/` 拷进去）；
+ *   - 开发：仓库根的 `out/`（`npm run build:static` 产出）。
+ */
+function resolveStaticRoot(): string | null {
+  const candidates = app.isPackaged
+    ? [path.join(process.resourcesPath, "static")]
+    : [path.join(app.getAppPath(), "out")];
+  for (const candidate of candidates) {
+    if (existsSync(path.join(candidate, "index.html"))) return candidate;
+  }
+  return null;
+}
+
+/** 安装 `piforge://` 协议：静态资源 + `/api/**` → Agent Host。 */
+function installStaticProtocol(): void {
+  if (staticProtocolInstalled) return;
+  staticProtocolInstalled = true;
+  const root = resolveStaticRoot();
+  logInfo("Installing static app protocol", {
+    root: root ?? "(missing)",
+    mode: "static",
+  });
+  const handler = createStaticAppHandler({
+    root,
+    getBridge: () => apiBridge,
+    log: (message, detail) => logError(message, detail),
+    csp: buildStaticAppCspHeader(),
+  });
+  protocol.handle(STATIC_APP_SCHEME, (request) => handler(request));
+}
+
+function staticAppUrl(appPath: string): string {
+  const normalized = appPath.startsWith("/") ? appPath : `/${appPath}`;
+  return `${STATIC_APP_ORIGIN}${normalized}`;
+}
+
+/** 静态模式下的窗口加载：没有服务端，只有协议处理器。 */
+async function loadStaticAppUrl(window: BrowserWindow, appPath: string): Promise<void> {
+  if (window.isDestroyed()) {
+    throw new Error("App window unavailable while loading app URL");
+  }
+  const url = staticAppUrl(appPath);
+  const navigationAbort = new AbortController();
+  const abortForWindowClose = () =>
+    navigationAbort.abort(new Error("App navigation cancelled: app window was destroyed"));
+  const abortForQuit = () =>
+    navigationAbort.abort(new Error("App navigation cancelled: application is quitting"));
+  window.once("closed", abortForWindowClose);
+  app.once("before-quit", abortForQuit);
+  try {
+    await fadeOutStartupPage(window);
+    if (window.isDestroyed() || isQuitting) return;
+    await window.loadURL(url);
+  } finally {
+    window.off("closed", abortForWindowClose);
+    app.off("before-quit", abortForQuit);
+  }
+}
+
+/** 静态模式的首屏：立刻加载，不等 Agent Host（Host 由 UI 显示"启动中"）。 */
+async function showStaticApp(): Promise<void> {
+  logStartupTiming("loading static app url", { origin: STATIC_APP_ORIGIN });
+  const windows = [...appWindows].filter((window) => !window.isDestroyed());
+  if (windows.length === 0) {
+    throw new Error("No app window available while loading app URL");
+  }
+  for (const window of windows) {
+    await loadStaticAppUrl(window, windowPaths.get(window) ?? "/");
+  }
+  serverState = "ready";
+  logStartupTiming("static app url loaded");
+}
+
 async function showApp(port: number): Promise<void> {
   activePort = port;
   logStartupTiming("loading app url", { port });
@@ -792,11 +1004,16 @@ async function showApp(port: number): Promise<void> {
  * window untouched, so two projects can be visible side by side.
  */
 function openNewWindow(path?: string): BrowserWindow {
-  const serverReady =
-    serverState === "ready" && Boolean(activePort) && Boolean(nextProcess) && nextProcess?.exitCode === null;
-  const window = createWindow({ initialPath: path, showStartup: !serverReady });
-  if (serverReady && activePort) {
-    void loadAppUrl(window, activePort, windowPaths.get(window) ?? "/").catch((err: unknown) => {
+  const appReady = !USE_NEXT_SERVER
+    ? serverState === "ready"
+    : serverState === "ready" && Boolean(activePort) && Boolean(nextProcess) && nextProcess?.exitCode === null;
+  const window = createWindow({ initialPath: path, showStartup: !appReady });
+  if (appReady) {
+    const targetPath = windowPaths.get(window) ?? "/";
+    const load = USE_NEXT_SERVER && activePort
+      ? loadAppUrl(window, activePort, targetPath)
+      : loadStaticAppUrl(window, targetPath);
+    void load.catch((err: unknown) => {
       logError("Failed to load app URL in new window", err);
       showStartupStateFor(window, "error", err instanceof Error ? err.message : String(err));
     });
@@ -810,6 +1027,10 @@ function isAllowedAppUrl(rawUrl: string): boolean {
 
     if (parsed.protocol === "file:") {
       return parsed.pathname.endsWith("/startup.html");
+    }
+
+    if (parsed.protocol === `${STATIC_APP_SCHEME}:` && parsed.host === "app") {
+      return true;
     }
 
     return parsed.protocol === "http:" && parsed.hostname === "127.0.0.1" && parsed.port === String(activePort);
@@ -964,6 +1185,12 @@ function getBrowserManager(window: BrowserWindow): BrowserManager {
 
 function startBrowserHostBridge(): void {
   if (!agentHostEndpoint || !agentHostToken) return;
+  // 诊断开关：关掉浏览器桥（它每 3s poll + 每 2.5s pushSnapshot，且会创建
+  // WebContentsView）。用来判断空闲 CPU 是否来自这条路径。
+  if (process.env.PIFORGE_DISABLE_BROWSER_BRIDGE === "1") {
+    logInfo("Browser host bridge disabled by env");
+    return;
+  }
   browserHostBridge?.stop();
   browserHostBridge = new BrowserHostBridge({
     endpoint: agentHostEndpoint,
@@ -1026,6 +1253,23 @@ function installWebviewGuests() {
 // IPC handlers
 // ---------------------------------------------------------------------------
 function registerIpcHandlers() {
+  // 启动早期状态查询：窗口可能已经加载了应用 URL，而 host-state 事件在窗口
+  // 就绪前就发过了；渲染进程 mount 时从这里拉一次当前快照。
+  ipcMain.handle("host-state:get", () => ({
+    state: agentHostState,
+    ...describeHostState(agentHostState),
+  }));
+
+  /**
+   * 流式期间临时关掉背景节流（打字机要按帧走），结束后恢复。
+   * 只影响发消息的窗口；其它窗口 / 空闲窗口仍走 Electron 默认节流。
+   */
+  ipcMain.on("window:streaming-throttle", (event, enabled: unknown) => {
+    const contents = event.sender;
+    if (contents.isDestroyed()) return;
+    contents.setBackgroundThrottling(enabled !== true);
+  });
+
   ipcMain.handle("select-directory", async () => {
     const targetWindow = BrowserWindow.getFocusedWindow() ?? mainWindow ?? undefined;
     const result = targetWindow
@@ -1147,6 +1391,8 @@ app.on("before-quit", (event) => {
   isQuitting = true;
   browserHostBridge?.stop();
   browserHostBridge = null;
+  apiBridge?.stop();
+  apiBridge = null;
   cleanup();
 
   // Delay the quit until the host has drained and killed its managed process
@@ -1177,6 +1423,16 @@ app.on("activate", () => {
   }
 });
 
+// 诊断/测量：`PIFORGE_EXIT_AFTER_MS=<n>` 让应用自己干净退出（CPU profile 才会落盘）。
+const exitAfterMs = Number(process.env.PIFORGE_EXIT_AFTER_MS);
+if (Number.isFinite(exitAfterMs) && exitAfterMs > 0) {
+  setTimeout(() => {
+    logInfo("Exiting after PIFORGE_EXIT_AFTER_MS", { exitAfterMs });
+    setQuitting(true);
+    app.quit();
+  }, exitAfterMs).unref?.();
+}
+
 app.whenReady().then(async () => {
   if (process.env.SMOKE_BROWSER === "1") {
     const { runBrowserSmoke } = await import("./browser-smoke");
@@ -1189,34 +1445,104 @@ app.whenReady().then(async () => {
   installWebviewGuests();
 
   try {
-    const port = await choosePort({ startPort: DEFAULT_PORT, reservePort });
-    logStartupTiming("port selected", { port });
-    serverState = "starting";
-    activePort = port;
-    logInfo(`Using port ${port}`);
+    // Agent Host 的启动最早开始：它只需要 endpoint + token（同步铸出），
+    // 不依赖端口 / 窗口。先发它，让它与端口探测、建窗、Next 启动完全重叠。
+    agentHostEndpoint ??= createAgentHostEndpoint();
+    agentHostToken ??= randomBytes(32).toString("hex");
+    const agentHostStart = startAgentHost();
+    logStartupTiming("agent host kickoff");
 
+    // `/api/**` 的传输桥：静态模式下它是唯一的数据通道，必须在装协议前就绪。
+    apiBridge = new AgentHostApiBridge({
+      endpoint: agentHostEndpoint,
+      token: agentHostToken,
+      log: (message, detail) => logInfo(message, detail),
+    });
+
+    // **绝不把首屏挂在 Host 上**：Host 在后台就绪，渲染进程按
+    // useHostHealth / host-state 事件显示“引擎启动中”。
+    void agentHostStart.then(() => {
+      logStartupTiming("agent host startup finished", { ready: agentHostReady });
+    });
+
+    let port: number | null = null;
+    if (USE_NEXT_SERVER) {
+      port = await choosePort({ startPort: DEFAULT_PORT, reservePort });
+      logStartupTiming("port selected", { port });
+      activePort = port;
+      logInfo(`Using port ${port}`);
+    }
+
+    serverState = "starting";
     createWindow();
     logStartupTiming("window created");
     createTray(mainWindow!, { onNewWindow: () => { openNewWindow(); } });
     startupUiReady = true;
 
-    // The agent host and the Next.js server are independent once the endpoint
-    // token exists (minted synchronously), so spawn both at once. Waiting for
-    // host readiness first added up to 10s of dead time on the startup path.
-    agentHostEndpoint ??= createAgentHostEndpoint();
-    agentHostToken ??= randomBytes(32).toString("hex");
-    const agentHostStart = startAgentHost();
-    nextProcess = startNextServer(port);
-    logStartupTiming("next process spawned");
-    logInfo("Waiting for Next.js server...");
+    if (USE_NEXT_SERVER) {
+      // ---- 回退路径（PIFORGE_USE_NEXT=1）：保留 0.9.0 的 Next standalone ----
+      nextProcess = startNextServer(port!);
+      logStartupTiming("next process spawned");
+      logInfo("Waiting for Next.js server...");
+      await waitForNextServerReady(port!, nextProcess, { requireHttpHealth: app.isPackaged });
+      logStartupTiming("next server ready");
+      logInfo("Next.js server is ready");
+      await showApp(port!);
+    } else {
+      // ---- 默认路径（P1-4）：静态直出 + 命名管道，零内部端口 ----
+      installStaticProtocol();
+      await showStaticApp();
+    }
 
-    const nextReady = waitForNextServerReady(port, nextProcess, { requireHttpHealth: app.isPackaged });
-    await agentHostStart;
-    logStartupTiming("agent host startup finished", { ready: agentHostReady });
-    await nextReady;
-    logStartupTiming("next server ready");
-    logInfo("Next.js server is ready");
-    await showApp(port);
+    // ---- 静态直出 UI 冒烟（P1-4 验收）------------------------------------
+    // 打包版 + dev 都能跑：等 Host 就绪后，在渲染进程里断言 Workbench 挂载了、
+    // 且 `/api/**` 能经 protocol → 命名管道拿到 Host 的真实响应。
+    // 诊断开关：把渲染进程里的动画/过渡全停掉，用来判定空闲 CPU 是否来自 CSS 合成。
+    if (process.env.PIFORGE_SMOKE_FREEZE_CSS === "1" && mainWindow && !mainWindow.isDestroyed()) {
+      try {
+        await mainWindow.webContents.insertCSS(
+          "*, *::before, *::after { animation: none !important; transition: none !important; }",
+        );
+        logInfo("Froze renderer CSS animations (diagnostic)");
+      } catch (error) {
+        logError("Failed to freeze renderer CSS", error);
+      }
+    }
+
+    if (process.env.PIFORGE_DEBUG_RENDERER === "1" && mainWindow && !mainWindow.isDestroyed()) {
+      void mainWindow.webContents.executeJavaScript("window.__piforgePerf = true;", true).catch(() => {});
+    }
+
+    if (process.env.PIFORGE_SMOKE_UI === "1" && mainWindow && !mainWindow.isDestroyed()) {
+      const smokeWindow = mainWindow;
+      for (const waitUntil = Date.now() + 30_000; Date.now() < waitUntil && !agentHostReady; ) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      try {
+        const result = await smokeWindow.webContents.executeJavaScript(
+          `(async () => {
+             const health = await fetch("/api/health", { cache: "no-store" }).then((r) => r.json()).catch((e) => ({ error: String(e) }));
+             const sessions = await fetch("/api/sessions", { cache: "no-store" }).then((r) => r.ok).catch(() => false);
+             return {
+               url: location.href,
+               title: document.title,
+               bodyLength: document.body.innerText.length,
+               hasComposer: Boolean(document.querySelector("textarea")),
+               health,
+               sessionsOk: sessions,
+             };
+           })()`,
+          true,
+        );
+        logInfo("Static UI smoke", result);
+      } catch (error) {
+        logError("Static UI smoke failed", error);
+      }
+      if (process.env.PIFORGE_SMOKE_EXIT === "1") {
+        setTimeout(() => app.quit(), 100);
+      }
+    }
 
     if (process.env.SMOKE_FLEET === "1" && mainWindow) {
       const { runFleetSmoke } = await import("./fleet-smoke");

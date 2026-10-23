@@ -1,8 +1,8 @@
 import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
-import { createPiRuntime } from "@/lib/pi-runtime";
-import { readDesktopSettings } from "@/lib/desktop-settings";
-import { pickAutoTargets } from "@/lib/model-routing";
+import { createPiRuntime } from "../../../lib/pi-runtime.ts";
+import { readDesktopSettings } from "../../../lib/desktop-settings.ts";
+import { pickAutoTargets } from "../../../lib/model-routing.ts";
 
 export const dynamic = "force-dynamic";
 

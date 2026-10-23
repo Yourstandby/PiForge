@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { NextResponse } from "next/server.js";
+import { NextResponse } from "../../../../../lib/next-server-shim.ts";
 import { existsSync, readdirSync, rmSync } from "fs";
 import { join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";

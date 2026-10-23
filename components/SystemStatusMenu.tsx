@@ -19,6 +19,8 @@ import { UpstreamVersionBadge } from "./UpstreamVersionBadge";
 
 const DOT_COLOR: Record<HostEngineState, string> = {
   ready: "#22C55E",
+  // 启动中 = 冰蓝呼吸（不是错误色），避免用户把冷启动当成故障去点重启。
+  starting: "#3B82F6",
   reconnecting: "#F59E0B",
   offline: "#EF4444",
   unknown: "#C7CBD3",
@@ -26,6 +28,7 @@ const DOT_COLOR: Record<HostEngineState, string> = {
 
 const STATE_LABEL: Record<HostEngineState, string> = {
   ready: "引擎正常",
+  starting: "引擎启动中",
   reconnecting: "引擎重连中",
   offline: "引擎离线",
   unknown: "引擎状态未知",

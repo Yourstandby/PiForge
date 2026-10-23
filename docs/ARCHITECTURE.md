@@ -31,6 +31,11 @@
 - **Next ↔ Host**：Next 作为 Host 的 RPC 客户端，不直连 SDK；流式事件带单调 `seq`，断线重连从 `lastDeliveredSeq+1` 重放（经命名管道，非 HTTP SSE）。
 - **文件授权**：Next 的 `/api/files`、`file-index`、`git`、`statusline`、`processes` 必须先调 Host `files.authorize`；Next 不维护 allowed-roots。
 - **Extension UI Bridge**：Extension 的 `confirm`/`select`/`input`/`editor`/`notify` 由 Host 分配 UUID + Deferred Promise，Renderer 通过 preload bridge 回传结果。禁止在 Next 侧维护 pending 队列，禁止为此新增 HTTP 路由。
+- **零内部端口的实现方式（v0.9.x P1-4 起）**：打包版**不再启动 Next standalone 服务**。
+  - 页面由 Main 的 `piforge://app` 自定义协议直出（`next build` 的静态导出 `out/` → `resources/static`）；
+  - `/api/**` 由 `protocol.handle` 接住 → `electron/api-bridge.ts`（命名管道 RPC `api.request`）→ Host 内 `agent-host/api-router.ts` 分派到 `app/api/**/route.ts`（路由文件保持 Web 标准 `(Request) => Response`，只通过 `lib/next-server-shim.ts` 提供 `NextResponse.json` / `NextRequest`）；
+  - 流式响应（SSE）走 `api.request` 返回的 `streamId` + `api.stream.chunk` / `api.stream.end` 事件，不再有 HTTP SSE；
+  - `npm run dev` 仍可用 Next dev server 迭代（`PIFORGE_NEXT_STANDALONE=1` + `PIFORGE_USE_NEXT=1` 走回退路径）。
 
 ## 3. 目录职责
 

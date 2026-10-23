@@ -1,11 +1,11 @@
-import { validateProviderName } from "@/lib/auth-policy";
+import { validateProviderName } from "../../../../../lib/auth-policy.ts";
 import {
   createPiRuntime,
   isOAuthProvider,
   loginProvider,
   type AuthInteraction,
-} from "@/lib/pi-runtime";
-import { notifyAgentHostModelsChanged } from "@/lib/agent-host-client";
+} from "../../../../../lib/pi-runtime.ts";
+import { notifyAgentHostModelsChanged } from "../../../../../lib/agent-host-client.ts";
 import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
 
 export const dynamic = "force-dynamic";

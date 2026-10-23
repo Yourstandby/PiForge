@@ -1,8 +1,8 @@
-import { NextResponse } from "next/server";
-import type { HostSubscription } from "@contract/client";
-import type { Result } from "@contract/methods";
-import { getAgentHostClient } from "@/lib/agent-host-client";
-import { jsonAgentHostError } from "@/lib/agent-host-http";
+import { NextResponse } from "../../../../lib/next-server-shim.ts";
+import type { HostSubscription } from "../../../../contract/client.ts";
+import type { Result } from "../../../../contract/methods.ts";
+import { getAgentHostClient } from "../../../../lib/agent-host-client.ts";
+import { jsonAgentHostError } from "../../../../lib/agent-host-http.ts";
 
 export const dynamic = "force-dynamic";
 

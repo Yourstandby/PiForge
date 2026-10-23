@@ -6,6 +6,8 @@ const eslintConfig = [
     ignores: [
       ".claude/worktrees/**",
       ".next/**",
+      // P1-4：静态导出产物与它的构建目录（自动生成，不参与 lint）。
+      ".next-static/**",
       "electron/dist/**",
       "agent-host/dist/**",
       "release/**",

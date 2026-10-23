@@ -1,6 +1,6 @@
-import { NextResponse } from "next/server";
+import { NextResponse } from "../../../../lib/next-server-shim.ts";
 import { stat } from "fs/promises";
-import type { Result } from "@contract/methods";
+import type { Result } from "../../../../contract/methods.ts";
 import {
   resolveSessionPath,
   invalidateSessionIndex,
@@ -9,10 +9,10 @@ import {
   getSessionEntriesAsync,
   getLeafId,
   getSessionName,
-} from "@/lib/session-reader";
-import { getAgentHostClient } from "@/lib/agent-host-client";
-import { jsonAgentHostError } from "@/lib/agent-host-http";
-import { errorMessage, getRequestId, jsonError, logApiError } from "@/lib/api-error";
+} from "../../../../lib/session-reader.ts";
+import { getAgentHostClient } from "../../../../lib/agent-host-client.ts";
+import { jsonAgentHostError } from "../../../../lib/agent-host-http.ts";
+import { errorMessage, getRequestId, jsonError, logApiError } from "../../../../lib/api-error.ts";
 
 /**
  * Read a session's entries, tolerating a not-yet-flushed file for live

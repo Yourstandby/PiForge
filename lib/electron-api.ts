@@ -14,6 +14,18 @@ export interface BrowserState {
   visible: boolean;
 }
 
+/**
+ * Agent Host 就绪状态（Main 广播）。
+ *
+ * `booting` / `degraded` 都是"还在启动"，不是错误——冷启动时 UI 应该显示
+ * "引擎启动中" 而不是"引擎离线，请检查进程状态"。
+ */
+export interface HostStateSnapshot {
+  state: "off" | "booting" | "ready" | "degraded";
+  label: string;
+  blocking: boolean;
+}
+
 /** 自动更新阶段（Main 主导，Renderer 只读快照）。 */
 export type UpdatePhase =
   | "idle"
@@ -78,6 +90,14 @@ export interface ElectronApi {
   onBrowserState?: (callback: (state: BrowserState) => void) => () => void;
   onBrowserAgentOpen?: (callback: () => void) => () => void;
   setTheme?: (theme: "light" | "dark" | "glacier") => void;
+  /**
+   * 流式期间关掉窗口背景节流（打字机按帧走），流结束传 false 恢复。
+   * 浏览器 / 旧版 preload 下不存在，调用方必须可空。
+   */
+  setStreamingThrottle?: (enabled: boolean) => void;
+  /** Agent Host 就绪状态快照（仅 Electron）。 */
+  getHostState?: () => Promise<HostStateSnapshot | null>;
+  onHostState?: (callback: (snapshot: HostStateSnapshot) => void) => () => void;
   /** 自动更新桥（打包版才有）。 */
   updater?: UpdaterApi;
 }

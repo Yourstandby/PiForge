@@ -1,14 +1,14 @@
-import { NextResponse } from "next/server";
+import { NextResponse } from "../../../lib/next-server-shim.ts";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
   mergeDesktopSettings,
   readDesktopSettings,
   validateDesktopSettingsBody,
   writeDesktopSettings,
-} from "@/lib/desktop-settings";
-import { errorMessage, getRequestId, jsonError, logApiError } from "@/lib/api-error";
-import { getAgentHostClient } from "@/lib/agent-host-client";
-import { resolveOnDemandDomains } from "@/lib/domain-tools";
+} from "../../../lib/desktop-settings.ts";
+import { errorMessage, getRequestId, jsonError, logApiError } from "../../../lib/api-error.ts";
+import { getAgentHostClient } from "../../../lib/agent-host-client.ts";
+import { resolveOnDemandDomains } from "../../../lib/domain-tools.ts";
 
 export const dynamic = "force-dynamic";
 

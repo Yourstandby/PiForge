@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server.js";
+import { NextResponse } from "../../../lib/next-server-shim.ts";
 import { errorMessage, getRequestId, jsonError, logApiError } from "../../../lib/api-error.ts";
 import { getExtensionsConfig, mutateExtensionOrSkill, type MutateExtensionOptions } from "../../../lib/extensions-config.ts";
 

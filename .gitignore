@@ -15,6 +15,8 @@
 
 # next.js
 /.next/
+# P1-4：静态导出的构建目录（产物在 out/，这个只是 next build 的中间态）
+/.next-static/
 /out/
 
 # production

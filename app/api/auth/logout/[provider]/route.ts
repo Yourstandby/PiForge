@@ -1,5 +1,5 @@
-import { createPiRuntime, isOAuthProvider, logoutProvider } from "@/lib/pi-runtime";
-import { notifyAgentHostModelsChanged } from "@/lib/agent-host-client";
+import { createPiRuntime, isOAuthProvider, logoutProvider } from "../../../../../lib/pi-runtime.ts";
+import { notifyAgentHostModelsChanged } from "../../../../../lib/agent-host-client.ts";
 
 export const dynamic = "force-dynamic";
 

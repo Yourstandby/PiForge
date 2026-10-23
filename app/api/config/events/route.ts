@@ -1,5 +1,5 @@
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { getConfigVersion, onConfigChange, startAgentConfigWatcher } from "@/lib/config-watcher";
+import { getConfigVersion, onConfigChange, startAgentConfigWatcher } from "../../../../lib/config-watcher.ts";
 
 export const dynamic = "force-dynamic";
 

@@ -1,11 +1,11 @@
-import { NextResponse } from "next/server";
+import { NextResponse } from "../../../../lib/next-server-shim.ts";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { completeSimple, type AssistantMessage } from "@earendil-works/pi-ai/compat";
-import { createPiRuntime } from "@/lib/pi-runtime";
-import { isObject } from "@/lib/normalize";
-import { errorMessage, getRequestId, logApiError } from "@/lib/api-error";
+import { createPiRuntime } from "../../../../lib/pi-runtime.ts";
+import { isObject } from "../../../../lib/normalize.ts";
+import { errorMessage, getRequestId, logApiError } from "../../../../lib/api-error.ts";
 
 export const dynamic = "force-dynamic";
 
