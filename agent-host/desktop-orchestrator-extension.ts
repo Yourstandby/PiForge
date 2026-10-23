@@ -6,6 +6,7 @@
  * down the Host or another worker.
  */
 import { Type } from "typebox";
+import { registerDomainAction } from "./domain-tools.ts";
 import type {
   ExtensionAPI,
   ExtensionFactory,
@@ -46,7 +47,7 @@ function summary(task: { name: string; status: string; cwd: string; branchName: 
 
 export function createDesktopOrchestratorFactory(): ExtensionFactory {
   return (pi: ExtensionAPI) => {
-    pi.registerTool({
+    registerDomainAction(pi, "orchestrator", "spawn", {
       name: ORCHESTRATOR_SPAWN_TOOL,
       label: "Spawn Worktree Worker",
       description:
@@ -90,7 +91,7 @@ export function createDesktopOrchestratorFactory(): ExtensionFactory {
       },
     });
 
-    pi.registerTool({
+    registerDomainAction(pi, "orchestrator", "status", {
       name: ORCHESTRATOR_STATUS_TOOL,
       label: "Orchestrator Status",
       description: "List orchestration workers, their worktrees, status, changed files and reports. Use after spawning workers.",

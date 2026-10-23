@@ -50,8 +50,8 @@ test("plan mode appends the plan prompt and keeps only read tools", async () => 
 
 ${PLAN_MODE_SYSTEM_PROMPT}`,
   );
-  // memory_recall is appended by withMemoryTools for plan mode.
-  assert.deepEqual(activeTools[0].slice().sort(), ["find", "grep", "ls", "memory_recall", "read", "tool_history_get"]);
+  // 只读工具 + memory 多态工具（plan 模式只放行 recall 动作）。
+  assert.deepEqual(activeTools[0].slice().sort(), ["find", "grep", "ls", "memory", "read", "tool_history_get"]);
 });
 
 test("plan mode appends after an existing append prompt", async () => {
@@ -89,15 +89,21 @@ function setupPrefix(options: {
 } = {}) {
   const handlers = new Map<string, Handler>();
   const activeTools: string[][] = [];
+  /** 模拟 SDK：tool_search 激活后 `getActiveTools()` 会包含它。 */
+  const activeState: string[] = (options.active ?? []).slice();
   const registered = options.registered ?? [];
   const pi = {
     on: (name: string, handler: Handler) => {
       handlers.set(name, handler);
       return () => handlers.delete(name);
     },
-    setActiveTools: (names: string[]) => activeTools.push(names),
+    setActiveTools: (names: string[]) => {
+      activeTools.push(names);
+      activeState.length = 0;
+      activeState.push(...names);
+    },
     getAllTools: () => registered,
-    getActiveTools: () => options.active ?? [],
+    getActiveTools: () => activeState,
     registerTool: () => {},
   } as unknown as ExtensionAPI;
   const modeRef = {
@@ -106,7 +112,15 @@ function setupPrefix(options: {
     ...(options.cwd ? { getCwd: () => options.cwd } : {}),
   };
   createDesktopApprovalFactory(modeRef)(pi);
-  return { handlers, activeTools, modeRef };
+  return {
+    handlers,
+    activeTools,
+    modeRef,
+    /** 模拟 tool_search：把名字加进 active 集合（不触发取消声明）。 */
+    activate: (name: string) => {
+      if (!activeState.includes(name)) activeState.push(name);
+    },
+  };
 }
 
 function prefixEvent() {
@@ -139,6 +153,12 @@ async function withEnv<T>(name: string, value: string | undefined, run: () => Pr
 
 test("prefix purity: identical state yields byte-identical tools and prompt", async () => {
   const registered: RegisteredTool[] = [
+    { name: "browser", description: "Browser actions" },
+    { name: "shell", description: "Shell actions" },
+    { name: "fleet", description: "Fleet actions" },
+    { name: "orchestrator", description: "Orchestrator actions" },
+    { name: "memory", description: "Memory actions" },
+    // 旧名字仍然在注册表里（deferred），但绝不能因为注册就重新被声明。
     { name: "browser_read", description: "Read the built-in browser page text" },
     { name: "run_bg", description: "Run a command in the background" },
     { name: "spawn_agent", description: "Delegate to a sub-agent" },
@@ -159,22 +179,25 @@ test("prefix purity: identical state yields byte-identical tools and prompt", as
     second.systemPromptOptions,
     "同一状态两次请求的提示词输入必须完全相等",
   );
-  // 扩展工具超过阈值 → 只声明核心工具 + 常驻工具，其余进存根目录。
+  // 常驻域（browser/shell/fleet）+ 通道工具；按需域（memory/orchestrator）默认不声明。
   assert.deepEqual(activeTools[0], [
     "bash",
+    "browser",
     "edit",
-    "herdr_spawn",
+    "fleet",
     "read",
-    "spawn_agent",
+    "shell",
+    "tool_history_get",
     "tool_search",
     "write",
   ]);
-  // 回归护栏：spawn_agent 一旦被存根掉，模型就再也派不出子 Agent（Agents 面板永远空）。
-  assert.ok(activeTools[0].includes("spawn_agent"), "spawn_agent 必须常驻声明");
-  assert.ok(activeTools[0].includes("herdr_spawn"), "herdr_spawn 必须常驻声明");
+  assert.ok(!activeTools[0].includes("memory"), "memory 是 tool_search 激活的按需域");
+  assert.ok(!activeTools[0].includes("orchestrator"), "orchestrator 是 tool_search 激活的按需域");
+  for (const legacy of ["browser_read", "run_bg", "spawn_agent", "herdr_spawn"]) {
+    assert.ok(!activeTools[0].includes(legacy), `${legacy} 已收进多态工具，不得单独声明`);
+  }
   const addendum = (first.systemPromptOptions as { appendSystemPrompt?: string }).appendSystemPrompt ?? "";
-  assert.match(addendum, /\[未加载的工具\]/);
-  assert.match(addendum, /browser_read: Read the built-in browser page text/);
+  assert.doesNotMatch(addendum, /browser_read: Read the built-in browser page text/);
   assert.equal(
     addendum,
     (second.systemPromptOptions as { appendSystemPrompt?: string }).appendSystemPrompt,
@@ -339,4 +362,29 @@ test("plan mode also reports the prefix diff only when it changes", async () => 
     assert.equal(lines.length, 1, "第二次前缀未变，不应重复打印");
     assert.match(lines[0], /首次建立前缀/);
   });
+});
+
+test("activated on-demand domains (memory/orchestrator) join the declaration and stay latched", async () => {
+  const registered: RegisteredTool[] = [
+    { name: "browser", description: "Browser actions" },
+    { name: "shell", description: "Shell actions" },
+    { name: "fleet", description: "Fleet actions" },
+    { name: "memory", description: "Memory actions" },
+    { name: "orchestrator", description: "Orchestrator actions" },
+    { name: "tool_search", description: "Search deferred tools" },
+  ];
+  const { handlers, activeTools, activate } = setupPrefix({ registered, cwd: "/repo" });
+
+  await handlers.get("before_agent_start")?.(prefixEvent());
+  assert.ok(!activeTools[0].includes("memory"), "默认不声明按需域");
+
+  // tool_search 激活 memory 之后（SDK 调 setActiveTools 把它写进 active），下一轮必须声明它。
+  activate("memory");
+  await handlers.get("before_agent_start")?.(prefixEvent());
+  assert.ok(activeTools[1].includes("memory"), "激活后必须进入声明集合");
+
+  // 之后保持声明（前缀只变这一次）。
+  await handlers.get("before_agent_start")?.(prefixEvent());
+  assert.ok(activeTools[2].includes("memory"));
+  assert.deepEqual(activeTools[1], activeTools[2], "激活后前缀字节稳定");
 });

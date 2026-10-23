@@ -144,9 +144,11 @@ export function selectDeclaredTools(input: {
   const canStub = pinnedTools.length > 0 && shouldUseToolStubs(extensionTools.length);
 
   if (!canStub) {
-    // 工具不多（或没有激活通道）：全量声明，行为与以前一致。
+    // 工具不多（或没有激活通道）：全量声明。
+    // pinnedTools 必须一起算进来 —— 早期版本这里只拼 core+extension，
+    // 于是「扩展工具很少」的会话里常驻工具（tool_search / 多态工具）会凭空消失。
     return {
-      declared: [...new Set([...coreTools, ...extensionTools])].filter(Boolean),
+      declared: [...new Set([...coreTools, ...extensionTools, ...pinnedTools])].filter(Boolean),
       stubbed: [],
       stubsActive: false,
     };

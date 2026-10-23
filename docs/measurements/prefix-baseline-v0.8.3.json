@@ -1,0 +1,206 @@
+{
+  "PiForge": {
+    "generatedAt": "2026-10-23T01:59:41.320Z",
+    "label": "PiForge",
+    "turns": [
+      {
+        "turn": 1,
+        "messages": 2,
+        "roles": [
+          "system",
+          "user"
+        ],
+        "systemChars": 10110,
+        "systemTokens": 3772,
+        "toolsCount": 10,
+        "toolsTokens": 2567,
+        "coreToolsTokens": 710,
+        "extensionToolsTokens": 1857,
+        "prefixTokens": 6339,
+        "bodyTokens": 6489,
+        "cacheBreakpoints": {
+          "system": false,
+          "tools": false,
+          "messages": 0,
+          "total": 0
+        },
+        "prefixHash": "d01746c22270"
+      },
+      {
+        "turn": 2,
+        "messages": 4,
+        "roles": [
+          "system",
+          "user",
+          "assistant",
+          "user"
+        ],
+        "systemChars": 10110,
+        "systemTokens": 3772,
+        "toolsCount": 10,
+        "toolsTokens": 2567,
+        "coreToolsTokens": 710,
+        "extensionToolsTokens": 1857,
+        "prefixTokens": 6339,
+        "bodyTokens": 6517,
+        "cacheBreakpoints": {
+          "system": false,
+          "tools": false,
+          "messages": 0,
+          "total": 0
+        },
+        "prefixHash": "d01746c22270"
+      }
+    ],
+    "tools": [
+      {
+        "name": "fleet",
+        "chars": 2668,
+        "tokens": 667,
+        "core": false
+      },
+      {
+        "name": "shell",
+        "chars": 2267,
+        "tokens": 567,
+        "core": false
+      },
+      {
+        "name": "edit",
+        "chars": 1179,
+        "tokens": 295,
+        "core": true
+      },
+      {
+        "name": "browser",
+        "chars": 897,
+        "tokens": 224,
+        "core": false
+      },
+      {
+        "name": "read",
+        "chars": 684,
+        "tokens": 171,
+        "core": true
+      },
+      {
+        "name": "tool_search",
+        "chars": 646,
+        "tokens": 162,
+        "core": false
+      },
+      {
+        "name": "tool_history_get",
+        "chars": 641,
+        "tokens": 160,
+        "core": false
+      },
+      {
+        "name": "bash",
+        "chars": 543,
+        "tokens": 136,
+        "core": true
+      },
+      {
+        "name": "write",
+        "chars": 430,
+        "tokens": 108,
+        "core": true
+      },
+      {
+        "name": "desktop_use_tool",
+        "chars": 308,
+        "tokens": 77,
+        "core": false
+      }
+    ],
+    "systemText": "<omitted: npm run measure:prefix -- --dump tmp/prefix-dump>",
+    "prefixChangedBetweenTurns": false,
+    "invalidatedOnPrefixChange": 0,
+    "estimator": "cjk=1 token/char, other=4 chars/token (identical to lib/live-usage.ts)"
+  },
+  "pi CLI": {
+    "generatedAt": "2026-10-23T01:59:44.742Z",
+    "label": "pi CLI",
+    "turns": [
+      {
+        "turn": 1,
+        "messages": 2,
+        "roles": [
+          "system",
+          "user"
+        ],
+        "systemChars": 8354,
+        "systemTokens": 3117,
+        "toolsCount": 4,
+        "toolsTokens": 710,
+        "coreToolsTokens": 710,
+        "extensionToolsTokens": 0,
+        "prefixTokens": 3827,
+        "bodyTokens": 3969,
+        "cacheBreakpoints": {
+          "system": false,
+          "tools": false,
+          "messages": 0,
+          "total": 0
+        },
+        "prefixHash": "03f17f22f47a"
+      },
+      {
+        "turn": 2,
+        "messages": 4,
+        "roles": [
+          "system",
+          "user",
+          "assistant",
+          "user"
+        ],
+        "systemChars": 8354,
+        "systemTokens": 3117,
+        "toolsCount": 4,
+        "toolsTokens": 710,
+        "coreToolsTokens": 710,
+        "extensionToolsTokens": 0,
+        "prefixTokens": 3827,
+        "bodyTokens": 3997,
+        "cacheBreakpoints": {
+          "system": false,
+          "tools": false,
+          "messages": 0,
+          "total": 0
+        },
+        "prefixHash": "03f17f22f47a"
+      }
+    ],
+    "tools": [
+      {
+        "name": "edit",
+        "chars": 1179,
+        "tokens": 295,
+        "core": true
+      },
+      {
+        "name": "read",
+        "chars": 684,
+        "tokens": 171,
+        "core": true
+      },
+      {
+        "name": "bash",
+        "chars": 543,
+        "tokens": 136,
+        "core": true
+      },
+      {
+        "name": "write",
+        "chars": 430,
+        "tokens": 108,
+        "core": true
+      }
+    ],
+    "systemText": "<omitted: npm run measure:prefix -- --dump tmp/prefix-dump>",
+    "prefixChangedBetweenTurns": false,
+    "invalidatedOnPrefixChange": 0,
+    "estimator": "cjk=1 token/char, other=4 chars/token (identical to lib/live-usage.ts)"
+  }
+}

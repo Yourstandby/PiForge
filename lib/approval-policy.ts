@@ -6,7 +6,15 @@
 export type AgentMode = "plan" | "ask" | "full";
 export type ToolPreset = "none" | "default" | "full";
 
-export const PLAN_TOOLS: readonly string[] = ["read", "grep", "find", "ls", "tool_history_get"];
+export const PLAN_TOOLS: readonly string[] = [
+  "read",
+  "grep",
+  "find",
+  "ls",
+  "tool_history_get",
+  /** 多态工具：plan 模式只放行只读动作（memory.recall / shell.read / shell.wait / browser.read）。 */
+  "memory",
+];
 export const ASK_CONFIRM_TOOLS: readonly string[] = [
   "bash",
   "powershell",

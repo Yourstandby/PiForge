@@ -3,6 +3,7 @@
  * Not gated by Ask-mode confirm (not bash/write/edit).
  */
 import { Type } from "typebox";
+import { registerDomainAction } from "./domain-tools.ts";
 import type {
   ExtensionAPI,
   ExtensionFactory,
@@ -10,7 +11,6 @@ import type {
 } from "./sdk-adapter.ts";
 import { isLtmDisabledError, isMemoryType, LTM_DISABLED } from "./ltm/http.ts";
 import { getMemoryService } from "./ltm/service.ts";
-import type { AgentMode } from "../lib/approval-policy.ts";
 
 export const MEMORY_TOOL_NAMES = [
   "memory_save",
@@ -28,21 +28,6 @@ export type DesktopLtmExtensionOptions = {
   /** Optional agentDir override for getMemoryService (tests). */
   agentDir?: string;
 };
-
-/** Append memory_* tools when any coding tools are active; empty stay empty (noTools: all).
- * Plan mode is read-only: keep only memory_recall, dropping the write/delete
- * channels (memory_save / memory_forget) that would let a plan loop mutate
- * durable project memory. */
-export function withMemoryTools(tools: string[], mode?: AgentMode): string[] {
-  if (tools.length === 0) return tools;
-  const next = [...tools];
-  const memoryTools =
-    mode === "plan" ? (["memory_recall"] as const) : MEMORY_TOOL_NAMES;
-  for (const name of memoryTools) {
-    if (!next.includes(name)) next.push(name);
-  }
-  return next;
-}
 
 function textResult(text: string, details: unknown = {}) {
   return {
@@ -91,7 +76,7 @@ export function createDesktopLtmFactory(
   const { getCwd, agentDir } = options;
 
   return (pi: ExtensionAPI) => {
-    pi.registerTool({
+    registerDomainAction(pi, "memory", "save", {
       name: "memory_save",
       label: "Memory Save",
       description:
@@ -128,7 +113,7 @@ export function createDesktopLtmFactory(
       },
     });
 
-    pi.registerTool({
+    registerDomainAction(pi, "memory", "recall", {
       name: "memory_recall",
       label: "Memory Recall",
       description:
@@ -169,7 +154,7 @@ export function createDesktopLtmFactory(
       },
     });
 
-    pi.registerTool({
+    registerDomainAction(pi, "memory", "forget", {
       name: "memory_forget",
       label: "Memory Forget",
       description: "Delete project memories by id.",

@@ -215,11 +215,13 @@ npm run dev:electron   # 桌面窗口（同时编译 Host 与 Electron 主进程
 
 Prompt 缓存按**字节级前缀**命中：system prompt 或 `tools` 数组抖一下，后面整段历史就按未命中重新计费。所以：
 
-1. **工具定序 + 装载锁定** —— 工具名强制 ASCII 字典序，同一状态原样复用上一份数组；默认只声明核心工具（`bash`/`edit`/`powershell`/`read`/`write`）。
-2. **动态工具存根** —— 扩展工具 > 5 个时只发「名字 + 一句话」目录；模型用 `tool_search` 或 `desktop_use_tool` 点名后才注入完整 schema。`spawn_agent` / `herdr_spawn` 等派生原语常驻声明，永远可调。
-3. **工具输出预算** —— 命令/日志类 100 行 / 8KB，`read` 300 行 / 16KB，超出换成 `[输出过长已截断，共 X 行]` + grep/sed 续读提示；原文落盘，`tool_history_get` 可翻页；模型自己给的分页提示原样保留。
-4. **稳定提示词** —— 输出风格等策略文本集中在 `agent-host/prompts/`，只放静态常量，禁止任何动态插值。
-5. **历史滑动窗口** —— 最近 6 轮原样保留，切点只在用户消息上；窗口外攒够 3 轮或上下文占用 ≥ 60% 就压，被压区间须 ≥ 3k tokens（压了不省就别压）。
+1. **工具定序 + 装载锁定** —— 工具名强制 ASCII 字典序，同一状态原样复用上一份数组；默认只声明核心工具（`bash`/`edit`/`read`/`write`）+ 5 个多态工具。
+2. **多态工具（v0.8.3）** —— 20 个扩展工具按域收成 5 个：`browser` / `shell` / `fleet` / `orchestrator` / `memory`，用 `action` 分派。旧工具仍以 `deferred` 注册（`ctx.executeTool` 可调、UI 与审批沿用旧名字），只是不再各带一份 schema。实测扩展工具 3 035 → 2 585 tok，声明工具数 23 → 12。
+3. **动态工具存根** —— 扩展工具 > 5 个时只发「名字 + 一句话」目录；模型用 `tool_search` 或 `desktop_use_tool` 点名后才注入完整 schema。5 个多态工具与通道工具常驻声明，永远可调。
+4. **前缀度量基线** —— `npm run measure:prefix` 用本地记录型 provider 把真实请求体拆成 system/tools/历史三段算账，并与 pi CLI（仅 4 个核心工具）对比；`npm run smoke:prefix-budget` 是回归护栏。详见 `docs/measurements/README.md`。
+5. **工具输出预算** —— 命令/日志类 100 行 / 8KB，`read` 300 行 / 16KB，超出换成 `[输出过长已截断，共 X 行]` + grep/sed 续读提示；原文落盘，`tool_history_get` 可翻页；模型自己给的分页提示原样保留。
+6. **稳定提示词** —— 输出风格等策略文本集中在 `agent-host/prompts/`，只放静态常量，禁止任何动态插值。
+7. **历史滑动窗口** —— 最近 6 轮原样保留，切点只在用户消息上；窗口外攒够 3 轮或上下文占用 ≥ 60% 就压，被压区间须 ≥ 3k tokens（压了不省就别压）。
 
 实测（真实函数，chars/3.2 估 token）：
 

@@ -11,6 +11,7 @@
  * not a sandbox.
  */
 import { Type } from "typebox";
+import { registerDomainAction } from "./domain-tools.ts";
 import type {
   ExtensionAPI,
   ExtensionFactory,
@@ -150,7 +151,7 @@ export function createDesktopProcessFactory(
 ): ExtensionFactory {
   const { getCwd } = options;
   return (pi: ExtensionAPI) => {
-    pi.registerTool({
+    registerDomainAction(pi, "shell", "run", {
       name: RUN_BG_TOOL_NAME,
       label: "Run Background",
       description:
@@ -210,7 +211,7 @@ export function createDesktopProcessFactory(
       },
     });
 
-    pi.registerTool({
+    registerDomainAction(pi, "shell", "read", {
       name: PROCESS_READ_TOOL_NAME,
       label: "Process Read",
       description:
@@ -254,7 +255,7 @@ export function createDesktopProcessFactory(
       },
     });
 
-    pi.registerTool({
+    registerDomainAction(pi, "shell", "wait", {
       name: PROCESS_WAIT_TOOL_NAME,
       label: "Process Wait",
       description:

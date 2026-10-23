@@ -30,7 +30,7 @@ test("appends bash/powershell guidance bullets once", () => {
   handler({ systemPromptOptions: options });
   const first = options.promptGuidelines ?? [];
   assert.equal(first.length, 4);
-  assert.ok(first.some((line) => line.includes("prefer the `powershell` tool")));
+  assert.ok(first.some((line) => line.includes("prefer the `shell` tool with action=exec")));
   assert.ok(first.some((line) => line.includes("Batch independent commands")));
 
   handler({ systemPromptOptions: options });

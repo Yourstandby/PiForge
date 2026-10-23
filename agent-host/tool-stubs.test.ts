@@ -114,5 +114,6 @@ test("small extension sets keep the old full declaration", () => {
     pinnedTools: ["tool_search", TOOL_USE_TOOL_NAME],
   });
   assert.equal(selection.stubsActive, false);
-  assert.deepEqual(selection.declared, ["bash", "read", "mcp__a", "mcp__b"]);
+  // 常驻工具必须一起声明：以前这里漏拼 pinnedTools，多态工具会凭空消失。
+  assert.deepEqual(selection.declared, ["bash", "read", "mcp__a", "mcp__b", "tool_search", TOOL_USE_TOOL_NAME]);
 });

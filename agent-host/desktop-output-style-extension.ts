@@ -8,21 +8,27 @@
 import type { ExtensionAPI, ExtensionFactory, InlineExtension } from "./sdk-adapter.ts";
 import { OUTPUT_STYLE_GUIDELINES } from "./prompts/output-style.ts";
 
-export function createDesktopOutputStyleFactory(): ExtensionFactory {
+export function createDesktopOutputStyleFactory(
+  options?: { enabled?: () => boolean }
+): ExtensionFactory {
   return (pi: ExtensionAPI) => {
     pi.on("before_agent_start", (event) => {
-      const options = event.systemPromptOptions;
-      const existing = options.promptGuidelines ?? [];
+      // 设置项控制（默认开）：用户关掉后这段不进步 system prompt，工具与上下文不变。
+      if (options?.enabled && !options.enabled()) return;
+      const options_ = event.systemPromptOptions;
+      const existing = options_.promptGuidelines ?? [];
       const missing = OUTPUT_STYLE_GUIDELINES.filter((line) => !existing.includes(line));
       if (missing.length === 0) return;
-      options.promptGuidelines = [...existing, ...missing];
+      options_.promptGuidelines = [...existing, ...missing];
     });
   };
 }
 
-export function desktopOutputStyleInlineExtension(): InlineExtension {
+export function desktopOutputStyleInlineExtension(options?: {
+  enabled?: () => boolean;
+}): InlineExtension {
   return {
     name: "desktop-output-style",
-    factory: createDesktopOutputStyleFactory(),
+    factory: createDesktopOutputStyleFactory(options),
   };
 }

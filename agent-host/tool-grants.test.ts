@@ -33,9 +33,9 @@ test("默认继承父 Agent 的 activeTools，并强制保留核心工具", () =
   for (const tool of CHILD_CORE_TOOLS) assert.ok(grants.tools.includes(tool), `missing ${tool}`);
   // 父 Agent 没开的工具不会凭空多出来（提权只按需，不擅自扩权）
   assert.ok(!grants.tools.includes("grep"));
-  // 递归工具永不下放
-  assert.ok(!grants.tools.includes("spawn_agent"));
-  assert.deepEqual(grants.denied, ["spawn_agent"]);
+  // 递归工具永不下放（spawn_agent 折叠成 fleet 多态工具后被拒绝）
+  assert.ok(!grants.tools.includes("fleet"));
+  assert.deepEqual(grants.denied, ["fleet"]);
 });
 
 test("显式 tools 按需放开，且与继承结果取并集（不会削减）", () => {
@@ -44,7 +44,8 @@ test("显式 tools 按需放开，且与继承结果取并集（不会削减）"
     requested: ["bash", "powershell"],
     available: [...FULL_REGISTRY, "powershell"],
   });
-  assert.ok(grants.tools.includes("powershell"));
+  // 旧名字（powershell）折叠成 shell 多态工具，不再作为独立工具下放。
+  assert.ok(grants.tools.includes("shell"));
   assert.ok(grants.tools.includes("bash"));
   assert.ok(grants.tools.includes("read"));
   assert.ok(grants.tools.includes("write"));

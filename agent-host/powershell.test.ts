@@ -37,16 +37,20 @@ test("PowerShell resolution prefers pwsh 7 and falls back to 5.1", () => {
   assert.equal(pickPowerShell({}, () => false), null);
 });
 
-test("PowerShell is declared only on Windows", () => {
+test("PowerShell is folded into the shell facade, never declared on its own", () => {
   const registered = [{ name: "powershell", description: "" }];
+  const shellRegistered = [...registered, { name: "shell", description: "" }];
+  // 旧名字不再直接声明（已收进 shell 的 exec 动作）。
   assert.ok(
-    desktopRuntimeTools("full", "default", false, registered, [], undefined, "win32").includes("powershell"),
+    !desktopRuntimeTools("full", "default", false, shellRegistered, [], undefined, "win32").includes("powershell"),
   );
+  // 声明的是 shell 多态工具。
   assert.ok(
-    !desktopRuntimeTools("full", "default", false, registered, [], undefined, "linux").includes("powershell"),
+    desktopRuntimeTools("full", "default", false, shellRegistered, [], undefined, "win32").includes("shell"),
   );
+  // plan 模式只读：shell 只在只读动作白名单里出现（由 policy 逐动作判定）。
   assert.ok(
-    !desktopRuntimeTools("plan", "default", false, registered, [], undefined, "win32").includes("powershell"),
+    !desktopRuntimeTools("plan", "default", false, shellRegistered, [], undefined, "win32").includes("shell"),
   );
 });
 

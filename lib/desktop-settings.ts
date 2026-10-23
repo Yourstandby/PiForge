@@ -45,6 +45,13 @@ export interface DesktopSettings {
   browserReadEnabled?: boolean;
   /** Allow web_preview to open / navigate the built-in browser (default off). */
   browserInteractEnabled?: boolean;
+  /**
+   * 输出风格约束（反废话/禁止复述问题/只给 diff…）默认开。关掉只是不再把这
+   * 些 bullets 放进 system prompt —— 它是**用户可感知**的输出风格开关，不是省钱开关。
+   */
+  outputStyleGuidelines?: boolean;
+  /** 回复语言跟随用户语言（默认开）。 */
+  responseLanguageGuideline?: boolean;
   /** Optional LTM config; omitted when unset. Merged by getLtmConfig. */
   ltm?: DesktopLtmSettings;
 }
@@ -100,6 +107,12 @@ export function mergeDesktopSettings(raw: unknown): DesktopSettings {
   result.codemodeEnabled = typeof obj.codemodeEnabled === "boolean" ? obj.codemodeEnabled : false;
   result.browserReadEnabled = obj.browserReadEnabled === true;
   result.browserInteractEnabled = obj.browserInteractEnabled === true;
+  if (typeof obj.outputStyleGuidelines === "boolean") {
+    result.outputStyleGuidelines = obj.outputStyleGuidelines;
+  }
+  if (typeof obj.responseLanguageGuideline === "boolean") {
+    result.responseLanguageGuideline = obj.responseLanguageGuideline;
+  }
   const fast = parseAutoRoutingSelection(obj.autoRoutingFast);
   const strong = parseAutoRoutingSelection(obj.autoRoutingStrong);
   if (fast) result.autoRoutingFast = fast;
@@ -139,7 +152,12 @@ export function validateDesktopSettingsBody(body: unknown): string | null {
   if (obj.codemodeEnabled !== undefined && typeof obj.codemodeEnabled !== "boolean") {
     return "codemodeEnabled must be a boolean";
   }
-  for (const key of ["browserReadEnabled", "browserInteractEnabled"] as const) {
+  for (const key of [
+    "browserReadEnabled",
+    "browserInteractEnabled",
+    "outputStyleGuidelines",
+    "responseLanguageGuideline",
+  ] as const) {
     if (obj[key] !== undefined && typeof obj[key] !== "boolean") {
       return `${key} must be a boolean`;
     }

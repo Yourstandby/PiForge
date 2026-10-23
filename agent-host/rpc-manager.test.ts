@@ -2,6 +2,7 @@ import test, { mock } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { AgentSessionWrapper, getRpcSessionRegistry, startRpcSession } from "./rpc-manager.ts";
+import { PLAN_TOOLS } from "../lib/approval-policy.ts";
 
 type SubscribeFn = (cb: (event: unknown) => void) => () => void;
 
@@ -25,18 +26,14 @@ test("startRpcSession does not pass a hardcoded default tool allowlist", () => {
 
 test("startRpcSession registers desktopLtmInlineExtension", () => {
   assert.match(source, /desktopLtmInlineExtension\(\{\s*getCwd:\s*\(\)\s*=>\s*cwd\s*\}\)/);
-  assert.match(source, /withMemoryTools/);
 });
 
-test("startRpcSession passes agentMode to withMemoryTools so plan drops write tools (S2)", () => {
-  // Regression: the start/restore path previously called
-  // withMemoryTools(effectiveToolsForMode(...)) without mode, so a plan
-  // session restored from history re-enabled memory_save/memory_forget
-  // (LTM write/delete) with no Ask confirm.
-  assert.match(
-    source,
-    /withMemoryTools\(\s*effectiveToolsForMode\(agentMode, toolPreset\),\s*agentMode\s*\)/
-  );
+test("memory is an on-demand domain: the start path no longer force-declares it", () => {
+  // v0.8.3 第 3 步：memory 改成 tool_search 激活的按需域，声明集合由
+  // desktop-runtime-tools 统一决定；plan 模式的只读 recall 由 PLAN_TOOLS 承担。
+  assert.match(source, /const effectiveTools = effectiveToolsForMode\(agentMode, toolPreset\)/);
+  assert.doesNotMatch(source, /withMemoryTools\(/);
+  assert.ok(PLAN_TOOLS.includes("memory"), "plan mode keeps the read-only memory facade");
 });
 
 function makeStubInner(overrides: {
@@ -820,10 +817,10 @@ test("set_agent_mode plan forces read tools", async () => {
   w.initPolicy("ask", "default");
   const result = await w.send({ type: "set_agent_mode", mode: "plan" }) as { agentMode: string };
   assert.equal(result.agentMode, "plan");
-  // Plan is read-only: memory_recall stays, write/delete channels are dropped.
+  // Plan is read-only: the memory facade stays (recall only), writes are gated per action.
   assert.deepEqual(
     applied.at(-1)?.slice().sort(),
-    ["find", "grep", "ls", "memory_recall", "read", "tool_history_get"]
+    ["find", "grep", "ls", "memory", "read", "tool_history_get"]
   );
 });
 

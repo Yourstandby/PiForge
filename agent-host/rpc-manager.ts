@@ -24,16 +24,14 @@ import {
 } from "../lib/approval-policy.ts";
 import { ExtensionUiBridge } from "./extension-ui-bridge.ts";
 import { desktopApprovalInlineExtension, type AgentModeRef } from "./desktop-approval-extension.ts";
-import {
-  desktopLtmInlineExtension,
-  withMemoryTools,
-} from "./desktop-ltm-extension.ts";
+import { desktopLtmInlineExtension } from "./desktop-ltm-extension.ts";
 import { readDesktopSettings } from "../lib/desktop-settings.ts";
 import { desktopRuntimeTools } from "./desktop-runtime-tools.ts";
 import { canonicalToolOrder } from "./prompt-prefix.ts";
 import { desktopProcessInlineExtension } from "./desktop-process-extension.ts";
 import { desktopPowerShellInlineExtension } from "./desktop-powershell-extension.ts";
-import { desktopShellGuidanceInlineExtension } from "./desktop-shell-guidance-extension.ts";
+import { desktopDomainInlineExtension } from "./desktop-domain-extension.ts";
+import { DOMAIN_LEGACY_TOOLS } from "../lib/domain-tools.ts";
 import { desktopOutputStyleInlineExtension } from "./desktop-output-style-extension.ts";
 import { desktopBrowserInlineExtension } from "./desktop-browser-extension.ts";
 import { desktopTerminalInlineExtension } from "./desktop-terminal-extension.ts";
@@ -1073,10 +1071,8 @@ export async function startRpcSession(
       else if (key === [...toolNamesForPreset("full")].sort().join(",")) toolPreset = "full";
     }
 
-    const effectiveTools = withMemoryTools(
-      effectiveToolsForMode(agentMode, toolPreset),
-      agentMode
-    );
+    // memory 已改为按需域（tool_search 激活）；plan 模式的只读 recall 由 PLAN_TOOLS 显式带上。
+    const effectiveTools = effectiveToolsForMode(agentMode, toolPreset);
 
     const modeRef: AgentModeRef = {
       current: agentMode,
@@ -1084,6 +1080,11 @@ export async function startRpcSession(
       codemodeEnabled: desktop.codemodeEnabled ?? false,
       /** cwd 只用于用户消息的 <context> 块，不进 system prompt。 */
       getCwd: () => cwd,
+      /** 提示词附加项：设置项默认开，用户关掉只是少几段静态文本。 */
+      promptAddons: {
+        outputStyle: desktop.outputStyleGuidelines !== false,
+        responseLanguage: desktop.responseLanguageGuideline !== false,
+      },
     };
     /**
      * 历史压缩扩展必须在 resourceLoader 之前注册，但它要读的分支 / 模型
@@ -1112,8 +1113,9 @@ export async function startRpcSession(
         desktopLtmInlineExtension({ getCwd: () => cwd }),
         desktopProcessInlineExtension({ getCwd: () => cwd }),
         desktopPowerShellInlineExtension(() => cwd),
-        desktopShellGuidanceInlineExtension(),
-        desktopOutputStyleInlineExtension(),
+        desktopOutputStyleInlineExtension({
+          enabled: () => modeRef.promptAddons?.outputStyle !== false,
+        }),
         desktopBrowserInlineExtension(),
         desktopTerminalInlineExtension({ getCwd: () => cwd }),
         desktopImageInlineExtension(),
@@ -1123,6 +1125,8 @@ export async function startRpcSession(
         desktopHerdrInlineExtension(),
         desktopPluginInlineExtension(),
         desktopOrchestratorInlineExtension(),
+        /** 必须最后加载：它要读前面各扩展登记的动作。 */
+        desktopDomainInlineExtension(),
       ],
     });
     await resourceLoader.reload();

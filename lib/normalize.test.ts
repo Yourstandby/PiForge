@@ -137,3 +137,33 @@ test("block with no recognizable fields is passed through unchanged", () => {
   const out = normalizeToolCalls(msg) as AssistantMessage;
   assert.equal(out.content[0], block);
 });
+
+test("merged domain calls are expanded back to the legacy tool name for the UI", () => {
+  const shell = {
+    type: "toolCall",
+    toolCallId: "call-1",
+    toolName: "shell",
+    input: { action: "run", command: "npm run dev" },
+  } as unknown as AssistantContentBlock;
+  const browser = {
+    type: "toolCall",
+    toolCallId: "call-2",
+    toolName: "browser",
+    input: { action: "screenshot" },
+  } as unknown as AssistantContentBlock;
+  const unknown = {
+    type: "toolCall",
+    toolCallId: "call-3",
+    toolName: "shell",
+    input: { action: "nope" },
+  } as unknown as AssistantContentBlock;
+
+  const result = normalizeToolCalls(baseAssistant([shell, browser, unknown]));
+  const blocks = result.content as Array<{ toolName: string; input: Record<string, unknown> }>;
+  assert.equal(blocks[0].toolName, "run_bg");
+  assert.deepEqual(blocks[0].input, { command: "npm run dev" });
+  assert.equal(blocks[1].toolName, "browser_read");
+  assert.deepEqual(blocks[1].input, { action: "screenshot" });
+  // 未知 action 保持原样：执行层会报参数错误，UI 不该把它伪装成别的工具。
+  assert.equal(blocks[2].toolName, "shell");
+});
