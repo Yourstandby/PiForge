@@ -229,6 +229,10 @@ node scripts/measure-prefix.mjs --mode host --api anthropic-messages --turns 2 -
 
 真实会话缺凭据时只打一条 `::notice`，不会把 CI 变红；其余护栏不需要任何 secret。
 
+> **前缀阈值口径**：`--max-prefix 7 200` 以**清空 `HOME` 后的干净基线 6 240**（默认 `shell` 按需、11 工具）为准。
+> 本机装了 `~/.agents/skills` 时，该目录会以 `<skills>` 段进 system prompt（+1 598 字符 ≈ +400 tok，前缀 **6 640**），
+> 属于**预期环境差异，不是回归**；逼近 7 200 时先用 `HOME=<空目录>` 重跑一次，确认是环境差异还是真实回归。
+
 ### 可选实验：高上下文时「写 memory + 释放原文」（未合并）
 
 在实验分支（未提交）里加了 2 条 guideline，令模型在上下文占比高时先写 memory、
@@ -262,5 +266,6 @@ token，所以**不合并**，也不留任何默认开关。
 1. 前缀稳定化：多跑几个「带工具调用」的回合，`prefixHash` 不该变；
    一变就要看到 `!! 前缀在两轮之间变化` 与作废 token 数。
 2. 内容去重：`turn N body` 的增长速度应慢于历史条数增长速度。
-3. 回归护栏：`npm run smoke:prefix-budget` 在 CI/发布前跑；阈值 **6 500 tok**
-   （当前 6 988 + 3% 余量），并跑「稳定段命中率 ≥ 90%」与按需域的激活探针（两种配置）。
+3. 回归护栏：`npm run smoke:prefix-budget` 在 CI/发布前跑；阈值 **7 200 tok**
+   （干净基线 6 240 / A 组全常驻 6 988；带 `~/.agents/skills` 时 6 640 属预期环境差异），
+   并跑「稳定段命中率 ≥ 90%」与按需域的激活探针（两种配置）。
