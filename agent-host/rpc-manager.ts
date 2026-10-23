@@ -72,6 +72,13 @@ import {
 import { FollowUpQueue, type FollowUpQueueSnapshot, type QueuedFollowUp } from "./follow-up-queue.ts";
 import { attachSessionStream } from "./session-events.ts";
 import {
+  observeAgentEvent,
+  registerWatchSession,
+  forgetWatchSession,
+} from "./watchdog.ts";
+import type { InterventionDelivery } from "./intervention.ts";
+import { resolveDelivery } from "./intervention.ts";
+import {
   countUserMessages,
   firstUserTextFromBranch,
   generateSessionTitle,
@@ -278,6 +285,9 @@ export class AgentSessionWrapper {
     this.unsubscribe = this.inner.subscribe((event: AgentEvent) => {
       this.lastAgentEventAt = Date.now();
       this.resetIdleTimer();
+      // 无进展看门狗：纯观测（同步、O(1)、无 IO），既不改事件也不发消息。
+      // 它只在自己的内存状态里记时间戳，绝不触碰 prompt / 对话历史。
+      observeAgentEvent(this.sessionId, event);
       // Best-effort LTM observe when an agent loop settles.
       if (event.type === "agent_end") {
         try {
@@ -515,6 +525,65 @@ export class AgentSessionWrapper {
   keepAlive(): void {
     if (!this._alive) return;
     this.resetIdleTimer();
+  }
+
+  /**
+   * 人工介入：把一段指令注入正在跑的这一轮（steer）、排到队首（queue）
+   * 或直接开新一轮（prompt）。
+   *
+   * 三条都是**既有通路**：这里不新增任何模型调用入口，也不拼 system prompt。
+   * 指令内容由调用方（`agent.intervene`）用纯函数生成，本方法只负责投递。
+   */
+  async deliverIntervention(message: string): Promise<{ delivered: InterventionDelivery }> {
+    if (!this._alive) throw new Error("Session is not running");
+    let streaming = false;
+    try {
+      streaming = this.inner.isStreaming;
+    } catch {
+      streaming = false;
+    }
+    const queued = this.followUpQueue.snapshot().items.length;
+    const delivery = resolveDelivery({ streaming, queued });
+
+    if (delivery === "steer") {
+      try {
+        await this._binding.catch(() => undefined);
+        // steer = 最高优先级：直接进入当前循环的下一步，立刻唤醒卡住的 Agent。
+        await this.inner.steer(message);
+        return { delivered: "steer" };
+      } catch (error) {
+        // steer 失败（循环刚好结束等）→ 退成排队，绝不丢掉用户手动发的指令。
+        this.emitAgentError(error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    if (delivery === "queue" || delivery === "steer") {
+      // steer 失败后也走这里：插到队首，保持“最高优先级”语义。
+      const snapshot = this.followUpQueue.prepend({
+        id: randomUUID(),
+        message,
+        createdAt: Date.now(),
+      });
+      this.emitFollowUpQueue(snapshot);
+      if (!this.pendingAgentEnd) {
+        let stillStreaming = false;
+        try {
+          stillStreaming = this.inner.isStreaming;
+        } catch {
+          stillStreaming = false;
+        }
+        if (!stillStreaming) this.dispatchNextFollowUp(null);
+      }
+      return { delivered: "queue" };
+    }
+
+    await this._binding.catch(() => undefined);
+    if (this.resourcesChanged) await this.reloadResources();
+    // 新一轮 prompt：与正常发送完全同一条路径。
+    void this.inner
+      .prompt(message)
+      .catch((error) => this.emitAgentError(error instanceof Error ? error.message : String(error)));
+    return { delivered: "prompt" };
   }
 
   /**
@@ -1236,6 +1305,8 @@ export async function startRpcSession(
     });
     wrapper.attachUiBridge(bridge);
     attachSessionStream(wrapper);
+    // 看门狗登记必须在 start() 之前：session_start 阶段就可能已有事件到达。
+    registerWatchSession(inner.sessionId as string, cwd);
 
     wrapper.start();
 
@@ -1268,6 +1339,8 @@ export async function startRpcSession(
     );
 
     const realSessionId = inner.sessionId as string;
+
+    wrapper.onDestroy(() => forgetWatchSession(realSessionId));
 
     // Ownership guard on the registry delete: destroy() is async and only runs
     // onDestroy callbacks after awaiting abort/unsubscribe, so a NEWER wrapper

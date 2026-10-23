@@ -45,6 +45,16 @@ export class FollowUpQueue {
     return this.snapshot();
   }
 
+  /**
+   * 插到队首：人工介入指令要求「最高优先级」，不能排在用户排队消息后面。
+   * 与 `enqueue` 共用 revision 语义，前端重排校验仍然有效。
+   */
+  prepend(item: QueuedFollowUp): FollowUpQueueSnapshot {
+    this.items.unshift(item);
+    this.revision += 1;
+    return this.snapshot();
+  }
+
   reorder(orderedIds: string[], expectedRevision: number): FollowUpQueueSnapshot {
     if (expectedRevision !== this.revision) {
       throw new Error("Follow-up queue changed; refresh and try again");

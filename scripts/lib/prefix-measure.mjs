@@ -211,23 +211,18 @@ export async function startRecorder(options = {}) {
         "cache-control": "no-cache",
         connection: "keep-alive",
       });
+      const messages = Array.isArray(body?.messages) ? body.messages : [];
+      const toolResults = countToolResults(messages, anthropic);
+      const step = probeSteps[toolResults];
       if (anthropic) {
-        if (probeSteps.length > 0) {
-          res.writeHead(400, { "content-type": "application/json" });
-          res.end(
-            JSON.stringify({
-              type: "error",
-              error: { type: "invalid_request_error", message: "--probe requires --api openai-completions" },
-            })
-          );
+        if (step) {
+          probeSent += 1;
+          writeAnthropicToolUseStream(res, { model, index: requests.length, accounting, step });
           return;
         }
         writeAnthropicStream(res, { model, index: requests.length, accounting });
         return;
       }
-      const messages = Array.isArray(body?.messages) ? body.messages : [];
-      const toolResults = messages.filter((message) => message?.role === "tool").length;
-      const step = probeSteps[toolResults];
       if (step) {
         probeSent += 1;
         res.write(openAIChunk({ id, model, delta: { role: "assistant", content: "" } }));
@@ -284,6 +279,65 @@ function readTools(body) {
       core: CORE_TOOLS.has(name),
     };
   });
+}
+
+/** OpenAI 用 role:"tool"；Anthropic 用 user 消息里的 tool_result 块。 */
+function countToolResults(messages, anthropic) {
+  if (!anthropic) return messages.filter((message) => message?.role === "tool").length;
+  let count = 0;
+  for (const message of messages) {
+    const content = message?.content;
+    if (Array.isArray(content)) {
+      for (const block of content) if (block?.type === "tool_result") count += 1;
+    }
+  }
+  return count;
+}
+
+/** Anthropic 形状的 tool_use 流（让缓存断点验证也能走 probe）。 */
+function writeAnthropicToolUseStream(res, { model, index, accounting, step }) {
+  const created = accounting?.cacheCreationTokens ?? 1;
+  const cacheRead = accounting?.cacheReadTokens ?? 0;
+  const send = (event, data) => res.write(`event: ${event}
+data: ${JSON.stringify(data)}
+
+`);
+  send("message_start", {
+    type: "message_start",
+    message: {
+      id: `msg_measure_${index}`,
+      type: "message",
+      role: "assistant",
+      model,
+      content: [],
+      stop_reason: null,
+      stop_sequence: null,
+      usage: {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_input_tokens: cacheRead,
+        cache_creation_input_tokens: created,
+      },
+    },
+  });
+  send("content_block_start", {
+    type: "content_block_start",
+    index: 0,
+    content_block: { type: "tool_use", id: `toolu_probe_${index}`, name: step.tool, input: {} },
+  });
+  send("content_block_delta", {
+    type: "content_block_delta",
+    index: 0,
+    delta: { type: "input_json_delta", partial_json: JSON.stringify(step.args) },
+  });
+  send("content_block_stop", { type: "content_block_stop", index: 0 });
+  send("message_delta", {
+    type: "message_delta",
+    delta: { stop_reason: "tool_use", stop_sequence: null },
+    usage: { output_tokens: 1 },
+  });
+  send("message_stop", { type: "message_stop" });
+  res.end();
 }
 
 function hasCacheControl(value) {

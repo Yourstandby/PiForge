@@ -5,7 +5,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
-import { BrainCircuit, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, CornerDownLeft, GitBranch, GitFork, Loader2, Wrench, X } from "lucide-react";
+import { BrainCircuit, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, CornerDownLeft, GitBranch, GitFork, Loader2, TriangleAlert, Wrench, X } from "lucide-react";
 import type { AgentMessage, AssistantMessage, ToolResultMessage } from "@/lib/types";
 import { diffStats } from "@/lib/diff-lines";
 import { stripImageDimensionNotes } from "@/lib/image-dimension-note";
@@ -25,6 +25,8 @@ import {
   resolveHrefFileReference,
   type FileReference,
 } from "@/lib/file-links";
+import { useToolStall } from "@/hooks/useWatchdogStatus";
+import { useWatchdogSessionId } from "./watchdog/WatchdogProvider";
 
 type OpenFileHandler = (filePath: string, fileName: string, line?: number) => void;
 
@@ -1046,6 +1048,15 @@ function ToolCallCard({
     const timer = window.setInterval(() => setElapsedMs(Date.now() - startedAtRef.current), 200);
     return () => window.clearInterval(timer);
   }, [streaming]);
+  /**
+   * 看门狗只读视图：主界面**只**保留「整行微红 + 图标提示」——
+   * 详细诊断与介入动作全部收拢到右侧「系统监控」面板。
+   * 数据来自只读快照，不触发任何请求/模型调用；未配置 Provider 时恒为 null。
+   */
+  const watchdogSessionId = useWatchdogSessionId();
+  const stall = useToolStall(watchdogSessionId, Boolean(streaming));
+  /** 仍在执行且没有结果的行才是「被卡住的那一行」。 */
+  const stalledRow = stall?.level === "stalled" && (Boolean(streaming) || !result);
   const nested = result?.nestedCalls;
   const tree = nested?.calls.length ? buildNestedTree(nested.calls) : null;
   const output = result ? resultText(result).trim() : "";
@@ -1074,7 +1085,11 @@ function ToolCallCard({
   return (
     <div
       className={`overflow-hidden ${
-        streaming ? "tool-running rounded-md border border-accent/35 bg-white" : ""
+        stalledRow
+          ? "rounded-md border border-[#E9B8B4] bg-[#FDF2F2]"
+          : streaming
+            ? "tool-running rounded-md border border-accent/35 bg-white"
+            : ""
       }`}
     >
       <button
@@ -1122,13 +1137,25 @@ function ToolCallCard({
           <span className="shrink-0 text-[10px] text-ink-faint">{nested?.calls.length} 子调用</span>
         )}
         {streaming ? (
-          <span className="shrink-0 tabular-nums text-[10.5px] text-accent-strong">
+          <span
+            className={`shrink-0 tabular-nums text-[10.5px] ${
+              stalledRow ? "text-[#B0443C]" : "text-accent-strong"
+            }`}
+          >
             {formatDuration(elapsedMs) ?? "0 ms"}
           </span>
         ) : (
           duration && (
             <span className="shrink-0 tabular-nums text-[10.5px] text-ink-faint">{duration}</span>
           )
+        )}
+        {stalledRow && (
+          <TriangleAlert
+            size={12}
+            strokeWidth={2.4}
+            className="shrink-0 text-[#C2554E]"
+            aria-label="已标记无进展"
+          />
         )}
         {result ? (
           result.isError ? (

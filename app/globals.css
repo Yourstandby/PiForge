@@ -125,6 +125,24 @@ html:not([data-electron-platform]) .app-titlebar-inner {
   padding-right: 1.25rem;
 }
 
+/* Image lightbox toolbar: the Electron window draws its own drag strip for the
+   overlay controls (36px, buttons at the right edge on Windows, traffic lights
+   on the left for macOS). Without this the toolbar sits underneath them. */
+.lightbox-toolbar {
+  padding-top: 0.5rem;
+}
+
+html[data-electron-platform] .lightbox-toolbar {
+  padding-top: calc(36px + 0.5rem);
+  padding-right: 150px;
+}
+
+html[data-electron-platform="darwin"] .lightbox-toolbar {
+  padding-top: calc(36px + 0.5rem);
+  padding-right: 0.75rem;
+  padding-left: 88px;
+}
+
 @layer components {
   .material-popover {
     background: var(--material-popover);

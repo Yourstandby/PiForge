@@ -6,7 +6,7 @@ import { useCurrency } from "@/hooks/useCurrency";
 import type { UpstreamProviderUsage } from "@/lib/upstream-usage/types";
 import { formatDuration } from "@/lib/upstream-usage/format";
 
-import type { SessionActivity, SessionStats, ContextUsage } from "./StatsBar";
+import type { SessionActivity, SessionStats, ContextUsage } from "./usage-types";
 
 export type SessionStatsProps = SessionStats;
 export type ContextUsageProps = ContextUsage;

@@ -40,8 +40,12 @@ const MIN_SCALE = 0.2;
 const MAX_SCALE = 8;
 const ZOOM_STEP = 1.25;
 
-/** 附件的可显示地址：优先原图 data URL，退回缩略图 object URL。 */
+/**
+ * 附件的可显示地址：**优先 previewUrl（原始文件的 object URL）**。
+ * `data` 是发给模型的降采样版本（长边 1568），拿它看大图会糊。
+ */
 export function attachmentSrc(image: AttachedImage): string {
+  if (image.previewUrl) return image.previewUrl;
   if (image.mimeType && image.data) return `data:${image.mimeType};base64,${image.data}`;
   return image.previewUrl;
 }
@@ -51,6 +55,30 @@ function formatBytes(bytes: number | undefined): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * 把任意图片重绘成 PNG。
+ * Chromium/Electron 的 `clipboard.write` 只认 `image/png`，直接塞原始
+ * jpeg/webp blob 会 reject（旧实现于是永远显示“复制失败”）。
+ */
+async function toPngBlob(src: string): Promise<Blob> {
+  const element = new Image();
+  element.decoding = "async";
+  element.src = src;
+  await (element.decode ? element.decode() : new Promise<void>((resolve, reject) => {
+    element.onload = () => resolve();
+    element.onerror = () => reject(new Error("image load failed"));
+  }));
+  const canvas = document.createElement("canvas");
+  canvas.width = element.naturalWidth;
+  canvas.height = element.naturalHeight;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("canvas 2d unavailable");
+  context.drawImage(element, 0, 0);
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+  if (!blob) throw new Error("png encode failed");
+  return blob;
 }
 
 export function ImageLightbox({ images, index, onIndexChange, onClose }: ImageLightboxProps) {
@@ -64,9 +92,9 @@ export function ImageLightbox({ images, index, onIndexChange, onClose }: ImageLi
   const frameRef = useRef<number | null>(null);
   const dragRef = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
   const [scaleLabel, setScaleLabel] = useState(1);
-  const [rotation, setRotation] = useState(0);
   const [dimensions, setDimensions] = useState<{ width: number; height: number } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
 
   const applyTransform = useCallback(() => {
     if (frameRef.current !== null) return;
@@ -84,7 +112,6 @@ export function ImageLightbox({ images, index, onIndexChange, onClose }: ImageLi
     scaleRef.current = 1;
     offsetRef.current = { x: 0, y: 0 };
     rotationRef.current = 0;
-    setRotation(0);
     applyTransform();
   }, [applyTransform]);
 
@@ -111,7 +138,6 @@ export function ImageLightbox({ images, index, onIndexChange, onClose }: ImageLi
 
   const rotate = useCallback(() => {
     rotationRef.current = (rotationRef.current + 90) % 360;
-    setRotation(rotationRef.current);
     applyTransform();
   }, [applyTransform]);
 
@@ -144,10 +170,8 @@ export function ImageLightbox({ images, index, onIndexChange, onClose }: ImageLi
   const copy = useCallback(async () => {
     if (!image) return;
     try {
-      const response = await fetch(attachmentSrc(image));
-      const blob = await response.blob();
-      const type = blob.type || image.mimeType || "image/png";
-      await navigator.clipboard.write([new ClipboardItem({ [type]: blob })]);
+      const blob = await toPngBlob(attachmentSrc(image));
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
       setNotice(t("lightbox.copied"));
     } catch {
       setNotice(t("lightbox.copyFailed"));
@@ -181,7 +205,9 @@ export function ImageLightbox({ images, index, onIndexChange, onClose }: ImageLi
       switch (event.key) {
         case "Escape":
           event.preventDefault();
-          onClose();
+          // 菜单开着时 Esc 先关菜单，再关查看器。
+          if (menu) setMenu(null);
+          else onClose();
           break;
         case "ArrowLeft":
           event.preventDefault();
@@ -216,7 +242,7 @@ export function ImageLightbox({ images, index, onIndexChange, onClose }: ImageLi
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [go, onClose, resetView, rotate, zoomBy]);
+  }, [go, menu, onClose, resetView, rotate, zoomBy]);
 
   if (!image || typeof document === "undefined") return null;
 
@@ -285,6 +311,27 @@ export function ImageLightbox({ images, index, onIndexChange, onClose }: ImageLi
   const toolbarButton =
     "flex h-8 w-8 items-center justify-center rounded-md text-white/80 transition-colors hover:bg-white/15 hover:text-white";
 
+  const openContextMenu = (event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setMenu({ x: event.clientX, y: event.clientY });
+  };
+
+  // 右键菜单：贴边时往回收，不让它被视口裁掉。
+  const menuStyle = menu
+    ? {
+        left: Math.max(8, Math.min(menu.x, window.innerWidth - 196)),
+        top: Math.max(8, Math.min(menu.y, window.innerHeight - 148)),
+      }
+    : undefined;
+
+  const menuItems: { label: string; icon: React.ReactNode; run: () => void }[] = [
+    { label: t("lightbox.copy"), icon: <Copy size={13} strokeWidth={2} />, run: () => void copy() },
+    { label: t("lightbox.download"), icon: <Download size={13} strokeWidth={2} />, run: download },
+    { label: t("lightbox.openInTab"), icon: <ExternalLink size={13} strokeWidth={2} />, run: openInTab },
+    { label: t("common.close"), icon: <X size={13} strokeWidth={2} />, run: onClose },
+  ];
+
   return createPortal(
     <div
       role="dialog"
@@ -292,11 +339,16 @@ export function ImageLightbox({ images, index, onIndexChange, onClose }: ImageLi
       aria-label={t("lightbox.title")}
       className="fixed inset-0 z-[1300] flex flex-col bg-black/85 backdrop-blur-[2px]"
       onClick={(event) => {
+        if (menu) {
+          setMenu(null);
+          return;
+        }
         if (event.target === event.currentTarget) onClose();
       }}
+      onContextMenu={openContextMenu}
     >
       {/* 顶部工具条：文件名 / 尺寸 / token 估算 / 操作 */}
-      <div className="flex shrink-0 items-center gap-2 px-3 py-2 text-[12px] text-white/70">
+      <div className="lightbox-toolbar flex shrink-0 items-center gap-2 px-3 text-[12px] text-white/70">
         <span className="truncate font-medium text-white/85">{fileName}</span>
         {width > 0 && height > 0 && (
           <span className="shrink-0 tabular-nums">
@@ -370,7 +422,8 @@ export function ImageLightbox({ images, index, onIndexChange, onClose }: ImageLi
           decoding="async"
           className="max-h-full max-w-full select-none shadow-[0_10px_40px_rgba(0,0,0,0.5)]"
           style={{
-            transform: `rotate(${rotation}deg)`,
+            // transform 由 applyTransform 直接写入 DOM；这里不能出现 transform，
+            // 否则任何一次 state 更新都会把它重置回 rotate(0deg)（缩放/平移会回弹）。
             transformOrigin: "center center",
             willChange: "transform",
             imageRendering: scaleRef.current >= 3 ? "pixelated" : "auto",
@@ -406,6 +459,35 @@ export function ImageLightbox({ images, index, onIndexChange, onClose }: ImageLi
           </>
         )}
       </div>
+
+      {menu && (
+        <div
+          role="menu"
+          className="fixed z-[1301] min-w-[184px] overflow-hidden rounded-lg border border-black/10 bg-white py-1 text-[12px] text-ink shadow-[0_12px_28px_-8px_rgba(15,23,42,0.35)]"
+          style={menuStyle}
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+        >
+          {menuItems.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              role="menuitem"
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-[#E8EFFB]"
+              onClick={() => {
+                setMenu(null);
+                item.run();
+              }}
+            >
+              <span className="text-ink-muted">{item.icon}</span>
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {notice && (
         <div className="pointer-events-none absolute bottom-14 left-1/2 -translate-x-1/2 rounded-md bg-white px-3 py-1 text-[12px] text-ink shadow-lg">

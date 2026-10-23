@@ -175,6 +175,15 @@ import {
   stopPlugins,
 } from "./plugin-manager.ts";
 import {
+  getTaskStatus,
+  getWatchdogSnapshot,
+  performIntervention,
+  setWatchdogStallMs,
+  stopWatchdogTimer,
+} from "./watchdog.ts";
+import { isInterventionAction } from "./intervention.ts";
+
+import {
   listOrchestratorTasks,
   onOrchestratorChange,
   OrchestratorError,
@@ -1045,6 +1054,39 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
           });
         return;
       }
+      case "agent.intervene": {
+        // 人工介入（HITL）：注入一条指令到既有队列，并立刻重置看门狗告警。
+        // 全程复用 steer / prompt / follow-up 队列，没有任何新增的模型直连。
+        const sessionId = readString(params, "sessionId");
+        if (!sessionId) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "sessionId is required");
+          return;
+        }
+        const actionType = params.actionType;
+        if (!isInterventionAction(actionType)) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "actionType must be 'skip' | 'ask' | 'ask_brief'");
+          return;
+        }
+        const session = getRpcSession(sessionId);
+        if (!session?.isAlive()) {
+          fail(state, frame.id, "SESSION_NOT_FOUND", "Session not running");
+          return;
+        }
+        void (async () => {
+          try {
+            // 守卫 / 拼文案 / 注入 / 重置看门狗都在 performIntervention 里（纯逻辑，可单测）。
+            const payload = await performIntervention({
+              sessionId,
+              actionType,
+              session,
+            });
+            result(state, frame.id, payload);
+          } catch (error) {
+            fail(state, frame.id, "INTERNAL", errorText(error));
+          }
+        })();
+        return;
+      }
       case "agent.command": {
         const sessionId = readString(params, "sessionId");
         if (!sessionId) {
@@ -1383,6 +1425,30 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
         )
           .then((page) => result(state, frame.id, page))
           .catch((error: unknown) => fail(state, frame.id, "INTERNAL", errorText(error)));
+        return;
+      }
+      case "watchdog.status": {
+        // 只读快照：纯程序层观测结果，不进 prompt、不触发任何模型调用。
+        result(state, frame.id, getWatchdogSnapshot());
+        return;
+      }
+      case "watchdog.configure": {
+        // 运行期调阈值：只写内存配置，不触发任何模型调用，也不重建定时器。
+        const stallMs = params.stallMs;
+        if (typeof stallMs !== "number" || !Number.isFinite(stallMs) || stallMs <= 0) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "stallMs must be a positive number");
+          return;
+        }
+        result(state, frame.id, setWatchdogStallMs(stallMs));
+        return;
+      }
+      case "watchdog.task": {
+        const taskId = readString(params, "taskId");
+        if (!taskId) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "taskId is required");
+          return;
+        }
+        result(state, frame.id, { task: getTaskStatus(taskId) });
         return;
       }
       case "subagents.list": {
@@ -1981,10 +2047,12 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
     if (closing) return closing;
     closing = (async () => {
       listenersDetached = true;
-  offHerdrChange();
+      offHerdrChange();
       offProcessesChange();
       offTerminalChange();
       offSubagentsChange();
+      // 看门狗只读常驻：关 Host 的时候顺手停掉扫描定时器（不写任何文件）。
+      stopWatchdogTimer();
       clearBroadcastTimers();
       for (const state of [...sockets]) {
         try {

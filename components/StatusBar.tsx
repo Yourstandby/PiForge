@@ -19,8 +19,6 @@ import {
 } from "lucide-react";
 import { ModelSelector } from "./chat-input/ModelSelector";
 import { getThinkingLevelsForModel } from "./chat-input/thinking-levels";
-import { StatsBar, type ContextUsage, type SessionStats } from "./StatsBar";
-import type { SessionActivity } from "@/hooks/agent-session/session-stats";
 import { useDismissOnOutsideClick } from "@/hooks/useDismissOnOutsideClick";
 import type { AgentMode } from "@/lib/approval-policy";
 import { projectNameFromCwd } from "@/lib/project-name";
@@ -47,7 +45,7 @@ const AGENT_MODE_OPTIONS: Array<{
 ];
 
 /**
- * 显示用文案。菜单只给 auto / medium / high 三档（见 thinking-levels.ts）；
+ * 显示用文案。菜单只给 auto / high / medium / low 四档（见 thinking-levels.ts）；
  * 其余键是历史会话的回显兜底（老 session 里可能持久化 off/low/xhigh/max），
  * 删掉会让这些状态在状态栏里显示成原始英文枚举值。
  */
@@ -55,7 +53,7 @@ const THINKING_LABELS: Record<ThinkingLevel, string> = {
   auto: "自动",
   off: "关闭",
   minimal: "极简",
-  low: "低",
+  low: "低质量",
   medium: "均衡",
   high: "高质量",
   xhigh: "极高",
@@ -111,13 +109,8 @@ interface Props {
   onGitDiff?: () => void;
   canCompact: boolean;
   compacting: boolean;
-  sessionStats: SessionStats | null;
-  contextUsage: ContextUsage | null;
-  /** 回合数 + 工具调用汇总（可选：缺数据时不影响渲染）。 */
-  activity?: SessionActivity | null;
   /** 当前会话所属项目目录：在工具栏最左侧显示极简项目标识。 */
   projectPath?: string | null;
-  currentProvider?: string | null;
 }
 
 /** One-click plan-mode switch; remembers the mode to restore on toggle-off. */
@@ -352,11 +345,7 @@ export function StatusBar({
   onGitDiff,
   canCompact,
   compacting,
-  sessionStats,
-  contextUsage,
-  activity = null,
   projectPath = null,
-  currentProvider,
 }: Props) {
   // 底部工具栏按聊天面板自身宽度（而非视口宽度）响应：窄于 640px 时收起按钮文字，
   // 只留图标，给 Token / 费用 / 回合留出单行空间。用 ResizeObserver 而不是 CSS
@@ -464,21 +453,8 @@ export function StatusBar({
           </button>
         </div>
 
-        {/* Token / 费用 / 回合 / 工具统计：整块可点击打开“用量与额度”。
-            统计区允许被子压缩（min-w-0 + flex-1）：宽度不够时优先裁掉
-            工具调用详情，核心的 Token / 费用 / 回合保持 shrink-0 不裁不换行。 */}
-        {/* min-w-[112px]：即便面板极窄也留住「费用 + 回合」，超出的部分让整行横向滚动，
-            而不是把统计压成 0 宽（StatsBar 内部再按自身宽度逐级披露） */}
-        <div className="ml-auto flex min-w-[112px] flex-1 flex-nowrap items-stretch justify-end whitespace-nowrap">
-          <StatsBar
-            showChat
-            sessionStats={sessionStats}
-            contextUsage={contextUsage}
-            activity={activity}
-            compact={compact}
-            currentProvider={currentProvider}
-          />
-        </div>
+        {/* 用量统计已迁到输入框下方的常驻用量条（UsageStrip），
+            这里不再渲染 Token / 费用 / 回合 chip 与它的弹窗。 */}
       </div>
     </div>
   );

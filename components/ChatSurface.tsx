@@ -23,9 +23,12 @@ import { ExtensionUiDialog } from "./ExtensionUiDialog";
 import { ModalSurface } from "./ModalSurface";
 import { RunningToolsBadge } from "./RunningToolsBadge";
 import { StatusBar, type ThinkingLevel } from "./StatusBar";
+import { UsageStrip } from "./UsageStrip";
+import { useUpstreamUsage } from "@/hooks/useUpstreamUsage";
 import { buildTranscriptTurns, Transcript } from "./Transcript";
 import { savedScrollTop } from "@/lib/chat-scroll-memory";
 import { TranscriptNav } from "./TranscriptNav";
+import { WatchdogSessionProvider } from "./watchdog/WatchdogProvider";
 
 const DONE_SUMMARY_LIMIT = 1200;
 
@@ -1404,9 +1407,12 @@ function ChatSession({
     return { cancel: false, text: message };
   };
 
+  // 上游配额只拉一次：输入框下方的用量条与底部状态栏共享同一份快照，
+  // 避免同一个上游配额接口被请求两遍（有速率限制风险）。
+  const upstreamUsage = useUpstreamUsage(currentModel?.provider ?? null);
+
   const composer = (
-    <div className="flex flex-col gap-2">
-      {chat.canExecutePlan && chat.agentMode === "plan" && (
+    <div className="flex flex-col gap-2">      {chat.canExecutePlan && chat.agentMode === "plan" && (
         <div
           role="group"
           aria-label="计划已生成"
@@ -1591,6 +1597,15 @@ function ChatSession({
         queueBusy={chat.followUpQueueBusy}
         cwd={session?.cwd ?? newSessionCwd ?? null}
       />
+      <UsageStrip
+        sessionStats={chat.sessionStats}
+        contextUsage={chat.contextUsage}
+        activity={chat.sessionActivity}
+        upstreamUsage={upstreamUsage.currentUsage}
+        allUsages={upstreamUsage.usages}
+        loading={upstreamUsage.loading}
+        onRefresh={upstreamUsage.refresh}
+      />
     </div>
   );
 
@@ -1612,11 +1627,7 @@ function ChatSession({
       onGitDiff={onOpenGitDiff}
       canCompact={canCompact}
       compacting={chat.isCompacting}
-      sessionStats={chat.sessionStats}
-      contextUsage={chat.contextUsage}
-      activity={chat.sessionActivity}
       projectPath={session?.cwd ?? newSessionCwd ?? null}
-      currentProvider={currentModel?.provider ?? null}
     />
   );
 
@@ -1682,6 +1693,7 @@ function ChatSession({
   );
 
   return (
+    <WatchdogSessionProvider sessionId={session?.id ?? null}>
     <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-[#FCFCFA]">
       {/* Extension UI: an extension awaiting input/select/confirm blocks the
           agent until this dialog answers, so it must render for every view. */}
@@ -1783,6 +1795,8 @@ function ChatSession({
           <div className="shrink-0 pb-4">
             <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-8">
               {trustCard}
+              {/* 看门狗的可视化已全部收拢到右侧「系统监控」面板；
+                  主聊天界面不订阅任何看门狗状态，也不会因此重渲染。 */}
               {/* 输入面板 + 浮在它右上角外侧的「回到最新对话」按钮 */}
               <div className="relative" ref={composerContainerRef} onFocusCapture={stickToBottomIfNear}>
                 {composer}
@@ -1888,6 +1902,7 @@ function ChatSession({
         </ModalSurface>
       )}
     </main>
+    </WatchdogSessionProvider>
   );
 }
 

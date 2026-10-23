@@ -58,6 +58,13 @@ import type {
 } from "./domains/providers.ts";
 import type { TerminalBlock, TerminalBlockStatus } from "./domains/terminal.ts";
 import type {
+  InterventionActionType,
+  InterventionResult,
+  WatchdogConfigView,
+  WatchdogSnapshot,
+  WatchdogTaskView,
+} from "./domains/watchdog.ts";
+import type {
   NeedsTrustPayload,
   TrustOptionId,
 } from "./domains/trust.ts";
@@ -359,6 +366,33 @@ export interface AgentHostMethods {
     result: { ok: boolean };
   };
 
+  // ---- 无进展看门狗（只读，纯程序层观测，绝不参与模型调用）----
+  "watchdog.status": {
+    params: Record<string, never>;
+    result: WatchdogSnapshot;
+  };
+  /**
+   * 运行期调整停滞阈值（UI 下拉框 15/30/60/90 秒）。
+   * 只改 Host 内存配置，返回最新配置视图；不重建定时器、不碰模型。
+   */
+  "watchdog.configure": {
+    params: { stallMs: number };
+    result: WatchdogConfigView;
+  };
+  /** 单个任务的只读查询：`get_task_status(task_id)`。 */
+  "watchdog.task": {
+    params: { taskId: string };
+    result: { task: WatchdogTaskView | null };
+  };
+  /**
+   * 人工介入：向该会话的待处理队列注入一条指令，并立刻重置看门狗告警。
+   * 复用既有 steer / prompt / follow-up 队列，不新增任何模型直连。
+   */
+  "agent.intervene": {
+    params: { sessionId: string; actionType: InterventionActionType };
+    result: InterventionResult;
+  };
+
   // ---- development environment probes ----
   "env.probe": {
     params: { refresh?: boolean };
@@ -634,4 +668,8 @@ export const IMPLEMENTED_HOST_METHODS = [
   "memory.forget",
   "memory.stats",
   "models.refresh",
+  "watchdog.status",
+  "watchdog.configure",
+  "watchdog.task",
+  "agent.intervene",
 ] as const satisfies readonly MethodName[];

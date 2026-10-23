@@ -3,7 +3,16 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { UpstreamProviderUsage } from "@/lib/upstream-usage/types";
 
-export function useUpstreamUsage(providerId?: string | null) {
+/**
+ * `options.enabled = false` 时只保留状态壳、不发请求也不轮询：
+ * 数据已由上层（ChatSurface）用同一个 hook 拉过一次并通过 props 下传，
+ * 这里再拉一遍会让同一份上游配额被请求两次（有速率限制风险）。
+ */
+export function useUpstreamUsage(
+  providerId?: string | null,
+  options?: { enabled?: boolean },
+) {
+  const enabled = options?.enabled ?? true;
   const [usages, setUsages] = useState<UpstreamProviderUsage[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -48,6 +57,7 @@ export function useUpstreamUsage(providerId?: string | null) {
   );
 
   useEffect(() => {
+    if (!enabled) return;
     fetchUsage(false);
     // Refresh automatically every 120 seconds
     const timer = setInterval(() => {
@@ -57,7 +67,7 @@ export function useUpstreamUsage(providerId?: string | null) {
       clearInterval(timer);
       requestRef.current?.controller.abort();
     };
-  }, [fetchUsage]);
+  }, [enabled, fetchUsage]);
 
   const refresh = useCallback(() => {
     return fetchUsage(true);

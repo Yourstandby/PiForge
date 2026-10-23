@@ -25,7 +25,11 @@ export function createDesktopDomainFactory(): ExtensionFactory {
     if (process.env.PIFORGE_DEBUG_DOMAIN === "1") {
       console.log(
         "[domain-tools] registering:",
-        definitions.map((definition) => definition.name).join(", ") || "(none)"
+        definitions
+          .map((definition) => `${definition.name}:${definition.exposure ?? "direct"}`)
+          .join(", ") || "(none)",
+        "| env:",
+        process.env.PIFORGE_ON_DEMAND_DOMAINS ?? "(unset)"
       );
     }
     for (const definition of definitions) {

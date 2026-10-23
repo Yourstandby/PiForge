@@ -49,6 +49,14 @@ const MAX_RIGHT_PANEL_WIDTH = 800;
 const LEFT_SIDEBAR_WIDTH = 260;
 /** 聊天区最小可用宽度：右侧面板拉到这里就卡住，不再把聊天区挤窄。 */
 const MIN_CHAT_WIDTH = 560;
+/**
+ * 窄视口阈值。低于它时左栏(260) + 聊天区(560) + 右栏(280) 已放不下，
+ * 三个固定宽度会互相重叠成一坨（内置浏览器里预览本应用就是这个宽度）。
+ * 因此改用浮层侧栏：聊天区独占宽度，侧栏按需覆盖在上面。
+ */
+const COMPACT_BREAKPOINT = 1080;
+/** 浮层侧栏的最小宽度。 */
+const COMPACT_PANEL_MIN_WIDTH = 320;
 const RIGHT_PANEL_WIDTH_KEY = "piforge.rightPanelWidth";
 
 /** 当前视口 / 侧边栏状态下，右侧面板允许的最大宽度。 */
@@ -158,6 +166,8 @@ export function Workbench() {
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
   const [rightPanelWidth, setRightPanelWidth] = useState(560);
+  /** 视口宽度：SSR/首帧与服务端保持一致，挂载后再同步真实值。 */
+  const [viewportWidth, setViewportWidth] = useState(1440);
   const [rightPanelResizing, setRightPanelResizing] = useState(false);
   const rightPanelDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
@@ -191,12 +201,21 @@ export function Workbench() {
   // the chat column must never be squeezed below MIN_CHAT_WIDTH.
   useEffect(() => {
     const reclamp = () => {
+      setViewportWidth(window.innerWidth);
       setRightPanelWidth((current) => clampPanelWidth(current));
     };
     reclamp();
     window.addEventListener("resize", reclamp);
     return () => window.removeEventListener("resize", reclamp);
   }, [clampPanelWidth]);
+
+  // 窄视口（窗口缩小，或在内置浏览器里预览本应用）首次挂载时只留聊天区。
+  useEffect(() => {
+    if (window.innerWidth <= COMPACT_BREAKPOINT) {
+      setLeftSidebarOpen(false);
+      setRightPanelOpen(false);
+    }
+  }, []);
 
   // 右侧面板限定标签：左侧边栏底部的「插件 / Agents」用它打开对应视图。
   const openPanelTab = useCallback((tab: "plugins" | "agents") => {
@@ -948,15 +967,28 @@ ${fenced}`
     return tabs[0]?.key ?? null;
   }, [activeKey, tabs]);
 
+  const compact = viewportWidth <= COMPACT_BREAKPOINT;
+  /** 浮层里的右栏宽度：至少 COMPACT_PANEL_MIN_WIDTH，但不超过视口。 */
+  const compactRightPanelWidth = Math.min(
+    Math.max(rightPanelWidth, COMPACT_PANEL_MIN_WIDTH),
+    Math.max(viewportWidth, 1),
+  );
+
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden bg-white">
       <TitleBar />
 
-      <div className="flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-1">
         <div
-          className={`shrink-0 overflow-hidden transition-[width] duration-300 ${
-            leftSidebarOpen ? "w-[260px]" : "w-0"
-          }`}
+          className={
+            compact
+              ? `absolute inset-y-0 left-0 z-30 flex h-full w-[260px] flex-col bg-white shadow-[0_0_24px_rgba(15,23,42,0.18)] transition-transform duration-200 ease-out ${
+                  leftSidebarOpen ? "translate-x-0" : "pointer-events-none -translate-x-full"
+                }`
+              : `shrink-0 overflow-hidden transition-[width] duration-300 ${
+                  leftSidebarOpen ? "w-[260px]" : "w-0"
+                }`
+          }
           aria-hidden={!leftSidebarOpen}
         >
           <div className="flex h-full w-[260px] flex-col overflow-hidden border-r border-black/[0.06] bg-white">
@@ -1150,16 +1182,40 @@ ${fenced}`
           </div>
         </div>
 
+        {compact && (leftSidebarOpen || rightPanelOpen) && (
+          <div
+            role="presentation"
+            onClick={() => {
+              setLeftSidebarOpen(false);
+              setRightPanelOpen(false);
+            }}
+            className="absolute inset-0 z-20 bg-slate-900/10"
+            aria-hidden="true"
+          />
+        )}
+
         <div
-          className={`relative shrink-0 overflow-hidden ${
-            rightPanelResizing
-              ? ""
-              : "transition-[width] duration-200 ease-in-out"
-          } ${rightPanelOpen ? "" : "pointer-events-none"}`}
-          style={{ width: rightPanelOpen ? rightPanelWidth : 0 }}
+          className={
+            compact
+              ? `absolute inset-y-0 right-0 z-30 h-full bg-white shadow-[0_0_24px_rgba(15,23,42,0.18)] transition-transform duration-200 ease-out ${
+                  rightPanelOpen ? "translate-x-0" : "pointer-events-none translate-x-full"
+                }`
+              : `relative shrink-0 overflow-hidden ${
+                  rightPanelResizing
+                    ? ""
+                    : "transition-[width] duration-200 ease-in-out"
+                } ${rightPanelOpen ? "" : "pointer-events-none"}`
+          }
+          style={{
+            width: compact
+              ? compactRightPanelWidth
+              : rightPanelOpen
+                ? rightPanelWidth
+                : 0,
+          }}
           aria-hidden={!rightPanelOpen}
         >
-          {rightPanelOpen && (
+          {rightPanelOpen && !compact && (
             <div
               role="separator"
               aria-orientation="vertical"
@@ -1174,7 +1230,10 @@ ${fenced}`
             />
           )}
           {/* 内部固定宽度：折叠/展开只裁剪外层，内容不逐帧重排 → 过渡流畅。 */}
-          <div className="h-full" style={{ width: rightPanelWidth }}>
+          <div
+            className="h-full"
+            style={{ width: compact ? compactRightPanelWidth : rightPanelWidth }}
+          >
             <FilePanel
               cwd={activeCwd}
               sessionId={activeTab?.session?.id ?? null}

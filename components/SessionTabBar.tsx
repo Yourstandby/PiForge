@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, PanelLeftOpen, PanelRightOpen, Plus, X } from "lucide-react";
 import { projectNameFromCwd } from "@/lib/project-name";
 import { ProjectTintDot } from "./ProjectTintDot";
+import { TabStatusLight } from "./watchdog/StatusDot";
 
 /**
  * Browser-style tab strip for the middle chat column.
@@ -182,15 +183,21 @@ export function SessionTabBar({
             >
               {/* 项目微胶囊：与左侧项目列表完全同色同位，纯颜色区分、不占标题宽度 */}
               {tab.cwd && <ProjectTintDot cwd={tab.cwd} className="mr-0.5" />}
-              {/* 状态指示灯：运行中（蓝色呼吸）/ 等待操作（琥珀）/ 后台已完成（绿色静态） */}
-              {statusMeta && (
-                <span
-                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusMeta.className}`}
-                  role="img"
-                  aria-label={statusMeta.label}
-                  title={statusMeta.label}
-                />
-              )}
+              {/* 状态指示灯：看门狗红灯优先；否则运行中（蓝）/ 等待操作（琥珀）/ 后台已完成（绿）。
+                  看门狗那部分是独立订阅的叶子组件，切标签不会牵动整条标签栏重渲染。 */}
+              <TabStatusLight
+                sessionId={tab.sessionId}
+                fallback={
+                  statusMeta ? (
+                    <span
+                      className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusMeta.className}`}
+                      role="img"
+                      aria-label={statusMeta.label}
+                      title={statusMeta.label}
+                    />
+                  ) : null
+                }
+              />
               <span className="min-w-0 flex-1 truncate">{tab.title}</span>
               <button
                 type="button"

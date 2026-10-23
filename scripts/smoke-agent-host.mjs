@@ -213,6 +213,32 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     assert.equal(unknown.ok, false);
     assert.equal(unknown.error.code, "E_UNKNOWN_METHOD");
 
+    // ---- watchdog（无进展看门狗：纯程序层、只读）----
+    client.send({ kind: "req", id: 91, method: "watchdog.status", params: {} });
+    const watchdog = await client.waitFor((frame) => frame.kind === "res" && frame.id === 91);
+    assert.equal(watchdog.ok, true, JSON.stringify(watchdog.error));
+    assert.equal(watchdog.result.enabled, true);
+    // 默认阈值 20s（面板可在 15/30/60/90 秒间运行期切换）。
+    assert.equal(watchdog.result.config.stallMs, 20_000);
+    assert.deepEqual(watchdog.result.tasks, []);
+    assert.deepEqual(watchdog.result.notices, []);
+
+    client.send({ kind: "req", id: 92, method: "watchdog.task", params: { taskId: "nope" } });
+    const singleTask = await client.waitFor((frame) => frame.kind === "res" && frame.id === 92);
+    assert.equal(singleTask.ok, true, JSON.stringify(singleTask.error));
+    assert.equal(singleTask.result.task, null);
+
+    // ---- 人工介入：参数校验 + 会话不存在时的拒绝（不能静默成功）----
+    client.send({ kind: "req", id: 93, method: "agent.intervene", params: { sessionId: "ghost", actionType: "abort" } });
+    const badAction = await client.waitFor((frame) => frame.kind === "res" && frame.id === 93);
+    assert.equal(badAction.ok, false);
+    assert.equal(badAction.error.code, "E_INVALID_PARAMS");
+
+    client.send({ kind: "req", id: 94, method: "agent.intervene", params: { sessionId: "ghost", actionType: "skip" } });
+    const missingSession = await client.waitFor((frame) => frame.kind === "res" && frame.id === 94);
+    assert.equal(missingSession.ok, false);
+    assert.equal(missingSession.error.code, "SESSION_NOT_FOUND");
+
     // ---- subscriptions ----
     client.send({ kind: "req", id: 3, method: "host.subscribe", params: { topics: ["processes", "terminal", "subagents"] } });
     const subscribe = await client.waitFor((frame) => frame.kind === "res" && frame.id === 3);
