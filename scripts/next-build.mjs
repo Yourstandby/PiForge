@@ -20,9 +20,10 @@
  * （见 next.config.ts 的 distDir）。
  */
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, readdirSync, rmSync, statSync } from "node:fs";
+import { cpSync, existsSync, rmSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { checkStaticExport } from "./lib/static-export-check.mjs";
 
 const standalone = process.argv.includes("--standalone");
 const repoRoot = process.cwd();
@@ -52,9 +53,10 @@ if (!standalone) {
    * `output: "export"` 的产物目录跟 `distDir` 走：设了 `.next-static` 之后，
    * Next 16 会把 HTML/`_next` 直接写进 `.next-static/`，**不再**写 `out/`。
    *
-   * 这个坑踩过一次：`out/` 停留在旧构建上，打包出来跑的是几小时前的 UI
-   * （改了的轮询/动画全都没生效，但宿主侧是新代码，指标看起来"部分改善"）。
-   * 所以这里显式同步，并在同步后**校验** chunk 文件名与导出目录一致。
+   * 这个坑踩过一次：`out/` 停留在旧构建上，打包出来跑的是几小时前的 UI。
+   * 所以这里显式同步，同步后用共享的检查模块（scripts/lib/static-export-check.mjs）
+   * 校验"chunk 名单一致 + index.html 新鲜 + 入口脚本存在"，与 CI 的
+   * `npm run smoke:static-fresh` 用**同一份**判定逻辑。
    */
   const distDir = path.join(repoRoot, ".next-static");
   const outDir = path.join(repoRoot, "out");
@@ -67,23 +69,16 @@ if (!standalone) {
     rmSync(outDir, { recursive: true, force: true });
     cpSync(exportDir, outDir, { recursive: true, force: true });
   }
-  const files = readdirSync(outDir).length;
-  const chunks = path.join(outDir, "_next", "static", "chunks");
-  const sourceChunks = path.join(exportDir, "_next", "static", "chunks");
-  if (existsSync(sourceChunks)) {
-    const expected = readdirSync(sourceChunks).sort().join(",");
-    const actual = existsSync(chunks) ? readdirSync(chunks).sort().join(",") : "";
-    if (expected !== actual) {
-      console.error("next-build: out/_next/static/chunks does not match the fresh export");
-      process.exit(1);
-    }
-  }
-  const ageSeconds = (Date.now() - statSync(path.join(outDir, "index.html")).mtimeMs) / 1000;
-  if (ageSeconds > 300) {
-    console.error(`next-build: out/index.html is stale (${Math.round(ageSeconds)}s old)`);
+  const check = checkStaticExport({ repoRoot, maxAgeMs: 10 * 60 * 1000 });
+  if (!check.ok) {
+    console.error("next-build: 静态导出自检失败");
+    for (const problem of check.problems) console.error(`  - ${problem}`);
     process.exit(1);
   }
-  console.log(`next-build: static export ready → out/ (${files} entries, chunks verified)`);
+  console.log(
+    `next-build: static export ready → out/ (${check.details.chunkCount ?? "?"} chunks, ` +
+      `index.html ${check.details.ageSeconds}s old)`,
+  );
 } else {
   if (!existsSync(path.join(repoRoot, ".next", "standalone", "server.js"))) {
     console.error("next-build: standalone build missing .next/standalone/server.js");
