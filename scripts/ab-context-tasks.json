@@ -1,0 +1,281 @@
+{
+  "$comment": "上下文治理 A/B 判分集（20 题）。每题的 check 必须可机检；longContext=true 的题目用来测 L-A（压缩阈值前移）的失败风险，本轮不跑 L-A。所有路径相对于当次实验的临时工作树根目录。",
+  "version": 1,
+  "tasks": [
+    {
+      "id": "E1-truncation-notice",
+      "category": "code-edit",
+      "longContext": false,
+      "turns": 1,
+      "prompt": "在 agent-host/tool-output-budget.ts 里把截断说明的文案改成以 '[truncated' 开头（保留原有信息量与后面的分页提示逻辑）。改完不要跑测试。",
+      "check": {
+        "type": "file-matches",
+        "path": "agent-host/tool-output-budget.ts",
+        "regex": "\\[truncated"
+      },
+      "expectInitial": "fail"
+    },
+    {
+      "id": "E2-heap-env-override-doc",
+      "category": "code-edit",
+      "longContext": true,
+      "turns": 1,
+      "prompt": "在 electron/host-heap.ts 里给 `PIFORGE_HOST_HEAP` 的解析函数（resolveHostHeapFlags）上方补一行注释：`// AB-DOC: 环境变量优先于默认值`。只改注释。",
+      "check": {
+        "type": "file-matches",
+        "path": "electron/host-heap.ts",
+        "regex": "AB-DOC: 环境变量优先于默认值"
+      },
+      "expectInitial": "fail"
+    },
+    {
+      "id": "E3-composer-aria",
+      "category": "code-edit",
+      "longContext": true,
+      "turns": 2,
+      "prompt": "在 components/ChatSurface.tsx 里给“回到最新对话”按钮的 aria-label 补上快捷键说明，改成带 (Ctrl/⌘ + End) 的形式（已有按钮，找 aria-label=\"回到最新对话\"）。",
+      "check": {
+        "type": "file-matches",
+        "path": "components/ChatSurface.tsx",
+        "regex": "aria-label=\"回到最新对话（Ctrl/⌘ \\+ End）\""
+      },
+      "expectInitial": "fail"
+    },
+    {
+      "id": "E4-rpc-guard-comment",
+      "category": "code-edit",
+      "longContext": true,
+      "turns": 1,
+      "prompt": "在 agent-host/rpc-manager.ts 里找到处理 agent.state 的分支，在它正上方加一行注释 `// prefixAudit 只读暴露给渲染层（Token 护栏用）`。不要改逻辑。",
+      "check": {
+        "type": "file-matches",
+        "path": "agent-host/rpc-manager.ts",
+        "regex": "prefixAudit 只读暴露给渲染层"
+      },
+      "expectInitial": "fail"
+    },
+    {
+      "id": "E5-server-shutdown-log",
+      "category": "code-edit",
+      "longContext": true,
+      "turns": 1,
+      "prompt": "在 agent-host/server.ts 里找到 host.shutdown 的处理，在关闭 socket 之前加一行日志：`log(\"ab-shutdown-trace\")`。",
+      "check": {
+        "type": "file-matches",
+        "path": "agent-host/server.ts",
+        "regex": "ab-shutdown-trace"
+      },
+      "expectInitial": "fail"
+    },
+    {
+      "id": "D1-token-audit-cost-share",
+      "category": "doc-lookup",
+      "longContext": false,
+      "turns": 1,
+      "prompt": "读 docs/optimizations/token-consumption-audit.md，把 cacheRead 占成本百分比填进 ab-answer.json：{\"cacheReadCostSharePct\": <数字>}。",
+      "check": {
+        "type": "json-field",
+        "path": "ab-answer.json",
+        "field": "cacheReadCostSharePct",
+        "equals": 56
+      },
+      "expectInitial": "fail"
+    },
+    {
+      "id": "D2-prefix-budget-tokens",
+      "category": "doc-lookup",
+      "longContext": false,
+      "turns": 1,
+      "prompt": "找出当前前缀预算的 token 数（提示：scripts/smoke-prefix-budget.mjs 与 docs/optimizations 里的记录），写进 ab-answer.json：{\"prefixTokens\": <数字>}。",
+      "check": {
+        "type": "json-field",
+        "path": "ab-answer.json",
+        "field": "prefixTokens",
+        "equals": 6640
+      },
+      "expectInitial": "fail"
+    },
+    {
+      "id": "D3-gpu-mode-enum",
+      "category": "doc-lookup",
+      "longContext": false,
+      "turns": 1,
+      "prompt": "读 electron/gpu-preference.ts，把决策码枚举里的取值个数写进 ab-answer.json：{\"decisionCodes\": <数字>}。",
+      "check": {
+        "type": "json-field",
+        "path": "ab-answer.json",
+        "field": "decisionCodes",
+        "equals": 6
+      },
+      "expectInitial": "fail"
+    },
+    {
+      "id": "D4-context-breaker-value",
+      "category": "doc-lookup",
+      "longContext": false,
+      "turns": 1,
+      "prompt": "读 agent-host/agent-guards.ts，把单轮上下文熔断阈值写进 ab-answer.json：{\"contextBreakerTokens\": <数字>}。",
+      "check": {
+        "type": "json-field",
+        "path": "ab-answer.json",
+        "field": "contextBreakerTokens",
+        "equals": 10000
+      },
+      "expectInitial": "fail"
+    },
+    {
+      "id": "D5-guard-thresholds",
+      "category": "doc-lookup",
+      "longContext": false,
+      "turns": 1,
+      "prompt": "读 lib/token-guard.ts，把恢复提示与拆分提示两个阈值写进 ab-answer.json：{\"resumeThreshold\": <数字>, \"splitThreshold\": <数字>}。",
+      "check": {
+        "type": "json-fields",
+        "path": "ab-answer.json",
+        "fields": {
+          "resumeThreshold": 20000,
+          "splitThreshold": 200000
+        }
+      },
+      "expectInitial": "fail"
+    },
+    {
+      "id": "T1-add-unit-test",
+      "category": "test-fix",
+      "longContext": false,
+      "turns": 2,
+      "prompt": "给 agent-host/tool-output-budget.test.ts 增加一个用例：断言默认预算的 maxChars 是 4000，并把测试名写成包含 'default budget maxChars' 的字样。",
+      "check": {
+        "type": "file-matches",
+        "path": "agent-host/tool-output-budget.test.ts",
+        "regex": "default budget maxChars"
+      },
+      "expectInitial": "fail"
+    },
+    {
+      "id": "T2-fix-failing-assertion",
+      "category": "test-fix",
+      "longContext": false,
+      "turns": 3,
+      "prompt": "在临时工作树里运行 `node --test --test-force-exit agent-host/agent-guards.test.ts`，如果全部通过，就在 ab-answer.json 写 {\"guardsTestsPassed\": true}。",
+      "check": {
+        "type": "json-field",
+        "path": "ab-answer.json",
+        "field": "guardsTestsPassed",
+        "equals": true
+      },
+      "expectInitial": "fail"
+    },
+    {
+      "id": "T3-tsc-error-report",
+      "category": "test-fix",
+      "longContext": true,
+      "turns": 2,
+      "prompt": "运行 `npx tsc --noEmit`（根 tsconfig）。把退出码写进 ab-answer.json：{\"tscExitCode\": <数字>}。",
+      "check": {
+        "type": "json-field",
+        "path": "ab-answer.json",
+        "field": "tscExitCode",
+        "equals": 0
+      },
+      "expectInitial": "fail"
+    },
+    {
+      "id": "T4-lint-warning-count",
+      "category": "test-fix",
+      "longContext": false,
+      "turns": 2,
+      "prompt": "运行 `npm run lint`，把输出里 'problems' 那一行报出的 warning 数写进 ab-answer.json：{\"lintWarnings\": <数字>}。",
+      "check": {
+        "type": "json-field",
+        "path": "ab-answer.json",
+        "field": "lintWarnings",
+        "equals": 4
+      },
+      "expectInitial": "fail"
+    },
+    {
+      "id": "T5-new-test-file",
+      "category": "test-fix",
+      "longContext": false,
+      "turns": 2,
+      "prompt": "新建 agent-host/ab-probe.test.ts，写一个 node:test 用例断言 1+1===2，测试名包含 'ab probe'。",
+      "check": {
+        "type": "file-matches",
+        "path": "agent-host/ab-probe.test.ts",
+        "regex": "ab probe"
+      },
+      "expectInitial": "fail"
+    },
+    {
+      "id": "S1-count-listen-calls",
+      "category": "script-write",
+      "longContext": true,
+      "turns": 2,
+      "prompt": "写一个脚本 ab-count.mjs：统计 agent-host/server.ts 里出现 'listen(' 的次数，把结果写进 ab-answer.json 的 { \"listenCalls\": <数字> }。然后运行它。",
+      "check": {
+        "type": "json-field",
+        "path": "ab-answer.json",
+        "field": "listenCalls",
+        "equals": 2
+      },
+      "expectInitial": "fail"
+    },
+    {
+      "id": "S2-loc-report",
+      "category": "script-write",
+      "longContext": true,
+      "turns": 2,
+      "prompt": "写一个脚本 ab-loc.mjs，统计 electron/main.ts 与 agent-host/server.ts 两个文件的总行数之和，写进 ab-answer.json 的 { \"totalLines\": <数字> }（当前应为 1925 + 2397 = 4322）。",
+      "check": {
+        "type": "json-field",
+        "path": "ab-answer.json",
+        "field": "totalLines",
+        "equals": 4322
+      },
+      "expectInitial": "fail"
+    },
+    {
+      "id": "S3-json-parse-guard",
+      "category": "script-write",
+      "longContext": false,
+      "turns": 2,
+      "prompt": "写一个脚本 ab-safe-json.mjs：对输入 '{\"a\":1}' 与 '{bad' 各解析一次，把成功次数写进 ab-answer.json 的 { \"parsedOk\": <数字> }。",
+      "check": {
+        "type": "json-field",
+        "path": "ab-answer.json",
+        "field": "parsedOk",
+        "equals": 1
+      },
+      "expectInitial": "fail"
+    },
+    {
+      "id": "S4-median-helper",
+      "category": "script-write",
+      "longContext": false,
+      "turns": 2,
+      "prompt": "写一个脚本 ab-median.mjs：计算 [3,1,2,5,4] 的中位并写进 ab-answer.json 的 { \"median\": <数字> }。",
+      "check": {
+        "type": "json-field",
+        "path": "ab-answer.json",
+        "field": "median",
+        "equals": 3
+      },
+      "expectInitial": "fail"
+    },
+    {
+      "id": "S5-large-file-digest",
+      "category": "script-write",
+      "longContext": true,
+      "turns": 3,
+      "prompt": "写一个脚本 ab-digest.mjs：读 components/ChatSurface.tsx，统计 `useEffect(` 出现次数，写进 ab-answer.json 的 { \"useEffectCalls\": <数字> }。先用 grep 确认，再让脚本自己算。",
+      "check": {
+        "type": "json-field-at-least",
+        "path": "ab-answer.json",
+        "field": "useEffectCalls",
+        "min": 5
+      },
+      "expectInitial": "fail"
+    }
+  ]
+}
