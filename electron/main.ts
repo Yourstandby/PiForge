@@ -1736,7 +1736,20 @@ app.whenReady().then(async () => {
       for (const waitUntil = Date.now() + 30_000; Date.now() < waitUntil && !agentHostReady; ) {
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      // 等页面真正有内容：容器挂载与首屏数据到达之间可能有几百毫秒到数秒的窗口，
+      // 单次读取会让冒烟偶发"bodyLength 过短"的假红（本轮踩过一次）。
+      try {
+        for (let attempt = 0; attempt < 40; attempt += 1) {
+          const length = await smokeWindow.webContents.executeJavaScript(
+            "document.body.innerText.length",
+            true,
+          );
+          if (typeof length === "number" && length >= 500) break;
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+      } catch {
+        // 渲染进程还没准备好：继续走下面的断言（失败信息里会体现）
+      }
       try {
         const result = await smokeWindow.webContents.executeJavaScript(
           `(async () => {

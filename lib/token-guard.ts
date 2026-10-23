@@ -47,6 +47,41 @@ export interface PrefixAuditView {
   } | null;
 }
 
+/**
+ * 从渲染层已有的 transcript 估算"下一次请求会带上多少上下文 token"。
+ *
+ * 为什么需要它：未运行过的会话在 Host 里没有 wrapper，`agent.state` 返回的
+ * `contextUsage.tokens` 是 null（实测打开 26MB 会话时就是 null）；而护栏要在
+ * "恢复会话"这一刻就给出估算，所以退化为对 transcript 的粗略计数。
+ * 口径与 `lib/live-usage.ts` 的 `estimateTokens` 一致（CJK≈1 字/token，其它≈4 字符/token）。
+ */
+export function estimateContextTokens(messages: readonly unknown[] | null | undefined): number {
+  if (!Array.isArray(messages) || messages.length === 0) return 0;
+  let cjk = 0;
+  let other = 0;
+  const addText = (text: unknown) => {
+    if (typeof text !== "string" || text.length === 0) return;
+    for (const char of text) {
+      if (/[　-鿿＀-￯]/.test(char)) cjk += 1;
+      else other += 1;
+    }
+  };
+  const visitBlock = (block: unknown) => {
+    if (!block || typeof block !== "object") return;
+    const typed = block as { type?: string; text?: string; content?: unknown };
+    if (typed.type === "text") addText(typed.text);
+    if (typeof typed.content === "string") addText(typed.content);
+    if (Array.isArray(typed.content)) typed.content.forEach(visitBlock);
+  };
+  for (const message of messages) {
+    if (!message || typeof message !== "object") continue;
+    const typed = message as { content?: unknown };
+    if (typeof typed.content === "string") addText(typed.content);
+    else if (Array.isArray(typed.content)) typed.content.forEach(visitBlock);
+  }
+  return Math.round(cjk + other / 4);
+}
+
 export interface TokenGuardInput {
   /** 当前上下文 token 数（`agent.state.contextUsage.tokens`），用于估算重发成本。 */
   contextTokens?: number | null;

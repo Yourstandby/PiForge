@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   RESUME_TOKENS_THRESHOLD,
   SPLIT_TOKENS_THRESHOLD,
+  estimateContextTokens,
   isPrefixInvalidated,
   resolveTokenGuards,
 } from "./token-guard.ts";
@@ -97,4 +98,18 @@ test("非法 token 数（null/NaN/负数）不会被当成大上下文", () => {
   for (const value of [null, undefined, Number.NaN, -1, 0]) {
     assert.deepEqual(resolveTokenGuards({ contextTokens: value, hasMessages: true }), []);
   }
+});
+
+test("estimateContextTokens：CJK≈1 字/token、其它≈4 字符/token，且跳过空消息", () => {
+  assert.equal(estimateContextTokens(null), 0);
+  assert.equal(estimateContextTokens([]), 0);
+  assert.equal(
+    estimateContextTokens([
+      { role: "user", content: [{ type: "text", text: "你好世界" }] }, // 4 CJK
+      { role: "assistant", content: [{ type: "text", text: "abcdefgh" }] }, // 8/4 = 2
+      { role: "toolResult", content: "tool output text" }, // 16/4 = 4
+      { role: "assistant", content: [{ type: "toolCall", name: "bash" }] }, // 无文本 → 0
+    ]),
+    10,
+  );
 });

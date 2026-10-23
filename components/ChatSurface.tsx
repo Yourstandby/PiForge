@@ -8,7 +8,7 @@ import { useAgentSession } from "@/hooks/useAgentSession";
 import { useSmoothTypewriter } from "@/hooks/useSmoothTypewriter";
 import { useAudio } from "@/hooks/useAudio";
 import { useHostHealth } from "@/hooks/useHostHealth";
-import { resolveTokenGuards, type TokenGuardKind } from "@/lib/token-guard";
+import { estimateContextTokens, resolveTokenGuards, type TokenGuardKind } from "@/lib/token-guard";
 import { TokenGuardBanner } from "./TokenGuardBanner";
 import { useSessionScope } from "@/hooks/useSessionScope";
 import { conversationToMarkdown } from "@/lib/conversation-markdown";
@@ -636,7 +636,8 @@ function ChatSession({
   const tokenGuardHints = useMemo(
     () =>
       resolveTokenGuards({
-        contextTokens: chat.contextUsage?.tokens ?? null,
+        // 未运行的会话没有 contextUsage（Host 侧还没有 wrapper）→ 用 transcript 估算。
+        contextTokens: chat.contextUsage?.tokens ?? (estimateContextTokens(messages) || null),
         hasMessages: messages.length > 0,
         prefixAudit: chat.prefixAudit,
         dismissed: dismissedGuards,
