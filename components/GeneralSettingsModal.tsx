@@ -14,6 +14,7 @@ import { ModalSurface } from "./ModalSurface";
 import { useI18n } from "./I18nProvider";
 import type { LocalePreference } from "@/lib/i18n";
 import type { UpstreamVersionStatus } from "@/lib/upstream-version";
+import { PiCoreVersionPicker } from "./PiCoreVersionPicker";
 
 export const UI_SCALE_STORAGE_KEY = "pi-ui-scale";
 
@@ -497,25 +498,22 @@ export function GeneralSettingsModal({ sessionId, cwd, onClose }: GeneralSetting
             label={upstream ? `当前 ${upstream.local}` : "当前版本读取中…"}
             hint={
               upstream?.hasUpdate && upstream.latest
-                ? `上游已发布 ${upstream.latest}，升级 SDK 后需重新打包`
+                ? `上游已发布 ${upstream.latest}；选版本 → 安装 → 重启生效`
                 : upstream?.latest
-                  ? `上游最新 ${upstream.latest}（已同步）`
+                  ? `上游最新 ${upstream.latest}（已同步）· 也可以回退到任意旧版本`
                   : "无法连接 npm registry，仅显示本地版本"
             }
           >
-            <button
-              type="button"
-              onClick={() => void loadUpstream(true)}
-              disabled={checkingUpstream}
-              className={`rounded-lg border px-2.5 py-1 text-[12px] transition-colors disabled:opacity-60 ${
-                upstream?.hasUpdate
-                  ? "border-[#F0C9A8] bg-[#FDF3E8] text-[#C2661A] hover:bg-[#FBE9D8]"
-                  : "border-divider text-ink-muted hover:bg-[#F5F5F7] hover:text-ink"
-              }`}
-            >
-              {checkingUpstream ? "检查中…" : upstream?.hasUpdate ? "有更新 · 重新检查" : "检查更新"}
-            </button>
+            <span className="text-[11px] text-ink-faint">
+              {checkingUpstream ? "检查中…" : upstream?.hasUpdate ? "有更新" : ""}
+            </span>
           </Row>
+          <PiCoreVersionPicker
+            local={upstream?.local ?? null}
+            latest={upstream?.latest ?? null}
+            checking={checkingUpstream}
+            onRecheck={() => void loadUpstream(true)}
+          />
         </section>
 
         <section className="flex flex-col gap-2">

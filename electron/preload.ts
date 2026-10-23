@@ -54,6 +54,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return () => ipcRenderer.off("update-downloaded", listener);
   },
   quitAndInstall: () => ipcRenderer.invoke("quit-and-install"),
+  /** pi 核心版本切换：选版本 → npm install → 重启生效。 */
+  piCore: {
+    install: (version: string) => ipcRenderer.invoke("pi-core:install", version),
+    relaunch: () => ipcRenderer.invoke("pi-core:relaunch"),
+    onProgress: (callback: (chunk: string) => void) => {
+      const listener = (_event: IpcRendererEvent, chunk: string) => callback(chunk);
+      ipcRenderer.on("pi-core:progress", listener);
+      return () => ipcRenderer.off("pi-core:progress", listener);
+    },
+  },
   openWindow: (path: string) => ipcRenderer.invoke("new-window", path),
   /** PNG screenshot of a <webview> guest, for the agent's web_preview tool. */
   captureWebview: (webContentsId: number) => ipcRenderer.invoke("capture-webview", webContentsId),

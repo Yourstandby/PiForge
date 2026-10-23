@@ -37,6 +37,7 @@ import {
 } from "./server-process";
 import { BrowserManager } from "./browser-manager";
 import { BrowserHostBridge } from "./browser-host-bridge";
+import { installPiCoreVersion, resolvePiCoreTarget } from "./pi-core-update";
 import {
   AGENT_HOST_HARD_TIMEOUT_MS,
   AGENT_HOST_READY_TIMEOUT_MS,
@@ -1363,6 +1364,37 @@ function registerIpcHandlers() {
     const { autoUpdater } = await import("electron-updater");
     autoUpdater.quitAndInstall();
     return { ok: true, version: decision.version };
+  });
+
+  ipcMain.handle("pi-core:install", async (_event, version: unknown) => {
+    if (typeof version !== "string") return { ok: false, error: "版本号缺失" };
+    const target = resolvePiCoreTarget({
+      isPackaged: app.isPackaged,
+      appPath: app.getAppPath(),
+      resourcesPath: process.resourcesPath,
+    });
+    logInfo("pi core install requested", { version, dir: target.dir, mode: target.mode });
+    const result = await installPiCoreVersion({
+      version,
+      target,
+      onLog: (chunk) => {
+        // 流式给 UI 看进度文案（npm 输出，非敏感）
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed()) window.webContents.send("pi-core:progress", chunk);
+        }
+      },
+    });
+    if (result.ok) logInfo("pi core installed", { version: result.installed });
+    else logError("pi core install failed", { version, error: result.error });
+    return result;
+  });
+
+  ipcMain.handle("pi-core:relaunch", async () => {
+    logInfo("pi core relaunch requested from renderer");
+    setQuitting(true);
+    app.relaunch();
+    app.exit(0);
+    return { ok: true };
   });
 
   ipcMain.on("set-theme", (event, theme: unknown) => {

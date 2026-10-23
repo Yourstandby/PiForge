@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse } from "../../../lib/next-server-shim.ts";
 import { errorMessage, getRequestId, jsonError, logApiError } from "../../../lib/api-error.ts";
 import { getUpstreamVersionStatus } from "../../../lib/upstream-version.ts";
 

@@ -203,6 +203,11 @@ export const API_ROUTES: ApiRouteEntry[] = [
     load: () => import("../app/api/terminal/events/route.ts"),
   },
   {
+    pattern: "/api/upstream/versions",
+    segments: ["upstream","versions"],
+    load: () => import("../app/api/upstream/versions/route.ts"),
+  },
+  {
     pattern: "/api/usage/upstream",
     segments: ["usage","upstream"],
     load: () => import("../app/api/usage/upstream/route.ts"),
