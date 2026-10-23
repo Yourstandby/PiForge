@@ -8,6 +8,7 @@ import {
 } from "@/lib/desktop-settings";
 import { errorMessage, getRequestId, jsonError, logApiError } from "@/lib/api-error";
 import { getAgentHostClient } from "@/lib/agent-host-client";
+import { resolveOnDemandDomains } from "@/lib/domain-tools";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +16,19 @@ export async function GET(req: Request) {
   const requestId = getRequestId(req);
   try {
     const settings = readDesktopSettings(getAgentDir());
-    return NextResponse.json(settings, { headers: { "x-request-id": requestId } });
+    // 实际生效的按需域（环境变量 > 设置项 > 默认），设置页展示这个而不是原始字段。
+    const onDemand = resolveOnDemandDomains({
+      env: process.env,
+      settings: settings.onDemandDomains ?? null,
+    });
+    return NextResponse.json(
+      {
+        ...settings,
+        onDemandDomains: settings.onDemandDomains ?? null,
+        onDemandEffective: { domains: onDemand.domains, source: onDemand.source },
+      },
+      { headers: { "x-request-id": requestId } }
+    );
   } catch (error) {
     logApiError({ route: "/api/desktop-settings", method: "GET", requestId, error });
     return jsonError(req, 500, errorMessage(error));
@@ -37,7 +50,18 @@ export async function PUT(req: Request) {
     void getAgentHostClient()
       .call("agent.updateCodemode", { enabled: saved.codemodeEnabled ?? false })
       .catch(() => {});
-    return NextResponse.json(saved, { headers: { "x-request-id": requestId } });
+    const onDemand = resolveOnDemandDomains({
+      env: process.env,
+      settings: saved.onDemandDomains ?? null,
+    });
+    return NextResponse.json(
+      {
+        ...saved,
+        onDemandDomains: saved.onDemandDomains ?? null,
+        onDemandEffective: { domains: onDemand.domains, source: onDemand.source },
+      },
+      { headers: { "x-request-id": requestId } }
+    );
   } catch (error) {
     logApiError({ route: "/api/desktop-settings", method: "PUT", requestId, error });
     return jsonError(req, 500, errorMessage(error));

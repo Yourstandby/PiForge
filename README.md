@@ -247,13 +247,21 @@ wire name 对不上 → `unsupported call`。现在只返回可调用的 wire na
 并把 active 按 canonical 顺序重排（否则激活那轮是追加序、下一轮变字典序 = 两次前缀写入），
 结果文本里明确写「新工具下一轮再调，不要同轮连调」。
 
-**开关**：
+**开关**（设置页 → 运行 → 「按需工具域」多选，默认只勾 `shell`）：
 ```bash
-PIFORGE_ON_DEMAND_DOMAINS=0            # 全部常驻（A 组，前缀 6 988）
-PIFORGE_ON_DEMAND_DOMAINS=1            # 两个低频域按需（历史配置）
-PIFORGE_ON_DEMAND_DOMAINS=browser,shell# 显式列表
-# 默认：shell
+PIFORGE_ON_DEMAND_DOMAINS=0             # 全部常驻（A 组，前缀 6 988）
+PIFORGE_ON_DEMAND_DOMAINS=1             # 兼容别名：memory + orchestrator 按需（历史语义）
+PIFORGE_ON_DEMAND_DOMAINS=browser,shell # 显式列表
+# 都不设置时读设置项 onDemandDomains；设置项也没有 → 默认 shell
 ```
+
+**第 9 步：开关的 UI 与语义迁移**
+- 设置页新增「按需工具域」多选（shell / browser / fleet / orchestrator / memory / plugin），
+  保存到 `desktop-settings.json` 的 `onDemandDomains`；空数组 = 全部常驻。
+- 优先级：**环境变量 > 设置项 > 默认（shell）**。来源是环境变量时，设置页显示生效值并禁用勾选。
+- 语义不变（这次只是搬到 UI）：`0` 全常驻、`1` 仍是 memory+orchestrator 的兼容别名、
+  显式列表按列出的域。老用户用过 `=1` 的行为不变；想回全常驻设 `0` 或取消所有勾选。
+- 勾选 `memory` / `orchestrator` 只给黄色提示（实测负收益），不禁止 —— 不删可感知能力。
 
 ### 第 7 步：当前状态与三条硬约束
 

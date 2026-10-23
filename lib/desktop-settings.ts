@@ -52,6 +52,11 @@ export interface DesktopSettings {
   outputStyleGuidelines?: boolean;
   /** 回复语言跟随用户语言（默认开）。 */
   responseLanguageGuideline?: boolean;
+  /**
+   * 哪些多态工具域走「按需激活」（默认只有 shell）。
+   * 环境变量 `PIFORGE_ON_DEMAND_DOMAINS` 优先于这里（CI / 调试用）。
+   */
+  onDemandDomains?: string[];
   /** Optional LTM config; omitted when unset. Merged by getLtmConfig. */
   ltm?: DesktopLtmSettings;
 }
@@ -112,6 +117,12 @@ export function mergeDesktopSettings(raw: unknown): DesktopSettings {
   }
   if (typeof obj.responseLanguageGuideline === "boolean") {
     result.responseLanguageGuideline = obj.responseLanguageGuideline;
+  }
+  if (Array.isArray(obj.onDemandDomains)) {
+    const allowed = new Set(["browser", "shell", "fleet", "memory", "orchestrator", "plugin"]);
+    result.onDemandDomains = [...new Set(obj.onDemandDomains.filter(
+      (name): name is string => typeof name === "string" && allowed.has(name)
+    ))];
   }
   const fast = parseAutoRoutingSelection(obj.autoRoutingFast);
   const strong = parseAutoRoutingSelection(obj.autoRoutingStrong);
@@ -180,6 +191,15 @@ export function validateDesktopSettingsBody(body: unknown): string | null {
     }
     if (typeof selection.modelId !== "string" || !selection.modelId.trim()) {
       return `${key}.modelId must be a non-empty string`;
+    }
+  }
+  if (obj.onDemandDomains !== undefined) {
+    if (!Array.isArray(obj.onDemandDomains) || !obj.onDemandDomains.every((name) => typeof name === "string")) {
+      return "onDemandDomains must be an array of strings";
+    }
+    const allowed = ["browser", "shell", "fleet", "memory", "orchestrator", "plugin"];
+    if (!obj.onDemandDomains.every((name) => allowed.includes(name as string))) {
+      return `onDemandDomains only accepts: ${allowed.join(", ")}`;
     }
   }
   if (obj.ltm !== undefined) {

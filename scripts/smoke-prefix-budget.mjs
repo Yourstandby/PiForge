@@ -47,10 +47,32 @@ const budget = await run([
   "--max-median-input",
   "200",
   "--assert-lean-transcript",
+  "--assert-undeclared",
+  "shell",
   "--turns",
   "4",
 ]);
 if (budget !== 0) process.exit(budget);
+
+// 设置项驱动的配置（不设环境变量，走 desktop-settings.json 的 onDemandDomains）。
+const settingsDriven = await run([
+  "--mode",
+  "host",
+  "--turns",
+  "2",
+  "--on-demand-settings",
+  "shell",
+  "--assert-undeclared",
+  "shell",
+]);
+if (settingsDriven !== 0) process.exit(settingsDriven);
+
+// 全常驻（A 组）：环境变量 =0，shell 必须重新被声明。
+const allDeclared = await run(
+  ["--mode", "host", "--turns", "2", "--assert-declared", "shell"],
+  { PIFORGE_ON_DEMAND_DOMAINS: "0" }
+);
+if (allDeclared !== 0) process.exit(allDeclared);
 
 // 默认配置下唯一按需的域：shell。探针同时验证命名对齐 + 激活后棘轮（measure-prefix 内断言）。
 const shellActivation = await run(["--mode", "host", "--turns", "3", "--probe-search", "shell"]);

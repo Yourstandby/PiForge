@@ -40,7 +40,11 @@ import { canonicalToolOrder } from "./prompt-prefix.ts";
 import { desktopProcessInlineExtension } from "./desktop-process-extension.ts";
 import { desktopPowerShellInlineExtension } from "./desktop-powershell-extension.ts";
 import { desktopDomainInlineExtension } from "./desktop-domain-extension.ts";
-import { DOMAIN_LEGACY_TOOLS } from "../lib/domain-tools.ts";
+import {
+  DOMAIN_LEGACY_TOOLS,
+  resolveOnDemandDomains,
+  setRuntimeOnDemandDomains,
+} from "../lib/domain-tools.ts";
 import { desktopOutputStyleInlineExtension } from "./desktop-output-style-extension.ts";
 import { desktopBrowserInlineExtension } from "./desktop-browser-extension.ts";
 import { desktopTerminalInlineExtension } from "./desktop-terminal-extension.ts";
@@ -1086,6 +1090,15 @@ export async function startRpcSession(
     } = await import("./sdk-adapter.ts");
     const agentDir = getAgentDir();
     const desktop = readDesktopSettings(agentDir);
+    /**
+     * 按需域：环境变量 > 设置项 `onDemandDomains` > 默认（shell）。
+     * 解析结果写进 domain-tools 的运行期状态，声明/合成/棘轮都用同一份。
+     */
+    const onDemand = resolveOnDemandDomains({
+      env: process.env,
+      settings: desktop.onDemandDomains ?? null,
+    });
+    setRuntimeOnDemandDomains(onDemand.domains);
 
     const sessionManager = sessionFile
       ? SessionManager.open(sessionFile, undefined)

@@ -48,18 +48,64 @@ export const ON_DEMAND_DOMAINS: readonly DomainToolName[] = ["memory", "orchestr
  */
 export const DEFAULT_ON_DEMAND_DOMAINS: readonly DomainToolName[] = ["shell"];
 
+export type OnDemandSource = "env" | "settings" | "default";
+
+export interface ResolvedOnDemand {
+  domains: DomainToolName[];
+  source: OnDemandSource;
+}
+
+/**
+ * 开关优先级：**环境变量 > 设置项 > 默认值（shell）**。
+ *
+ * 语义（第 9 步定稿，README / 设置页 / CHANGELOG 三处一致）：
+ *   - `0`            → 全部常驻（A 组）
+ *   - `1`            → 兼容别名：memory + orchestrator 按需（第 3–5 步的历史行为）
+ *   - `a,b`          → 显式列表，例如 `shell` / `browser,shell`
+ *   - 未设置         → 设置项 `onDemandDomains`；设置项也没有 → 默认 `shell`
+ */
+export function resolveOnDemandDomains(options: {
+  env?: Record<string, string | undefined>;
+  settings?: readonly string[] | null;
+} = {}): ResolvedOnDemand {
+  const envValue = options.env?.PIFORGE_ON_DEMAND_DOMAINS?.trim();
+  if (envValue) {
+    if (envValue === "0") return { domains: [], source: "env" };
+    if (envValue === "1") return { domains: [...ON_DEMAND_DOMAINS], source: "env" };
+    const wanted = new Set(envValue.split(",").map((entry) => entry.trim()).filter(Boolean));
+    return { domains: DOMAIN_TOOL_NAMES.filter((domain) => wanted.has(domain)), source: "env" };
+  }
+  if (Array.isArray(options.settings)) {
+    const wanted = new Set(options.settings);
+    return { domains: DOMAIN_TOOL_NAMES.filter((domain) => wanted.has(domain)), source: "settings" };
+  }
+  return { domains: [...DEFAULT_ON_DEMAND_DOMAINS], source: "default" };
+}
+
+/**
+ * 运行期覆盖：Host 在会话创建时用「设置项 + 环境变量」解析一次，之后所有声明/合成
+ * 都读这个值（模块级，因为 desktop-settings 是全局的）。
+ */
+let runtimeOnDemand: DomainToolName[] | null = null;
+
+export function setRuntimeOnDemandDomains(domains: readonly string[] | null): void {
+  if (domains === null) {
+    runtimeOnDemand = null;
+    return;
+  }
+  const wanted = new Set(domains);
+  runtimeOnDemand = DOMAIN_TOOL_NAMES.filter((domain) => wanted.has(domain));
+}
+
+export function getRuntimeOnDemandDomains(): readonly DomainToolName[] | null {
+  return runtimeOnDemand;
+}
+
 export function enabledOnDemandDomains(
   env: Record<string, string | undefined> = process.env
 ): readonly DomainToolName[] {
-  const raw = env.PIFORGE_ON_DEMAND_DOMAINS?.trim();
-  // `0` = 全部常驻（等价于第 5 步的 A 组）
-  if (raw === "0") return [];
-  if (!raw) return DEFAULT_ON_DEMAND_DOMAINS;
-  // `1` = 两个低频域（第 3–5 步的历史行为，供无缓存 provider 用）
-  if (raw === "1") return ON_DEMAND_DOMAINS;
-  // 显式列表：`shell` / `browser,shell` / `memory,orchestrator,shell`
-  const wanted = new Set(raw.split(",").map((entry) => entry.trim()).filter(Boolean));
-  return DOMAIN_TOOL_NAMES.filter((domain) => wanted.has(domain));
+  if (runtimeOnDemand) return runtimeOnDemand;
+  return resolveOnDemandDomains({ env }).domains;
 }
 
 export function isOnDemandDomain(

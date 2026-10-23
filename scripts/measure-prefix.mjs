@@ -84,6 +84,11 @@ const maxMedianInput = Number(valueOf("--max-median-input") ?? 0);
 const dumpRequestsDir = valueOf("--dump-requests");
 /** 校验发送给模型的 transcript 只带模型需要的字段（不带 details/usage/UI 元数据）。 */
 const assertLeanTranscript = args.includes("--assert-lean-transcript");
+/** 用设置项（desktop-settings.json 的 onDemandDomains）驱动按需域，而不是环境变量。 */
+const onDemandSettings = valueOf("--on-demand-settings");
+/** 断言某个工具在第一条会话请求里被声明 / 未被声明。 */
+const assertDeclared = valueOf("--assert-declared");
+const assertUndeclared = valueOf("--assert-undeclared");
 /** 每个域探针用真实存在的动作与参数（否则会在参数校验处失败，测不到分派链路）。 */
 const PROBE_ARGS = {
   memory: { action: "recall", query: "token cost" },
@@ -198,6 +203,25 @@ function writeAgentDir(agentDir, baseUrl, apiShape = "openai-completions") {
     )}\n`
   );
   writeFileSync(path.join(agentDir, "auth.json"), `${JSON.stringify({}, null, 2)}\n`);
+  if (onDemandSettings !== undefined) {
+    writeFileSync(
+      path.join(agentDir, "desktop-settings.json"),
+      `${JSON.stringify(
+        {
+          defaultAgentMode: "full",
+          defaultToolPreset: "default",
+          onDemandDomains: onDemandSettings
+            .split(",")
+            .map((entry) => entry.trim())
+            .filter(Boolean),
+        },
+        null,
+        2
+      )}
+`
+    );
+  }
+
   if (noAddons) {
     writeFileSync(
       path.join(agentDir, "desktop-settings.json"),
@@ -711,6 +735,26 @@ async function main() {
         console.error("  ✗ 出现非预期前缀变化（相邻两轮本应字节一致）");
         process.exitCode = 4;
       }
+    }
+  }
+
+  if (assertDeclared || assertUndeclared) {
+    const firstSessionRequest = recorder.requests.find(
+      (entry) => Array.isArray(entry.body?.tools) && entry.body.tools.length > 0
+    );
+    const declared = new Set(
+      (firstSessionRequest?.body?.tools ?? []).map((tool) => String((tool?.function ?? tool)?.name ?? ""))
+    );
+    console.log("");
+    if (assertDeclared) {
+      const ok = declared.has(assertDeclared);
+      console.log(`${ok ? "✓" : "✗"} ${assertDeclared} 在默认声明集合里`);
+      if (!ok) process.exitCode = 10;
+    }
+    if (assertUndeclared) {
+      const ok = !declared.has(assertUndeclared);
+      console.log(`${ok ? "✓" : "✗"} ${assertUndeclared} 默认不声明（按需）`);
+      if (!ok) process.exitCode = 10;
     }
   }
 
