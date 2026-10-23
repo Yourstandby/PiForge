@@ -10,6 +10,7 @@ import { useAudio } from "@/hooks/useAudio";
 import { useHostHealth } from "@/hooks/useHostHealth";
 import { estimateContextTokens, resolveTokenGuards, type TokenGuardKind } from "@/lib/token-guard";
 import { TokenGuardBanner } from "./TokenGuardBanner";
+import { useSessionSplitHint } from "@/hooks/useSessionSplitHint";
 import { useSessionScope } from "@/hooks/useSessionScope";
 import { conversationToMarkdown } from "@/lib/conversation-markdown";
 import { buildBranchSwitchMap } from "@/lib/session-branches-view";
@@ -633,9 +634,12 @@ function ChatSession({
   useEffect(() => {
     setDismissedGuards([]);
   }, [session?.id]);
+  // L-B 实验开关：默认 false（与引入前一致），`PIFORGE_SESSION_SPLIT_HINT=1` 才给动作按钮。
+  const sessionSplitHint = useSessionSplitHint();
   const tokenGuardHints = useMemo(
     () =>
       resolveTokenGuards({
+        flags: { sessionSplitHint },
         // 未运行的会话没有 contextUsage（Host 侧还没有 wrapper）→ 用 transcript 估算。
         contextTokens: chat.contextUsage?.tokens ?? (estimateContextTokens(messages) || null),
         hasMessages: messages.length > 0,
@@ -643,7 +647,7 @@ function ChatSession({
         dismissed: dismissedGuards,
       }),
     // messages 用于估算上下文（未运行会话没有 contextUsage）；依赖整数组才能跟上内容变化。
-    [chat.contextUsage?.tokens, chat.prefixAudit, messages, dismissedGuards],
+    [chat.contextUsage?.tokens, chat.prefixAudit, messages, dismissedGuards, sessionSplitHint],
   );
 
   // Reconcile with the server when the run ends without us seeing agent_end.

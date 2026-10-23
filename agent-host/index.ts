@@ -11,6 +11,7 @@ import v8 from "node:v8";
 import process from "node:process";
 import { PROTOCOL_VERSION, type ParentMessage } from "../contract/protocol.ts";
 import { createAgentHostServer } from "./server.ts";
+import { parseHostStdinLine } from "../contract/host-stdin.ts";
 
 interface ParentPort {
   postMessage(message: unknown): void;
@@ -118,6 +119,32 @@ function startCpuDiagnostics(): void {
   timer.unref?.();
 }
 
+/**
+ * node 传输层的关闭通道：utilityProcess 用 `parentPort.postMessage({type:"shutdown"})`，
+ * 普通子进程没有 parentPort，所以改读 stdin 的一行 JSON（同一个处理函数）。
+ * 另外 stdin 被父进程关闭（`end()` / 父进程死亡）时也要退，避免成孤儿。
+ */
+function startStdinControl(onShutdown: (reason: string) => void): void {
+  if (process.stdin.isTTY) return;
+  process.stdin.setEncoding("utf8");
+  const newline = String.fromCharCode(10);
+  let buffer = "";
+  process.stdin.on("data", (chunk: string) => {
+    buffer += chunk;
+    let index = buffer.indexOf(newline);
+    while (index !== -1) {
+      const line = buffer.slice(0, index);
+      buffer = buffer.slice(index + 1);
+      const command = parseHostStdinLine(line);
+      if (command?.type === "shutdown") onShutdown(command.reason ?? "parent request");
+      index = buffer.indexOf(newline);
+    }
+  });
+  process.stdin.on("end", () => onShutdown("parent closed stdin"));
+  process.stdin.on("error", () => onShutdown("stdin error"));
+  process.stdin.resume();
+}
+
 function getParentPort(): ParentPort | undefined {
   return (process as unknown as { parentPort?: ParentPort }).parentPort;
 }
@@ -190,6 +217,9 @@ async function main(): Promise<void> {
       void shutdown(message.reason ?? "parent request");
     }
   });
+
+  // node 传输层（PIFORGE_HOST_TRANSPORT=node）：没有 parentPort，改读 stdin。
+  if (!parentPort) startStdinControl((reason) => void shutdown(reason));
 
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));

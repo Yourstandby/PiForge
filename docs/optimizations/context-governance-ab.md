@@ -1,6 +1,6 @@
 # 上下文治理 A/B 实验方案（L-D + L-B）
 
-> 状态：**方案已落地，本轮不执行**。判分集与执行器都已提交并自检通过：
+> 状态：**开关已实现（默认不变），A/B 仍未执行**。判分集与执行器都已提交并自检通过：
 > `node scripts/ab-context-eval.mjs --validate` / `--selfcheck` / `--plan`。
 > 真跑必须显式 `--run --spend`（预估 80 次任务 / 1 200 次模型调用 / ≈$2.6）。
 
@@ -44,11 +44,23 @@ L-C（subagent 隔离）已用 `audit-subagent-share.mjs` 量化掉了：**上�
 | `L-B` | `PIFORGE_SESSION_SPLIT_HINT=1` | 上下文 ≥200k 时在输入框上方给"开新会话"提示（复用 `lib/token-guard.ts` 的 `session-too-long`，仅提示，不阻断） |
 | `L-D+L-B` | 两者都设 | 检验是否叠加 |
 
-实现要求（**尚未实现，等 A/B 立项后才写**）：
-- `PIFORGE_TOOL_OUTPUT_CHARS` 在 `toolOutputBudget()` 里读一次环境变量，缺省 4 000；
-  非法值（非数字 / <500）忽略并保留默认 —— 与 `PIFORGE_HOST_HEAP` 同样的宽松策略。
-- `PIFORGE_SESSION_SPLIT_HINT` 只控制渲染层提示是否显示；**不改任何前缀/工具定义**。
-- 两个开关都只在启动时读一次，运行期不变（避免 A/B 中途漂移）。
+实现状态（**已实现，2026-10-23**）：
+
+- `PIFORGE_TOOL_OUTPUT_CHARS`：`agent-host/tool-output-budget.ts` 的
+  `resolveToolOutputChars()` / `withCharsLimit()` / `toolOutputBudget(toolName, env)`。
+  缺省 4 000、允许 500–200 000，非法值保留默认并写明原因（与 `PIFORGE_HOST_HEAP` 同策略）。
+  **开关关闭时 `toolOutputBudget()` 返回的就是原来的常量对象本身**（单测用 `assert.equal`
+  断言同一引用），所以默认路径零差异。打开时头/尾/行数按比例缩放，`read` 档仍"头大尾小"。
+- `PIFORGE_SESSION_SPLIT_HINT`：`lib/token-guard.ts` 的 `resolveSessionSplitHint()`；
+  只影响"会话过长"那条提示 —— 关闭 = 现状（信息提示，**逐字节一致**，单测锁定文案），
+  打开 = 同一条提示升级为「建议开新会话」+ 可点按钮（`action: "new-session"`）。
+  开关值通过 `/api/health` 的 `flags.sessionSplitHint` 暴露给渲染层（`hooks/useSessionSplitHint.ts`），
+  **不改任何前缀/工具定义**。
+- 两个开关互相独立、可组合；都只在启动时读一次，运行期不变（避免 A/B 中途漂移）。
+
+> 为什么 L-B 的"开"是**加动作按钮**而不是"加一条提示"：提示文案本身已经在（上一轮就上线在
+> 护栏里），L-B 的假设是"**有可点的动作**才会改变用户行为"。所以两臂只差这一个变量，
+> 归因清楚。
 
 ## 3. 判分集（20 题，`scripts/ab-context-tasks.json`）
 
@@ -112,6 +124,8 @@ S5（`ChatSurface.tsx` 的 `useEffect(` 计数）。
 ## 7. 样本量与统计说明（诚实版）
 
 - 20 题 × 4 组 = 80 次任务；每题只跑 **1 次**。
+- 预算（`npm run ab:context -- --plan` 实测）：单轮 80 次任务 / 1 200 次调用 / **≈$2.64** / ≈2 小时；
+  **两轮 160 次任务 / 2 400 次调用 / ≈$5.28 / ≈4 小时**（正式结论的最低要求）。
 - 这个样本量**不足以下统计显著结论**（20 题的 pass/fail 只能分辨 ≥2pp 的差异，
   且单次运行受模型随机性影响大）。所以本轮判据刻意设成"**成本/耗时看幅度，成功率看是否掉题**"：
   - 若 L-D 成本降幅 >15% 且成功题数不掉 → 进下一轮（每组再补 20 题重复），

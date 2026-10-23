@@ -181,6 +181,7 @@ function plan(tasks) {
   // 一次任务 ≠ 一次调用：agentic 任务会反复工具循环，按 ASSUMED_CALLS_PER_TASK 估（脚本里显式写出假设）。
   const calls = groupNames.length * tasks.length * ASSUMED_CALLS_PER_TASK;
   const estimate = (calls * BASELINE_COST_PER_CALL).toFixed(2);
+  const twoRoundCalls = calls * 2;
   return {
     groups: groupNames,
     tasks: tasks.length,
@@ -189,6 +190,13 @@ function plan(tasks) {
     assumedCallsPerTask: ASSUMED_CALLS_PER_TASK,
     baselineCostPerCall: BASELINE_COST_PER_CALL,
     estimatedCostUsd: Number(estimate),
+    twoRound: {
+      runs: runs * 2,
+      modelCalls: twoRoundCalls,
+      costUsd: Number((twoRoundCalls * BASELINE_COST_PER_CALL).toFixed(2)),
+      // 与单轮口径一致：每题 3 分钟、2 组并行 → 两轮 = 2 × (runs × 3 / 2) 分钟
+      hours: Number(((runs * 2 * 3) / 2 / 60).toFixed(1)),
+    },
     longContextTasks: tasks.filter((task) => task.longContext).map((task) => task.id),
     perTaskMinutes: { p50: 2, p90: 6 },
     wallClockMinutes: Math.round((runs * 3) / 2),
@@ -264,6 +272,9 @@ function main() {
       `  预估成本：$${result.estimatedCostUsd}（假设每题 ${result.assumedCallsPerTask} 次调用 × 实测均值 $${result.baselineCostPerCall}/调用）`,
     );
     console.log(`  预估墙钟：≈ ${result.wallClockMinutes} 分钟（单题 2–6 分钟，可并行 2 组）`);
+    console.log(
+      `  两轮预算（正式结论的最低要求）：${result.twoRound.runs} 次任务 / ${result.twoRound.modelCalls.toLocaleString()} 次调用 / ≈$${result.twoRound.costUsd} / ≈${result.twoRound.hours} 小时`,
+    );
     console.log(`  长上下文题：${result.longContextTasks.join(", ")}`);
     return;
   }

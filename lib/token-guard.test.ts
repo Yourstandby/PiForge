@@ -5,6 +5,7 @@ import {
   SPLIT_TOKENS_THRESHOLD,
   estimateContextTokens,
   isPrefixInvalidated,
+  resolveSessionSplitHint,
   resolveTokenGuards,
 } from "./token-guard.ts";
 
@@ -112,4 +113,71 @@ test("estimateContextTokens：CJK≈1 字/token、其它≈4 字符/token，且�
     ]),
     10,
   );
+});
+
+// ---------------------------------------------------------------------------
+// L-B 实验开关（PIFORGE_SESSION_SPLIT_HINT）
+// ---------------------------------------------------------------------------
+
+test("resolveSessionSplitHint: 未设置 → 关闭（默认行为不变）", () => {
+  const setting = resolveSessionSplitHint({});
+  assert.equal(setting.enabled, false);
+  assert.equal(setting.source, "default");
+});
+
+test("resolveSessionSplitHint: 1/true/on/yes → 开；0/false/off/no → 关", () => {
+  for (const raw of ["1", "true", "on", "yes", " TRUE "]) {
+    assert.equal(resolveSessionSplitHint({ PIFORGE_SESSION_SPLIT_HINT: raw }).enabled, true, raw);
+  }
+  for (const raw of ["0", "false", "off", "no"]) {
+    assert.equal(resolveSessionSplitHint({ PIFORGE_SESSION_SPLIT_HINT: raw }).enabled, false, raw);
+  }
+});
+
+test("resolveSessionSplitHint: 非法值保持关闭并写明原因（不静默）", () => {
+  const setting = resolveSessionSplitHint({ PIFORGE_SESSION_SPLIT_HINT: "maybe" });
+  assert.equal(setting.enabled, false);
+  assert.equal(setting.source, "env_invalid");
+  assert.match(setting.reason, /maybe/);
+});
+
+test("L-B 关闭时输出与引入开关前逐字节一致（无 action 字段、文案不变）", () => {
+  const baseline = resolveTokenGuards({ contextTokens: 250_000, hasMessages: true });
+  for (const flags of [undefined, {}, { sessionSplitHint: false }]) {
+    const output = resolveTokenGuards({ contextTokens: 250_000, hasMessages: true, flags });
+    assert.deepEqual(output, baseline);
+    assert.equal(output.some((hint) => hint.action !== undefined), false);
+  }
+  const tooLong = baseline.find((hint) => hint.kind === "session-too-long");
+  assert.equal(tooLong?.text, "当前会话上下文 ≈250k tok，每轮都要重读");
+});
+
+test("L-B 打开时只改 session-too-long 这一条（kind/阈值不变，多一个动作入口）", () => {
+  const off = resolveTokenGuards({ contextTokens: 250_000, hasMessages: true });
+  const on = resolveTokenGuards({
+    contextTokens: 250_000,
+    hasMessages: true,
+    flags: { sessionSplitHint: true },
+  });
+  assert.deepEqual(
+    on.map((hint) => hint.kind),
+    off.map((hint) => hint.kind),
+  );
+  const onTooLong = on.find((hint) => hint.kind === "session-too-long");
+  assert.equal(onTooLong?.action, "new-session");
+  assert.match(String(onTooLong?.text), /建议开新会话/);
+  assert.equal(onTooLong?.estimatedTokens, 250_000);
+  // 其它提示（恢复成本）完全不受影响
+  const offResume = off.find((hint) => hint.kind === "resume-cost");
+  const onResume = on.find((hint) => hint.kind === "resume-cost");
+  assert.deepEqual(onResume, offResume);
+});
+
+test("L-B 打开也不会在阈值以下出现提示", () => {
+  const output = resolveTokenGuards({
+    contextTokens: 199_999,
+    hasMessages: true,
+    flags: { sessionSplitHint: true },
+  });
+  assert.equal(output.some((hint) => hint.kind === "session-too-long"), false);
 });

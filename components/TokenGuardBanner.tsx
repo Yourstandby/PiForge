@@ -45,7 +45,7 @@ export function TokenGuardBanner({
         <div className="font-medium">{hint.text}</div>
         {hint.detail && <div className="mt-0.5 text-[11px] opacity-80">{hint.detail}</div>}
       </div>
-      {onNewSession && hint.kind === "prefix-invalidated" && (
+      {onNewSession && (hint.kind === "prefix-invalidated" || hint.action === "new-session") && (
         <button
           type="button"
           onClick={onNewSession}

@@ -1,4 +1,5 @@
 import { getAgentHostClient } from "../../../lib/agent-host-client.ts";
+import { resolveSessionSplitHint } from "../../../lib/token-guard.ts";
 
 /** Next 的客户端状态 → UI 状态串。导出便于单测，不改变运行时行为。 */
 export type HostProbeState = "ready" | "starting" | "reconnecting" | "offline";
@@ -17,12 +18,21 @@ export function hostProbeState(status: string): HostProbeState {
   return "offline";
 }
 
+/**
+ * 渲染层可见的实验开关（当前只有 L-B）。
+ * 由 `PIFORGE_SESSION_SPLIT_HINT` 决定，默认关闭 → 与引入前行为一致。
+ */
+function featureFlags() {
+  return { sessionSplitHint: resolveSessionSplitHint(process.env).enabled };
+}
+
 export async function GET() {
   const client = getAgentHostClient();
   try {
     const health = await client.call("host.health", {}, { timeoutMs: 1_200 });
     return Response.json({
       ok: true,
+      flags: featureFlags(),
       host: health.ok ? "ok" : "down",
       hostState: "ready",
       hostDetail: {
@@ -37,6 +47,7 @@ export async function GET() {
     // Next.js is still serving pages; only the engine is unavailable.
     return Response.json({
       ok: true,
+      flags: featureFlags(),
       host: "down",
       hostState: hostProbeState(client.status),
     });

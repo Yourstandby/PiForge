@@ -24,6 +24,8 @@ export type TokenGuardKind = "prefix-invalidated" | "resume-cost" | "session-too
 
 export interface TokenGuardHint {
   kind: TokenGuardKind;
+  /** 提示是否带"开新会话"的动作入口（L-B 实验臂才为 `new-session`）。 */
+  action?: "new-session";
   /** 一句话结论（气泡主文案）。 */
   text: string;
   /** 补充说明（工具名、变化摘要等）。 */
@@ -82,6 +84,45 @@ export function estimateContextTokens(messages: readonly unknown[] | null | unde
   return Math.round(cjk + other / 4);
 }
 
+/**
+ * L-B 实验开关：`PIFORGE_SESSION_SPLIT_HINT`（默认**关闭**）。
+ *
+ *   - 关闭（默认）：`session-too-long` 只是信息提示 —— 与引入本开关前**逐字节一致**；
+ *   - `=1`：同一条提示升级为「建议动作」——文案强调成本、并给出「开新会话」按钮。
+ *
+ * 为什么默认关闭：L-B 的假设是"**给出可点的动作**才会改变用户行为"，
+ * 光加一行信息不会（这一点要靠 adoption 率验证，见 context-governance-ab.md）。
+ * 所以关 = 现状，开 = 实验臂，两臂之间只差"有没有动作入口"。
+ */
+export interface SessionSplitHintSetting {
+  enabled: boolean;
+  source: "default" | "env" | "env_invalid";
+  reason: string;
+}
+
+export function resolveSessionSplitHint(
+  env: Record<string, string | undefined> = {},
+): SessionSplitHintSetting {
+  const raw = env.PIFORGE_SESSION_SPLIT_HINT?.trim().toLowerCase();
+  if (!raw) return { enabled: false, source: "default", reason: "默认关闭（只给信息提示）" };
+  if (["1", "true", "on", "yes"].includes(raw)) {
+    return { enabled: true, source: "env", reason: `PIFORGE_SESSION_SPLIT_HINT=${raw}` };
+  }
+  if (["0", "false", "off", "no"].includes(raw)) {
+    return { enabled: false, source: "env", reason: `PIFORGE_SESSION_SPLIT_HINT=${raw}` };
+  }
+  return {
+    enabled: false,
+    source: "env_invalid",
+    reason: `PIFORGE_SESSION_SPLIT_HINT="${raw}" 不是布尔值，保持关闭`,
+  };
+}
+
+export interface TokenGuardFlags {
+  /** L-B：会话过长时是否给「开新会话」动作（默认 false = 现状）。 */
+  sessionSplitHint?: boolean;
+}
+
 export interface TokenGuardInput {
   /** 当前上下文 token 数（`agent.state.contextUsage.tokens`），用于估算重发成本。 */
   contextTokens?: number | null;
@@ -91,6 +132,8 @@ export interface TokenGuardInput {
   prefixAudit?: PrefixAuditView | null;
   /** 用户手动关掉的 hint 类型集合（本会话内）。 */
   dismissed?: readonly TokenGuardKind[];
+  /** 实验开关（L-B）。不传 = 全部关闭 = 与引入前逐字节一致。 */
+  flags?: TokenGuardFlags;
 }
 
 function positive(value: unknown): number {
@@ -161,12 +204,25 @@ export function resolveTokenGuards(input: TokenGuardInput): TokenGuardHint[] {
   }
 
   if (!dismissed.has("session-too-long") && contextTokens >= SPLIT_TOKENS_THRESHOLD) {
-    hints.push({
-      kind: "session-too-long",
-      text: `当前会话上下文 ≈${formatTokens(contextTokens)} tok，每轮都要重读`,
-      detail: "长会话的成本大头是每轮重读上下文（审计：cacheRead 占成本 56%）。可以考虑带着摘要开新会话。",
-      estimatedTokens: contextTokens,
-    });
+    // L-B 实验臂：同一条提示 + 动作入口；关闭时与引入前完全一致（无 action 字段）。
+    hints.push(
+      input.flags?.sessionSplitHint === true
+        ? {
+            kind: "session-too-long",
+            action: "new-session",
+            text: `上下文 ≈${formatTokens(contextTokens)} tok，建议开新会话（每轮都在重读它）`,
+            detail:
+              "长会话的成本大头是每轮重读上下文（审计：cacheRead 占成本 56%）。" +
+              "带着当前结论开新会话，能把后续每轮的重读量降下来。",
+            estimatedTokens: contextTokens,
+          }
+        : {
+            kind: "session-too-long",
+            text: `当前会话上下文 ≈${formatTokens(contextTokens)} tok，每轮都要重读`,
+            detail: "长会话的成本大头是每轮重读上下文（审计：cacheRead 占成本 56%）。可以考虑带着摘要开新会话。",
+            estimatedTokens: contextTokens,
+          },
+    );
   }
 
   return hints;

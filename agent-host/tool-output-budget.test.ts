@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  resolveToolOutputChars,
+  withCharsLimit,
   DEFAULT_TOOL_OUTPUT_BUDGET,
   READ_TOOL_OUTPUT_BUDGET,
   TRUNCATION_HINT,
@@ -10,6 +12,7 @@ import {
   truncationNotice,
   truncateToolOutput,
 } from "./tool-output-budget.ts";
+import { shouldPersistToolOutput } from "./tool-outputs.ts";
 
 function lines(count: number): string {
   return Array.from({ length: count }, (_, index) => `line ${index + 1}`).join("\n");
@@ -118,4 +121,65 @@ test("truncation notice wording is stable", () => {
     "[...已截断 1234 行 / 900 字符...]（已保留前 3000 字符 + 后 1000 字符）",
   );
   assert.match(TRUNCATION_HINT, /如需查看完整内容，请使用 grep、sed 等工具分段读取/);
+});
+
+// ---------------------------------------------------------------------------
+// L-D 实验开关（PIFORGE_TOOL_OUTPUT_CHARS）
+// ---------------------------------------------------------------------------
+
+test("resolveToolOutputChars: 未设置 → 默认 4000，source=default", () => {
+  const setting = resolveToolOutputChars({});
+  assert.equal(setting.maxChars, 4_000);
+  assert.equal(setting.source, "default");
+});
+
+test("resolveToolOutputChars: 2000 生效；非法值（字符/null/NaN/越界）保留默认", () => {
+  assert.equal(resolveToolOutputChars({ PIFORGE_TOOL_OUTPUT_CHARS: "2000" }).maxChars, 2_000);
+  assert.equal(resolveToolOutputChars({ PIFORGE_TOOL_OUTPUT_CHARS: "2000" }).source, "env");
+  for (const raw of ["abc", "0", "-100", "10", "999999", "NaN"]) {
+    const setting = resolveToolOutputChars({ PIFORGE_TOOL_OUTPUT_CHARS: raw });
+    assert.equal(setting.maxChars, 4_000, raw);
+    assert.equal(setting.source, "env_invalid", raw);
+    assert.match(setting.reason, /保留默认/);
+  }
+});
+
+test("toolOutputBudget: 开关关闭时返回的就是常量对象本身（零差异、零开销）", () => {
+  assert.equal(toolOutputBudget("read", {}), READ_TOOL_OUTPUT_BUDGET);
+  assert.equal(toolOutputBudget("bash", {}), DEFAULT_TOOL_OUTPUT_BUDGET);
+  assert.equal(toolOutputBudget(undefined, {}), DEFAULT_TOOL_OUTPUT_BUDGET);
+});
+
+test("toolOutputBudget: 开关打开时只改 budget，工具名分档不变", () => {
+  const env = { PIFORGE_TOOL_OUTPUT_CHARS: "2000" };
+  const read = toolOutputBudget("read", env);
+  const bash = toolOutputBudget("bash", env);
+  assert.equal(read.maxChars, 2_000);
+  assert.equal(bash.maxChars, 2_000);
+  // read 档仍然"头大尾小"，bash 档仍然头尾对称
+  assert.ok(read.headChars > read.tailChars);
+  assert.equal(bash.headChars, bash.tailChars);
+});
+
+test("withCharsLimit: 头/尾/行数按比例缩放，且不超过新上限", () => {
+  const scaled = withCharsLimit(DEFAULT_TOOL_OUTPUT_BUDGET, 2_000);
+  assert.equal(scaled.maxChars, 2_000);
+  assert.equal(scaled.maxBytes, 2_000);
+  assert.equal(scaled.headChars, 750);
+  assert.equal(scaled.tailChars, 750);
+  assert.equal(scaled.maxLines, 30);
+  assert.ok(scaled.headChars + scaled.tailChars <= scaled.maxChars);
+});
+
+test("withCharsLimit: 上限不变时原样返回同一对象", () => {
+  assert.equal(withCharsLimit(DEFAULT_TOOL_OUTPUT_BUDGET, DEFAULT_TOOL_OUTPUT_BUDGET.maxChars), DEFAULT_TOOL_OUTPUT_BUDGET);
+});
+
+test("shouldPersistToolOutput: 默认阈值不变；开关打开后 2000 字符就落盘", () => {
+  assert.equal(shouldPersistToolOutput("x".repeat(3_999)), false);
+  assert.equal(shouldPersistToolOutput("x".repeat(4_001)), true);
+  // 走 env 的那条路径（默认参数会读 process.env，这里显式传预算，避免测试受环境影响）
+  const tight = toolOutputBudget(undefined, { PIFORGE_TOOL_OUTPUT_CHARS: "2000" });
+  assert.equal(shouldPersistToolOutput("x".repeat(2_001), undefined, tight), true);
+  assert.equal(shouldPersistToolOutput("x".repeat(1_999), undefined, tight), false);
 });

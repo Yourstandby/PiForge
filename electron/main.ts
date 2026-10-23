@@ -29,6 +29,7 @@ import {
   STATIC_APP_SCHEME,
 } from "./static-app";
 import { isHeapExhaustion, resolveHostHeapFlags } from "./host-heap";
+import { buildHostSpawnSpec, hostShutdownFrame, resolveHostTransport } from "./host-launcher";
 import {
   describeReEvaluation,
   GPU_EVIDENCE_FILE,
@@ -199,7 +200,32 @@ const USE_NEXT_SERVER = process.env.PIFORGE_USE_NEXT === "1";
 let apiBridge: AgentHostApiBridge | null = null;
 let staticProtocolInstalled = false;
 let nextProcess: ServerProcess | null = null;
-let agentHostProcess: ReturnType<typeof utilityProcess.fork> | null = null;
+/**
+ * Host 句柄：utility 模式是 `UtilityProcess`，node 模式是 `ChildProcess`。
+ * 两者的公共面只有 pid / stdout / stderr / once / kill，所以用结构化类型收敛。
+ */
+interface HostProcessHandle {
+  pid?: number;
+  stdout: NodeJS.ReadableStream | null;
+  stderr: NodeJS.ReadableStream | null;
+  once(event: "exit", listener: (code: number | null, signal?: string | null) => void): void;
+  once(event: "error", listener: (...args: unknown[]) => void): void;
+  kill(signal?: NodeJS.Signals): boolean;
+  /** 只有 utility 模式有（parentPort 通道）。 */
+  postMessage?: (message: unknown) => void;
+  /** 只有 node 模式有（stdin 通道）。 */
+  stdin?: NodeJS.WritableStream | null;
+}
+
+let agentHostProcess: HostProcessHandle | null = null;
+/**
+ * node 传输层没有 parentPort，就绪信号只能从 host 的 stdout 里认：
+ * `[agent-host] ready protocol=1 endpoint=...`。这里挂一个回调，由就绪等待
+ * 的 Promise 设置（utility 模式保持原来的 message 通道，不受影响）。
+ */
+let notifyHostReadyFromStdout: ((detail: unknown) => void) | null = null;
+/** 本轮实际生效的传输层（日志 / 诊断用）。 */
+let activeHostTransport: "utility" | "node" = "utility";
 let agentHostEndpoint: string | null = null;
 let agentHostToken: string | null = null;
 let agentHostReady = false;
@@ -424,39 +450,73 @@ async function startAgentHost(): Promise<void> {
     : [];
 
   /**
-   * L1：只给 **host**（utilityProcess）收紧 V8 堆，不动 main / 渲染进程。
-   * 实测 host RSS 289–357 MB → 173–195 MB（见 electron/host-heap.ts）；
+   * L1：只给 **host** 收紧 V8 堆，不动 main / 渲染进程。
    * `PIFORGE_HOST_HEAP=default` 回退到不干预。
    */
   const hostHeap = resolveHostHeapFlags({ env: process.env });
   activeHostHeapLimits = { semiSpaceMb: hostHeap.semiSpaceMb, oldSpaceMb: hostHeap.oldSpaceMb };
-  // execArgv 顺序：L1 堆参数（`--js-flags=--max-old-space-size=N`）→ CPU profile → 实验参数。
-  const extraExecArgv = (process.env.PIFORGE_HOST_EXEC_ARGV ?? "")
+  const extraFlags = (process.env.PIFORGE_HOST_EXEC_ARGV ?? "")
     .split(",")
     .map((entry) => entry.trim())
     .filter(Boolean);
-  const execArgvParts = [...hostHeap.execArgv, ...profileFlags, ...extraExecArgv];
-  const execArgv = execArgvParts.length > 0 ? execArgvParts : undefined;
-  logInfo("Agent Host heap flags", {
-    execArgv: execArgvParts,
-    reason: hostHeap.reason,
-    semiSpaceMb: hostHeap.semiSpaceMb,
-    oldSpaceMb: hostHeap.oldSpaceMb,
+
+  /**
+   * 传输层双实现（默认 utility，行为与切默认前完全一致）：
+   *   - utility：`utilityProcess.fork` + `--js-flags=--max-old-space-size=N`（新生代设不了）；
+   *   - node：`ELECTRON_RUN_AS_NODE=1` 普通子进程 + `NODE_OPTIONS`（两个 flag 都生效，
+   *     实测 heap limit 280MB / 空闲 RSS 115–116MB，见 docs/optimizations/l1-run-as-node-probe.md）。
+   */
+  const transportDecision = resolveHostTransport({ env: process.env });
+  const hostCwd = app.isPackaged ? path.join(process.resourcesPath, "standalone") : app.getAppPath();
+  const spawnSpec = buildHostSpawnSpec({
+    decision: transportDecision,
+    entry,
+    env: agentHostProcessEnv(),
+    binaryPath: process.execPath,
+    heap: { semiSpaceMb: hostHeap.semiSpaceMb, oldSpaceMb: hostHeap.oldSpaceMb },
+    extraRuntimeFlags: [...profileFlags, ...extraFlags],
+  });
+  activeHostTransport = spawnSpec.transport;
+  logInfo("Agent Host transport", {
+    transport: spawnSpec.transport,
+    reason: spawnSpec.reason,
+    execArgv: spawnSpec.execArgv,
+    nodeOptions: spawnSpec.nodeOptions,
+    heapLimitHintMb: spawnSpec.effective.heapLimitMb,
+    semiSpaceMb: spawnSpec.effective.semiSpaceMb,
+    oldSpaceMb: spawnSpec.effective.oldSpaceMb,
+    notes: spawnSpec.notes,
   });
 
-  const child = utilityProcess.fork(entry, [], {
-    cwd: app.isPackaged ? path.join(process.resourcesPath, "standalone") : app.getAppPath(),
-    env: agentHostProcessEnv(),
-    stdio: "pipe",
-    serviceName: "PiForge Agent Host",
-    ...(execArgv ? { execArgv } : {}),
-  });
+  const child: HostProcessHandle =
+    spawnSpec.transport === "node" && spawnSpec.command
+      ? (spawn(spawnSpec.command, spawnSpec.args, {
+          cwd: hostCwd,
+          env: spawnSpec.env as NodeJS.ProcessEnv,
+          stdio: ["pipe", "pipe", "pipe"],
+          windowsHide: true,
+        }) as unknown as HostProcessHandle)
+      : (utilityProcess.fork(entry, [], {
+          cwd: hostCwd,
+          env: spawnSpec.env,
+          stdio: "pipe",
+          serviceName: "PiForge Agent Host",
+          ...(spawnSpec.execArgv.length > 0 ? { execArgv: spawnSpec.execArgv } : {}),
+        }) as unknown as HostProcessHandle);
   agentHostProcess = child;
   agentHostReady = false;
   setHostReadiness(markHostBooting());
   logStartupTiming("agent host spawned", { pid: child.pid });
 
-  child.stdout?.on("data", (chunk: Buffer) => logInfo(`[AgentHost] ${chunk.toString().trim()}`));
+  let stdoutTail = "";
+  child.stdout?.on("data", (chunk: Buffer) => {
+    const text = chunk.toString();
+    logInfo(`[AgentHost] ${text.trim()}`);
+    if (spawnSpec.transport !== "node") return;
+    stdoutTail = (stdoutTail + text).slice(-2_000);
+    const match = stdoutTail.match(/\[agent-host\] ready protocol=(\d+) endpoint=(\S+)/);
+    if (match) notifyHostReadyFromStdout?.({ protocolVersion: Number(match[1]), endpoint: match[2], via: "stdout" });
+  });
   child.stderr?.on("data", (chunk: Buffer) => logError(`[AgentHost] ${chunk.toString().trim()}`));
 
   child.once("exit", (code) => {
@@ -466,6 +526,7 @@ async function startAgentHost(): Promise<void> {
     // OOM 归因：exit 134 / SIGABRT 基本都是堆爆（L1 收紧了 old-space，必须能分辨）。
     logError("Agent Host exited", {
       code,
+      transport: activeHostTransport,
       heapExhaustionSuspected: isHeapExhaustion({ exitCode: code }),
       heapLimits: activeHostHeapLimits,
     });
@@ -491,6 +552,7 @@ async function startAgentHost(): Promise<void> {
     const succeed = (detail?: unknown) => {
       if (settled) return;
       settled = true;
+      notifyHostReadyFromStdout = null;
       clearTimers();
       agentHostReady = true;
       setHostReadiness(markHostReady());
@@ -526,9 +588,16 @@ async function startAgentHost(): Promise<void> {
       }, AGENT_HOST_HARD_TIMEOUT_MS - AGENT_HOST_READY_TIMEOUT_MS);
     }, AGENT_HOST_READY_TIMEOUT_MS);
 
-    child.on("message", (message: unknown) => {
-      if (isHostReadyMessage(message)) succeed(message);
-    });
+    // node 传输层：没有 parentPort，靠 stdout 的 ready 行（上面已解析）。
+    notifyHostReadyFromStdout = succeed;
+    if (typeof child.postMessage === "function") {
+      (child as unknown as { on: (event: "message", listener: (message: unknown) => void) => void }).on(
+        "message",
+        (message: unknown) => {
+          if (isHostReadyMessage(message)) succeed(message);
+        },
+      );
+    }
     child.once("exit", (code) => {
       // 崩溃型失败（0.9.0 实测的 197 次 code=1 就是这条路径）：必须留下可 grep
       // 的审计行，否则 UI 只说"启动中"，日志里查不到为什么起不来。
@@ -631,7 +700,14 @@ function stopAgentHost(): Promise<void> {
 
     child.once("exit", finish);
     try {
-      child.postMessage({ type: "shutdown", reason: "app-quit" });
+      if (typeof child.postMessage === "function") {
+        child.postMessage({ type: "shutdown", reason: "app-quit" });
+      } else if (child.stdin) {
+        // node 传输层：一帧 JSON + 关 stdin（host 侧两条路都会触发 shutdown，
+        // 关 stdin 还兼作"父进程已死"的兜底）。
+        child.stdin.write(hostShutdownFrame("app-quit"));
+        (child.stdin as NodeJS.WriteStream).end?.();
+      }
     } catch {
       // Already gone; the exit listener (or the timeout) resolves us.
     }
