@@ -270,11 +270,27 @@ export function AgentRailPanel({
     return () => source.close();
   }, [noteTerminal]);
 
-  /** 1 秒只更新"现在"，行内用 memo 挡住整树重渲染。 */
+  /**
+   * 1 秒只更新"现在"，行内用 memo 挡住整树重渲染。
+   * 只在真的有运行中的 agent 时才跳秒表（0.9.0 是常驻 1s 定时器：空闲时也在叫醒渲染进程）；
+   * 窗口隐藏时直接停。
+   */
+  const hasRunningAgent = useMemo(() => {
+    const agents = [
+      ...subagents.map((view) => toRailInput(view, "subagent")),
+      ...fleet.map((view) => toRailInput(view, "fleet")),
+    ];
+    return agents.some((agent) => isRunningStatus(agent.status));
+  }, [subagents, fleet]);
+
   useEffect(() => {
-    const tick = setInterval(() => setNow(Date.now()), 1_000);
+    if (!hasRunningAgent) return;
+    const tick = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      setNow(Date.now());
+    }, 1_000);
     return () => clearInterval(tick);
-  }, []);
+  }, [hasRunningAgent]);
 
   // titlesVersion 是订阅信号：缓存内容变了它就变，用它当 memo 的钥匙。
   const sessionTitleById = useMemo(

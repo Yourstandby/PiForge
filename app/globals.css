@@ -849,36 +849,61 @@ body,
   animation: piforge-heartbeat 0.9s ease-in-out infinite;
 }
 
-/* 工具执行中：卡片边框呼吸 + 新生成代码 diff 的绿色闪一下 */
+/* 工具执行中：卡片边框呼吸。
+   ！！这里只能动 opacity / transform。旧实现动画 `box-shadow` 的 spread 与
+   `border-color`，每帧都要对整张卡片重绘；流式时一屏十几行工具卡，实测就是
+   渲染进程 100%+ CPU 的主要来源。换成 ::after 叠加环后走合成器，零重绘。 */
 @keyframes piforge-tool-running {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgb(59 130 246 / 0.06);
-    border-color: rgb(59 130 246 / 0.35);
+    opacity: 0.25;
+    transform: scale(1);
   }
   50% {
-    box-shadow: 0 0 0 3px rgb(59 130 246 / 0.1);
-    border-color: rgb(59 130 246 / 0.6);
+    opacity: 0.8;
+    transform: scale(1.004);
   }
 }
 .tool-running {
+  position: relative;
+}
+.tool-running::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 1px solid rgb(59 130 246 / 0.55);
+  pointer-events: none;
+  opacity: 0.25;
   animation: piforge-tool-running 1.6s ease-in-out infinite;
+  will-change: opacity, transform;
 }
 /* 上下文越硬顶：环外面呼吸一圈红晕，不用文字也能看见「该压了」 */
 @keyframes piforge-context-alert {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgb(220 38 38 / 0.35);
     opacity: 1;
+    transform: scale(1);
   }
   50% {
-    box-shadow: 0 0 0 3px rgb(220 38 38 / 0.14);
-    opacity: 0.6;
+    opacity: 0.55;
+    transform: scale(1.06);
   }
 }
 .context-ring-alert {
   border-radius: 9999px;
+  /* 旧实现动画 box-shadow（重绘）；现在只动合成属性。 */
   animation: piforge-context-alert 1.4s ease-in-out infinite;
+  will-change: opacity, transform;
+}
+
+/* 窗口隐藏 / 被托盘接管时暂停一切装饰动画。
+   preload 在 visibilitychange 里给 <html> 写 data-window-hidden；配合
+   backgroundThrottling: true，托盘里的 PiForge 不再合成任何东西。 */
+html[data-window-hidden="true"] *,
+html[data-window-hidden="true"] *::before,
+html[data-window-hidden="true"] *::after {
+  animation-play-state: paused !important;
 }
 
 @keyframes piforge-diff-flash {

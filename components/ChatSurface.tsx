@@ -342,6 +342,20 @@ function ChatSession({
     }
   }, [hostHealth.state, hostHealth.message]);
 
+  /**
+   * 流式期间才关掉背景节流。
+   *
+   * 0.9.0 为了"后台不降帧"在 BrowserWindow 里全局 `backgroundThrottling: false`，
+   * 代价是空闲窗口也按 60fps 跑装饰动画（实测空闲渲染进程 105% CPU）。
+   * 现在默认节流开启，只有 agent 真的在跑时才临时关掉（打字机的 rAF 需要按帧走）。
+   */
+  useEffect(() => {
+    const api = (window as { electronAPI?: { setStreamingThrottle?: (enabled: boolean) => void } })
+      .electronAPI;
+    api?.setStreamingThrottle?.(Boolean(chat.agentRunning));
+    return () => api?.setStreamingThrottle?.(false);
+  }, [chat.agentRunning]);
+
   useEffect(() => {
     if (!compactToast) return;
     const timer = setTimeout(() => setCompactToast(null), 4200);
@@ -590,12 +604,15 @@ function ChatSession({
       return;
     }
     const retryable = /(HTTP 5\d\d|timed out|Failed to fetch|network|socket|ENOENT|ECONN)/i.test(chat.error);
-    if (!retryable || autoRetryRef.current >= 2) return;
+    // 重试预算从 2 次（≈4.5s）提到 6 次（≈28s）：冷启动时 Host 要 5–20s
+    // 才就绪，旧预算在引擎刚起来时就先用完了，用户看到的是"加载失败"而不是
+    // "引擎启动中"。首次成功后计数器归零，不影响真正的持续故障。
+    if (!retryable || autoRetryRef.current >= 6) return;
     const attempt = autoRetryRef.current + 1;
     const timer = window.setTimeout(() => {
       autoRetryRef.current = attempt;
       void loadSessionRef.current(session.id, false, true);
-    }, attempt * 1500);
+    }, Math.min(attempt * 2_000, 6_000));
     return () => window.clearTimeout(timer);
   }, [chat.error, session]);
 

@@ -52,8 +52,16 @@ const INITIAL: WatchdogStoreState = {
   config: null,
 };
 
-const ACTIVE_MS = 1_000;
-const IDLE_MS = 4_000;
+/**
+ * 轮询节奏（0.9.0 实测：空闲渲染进程 105% CPU，日志里 /api/watchdog 每秒一轮）。
+ *
+ * 任务运行中 2.5s 足够：看门狗的语义是"卡住检测"，而卡顿阈值最矮也是 5s
+ * （Host 侧钳制），1s 轮询除了刷 CPU 并没有提升分辨率。
+ */
+const ACTIVE_MS = 2_500;
+const IDLE_MS = 10_000;
+/** 窗口隐藏 / 被遮挡：降到 30s，只保留"活着"的最低感知。 */
+const HIDDEN_MS = 30_000;
 const RETRY_MS = 8_000;
 /** 连续失败这么多次后降到慢速重试（对方 Host 旧版本 / 正在重启都不要永久放弃）。 */
 const MAX_FAILURES = 5;
@@ -106,7 +114,7 @@ function schedule(delayMs: number): void {
 async function pollOnce(): Promise<void> {
   if (!started || hostDisabled) return;
   if (typeof document !== "undefined" && document.hidden) {
-    schedule(IDLE_MS);
+    schedule(HIDDEN_MS);
     return;
   }
   if (inFlight) return;

@@ -112,6 +112,8 @@ export class BrowserHostBridge {
   }
 
   private handleData(chunk: Buffer | string): void {
+    const socket = this.socket;
+    if (!socket) return;
     this.buffer += chunk.toString();
     let index: number;
     while ((index = this.buffer.indexOf("\n")) !== -1) {
@@ -126,6 +128,14 @@ export class BrowserHostBridge {
       }
       if (frame.kind === "hello_ok") {
         this.startPolling();
+        continue;
+      }
+      // Host 每 15s 发一次 ping，60s 内没收到 pong 就断链。
+      // 0.9.0 这里没处理 ping：主机日志每 60s 一条
+      //   `heartbeat timeout → client connected`（pid=主进程, role=cli），
+      // 意味着浏览器桥永远在重连，Host 与主进程各白烧一份 CPU。
+      if (frame.kind === "ping" && typeof frame.nonce === "number") {
+        socket.write(`${JSON.stringify({ kind: "pong", nonce: frame.nonce })}\n`);
         continue;
       }
       if (frame.kind === "res" && typeof frame.id === "number") {
@@ -168,6 +178,22 @@ export class BrowserHostBridge {
     this.pending.clear();
   }
 
+  /**
+   * 轮询节奏：面板可见时 700ms（用户在看预览，要跟手），不可见/未打开时 3s。
+   *
+   * 旧实现无条件 700ms、永不停：没人看浏览器预览时 Host 仍然每秒被叫醒
+   * 1.4 次（实测 agent-host 空闲 12% CPU）。
+   */
+  private pollDelayMs(): number {
+    if (this.options.pollMs) return this.options.pollMs;
+    const manager = this.options.getManager();
+    try {
+      return manager?.getState?.().visible ? 700 : 3_000;
+    } catch {
+      return 3_000;
+    }
+  }
+
   private startPolling(): void {
     if (this.pollTimer) clearTimeout(this.pollTimer);
     const tick = async () => {
@@ -181,7 +207,7 @@ export class BrowserHostBridge {
         // Reconnect logic handles a dead pipe; polling resumes after hello_ok.
       } finally {
         if (!this.stopped && this.socket) {
-          this.pollTimer = setTimeout(() => void tick(), this.options.pollMs ?? 700);
+          this.pollTimer = setTimeout(() => void tick(), this.pollDelayMs());
           this.pollTimer.unref?.();
         }
       }

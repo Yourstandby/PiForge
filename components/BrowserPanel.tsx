@@ -184,6 +184,8 @@ export function BrowserPanel({
   useEffect(() => {
     let stopped = false;
     const load = async () => {
+      // 隐藏时不起请求：窗口在后台时这份列表没人看（0.9.0 的 4s 轮询是空闲开销之一）。
+      if (typeof document !== "undefined" && document.hidden) return;
       try {
         const res = await fetch("/api/processes", { cache: "no-store" });
         if (!res.ok) return;
@@ -194,10 +196,17 @@ export function BrowserPanel({
       }
     };
     void load();
-    const id = window.setInterval(() => void load(), 4_000);
+    // 10s 已能覆盖"开发服务器刚起来"这种真实变化；进程列表本身有
+    // /api/processes/events 的 SSE 推送（监控面板用），这里只是取预览地址。
+    const id = window.setInterval(() => void load(), 10_000);
+    const onVisible = () => {
+      if (typeof document !== "undefined" && !document.hidden) void load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       stopped = true;
       window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
 

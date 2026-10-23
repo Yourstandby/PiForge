@@ -458,9 +458,14 @@ export function SubagentPanel({
       }
     };
     const fallback = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
       if (!liveRef.current) void loadSubagents();
     }, 5_000);
-    const tick = setInterval(() => setNow(Date.now()), 1_000);
+    // 秒表只在面板可见时走；隐藏窗口不叫醒渲染进程。
+    const tick = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      setNow(Date.now());
+    }, 1_000);
     return () => {
       source.close();
       clearInterval(fallback);
