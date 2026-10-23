@@ -43,16 +43,25 @@ node scripts/probe-host-runtime.mjs --json     # 机器可读
 
 | 运行方式 | heap limit | 空闲 RSS 中位 | 空闲 RSS 最大 | ready | host.health |
 |---|---|---|---|---|---|
-| `utilityProcess`（现状，打包版） | **352 MB** | **265.6 MB** | 268 MB | 1 768 ms | ok |
+| `utilityProcess`（现状，打包版） | **352 MB** | **264–284 MB** | 284 MB | 1 768 ms | ok |
 | `node`（基线下限，同一份 dist） | **280 MB** | **136 MB** | 136 MB | 1 982 ms | ok |
 | **`ELECTRON_RUN_AS_NODE=1`（候选）** | **280 MB** | **116 MB** | 116 MB | **1 506 ms** | ok |
 
 - **heap limit 280 MB** ✅（目标是 280）：`NODE_OPTIONS` 里两个 flag 都生效了。
-- **空闲 RSS 116 MB** ✅（目标 173–195 MB，还低了 57–79 MB）→ 相对现状 **−149.6 MB（−56%）**。
+- **空闲 RSS 115–116 MB** ✅（目标 173–195 MB，还低了 57–80 MB）→ 相对现状 **−150 MB（−56%）**。
 - ready 反而更快（1 506 vs 1 768 ms）：少了 Chromium utility 进程的脚手架。
 
 > 口径说明：三行都是**空闲**（不打开会话）。所以是苹果对苹果：
-> 现状的 265.6 MB 也是 `measure-packaged` 稳定后的空闲值。
+> 现状的 264–284 MB 也是 `measure-packaged` 稳定后的空闲值（同一台机连测三次的波动）。
+
+**验收命令的一个坑（顺手记下）**：`measure-packaged --max-rss-mb 220` 里的
+`--max-rss-mb` 管的是**整个 App 的总 RSS**（实测 897–921 MB / 5 进程），任何配置都到不了 220；
+host 单进程的门禁是 **`--max-host-rss-mb 220`**。本轮实测：
+
+```
+node scripts/measure-packaged.mjs --exe release/win-unpacked/PiForge.exe   --seconds 10 --settle 15 --max-idle-cpu 3            # → host 264.3 / 283.6 MB，CPU 0.31%
+  ... --max-host-rss-mb 220                            # → FAIL host RSS 264.3 MB > 220 MB（符合预期）
+```
 
 ## 4. 结论：**值得立项**
 
