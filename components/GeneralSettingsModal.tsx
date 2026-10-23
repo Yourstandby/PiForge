@@ -440,7 +440,7 @@ export function GeneralSettingsModal({ sessionId, cwd, onClose }: GeneralSetting
                 ? `${formatOnDemandSummary(onDemand)}${
                     isSettingsOverriddenByEnv(onDemand.source)
                       ? "（环境变量生效，设置项暂不生效）"
-                      : "（对新会话生效）"
+                      : "（改动对新建会话生效，当前会话需重新加载）"
                   }`
                 : "勾选的域默认不声明，首次使用时用 tool_search 激活"
             }
