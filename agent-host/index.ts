@@ -219,7 +219,11 @@ async function main(): Promise<void> {
   });
 
   // node 传输层（PIFORGE_HOST_TRANSPORT=node）：没有 parentPort，改读 stdin。
-  if (!parentPort) startStdinControl((reason) => void shutdown(reason));
+  // 必须由启动方显式开启：`stdio: ["ignore"]` 启动时 stdin 会立刻 end，
+  // 若把"end"当成"父进程死了"，host 会秒退（探针/冒烟就是这么启动的）。
+  if (!parentPort && process.env.PIFORGE_HOST_STDIN_CONTROL === "1") {
+    startStdinControl((reason) => void shutdown(reason));
+  }
 
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));

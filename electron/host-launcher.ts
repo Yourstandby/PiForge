@@ -182,6 +182,14 @@ export function buildHostSpawnSpec(input: {
   const env: Record<string, string> = {
     ...input.env,
     ELECTRON_RUN_AS_NODE: "1",
+    /**
+     * 明确告诉 host「父进程会用 stdin 传控制帧」。
+     *
+     * 不能靠"stdin 不是 TTY"猜：探针/冒烟脚本用 `stdio: ["ignore", ...]` 启动时，
+     * stdin 是一个**立刻关闭**的管道，host 会把它当成"父进程已经死了"而秒退。
+     * 所以通道开关必须是显式的（这条踩过一次，见 docs/optimizations/l1-transport-implementation.md）。
+     */
+    PIFORGE_HOST_STDIN_CONTROL: "1",
   };
   if (plan.nodeOptions) env.NODE_OPTIONS = plan.nodeOptions;
   else delete env.NODE_OPTIONS;

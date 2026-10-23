@@ -118,3 +118,26 @@ node scripts/audit-token-usage.mjs --days 14 --json
    目标是把每调用 cacheRead 中位从 143k 压到 ≤100k；先做 A/B 量它是否影响
    任务成功率与输出质量。
 3. **继续观察（不做）**：P2-3b 自动预热、全按需域默认开启、output 长度压缩。
+
+---
+
+## 已排除项（先量过再排除，避免反复立项）
+
+### subagent 上下文（L-C）：上界 0.004%，且隔离机制本来就在
+
+`npm run audit:subagent -- --days 365`（本机 60 会话 / 10 390 请求 / cacheRead 2.15B tok / $23.10）：
+
+| 指标 | 实测 |
+|---|---|
+| 用过派发的会话 | **2 / 60（3.33%）**，共 **3 次**（`herdr_spawn` 1 / `orchestrator_spawn` 1 / `spawn_agent` 1） |
+| 占全部工具调用 | **0.027%** |
+| 有派发的父会话 cacheRead/调用 | **89 911**（低于无派发的 **214 187**）→ 派发与上下文膨胀**无相关性** |
+| 子 Agent 成本上界 | 3 轮 × 10 000 tok = **30 000 tok/次**，合计 90 000 = 观测 cacheRead 的 **0.004%** ≈ 0.21 次父调用 |
+
+代码事实（`agent-host/subagents.ts`）：子 Agent 用 `SessionManager.inMemory(cwd)`（不写 JSONL、
+**不继承父 transcript**）、`noContextFiles: true`、独立 `childSystemPrompt`（固定文案实测 ≈71 tok），
+外加三道硬闸门：3 轮上限 / 单轮 10k 熔断 / 回包 ≤1 200 字符。
+
+**结论**：这条杠杆没有可省的 token（"隔离"已经在做），不立项。
+方法论补充：子 Agent 不落盘，所以"从磁盘按 parentSessionId 聚合"这条路**不存在**
+（`scripts/audit-token-usage.mjs` 头部也写了这条，避免下次重复找）。

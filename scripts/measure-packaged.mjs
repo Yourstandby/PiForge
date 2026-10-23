@@ -8,6 +8,10 @@
  *
  *   node scripts/measure-packaged.mjs --exe "release/win-unpacked/PiForge.exe"
  *   node scripts/measure-packaged.mjs --exe ... --seconds 8 --max-host-ready 5000 --max-rss-mb 900
+ *   node scripts/measure-packaged.mjs --exe ... --settle 15 --max-host-rss-mb 220   # L1 验收
+ *
+ * ⚠️ `--max-rss-mb` 管的是**整个 App 的总 RSS**（不管怎么优化都在 850 MB 以上），
+ *    "host 单进程"的门禁是 `--max-host-rss-mb`。`--help` 里也写了这两行的区别。
  *
  * 输出：
  *   - `app ready → window / static url loaded / host ready`（读主进程 JSONL 日志）
@@ -20,6 +24,30 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
+
+const HELP = `measure-packaged：打包版启动时间线 + 进程内存/CPU 实测
+
+用法：
+  node scripts/measure-packaged.mjs --exe "release/win-unpacked/PiForge.exe" [选项]
+
+内存门禁（**两个别名的作用域完全不同，最常被搞混**）：
+  --max-rss-mb <n>        整个 App 的**总 RSS**（所有进程相加，实测量级 850–1130 MB）
+  --max-host-rss-mb <n>   Agent Host **单进程** RSS（实测量级 190–340 MB，L1 的验收线）
+
+其它：
+  --seconds <n>        采样窗口秒数（默认 8）
+  --settle <n>         Host 就绪后先静置几秒再采样（稳态测量建议 15）
+  --interval <ms>      采样间隔（默认 250）
+  --max-host-ready <ms>  启动→Host 就绪的上限
+  --max-window <ms>      启动→窗口可用的上限
+  --max-idle-cpu <%>     空闲 CPU 上限（单核口径）
+  --json               机器可读输出
+  --series             逐采样点输出
+  --arg <k=v>          透传环境变量给被测 App
+  --skip-port-check    跳过 30141 端口检查
+  --keep-user-data     保留临时 userData（排障用）
+  --help               本帮助
+`;
 
 function parseArgs(argv) {
   const args = {
@@ -47,6 +75,10 @@ function parseArgs(argv) {
     name: null,
   };
   for (let i = 0; i < argv.length; i += 1) {
+    if (argv[i] === "--help" || argv[i] === "-h") {
+      console.log(HELP);
+      process.exit(0);
+    }
     const key = argv[i];
     const next = argv[i + 1];
     switch (key) {
@@ -160,6 +192,14 @@ function runPowerShell(script) {
 function classify(commandLine) {
   const cmd = String(commandLine ?? "");
   if (/server\.js/i.test(cmd)) return "next-server";
+  /**
+   * node 传输层（PIFORGE_HOST_TRANSPORT=node）的 host 是**独立进程**：
+   * 命令行形如 `PiForge.exe .../agent-host/index.js`，没有任何 `--type=` 标记，
+   * 会被误判成 main（于是 host 角色是 0 MB）。这里先按脚本路径认领。
+   */
+  if (cmd.includes("agent-host" + String.fromCharCode(92) + "index.js") || cmd.includes("agent-host/index.js")) {
+    return "agent-host";
+  }
   if (/--type=renderer/.test(cmd)) return "renderer";
   if (/--type=gpu-process/.test(cmd)) return "gpu";
   if (/--type=crashpad/.test(cmd)) return "crashpad";

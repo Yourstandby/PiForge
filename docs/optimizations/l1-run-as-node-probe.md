@@ -1,4 +1,10 @@
-# L1 传输层验证：`ELECTRON_RUN_AS_NODE` 子进程（临时分支验证，未合并）
+# L1 传输层验证：`ELECTRON_RUN_AS_NODE` 子进程（临时分支，已合并为双实现）
+
+> ⚠️ **本文的数字有口径错误（保留作历史记录）**：探针里的 host 是**裸 host**（只起服务），
+> 而对照组 265.6 MB 来自 `measure-packaged`（**加载了 API 桥 + 会话索引 + 扩展** 的 host）。
+> 所以"−150 MB"主要是"未加载 vs 加载"的差。
+> 打包版同口径复测的结论是 **中位 −14~20 MB、最坏情况尖峰 −53 MB**，
+> 见 `docs/optimizations/l1-transport-implementation.md` §1/§3。
 
 > 验证在临时分支 `probe/run-as-node` 上完成，**验证完已删分支**，只带回探针脚本与本文。
 > **运行时代码一行未改** ——

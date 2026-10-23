@@ -87,6 +87,7 @@ test("buildHostSpawnSpec: utility 模式命令为 null、env 里不含 ELECTRON_
   assert.equal(spec.command, null);
   assert.deepEqual(spec.args, []);
   assert.equal("ELECTRON_RUN_AS_NODE" in spec.env, false);
+  assert.equal("PIFORGE_HOST_STDIN_CONTROL" in spec.env, false);
   assert.deepEqual(spec.execArgv, ["--js-flags=--max-old-space-size=256"]);
 });
 
@@ -102,6 +103,8 @@ test("buildHostSpawnSpec: node 模式 = 可执行文件 + [flags..., entry]，en
   assert.equal(spec.command, "C:\\app\\PiForge.exe");
   assert.deepEqual(spec.args, ["--cpu-prof", "C:\\app\\agent-host\\index.js"]);
   assert.equal(spec.env.ELECTRON_RUN_AS_NODE, "1");
+  // stdin 控制通道必须**显式**开启：host 不能靠"stdin 不是 TTY"去猜（ignore 的 stdin 会立刻 end）。
+  assert.equal(spec.env.PIFORGE_HOST_STDIN_CONTROL, "1");
   assert.match(String(spec.env.NODE_OPTIONS), /--max-semi-space-size=8/);
   assert.match(String(spec.env.NODE_OPTIONS), /--enable-source-maps/);
   assert.deepEqual(spec.execArgv, []);

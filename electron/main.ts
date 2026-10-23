@@ -601,7 +601,9 @@ async function startAgentHost(): Promise<void> {
     child.once("exit", (code) => {
       // 崩溃型失败（0.9.0 实测的 197 次 code=1 就是这条路径）：必须留下可 grep
       // 的审计行，否则 UI 只说"启动中"，日志里查不到为什么起不来。
-      if (!agentHostReady) logError("Agent Host exited before becoming ready", { code });
+      // 用本 Promise 自己的 settled 判定，而不是全局 agentHostReady —— 后者会被
+      // startAgentHost 的 exit 处理器先置 false，导致**每次正常退出都误报一次**。
+      if (!settled) logError("Agent Host exited before becoming ready", { code });
       finish();
     });
     child.once("error", (type, location) => {
