@@ -203,3 +203,32 @@ test("browser permissions default to off and persist booleans", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("onDemandDomains round-trips through the settings file", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-desktop-settings-"));
+  try {
+    const written = writeDesktopSettings(dir, {
+      defaultAgentMode: "full",
+      defaultToolPreset: "default",
+      onDemandDomains: ["shell", "browser"],
+    });
+    assert.deepEqual(written.onDemandDomains, ["shell", "browser"]);
+    const read = readDesktopSettings(dir);
+    assert.deepEqual(read.onDemandDomains, ["shell", "browser"]);
+    // 空数组 = 显式「全部常驻」，必须保留（而不是当成未设置）
+    writeDesktopSettings(dir, { defaultAgentMode: "full", defaultToolPreset: "default", onDemandDomains: [] });
+    assert.deepEqual(readDesktopSettings(dir).onDemandDomains, []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("onDemandDomains drops unknown names and rejects malformed input", () => {
+  assert.deepEqual(mergeDesktopSettings({ onDemandDomains: ["shell", "nope"] }).onDemandDomains, ["shell"]);
+  assert.equal(validateDesktopSettingsBody({ onDemandDomains: "shell" }), "onDemandDomains must be an array of strings");
+  assert.match(
+    validateDesktopSettingsBody({ onDemandDomains: ["nope"] }) ?? "",
+    /onDemandDomains only accepts/
+  );
+  assert.equal(validateDesktopSettingsBody({ onDemandDomains: ["shell"] }), null);
+});

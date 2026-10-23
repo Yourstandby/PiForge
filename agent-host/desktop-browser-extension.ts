@@ -8,6 +8,7 @@
  * text fetch for loopback URLs so it still degrades usefully.
  */
 import { Type } from "typebox";
+import { registerDeferredTool, registerDomainAction } from "./domain-tools.ts";
 import type {
   ExtensionAPI,
   ExtensionFactory,
@@ -228,7 +229,7 @@ export function createDesktopBrowserFactory(): ExtensionFactory {
       grantSessionBrowserPermissions(sessionId, missing);
     });
 
-    pi.registerTool({
+    registerDeferredTool(pi, {
       name: BROWSER_PREVIEW_TOOL_NAME,
       label: "Web Preview",
       description:
@@ -325,7 +326,7 @@ export function createDesktopBrowserFactory(): ExtensionFactory {
       },
     });
 
-    pi.registerTool({
+    registerDomainAction(pi, "browser", "read", {
       name: BROWSER_READ_TOOL_NAME,
       label: "Browser Read",
       description:
@@ -383,7 +384,7 @@ export function createDesktopBrowserFactory(): ExtensionFactory {
       },
     });
 
-    pi.registerTool({
+    registerDomainAction(pi, "browser", "open", {
       name: BROWSER_INTERACT_TOOL_NAME,
       label: "Browser Interact",
       description: "Navigate the Main-owned built-in browser: open a URL, go back, forward or reload.",

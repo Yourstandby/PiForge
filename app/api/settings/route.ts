@@ -35,7 +35,8 @@ function snapshot(manager: SettingsManager): SettingsSnapshot {
     showCacheMissNotices: settings.showCacheMissNotices === true,
     compactionEnabled: settings.compaction?.enabled !== false,
     retryEnabled: settings.retry?.enabled !== false,
-    cacheWarming: String(settings.cacheWarming ?? "off"),
+    // 真实生效的模式（未显式设置时是 pi 的默认值），不要再把 undefined 显示成 off。
+    cacheWarming: manager.getCacheWarmingMode(),
     showImages: settings.images?.show !== false,
     enableSkillCommands: settings.enableSkillCommands === true,
   };

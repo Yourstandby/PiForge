@@ -2,25 +2,26 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { THINKING_LEVELS, getThinkingLevelsForModel } from "./thinking-levels.ts";
 
-test("the thinking menu offers exactly auto / medium / high", () => {
-  assert.deepEqual([...THINKING_LEVELS], ["auto", "medium", "high"]);
+test("the thinking menu offers exactly auto / high / medium / low", () => {
+  assert.deepEqual([...THINKING_LEVELS], ["auto", "high", "medium", "low"]);
 });
 
 test("unknown model capability keeps every option", () => {
-  assert.deepEqual(getThinkingLevelsForModel(null), ["auto", "medium", "high"]);
-  assert.deepEqual(getThinkingLevelsForModel(undefined), ["auto", "medium", "high"]);
+  assert.deepEqual(getThinkingLevelsForModel(null), ["auto", "high", "medium", "low"]);
+  assert.deepEqual(getThinkingLevelsForModel(undefined), ["auto", "high", "medium", "low"]);
 });
 
-test("auto is always available, the other two follow model support", () => {
+test("auto is always available, the other three stay regardless of the model subset", () => {
   assert.deepEqual(getThinkingLevelsForModel([]), ["auto"]);
-  assert.deepEqual(getThinkingLevelsForModel(["medium"]), ["auto", "medium"]);
+  // 模型只暴露部分档位时仍然给出四档：后端会把不支持的档位收敛到合法值。
+  assert.deepEqual(getThinkingLevelsForModel(["medium"]), ["auto", "high", "medium", "low"]);
+  assert.deepEqual(getThinkingLevelsForModel(["low"]), ["auto", "high", "medium", "low"]);
   assert.deepEqual(getThinkingLevelsForModel(["low", "medium", "high"]), [
     "auto",
-    "medium",
     "high",
+    "medium",
+    "low",
   ]);
-  // 老模型只暴露 high 以外的档位时，高质量不会硬塞进去
-  assert.deepEqual(getThinkingLevelsForModel(["minimal", "low"]), ["auto"]);
 });
 
 test("every curated option maps to a real backend enum value", () => {

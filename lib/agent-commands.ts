@@ -25,6 +25,7 @@ const AGENT_COMMAND_TYPE_LIST = [
   "set_agent_mode",
   "reload_resources",
   "extension_ui_response",
+  "prewarm",
 ] as const;
 
 export type AgentCommandType = (typeof AGENT_COMMAND_TYPE_LIST)[number];

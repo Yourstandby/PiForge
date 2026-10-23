@@ -13,15 +13,17 @@ import {
   PLAN_TOOLS,
 } from "../lib/approval-policy.ts";
 import { desktopRuntimeTools, isMcpTool } from "./desktop-runtime-tools.ts";
-import { SPAWN_AGENT_TOOL_NAME } from "./aux-tool-names.ts";
-import { HERDR_SPAWN_TOOL_NAME } from "./desktop-herdr-extension.ts";
 import {
   STATIC_CWD_SECTION,
   buildPrefixSnapshot,
   canonicalToolOrder,
   diffPrefixSnapshots,
+  emptyPrefixAudit,
   estimatePrefixTokens,
+  isExpectedPrefixChange,
+  recordPrefixChange,
   userContextBlock,
+  type PrefixAudit,
   type PrefixSnapshot,
 } from "./prompt-prefix.ts";
 import {
@@ -30,6 +32,12 @@ import {
   selectDeclaredTools,
   toolStubPromptSection,
 } from "./tool-stubs.ts";
+import {
+  DOMAIN_TOOL_NAMES,
+  enabledOnDemandDomains,
+  PLAN_READONLY_LEGACY_TOOLS,
+  isPlanAllowedDomainCall,
+} from "../lib/domain-tools.ts";
 import { Type } from "typebox";
 
 export type AgentModeRef = {
@@ -40,6 +48,13 @@ export type AgentModeRef = {
   getCwd?: () => string | undefined;
   /** 模型点名要用、但当前只发了存根的工具（下一轮完整声明）。 */
   requestedTools?: Set<string>;
+  /**
+   * 可关的提示词附加项（设置项控制，默认都开）。关掉只影响 system prompt 的
+   * 静态段落，不改工具、不改上下文长度。
+   */
+  promptAddons?: { outputStyle?: boolean; responseLanguage?: boolean };
+  /** 前缀棘轮审计（每轮 before_agent_start 更新，get_state 上报）。 */
+  prefixAudit?: PrefixAudit;
 };
 
 /**
@@ -48,7 +63,7 @@ export type AgentModeRef = {
  * 只在"上一轮真的用过"时才重新纳入，且最终列表按字母序固定下来，
  * 保证同一状态下序列化出来的工具数组字节级一致。
  */
-const CORE_TOOLS = ["bash", "edit", "powershell", "read", "write"];
+const CORE_TOOLS = ["bash", "edit", "read", "write"];
 
 /** 每条用户消息尾部携带的易变状态块（display:false，不进对话记录）。 */
 function contextMessage(content: string) {
@@ -145,8 +160,12 @@ export function createDesktopApprovalFactory(modeRef: AgentModeRef): ExtensionFa
       const pinnedTools = [
         ...(registered.some((tool) => tool.name === "tool_search") ? ["tool_search"] : []),
         ...(registered.some((tool) => tool.name === TOOL_USE_TOOL_NAME) ? [TOOL_USE_TOOL_NAME] : []),
-        ...(registered.some((tool) => tool.name === SPAWN_AGENT_TOOL_NAME) ? [SPAWN_AGENT_TOOL_NAME] : []),
-        ...(registered.some((tool) => tool.name === HERDR_SPAWN_TOOL_NAME) ? [HERDR_SPAWN_TOOL_NAME] : []),
+        // 多态工具：没被开关点名的恒常驻；被点名的只在激活后常驻（否则模型刚拿到又失去）。
+        ...DOMAIN_TOOL_NAMES.filter(
+          (name) =>
+            registered.some((tool) => tool.name === name) &&
+            (!enabledOnDemandDomains().includes(name) || pi.getActiveTools().includes(name))
+        ),
       ];
       const extensionTools = available.filter(
         (name) => !CORE_TOOLS.includes(name) && !pinnedTools.includes(name),
@@ -213,9 +232,16 @@ export function createDesktopApprovalFactory(modeRef: AgentModeRef): ExtensionFa
       /**
        * 回复语言：pi 默认 prompt 不约束语言，模型常在工具调用之间用英文复述
        * 计划（"Now the grouping logic + panel:"），中文对话里看着很割裂。
-       * 静态文本，不含任何易变状态 → 不破坏前缀缓存。
+       * 静态文本，不含任何易变状态 → 不破坏前缀缓存；设置项可关（默认开）。
        */
-      {
+      /**
+       * 位置实验开关（第 3 步度量用，默认关）：
+       *   PIFORGE_LANGUAGE_IN_MESSAGE=1 → 这 104 tok 从 system prompt 挪到每条用户消息。
+       * 实测结论见 docs/measurements/README.md：前缀短 104 tok，但每条用户消息都多背
+       * 104 tok，总成本更高，所以默认仍留在前缀。
+       */
+      const languageInMessage = process.env.PIFORGE_LANGUAGE_IN_MESSAGE === "1";
+      if (!languageInMessage && modeRef.promptAddons?.responseLanguage !== false) {
         const current = event.systemPromptOptions.appendSystemPrompt;
         event.systemPromptOptions.appendSystemPrompt = current
           ? `${current}\n\n${RESPONSE_LANGUAGE_PROMPT}`
@@ -240,19 +266,43 @@ export function createDesktopApprovalFactory(modeRef: AgentModeRef): ExtensionFa
         }
       }
       const contextBlock = stripCwd ? userContextBlock({ cwd: modeRef.getCwd?.() }) : null;
+      // 实验：把回复语言约束放在用户消息侧（display:false，不进对话记录）。
+      const messageBlock =
+        languageInMessage && modeRef.promptAddons?.responseLanguage !== false
+          ? [contextBlock, RESPONSE_LANGUAGE_PROMPT].filter(Boolean).join("\n\n")
+          : contextBlock;
 
-      /** 前缀审计（只在环境变量打开时打印，避免污染正常日志）。 */
-      if (process.env.PIFORGE_DEBUG_PREFIX === "1") {
+      /**
+       * 前缀棘轮审计：同一会话里除「按需域首次激活」外，相邻两轮必须字节一致。
+       * 不一致 → 整段历史缓存作废，所以这里既计数（get_state 里能看到）也告警。
+       *   PIFORGE_DEBUG_PREFIX=1  打印每次变化的差异段
+       */
+      {
         const snapshot = buildPrefixSnapshot(event.systemPromptOptions, tools);
+        const firstBuild = lastPrefix === null;
         const diff = diffPrefixSnapshots(lastPrefix, snapshot);
         lastPrefix = snapshot;
+        // 首次建立前缀不算「变化」，之后只允许「按需域首次激活」这一种变化。
+        const expected = firstBuild || isExpectedPrefixChange(diff, enabledOnDemandDomains());
+        const audit = modeRef.prefixAudit ?? emptyPrefixAudit();
+        modeRef.prefixAudit = firstBuild
+          ? { ...audit, turns: audit.turns + 1, stableTurns: audit.stableTurns + 1 }
+          : recordPrefixChange(audit, diff, expected);
         if (!diff.identical) {
-          console.log("[prefix]", diff.summary, {
-            tools: tools.join(","),
-            toolCount: tools.length,
-            approxTokens: estimatePrefixTokens(snapshot),
-            sections: Object.keys(snapshot.sections).length,
-          });
+          if (!expected) {
+            console.warn("[prefix] UNEXPECTED change (cache invalidated)", {
+              summary: diff.summary,
+              toolsAdded: diff.toolsAdded,
+              toolsRemoved: diff.toolsRemoved,
+              sectionsChanged: diff.sectionsChanged,
+              toolsReordered: diff.toolsReordered,
+            });
+          } else if (process.env.PIFORGE_DEBUG_PREFIX === "1") {
+            console.log("[prefix] expected on-demand activation", {
+              added: diff.toolsAdded,
+              approxTokens: estimatePrefixTokens(snapshot),
+            });
+          }
         }
       }
 
@@ -264,17 +314,23 @@ export function createDesktopApprovalFactory(modeRef: AgentModeRef): ExtensionFa
         event.systemPromptOptions.appendSystemPrompt = appended
           ? `${appended}\n\n${PLAN_MODE_SYSTEM_PROMPT}`
           : PLAN_MODE_SYSTEM_PROMPT;
-        return contextBlock ? { message: contextMessage(contextBlock) } : undefined;
+        return messageBlock ? { message: contextMessage(messageBlock) } : undefined;
       }
       if (preset === "none") return { systemPrompt: "" };
-      return contextBlock ? { message: contextMessage(contextBlock) } : undefined;
+      return messageBlock ? { message: contextMessage(messageBlock) } : undefined;
     });
     pi.on("tool_call", async (event, ctx) => {
       recentlyUsedTools.add(event.toolName);
       // Native MCP can register tools asynchronously after a mode switch.
       // Enforce the desktop policy at execution as well as declaration time.
       if (modeRef.toolPreset === "none" && modeRef.current !== "plan") return askBlockResult();
-      if (modeRef.current === "plan" && ![...PLAN_TOOLS, "memory_recall"].includes(event.toolName)) return askBlockResult();
+      if (modeRef.current === "plan") {
+        const allowed =
+          PLAN_TOOLS.includes(event.toolName) ||
+          PLAN_READONLY_LEGACY_TOOLS.has(event.toolName) ||
+          isPlanAllowedDomainCall(event.toolName, event.input);
+        if (!allowed) return askBlockResult();
+      }
       if (event.toolName === "codemode" && !modeRef.codemodeEnabled) return askBlockResult();
       const confirmMcp = modeRef.current === "ask" && isMcpTool(event.toolName);
       const confirmBg = modeRef.current === "ask" && event.toolName === "run_bg";

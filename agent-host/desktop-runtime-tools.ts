@@ -1,14 +1,8 @@
 import type { ToolInfo } from "../lib/pi-types.ts";
 import { effectiveToolsForMode, type AgentMode, type ToolPreset } from "../lib/approval-policy.ts";
-import { withMemoryTools } from "./desktop-ltm-extension.ts";
-import { BROWSER_PREVIEW_TOOL_NAME } from "./browser-bridge.ts";
-import {
-  CLASSIFY_DECISION_TOOL_NAME,
-  GENERATE_IMAGE_TOOL_NAME,
-  SPAWN_AGENT_TOOL_NAME,
-} from "./aux-tool-names.ts";
+import { DOMAIN_TOOL_NAMES, enabledOnDemandDomains } from "../lib/domain-tools.ts";
+import { CLASSIFY_DECISION_TOOL_NAME, GENERATE_IMAGE_TOOL_NAME } from "./aux-tool-names.ts";
 import { TOOL_HISTORY_TOOL_NAME } from "./tool-outputs.ts";
-import { PROCESS_READ_TOOL_NAME, PROCESS_WAIT_TOOL_NAME } from "./process-tool-names.ts";
 import { TOOL_USE_TOOL_NAME } from "./tool-stubs.ts";
 
 /** Auxiliary model tools are only declared once the user configured them. */
@@ -23,7 +17,11 @@ export function isMcpTool(name: string): boolean {
 
 /** Preserve native MCP exposure; selecting tools must not declare script-only tools. */
 export function desktopRuntimeTools(mode: AgentMode, preset: ToolPreset, codemode: boolean, registered: ToolInfo[], active: string[] = [], aux?: AuxToolAvailability, platform: NodeJS.Platform = process.platform): string[] {
-  const names = withMemoryTools(effectiveToolsForMode(mode, preset), mode);
+  // platform 保留在签名里：历史上 Windows 才声明 powershell，现在它收进 shell 多态工具，
+  // 平台差异由 shell 的 action 表（exec 只在 win32 注册）决定。
+  void platform;
+  // memory 是「按需域」：默认不声明，plan 模式通过 PLAN_TOOLS 显式带上只读 recall。
+  const names = effectiveToolsForMode(mode, preset);
   if (mode === "plan" || preset === "none") return names;
   for (const tool of registered) {
     // Native tool_search records deferred/codemode activations in the session.
@@ -34,29 +32,18 @@ export function desktopRuntimeTools(mode: AgentMode, preset: ToolPreset, codemod
   if (registered.some((tool) => tool.name === "tool_search")) names.push("tool_search");
   // 存根的点名加载通道（MCP 直曝 / 插件工具只能靠它拉回来）。
   if (registered.some((tool) => tool.name === TOOL_USE_TOOL_NAME)) names.push(TOOL_USE_TOOL_NAME);
-  // PowerShell is a first-class Windows shell when the host registered it.
-  if (platform === "win32" && registered.some((tool) => tool.name === "powershell")) names.push("powershell");
-  // Background processes are a desktop capability registered by our inline
-  // extension; ask mode still gates them through the approval hook.
-  if (registered.some((tool) => tool.name === "run_bg")) names.push("run_bg");
-  // Read-only managed-process tools (no stop/restart tools by design).
-  if (registered.some((tool) => tool.name === PROCESS_READ_TOOL_NAME)) names.push(PROCESS_READ_TOOL_NAME);
-  if (registered.some((tool) => tool.name === PROCESS_WAIT_TOOL_NAME)) names.push(PROCESS_WAIT_TOOL_NAME);
-  // Sub-agent delegation: available whenever the extension is registered.
-  if (registered.some((tool) => tool.name === SPAWN_AGENT_TOOL_NAME)) names.push(SPAWN_AGENT_TOOL_NAME);
+  // 多态工具：默认全常驻；被 `PIFORGE_ON_DEMAND_DOMAINS` 点名的域要等
+  // `tool_search` 激活（active）后才声明 —— 这一变化只发生一次，之后 latched
+  // loadout 保证前缀字节稳定。核心域（browser/shell/fleet/memory/orchestrator）
+  // 一视同仁，是否按需只由开关决定。
+  const onDemand = enabledOnDemandDomains();
+  for (const domain of DOMAIN_TOOL_NAMES) {
+    if (!registered.some((tool) => tool.name === domain)) continue;
+    if (onDemand.includes(domain) && !active.includes(domain)) continue;
+    names.push(domain);
+  }
   // Oversized tool outputs are persisted; the agent reads them back by page.
   if (registered.some((tool) => tool.name === TOOL_HISTORY_TOOL_NAME)) names.push(TOOL_HISTORY_TOOL_NAME);
-  // Built-in browser: Main owns the view; these tools only inspect/navigate.
-  if (registered.some((tool) => tool.name === BROWSER_PREVIEW_TOOL_NAME)) names.push(BROWSER_PREVIEW_TOOL_NAME);
-  if (registered.some((tool) => tool.name === "browser_read")) names.push("browser_read");
-  if (registered.some((tool) => tool.name === "browser_interact")) names.push("browser_interact");
-  // Herdr fleet lifecycle is Host-owned; tools are declared when registered.
-  for (const name of ["herdr_spawn", "herdr_status", "herdr_message"]) {
-    if (registered.some((tool) => tool.name === name)) names.push(name);
-  }
-  for (const name of ["orchestrator_spawn", "orchestrator_status"]) {
-    if (registered.some((tool) => tool.name === name)) names.push(name);
-  }
   // Sandboxed plugins: always visible when the plugin manager loaded them.
   // Plan mode returned above, so plugin tools (which may request Host writes
   // through RPC) stay out of read-only plans.

@@ -14,6 +14,53 @@ export interface BrowserState {
   visible: boolean;
 }
 
+/** 自动更新阶段（Main 主导，Renderer 只读快照）。 */
+export type UpdatePhase =
+  | "idle"
+  | "checking"
+  | "up-to-date"
+  | "available"
+  | "downloading"
+  | "downloaded"
+  | "installing"
+  | "error"
+  | "unsupported";
+
+/** 一次自动更新的完整快照。 */
+export interface UpdateSnapshot {
+  phase: UpdatePhase;
+  /** 目标版本（已发布 / 最新版本号）。 */
+  version: string | null;
+  /** 下载进度 0-100。 */
+  percent: number;
+  bytesPerSecond: number;
+  /** Main 正在干活（按钮置灰用）。 */
+  busy: boolean;
+  error: string | null;
+}
+
+/** 留档的历史安装包含版本号。 */
+export interface UpdateArchive {
+  version: string;
+  path?: string;
+}
+
+/**
+ * preload 暴露的自动更新桥。
+ *
+ * 仅打包版 Electron 存在；dev / 浏览器模式下 `electronAPI.updater` 为 undefined，
+ * 调用方（useAppUpdater）据此把 supported 置为 false 并隐藏入口。
+ */
+export interface UpdaterApi {
+  getState: () => Promise<UpdateSnapshot>;
+  onState: (callback: (snapshot: UpdateSnapshot) => void) => () => void;
+  check: () => Promise<UpdateSnapshot>;
+  download: () => Promise<UpdateSnapshot>;
+  install: () => Promise<void>;
+  rollback: (version: string) => Promise<{ ok: boolean; error?: string }>;
+  archives: () => Promise<UpdateArchive[]>;
+}
+
 export interface ElectronApi {
   /** Native folder picker. Resolves null when the user cancels. */
   selectDirectory: () => Promise<string | null>;
@@ -31,6 +78,8 @@ export interface ElectronApi {
   onBrowserState?: (callback: (state: BrowserState) => void) => () => void;
   onBrowserAgentOpen?: (callback: () => void) => () => void;
   setTheme?: (theme: "light" | "dark" | "glacier") => void;
+  /** 自动更新桥（打包版才有）。 */
+  updater?: UpdaterApi;
 }
 
 export function getElectronApi(): ElectronApi | null {

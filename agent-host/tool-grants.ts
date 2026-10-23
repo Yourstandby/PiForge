@@ -20,12 +20,16 @@
  *   的前缀缓存（静态 schema + A-Z 排序）保持字节级稳定。
  */
 import { canonicalToolOrder } from "./prompt-prefix.ts";
+import { DOMAIN_LEGACY_TOOLS, collapseToolName } from "../lib/domain-tools.ts";
 
 /** 子 Agent 必须有（运行时存在的话）的核心工具：「瞎子」问题的正面解法。 */
 export const CHILD_CORE_TOOLS = ["bash", "read", "write", "edit"] as const;
 
 /** 递归 / UI 副作用工具：无论父 Agent 有没有，都不下放。 */
 const DENIED_TOOLS = new Set([
+  // 多态工具里的「派生 / 编排」域：子 Agent 不许再开舰队或工作树（递归）。
+  "fleet",
+  "orchestrator",
   "spawn_agent",
   "herdr_spawn",
   "herdr_message",
@@ -42,6 +46,7 @@ const DENIED_TOOLS = new Set([
 ]);
 
 const DENIED_PREFIXES = ["herdr_", "orchestrator_", "desktop_"];
+
 
 export class ToolGrantError extends Error {
   readonly code = "PERMISSION_MISSING";
@@ -80,10 +85,20 @@ export interface ResolvedChildTools {
  * 由 spawn 层直接作为工具错误返回给父 Agent（第一轮就可见）。
  */
 export function resolveChildTools(input: ResolveChildToolsInput): ResolvedChildTools {
-  const available = canonicalToolOrder(input.available);
+  // 收进多态工具的旧名字仍在注册表里（可被 executeTool 调用），但对子 Agent 来说
+  // 唯一入口是 shell / browser / memory：旧名字先折叠成多态工具，再从可选集里剔除。
+  const available = canonicalToolOrder(input.available)
+    .filter((name) => !DOMAIN_LEGACY_TOOLS.has(name))
+    .concat(
+      canonicalToolOrder(input.available)
+        .filter((name) => DOMAIN_LEGACY_TOOLS.has(name))
+        .map((name) => collapseToolName(name)?.tool)
+        .filter((name): name is Exclude<typeof name, undefined> => Boolean(name))
+    );
+  const normalizeName = (name: string): string => collapseToolName(name)?.tool ?? name;
   const availableSet = new Set(available);
-  const requested = canonicalToolOrder(input.requested ?? []);
-  const parentActive = canonicalToolOrder(input.parentActive ?? []);
+  const requested = canonicalToolOrder((input.requested ?? []).map(normalizeName));
+  const parentActive = canonicalToolOrder((input.parentActive ?? []).map(normalizeName));
 
   const usable = (name: string) => availableSet.has(name) && !isChildToolDenied(name);
 

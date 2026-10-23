@@ -54,10 +54,33 @@ export interface AgentSessionLike {
   readonly modelRuntime: {
     getModel: (provider: string, modelId: string) => ModelLike | undefined;
     complete?: (...args: unknown[]) => Promise<unknown>;
+    /** 预热/保活用：直接发一次 provider 请求（与 pi 的 CacheWarmer 同一条路径）。 */
+    streamSimple?: (
+      model: unknown,
+      context: { systemPrompt: string; messages: unknown[]; tools: unknown[] },
+      options: { maxTokens: number; maxRetries: number }
+    ) => { result?: () => Promise<unknown> };
   };
   readonly sessionManager: SessionManager;
   readonly settingsManager: SettingsManager;
-  readonly agent: { state?: { systemPrompt?: string; thinkingLevel?: string } };
+  readonly agent: {
+    state?: {
+      systemPrompt?: string;
+      thinkingLevel?: string;
+      /** 当前 transcript（预热要重放它才能命中同一前缀）。 */
+      messages?: unknown[];
+      /** 当前声明的工具（同上）。 */
+      tools?: unknown[];
+    };
+  };
+  /** 缓存保活：pi 的 CacheWarmer 模式与实时状态。 */
+  setCacheWarmingMode?(mode: "off" | "streaming" | "idle"): void;
+  readonly cacheWarmingStatus?: {
+    state?: string;
+    reason?: string;
+    nextWarmAt?: number;
+    decision?: unknown;
+  };
 
   subscribe(listener: (event: AgentSessionEvent) => void): () => void;
   prompt(text: string, options?: { images?: Array<{ type: "image"; data: string; mimeType: string }> }): Promise<void>;

@@ -6,6 +6,7 @@
  * report comes back as this tool's result. Everything runs in the Agent Host.
  */
 import { Type } from "typebox";
+import { registerDomainAction } from "./domain-tools.ts";
 import type { ThinkingLevel } from "./sdk-adapter.ts";
 import type {
   ExtensionAPI,
@@ -42,7 +43,7 @@ function summaryOfTask(task: string): string {
 
 export function createDesktopSubagentFactory(): ExtensionFactory {
   return (pi: ExtensionAPI) => {
-    pi.registerTool({
+    registerDomainAction(pi, "fleet", "spawn", {
       name: SPAWN_AGENT_TOOL_NAME,
       label: "Spawn Sub-agent",
       description:

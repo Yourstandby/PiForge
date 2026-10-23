@@ -24,16 +24,27 @@ import {
 } from "../lib/approval-policy.ts";
 import { ExtensionUiBridge } from "./extension-ui-bridge.ts";
 import { desktopApprovalInlineExtension, type AgentModeRef } from "./desktop-approval-extension.ts";
-import {
-  desktopLtmInlineExtension,
-  withMemoryTools,
-} from "./desktop-ltm-extension.ts";
+import { desktopLtmInlineExtension } from "./desktop-ltm-extension.ts";
 import { readDesktopSettings } from "../lib/desktop-settings.ts";
 import { desktopRuntimeTools } from "./desktop-runtime-tools.ts";
+import { desktopDedupeInlineExtension } from "./desktop-dedupe-extension.ts";
+import { desktopToolSearchAlignmentInlineExtension } from "./desktop-tool-search-alignment.ts";
+import {
+  applyCacheWarmingPolicy,
+  describeCacheWarming,
+  hasReplayablePrefix,
+  warmPromptPrefix,
+  type PrewarmResult,
+} from "./cache-warming.ts";
 import { canonicalToolOrder } from "./prompt-prefix.ts";
 import { desktopProcessInlineExtension } from "./desktop-process-extension.ts";
 import { desktopPowerShellInlineExtension } from "./desktop-powershell-extension.ts";
-import { desktopShellGuidanceInlineExtension } from "./desktop-shell-guidance-extension.ts";
+import { desktopDomainInlineExtension } from "./desktop-domain-extension.ts";
+import {
+  DOMAIN_LEGACY_TOOLS,
+  resolveOnDemandDomains,
+  setRuntimeOnDemandDomains,
+} from "../lib/domain-tools.ts";
 import { desktopOutputStyleInlineExtension } from "./desktop-output-style-extension.ts";
 import { desktopBrowserInlineExtension } from "./desktop-browser-extension.ts";
 import { desktopTerminalInlineExtension } from "./desktop-terminal-extension.ts";
@@ -60,6 +71,13 @@ import {
 } from "./ltm/observe-hooks.ts";
 import { FollowUpQueue, type FollowUpQueueSnapshot, type QueuedFollowUp } from "./follow-up-queue.ts";
 import { attachSessionStream } from "./session-events.ts";
+import {
+  observeAgentEvent,
+  registerWatchSession,
+  forgetWatchSession,
+} from "./watchdog.ts";
+import type { InterventionDelivery } from "./intervention.ts";
+import { resolveDelivery } from "./intervention.ts";
 import {
   countUserMessages,
   firstUserTextFromBranch,
@@ -126,6 +144,8 @@ export class AgentSessionWrapper {
    */
   private settleWatchdog: ReturnType<typeof setInterval> | null = null;
   private lastAgentEventAt = 0;
+  /** 最后一次首轮预热的结果（get_state 里上报，便于排查"为什么没预热"）。 */
+  private prewarm: PrewarmResult | null = null;
   /** 静默多久判定 settled 丢失。测试里会调小。 */
   static settleSilenceMs = 20_000;
   private suppressQueuedDispatchOnSettled = false;
@@ -265,6 +285,9 @@ export class AgentSessionWrapper {
     this.unsubscribe = this.inner.subscribe((event: AgentEvent) => {
       this.lastAgentEventAt = Date.now();
       this.resetIdleTimer();
+      // 无进展看门狗：纯观测（同步、O(1)、无 IO），既不改事件也不发消息。
+      // 它只在自己的内存状态里记时间戳，绝不触碰 prompt / 对话历史。
+      observeAgentEvent(this.sessionId, event);
       // Best-effort LTM observe when an agent loop settles.
       if (event.type === "agent_end") {
         try {
@@ -505,6 +528,65 @@ export class AgentSessionWrapper {
   }
 
   /**
+   * 人工介入：把一段指令注入正在跑的这一轮（steer）、排到队首（queue）
+   * 或直接开新一轮（prompt）。
+   *
+   * 三条都是**既有通路**：这里不新增任何模型调用入口，也不拼 system prompt。
+   * 指令内容由调用方（`agent.intervene`）用纯函数生成，本方法只负责投递。
+   */
+  async deliverIntervention(message: string): Promise<{ delivered: InterventionDelivery }> {
+    if (!this._alive) throw new Error("Session is not running");
+    let streaming = false;
+    try {
+      streaming = this.inner.isStreaming;
+    } catch {
+      streaming = false;
+    }
+    const queued = this.followUpQueue.snapshot().items.length;
+    const delivery = resolveDelivery({ streaming, queued });
+
+    if (delivery === "steer") {
+      try {
+        await this._binding.catch(() => undefined);
+        // steer = 最高优先级：直接进入当前循环的下一步，立刻唤醒卡住的 Agent。
+        await this.inner.steer(message);
+        return { delivered: "steer" };
+      } catch (error) {
+        // steer 失败（循环刚好结束等）→ 退成排队，绝不丢掉用户手动发的指令。
+        this.emitAgentError(error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    if (delivery === "queue" || delivery === "steer") {
+      // steer 失败后也走这里：插到队首，保持“最高优先级”语义。
+      const snapshot = this.followUpQueue.prepend({
+        id: randomUUID(),
+        message,
+        createdAt: Date.now(),
+      });
+      this.emitFollowUpQueue(snapshot);
+      if (!this.pendingAgentEnd) {
+        let stillStreaming = false;
+        try {
+          stillStreaming = this.inner.isStreaming;
+        } catch {
+          stillStreaming = false;
+        }
+        if (!stillStreaming) this.dispatchNextFollowUp(null);
+      }
+      return { delivered: "queue" };
+    }
+
+    await this._binding.catch(() => undefined);
+    if (this.resourcesChanged) await this.reloadResources();
+    // 新一轮 prompt：与正常发送完全同一条路径。
+    void this.inner
+      .prompt(message)
+      .catch((error) => this.emitAgentError(error instanceof Error ? error.message : String(error)));
+    return { delivered: "prompt" };
+  }
+
+  /**
    * Build the current state snapshot. Shared by `send({ type: "get_state" })`
    * (which resets the idle timer, since the caller is actively driving the
    * session) and `peekState()` (which does not, since the caller is only
@@ -541,6 +623,11 @@ export class AgentSessionWrapper {
     return reasoning;
   }
 
+  /** 记录首轮预热结果（恢复会话的预热在 binding 里完成）。 */
+  recordPrewarm(result: PrewarmResult): void {
+    this.prewarm = result;
+  }
+
   private buildStateSnapshot(): Record<string, unknown> {
     const model = this.inner.model;
     const contextUsage = this.inner.getContextUsage();
@@ -568,6 +655,22 @@ export class AgentSessionWrapper {
         ? { percent: contextUsage.percent, contextWindow: contextUsage.contextWindow, tokens: contextUsage.tokens }
         : null,
       contextBudget,
+      // 前缀棘轮审计：除按需域首次激活外，相邻两轮前缀必须字节一致。
+      prefixAudit: this._modeRef.prefixAudit ?? {
+        turns: 0,
+        stableTurns: 0,
+        expectedChanges: 0,
+        unexpectedChanges: 0,
+      },
+      // 缓存保活的真实状态（模式 + warmer 状态 + 预热结果），设置页据此显示。
+      cacheWarming: {
+        ...describeCacheWarming(
+          this.inner as unknown as Parameters<typeof describeCacheWarming>[0],
+          (this.inner.settingsManager?.getSettings?.() as { cacheWarming?: unknown } | undefined)
+            ?.cacheWarming
+        ),
+        ...(this.prewarm ? { prewarm: this.prewarm } : {}),
+      },
       sessionStats: sessionStats
         ? {
             tokens: {
@@ -844,6 +947,13 @@ export class AgentSessionWrapper {
         return null;
       }
 
+      case "prewarm": {
+        // 手动预热（设置页/诊断用）：用 maxTokens:1 重放当前前缀。
+        const result = await warmPromptPrefix(this.inner);
+        this.recordPrewarm(result);
+        return result;
+      }
+
       case "set_agent_mode": {
         const mode = command.mode;
         if (!isAgentMode(mode)) throw new Error(`Invalid agent mode: ${String(mode)}`);
@@ -1049,6 +1159,15 @@ export async function startRpcSession(
     } = await import("./sdk-adapter.ts");
     const agentDir = getAgentDir();
     const desktop = readDesktopSettings(agentDir);
+    /**
+     * 按需域：环境变量 > 设置项 `onDemandDomains` > 默认（shell）。
+     * 解析结果写进 domain-tools 的运行期状态，声明/合成/棘轮都用同一份。
+     */
+    const onDemand = resolveOnDemandDomains({
+      env: process.env,
+      settings: desktop.onDemandDomains ?? null,
+    });
+    setRuntimeOnDemandDomains(onDemand.domains);
 
     const sessionManager = sessionFile
       ? SessionManager.open(sessionFile, undefined)
@@ -1073,10 +1192,8 @@ export async function startRpcSession(
       else if (key === [...toolNamesForPreset("full")].sort().join(",")) toolPreset = "full";
     }
 
-    const effectiveTools = withMemoryTools(
-      effectiveToolsForMode(agentMode, toolPreset),
-      agentMode
-    );
+    // memory 已改为按需域（tool_search 激活）；plan 模式的只读 recall 由 PLAN_TOOLS 显式带上。
+    const effectiveTools = effectiveToolsForMode(agentMode, toolPreset);
 
     const modeRef: AgentModeRef = {
       current: agentMode,
@@ -1084,6 +1201,11 @@ export async function startRpcSession(
       codemodeEnabled: desktop.codemodeEnabled ?? false,
       /** cwd 只用于用户消息的 <context> 块，不进 system prompt。 */
       getCwd: () => cwd,
+      /** 提示词附加项：设置项默认开，用户关掉只是少几段静态文本。 */
+      promptAddons: {
+        outputStyle: desktop.outputStyleGuidelines !== false,
+        responseLanguage: desktop.responseLanguageGuideline !== false,
+      },
     };
     /**
      * 历史压缩扩展必须在 resourceLoader 之前注册，但它要读的分支 / 模型
@@ -1098,6 +1220,10 @@ export async function startRpcSession(
         createToolSearchExtension(),
         createMcpExtension({ loadConfig: (ctx) => loadDesktopMcpConfig(agentDir, ctx.cwd, ctx.isProjectTrusted()) }),
         desktopApprovalInlineExtension(modeRef),
+        // tool_search 结果必须只含可调用的 wire name（旧注册名会让模型调不通）。
+        desktopToolSearchAlignmentInlineExtension(),
+        // 每轮增量去重：重复 read / 重复命令只回一句或尾部差异（错误永远完整返回）。
+        desktopDedupeInlineExtension(),
         desktopCompactionInlineExtension({
           getEntries: () => (sessionForCompaction?.sessionManager.getBranch() ?? []) as never,
           getTarget: () => ({
@@ -1112,8 +1238,9 @@ export async function startRpcSession(
         desktopLtmInlineExtension({ getCwd: () => cwd }),
         desktopProcessInlineExtension({ getCwd: () => cwd }),
         desktopPowerShellInlineExtension(() => cwd),
-        desktopShellGuidanceInlineExtension(),
-        desktopOutputStyleInlineExtension(),
+        desktopOutputStyleInlineExtension({
+          enabled: () => modeRef.promptAddons?.outputStyle !== false,
+        }),
         desktopBrowserInlineExtension(),
         desktopTerminalInlineExtension({ getCwd: () => cwd }),
         desktopImageInlineExtension(),
@@ -1123,6 +1250,8 @@ export async function startRpcSession(
         desktopHerdrInlineExtension(),
         desktopPluginInlineExtension(),
         desktopOrchestratorInlineExtension(),
+        /** 必须最后加载：它要读前面各扩展登记的动作。 */
+        desktopDomainInlineExtension(),
       ],
     });
     await resourceLoader.reload();
@@ -1153,6 +1282,11 @@ export async function startRpcSession(
     });
 
     sessionForCompaction = inner as unknown as AgentSessionLike;
+    // 缓存保活：把「原始设置 → 有效模式」落到会话上（桌面默认 idle）。
+    const cacheWarmingMode = applyCacheWarmingPolicy(
+      inner as unknown as AgentSessionLike,
+      (inner.settingsManager.getSettings() as { cacheWarming?: unknown } | undefined)?.cacheWarming
+    );
 
     if (effectiveTools.length > 0) {
       inner.setActiveToolsByName(canonicalToolOrder([...effectiveTools, ...inner.getActiveToolNames()]));
@@ -1171,6 +1305,8 @@ export async function startRpcSession(
     });
     wrapper.attachUiBridge(bridge);
     attachSessionStream(wrapper);
+    // 看门狗登记必须在 start() 之前：session_start 阶段就可能已有事件到达。
+    registerWatchSession(inner.sessionId as string, cwd);
 
     wrapper.start();
 
@@ -1187,10 +1323,24 @@ export async function startRpcSession(
           });
         }
         wrapper.applyAgentMode(agentMode);
+        /**
+         * 首轮预热必须在**装载落定之后**：applyAgentMode 之前 `state.tools` 还是
+         * 默认集合（少 tool_search / tool_history_get），重放出的前缀与真实请求
+         * 不一致 —— 写进缓存的是另一条前缀，白付一次写入。
+         */
+        if (cacheWarmingMode !== "off" && hasReplayablePrefix(inner as unknown as AgentSessionLike)) {
+          const result = await warmPromptPrefix(inner as unknown as AgentSessionLike);
+          wrapper.recordPrewarm(result);
+          if (process.env.PIFORGE_DEBUG_CACHE === "1") {
+            console.log("[cache] prewarm", result.sent ? "sent" : "skipped", result.reason);
+          }
+        }
       })(),
     );
 
     const realSessionId = inner.sessionId as string;
+
+    wrapper.onDestroy(() => forgetWatchSession(realSessionId));
 
     // Ownership guard on the registry delete: destroy() is async and only runs
     // onDestroy callbacks after awaiting abort/unsubscribe, so a NEWER wrapper

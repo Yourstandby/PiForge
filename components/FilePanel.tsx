@@ -10,6 +10,7 @@ import {
   Network,
   PanelRightClose,
   Puzzle,
+  Radar,
   SquareTerminal,
   Terminal,
   Users,
@@ -24,6 +25,7 @@ import { AgentRailPanel, type AgentRailDoneEvent } from "./AgentRailPanel";
 import { HerdrPanel } from "./HerdrPanel";
 import { PluginPanel } from "./PluginPanel";
 import { OrchestratorPanel } from "./OrchestratorPanel";
+import { WatchdogPanel, WatchdogTabBadge } from "./watchdog/WatchdogPanel";
 
 /**
  * FileExplorer renders its rows with inline styles that read the legacy theme
@@ -43,7 +45,17 @@ const explorerTokens = {
   "--font-mono": "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
 } as CSSProperties;
 
-type PanelTab = "files" | "git" | "browser" | "processes" | "terminal" | "agents" | "fleet" | "orchestrator" | "plugins";
+type PanelTab =
+  | "files"
+  | "git"
+  | "browser"
+  | "processes"
+  | "terminal"
+  | "monitor"
+  | "agents"
+  | "fleet"
+  | "orchestrator"
+  | "plugins";
 
 /** 主标签：文件 / Git / 浏览器 / 进程 / 终端 / 舰队 / 编排。
  *  「插件」与「Agents」已迁移到左侧边栏底部工具栏，但仍然通过
@@ -54,6 +66,7 @@ const PANEL_TABS = [
   { id: "browser" as const, label: "浏览器", Icon: Globe },
   { id: "processes" as const, label: "进程", Icon: Terminal },
   { id: "terminal" as const, label: "终端", Icon: SquareTerminal },
+  { id: "monitor" as const, label: "系统监控", Icon: Radar },
   { id: "fleet" as const, label: "舰队", Icon: Users },
   { id: "orchestrator" as const, label: "编排", Icon: Network },
 ];
@@ -276,6 +289,7 @@ export function FilePanel({
                   className="absolute right-0.5 top-0.5 h-1.5 w-1.5 animate-pulse rounded-full bg-[#22c55e]"
                 />
               )}
+              {id === "monitor" && <WatchdogTabBadge sessionId={sessionId ?? null} />}
               <Icon size={15} strokeWidth={1.9} aria-hidden="true" />
             </button>
           );
@@ -431,6 +445,12 @@ export function FilePanel({
         {tab === "terminal" && (
           <div className="h-full">
             <TerminalPanel />
+          </div>
+        )}
+
+        {tab === "monitor" && (
+          <div className="h-full">
+            <WatchdogPanel sessionId={sessionId ?? null} />
           </div>
         )}
         </div>

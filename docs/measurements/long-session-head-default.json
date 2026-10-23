@@ -1,0 +1,917 @@
+{
+  "label": "HEAD default (always declared)",
+  "provider": "deepseek",
+  "modelId": "deepseek-flash",
+  "turns": 30,
+  "measuredAt": "2026-10-23T03:13:52.595Z",
+  "stableTurns": 29,
+  "stableHitRate": 94.89,
+  "totals": {
+    "read": 659584,
+    "write": 0,
+    "input": 35493,
+    "denominator": 695077
+  },
+  "rows": [
+    {
+      "turn": 1,
+      "delta": {
+        "input": 2238,
+        "cacheRead": 12544,
+        "cacheWrite": 0,
+        "output": 69
+      },
+      "contextTokens": 7440,
+      "cacheHitRate": 84.85996482208091,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 1,
+        "stableTurns": 1,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 2,
+      "delta": {
+        "input": 403,
+        "cacheRead": 14592,
+        "cacheWrite": 0,
+        "output": 63
+      },
+      "contextTokens": 7540,
+      "cacheHitRate": 97.31243747915971,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 2,
+        "stableTurns": 2,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 3,
+      "delta": {
+        "input": 9509,
+        "cacheRead": 16384,
+        "cacheWrite": 0,
+        "output": 416
+      },
+      "contextTokens": 9200,
+      "cacheHitRate": 63.27578882323408,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 3,
+        "stableTurns": 3,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 4,
+      "delta": {
+        "input": 643,
+        "cacheRead": 16000,
+        "cacheWrite": 0,
+        "output": 97
+      },
+      "contextTokens": 8378,
+      "cacheHitRate": 96.13651384966653,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 4,
+        "stableTurns": 4,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 5,
+      "delta": {
+        "input": 1343,
+        "cacheRead": 25472,
+        "cacheWrite": 0,
+        "output": 224
+      },
+      "contextTokens": 9600,
+      "cacheHitRate": 94.99160917396979,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 5,
+        "stableTurns": 5,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 6,
+      "delta": {
+        "input": 285,
+        "cacheRead": 19072,
+        "cacheWrite": 0,
+        "output": 122
+      },
+      "contextTokens": 9760,
+      "cacheHitRate": 98.52766441080746,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 6,
+        "stableTurns": 6,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 7,
+      "delta": {
+        "input": 441,
+        "cacheRead": 19200,
+        "cacheWrite": 0,
+        "output": 65
+      },
+      "contextTokens": 9864,
+      "cacheHitRate": 97.75469680769818,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 7,
+        "stableTurns": 7,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 8,
+      "delta": {
+        "input": 362,
+        "cacheRead": 19584,
+        "cacheWrite": 0,
+        "output": 91
+      },
+      "contextTokens": 10070,
+      "cacheHitRate": 98.18509976937732,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 8,
+        "stableTurns": 8,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 9,
+      "delta": {
+        "input": 377,
+        "cacheRead": 19968,
+        "cacheWrite": 0,
+        "output": 149
+      },
+      "contextTokens": 10305,
+      "cacheHitRate": 98.14696485623003,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 9,
+        "stableTurns": 9,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 10,
+      "delta": {
+        "input": 376,
+        "cacheRead": 20352,
+        "cacheWrite": 0,
+        "output": 62
+      },
+      "contextTokens": 10403,
+      "cacheHitRate": 98.1860285604014,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 10,
+        "stableTurns": 10,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 11,
+      "delta": {
+        "input": 443,
+        "cacheRead": 20608,
+        "cacheWrite": 0,
+        "output": 99
+      },
+      "contextTokens": 10635,
+      "cacheHitRate": 97.89558690798536,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 11,
+        "stableTurns": 11,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 12,
+      "delta": {
+        "input": 408,
+        "cacheRead": 20992,
+        "cacheWrite": 0,
+        "output": 66
+      },
+      "contextTokens": 10741,
+      "cacheHitRate": 98.09345794392523,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 12,
+        "stableTurns": 12,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 13,
+      "delta": {
+        "input": 525,
+        "cacheRead": 21376,
+        "cacheWrite": 0,
+        "output": 119
+      },
+      "contextTokens": 11164,
+      "cacheHitRate": 97.60284918496872,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 13,
+        "stableTurns": 13,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 14,
+      "delta": {
+        "input": 432,
+        "cacheRead": 22144,
+        "cacheWrite": 0,
+        "output": 101
+      },
+      "contextTokens": 11405,
+      "cacheHitRate": 98.08646350106306,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 14,
+        "stableTurns": 14,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 15,
+      "delta": {
+        "input": 406,
+        "cacheRead": 22528,
+        "cacheWrite": 0,
+        "output": 64
+      },
+      "contextTokens": 11507,
+      "cacheHitRate": 98.2297026249237,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 15,
+        "stableTurns": 15,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 16,
+      "delta": {
+        "input": 356,
+        "cacheRead": 22912,
+        "cacheWrite": 0,
+        "output": 74
+      },
+      "contextTokens": 11749,
+      "cacheHitRate": 98.47000171909919,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 16,
+        "stableTurns": 16,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 17,
+      "delta": {
+        "input": 13414,
+        "cacheRead": 24320,
+        "cacheWrite": 0,
+        "output": 192
+      },
+      "contextTokens": 13006,
+      "cacheHitRate": 64.45115810674723,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 17,
+        "stableTurns": 17,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 18,
+      "delta": {
+        "input": 468,
+        "cacheRead": 24064,
+        "cacheWrite": 0,
+        "output": 68
+      },
+      "contextTokens": 12313,
+      "cacheHitRate": 98.09228762432741,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 18,
+        "stableTurns": 18,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 19,
+      "delta": {
+        "input": 414,
+        "cacheRead": 24448,
+        "cacheWrite": 0,
+        "output": 97
+      },
+      "contextTokens": 12535,
+      "cacheHitRate": 98.33480814093798,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 19,
+        "stableTurns": 19,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 20,
+      "delta": {
+        "input": 480,
+        "cacheRead": 24704,
+        "cacheWrite": 0,
+        "output": 67
+      },
+      "contextTokens": 12639,
+      "cacheHitRate": 98.09402795425667,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 20,
+        "stableTurns": 20,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 21,
+      "delta": {
+        "input": 453,
+        "cacheRead": 24960,
+        "cacheWrite": 0,
+        "output": 66
+      },
+      "contextTokens": 12752,
+      "cacheHitRate": 98.21744776295597,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 21,
+        "stableTurns": 21,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 22,
+      "delta": {
+        "input": 821,
+        "cacheRead": 25344,
+        "cacheWrite": 0,
+        "output": 164
+      },
+      "contextTokens": 13465,
+      "cacheHitRate": 96.86222052360023,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 22,
+        "stableTurns": 22,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 23,
+      "delta": {
+        "input": 318,
+        "cacheRead": 26880,
+        "cacheWrite": 0,
+        "output": 208
+      },
+      "contextTokens": 13762,
+      "cacheHitRate": 98.83079638208692,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 23,
+        "stableTurns": 23,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 24,
+      "delta": {
+        "input": 402,
+        "cacheRead": 27264,
+        "cacheWrite": 0,
+        "output": 86
+      },
+      "contextTokens": 13908,
+      "cacheHitRate": 98.54695293862503,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 24,
+        "stableTurns": 24,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 25,
+      "delta": {
+        "input": 463,
+        "cacheRead": 27520,
+        "cacheWrite": 0,
+        "output": 105
+      },
+      "contextTokens": 14086,
+      "cacheHitRate": 98.34542400743308,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 25,
+        "stableTurns": 25,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 26,
+      "delta": {
+        "input": 408,
+        "cacheRead": 27904,
+        "cacheWrite": 0,
+        "output": 72
+      },
+      "contextTokens": 14200,
+      "cacheHitRate": 98.55891494772536,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 26,
+        "stableTurns": 26,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 27,
+      "delta": {
+        "input": 389,
+        "cacheRead": 28160,
+        "cacheWrite": 0,
+        "output": 99
+      },
+      "contextTokens": 14333,
+      "cacheHitRate": 98.63743038285054,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 27,
+        "stableTurns": 27,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 28,
+      "delta": {
+        "input": 582,
+        "cacheRead": 28544,
+        "cacheWrite": 0,
+        "output": 146
+      },
+      "contextTokens": 14838,
+      "cacheHitRate": 98.00178534642588,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 28,
+        "stableTurns": 28,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 29,
+      "delta": {
+        "input": 388,
+        "cacheRead": 29440,
+        "cacheWrite": 0,
+        "output": 98
+      },
+      "contextTokens": 15009,
+      "cacheHitRate": 98.69920879710338,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 29,
+        "stableTurns": 29,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 30,
+      "delta": {
+        "input": 184,
+        "cacheRead": 14848,
+        "cacheWrite": 0,
+        "output": 920
+      },
+      "contextTokens": 15952,
+      "cacheHitRate": 98.77594465141033,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 30,
+        "stableTurns": 30,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    }
+  ]
+}

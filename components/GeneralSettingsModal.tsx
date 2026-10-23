@@ -1,6 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import {
+  ON_DEMAND_DOMAIN_OPTIONS,
+  formatOnDemandSummary,
+  isSettingsOverriddenByEnv,
+  normalizeOnDemandSelection,
+  onDemandWarning,
+} from "@/lib/on-demand-settings-view";
+import type { OnDemandSource } from "@/lib/domain-tools";
 import { Settings2 } from "lucide-react";
 import { ModalSurface } from "./ModalSurface";
 import { useI18n } from "./I18nProvider";
@@ -35,8 +43,17 @@ const ENTER_OPTIONS = [
 
 const CACHE_WARMING_OPTIONS = [
   { label: "关闭", value: "off" },
-  { label: "空闲时预热", value: "warm" },
+  { label: "流式期间", value: "streaming" },
+  { label: "空闲时保活", value: "idle" },
 ];
+
+/** agent.state 上报的真实缓存保活状态（见 agent-host/cache-warming.ts）。 */
+interface CacheWarmingStatusView {
+  mode: string;
+  state: string;
+  reason?: string;
+  prewarm?: { sent: boolean; reason: string };
+}
 
 export interface SettingsSnapshot {
   defaultThinkingLevel: string;
@@ -144,6 +161,13 @@ export function GeneralSettingsModal({ sessionId, cwd, onClose }: GeneralSetting
   const { preference, setPreference } = useI18n();
   const [scale, setScale] = useState(1);
   const [settings, setSettings] = useState<SettingsSnapshot | null>(null);
+  const [cacheWarming, setCacheWarming] = useState<CacheWarmingStatusView | null>(null);
+  /** 实际生效的按需域（环境变量 > 设置项 > 默认）与来源。 */
+  const [onDemand, setOnDemand] = useState<{
+    domains: string[];
+    source: OnDemandSource;
+    saved: string[];
+  } | null>(null);
   const [saving, setSaving] = useState(false);
   const [reloading, setReloading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -175,6 +199,68 @@ export function GeneralSettingsModal({ sessionId, cwd, onClose }: GeneralSetting
   useEffect(() => {
     void loadUpstream(false);
   }, [loadUpstream]);
+
+  useEffect(() => {
+    fetch("/api/desktop-settings")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data: {
+        onDemandDomains?: string[] | null;
+        onDemandEffective?: { domains: string[]; source: OnDemandSource };
+      } | null) => {
+        if (!data?.onDemandEffective) return;
+        setOnDemand({
+          domains: data.onDemandEffective.domains,
+          source: data.onDemandEffective.source,
+          saved: data.onDemandDomains ?? [],
+        });
+      })
+      .catch(() => {});
+  }, []);
+
+  const saveOnDemand = useCallback(async (next: string[]) => {
+    const normalized = normalizeOnDemandSelection(next);
+    setOnDemand((prev) => (prev ? { ...prev, saved: normalized, domains: normalized } : prev));
+    try {
+      const response = await fetch("/api/desktop-settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ onDemandDomains: normalized }),
+      });
+      if (response.ok) {
+        const data = (await response.json()) as {
+          onDemandDomains?: string[] | null;
+          onDemandEffective?: { domains: string[]; source: OnDemandSource };
+        };
+        if (data.onDemandEffective) {
+          setOnDemand({
+            domains: data.onDemandEffective.domains,
+            source: data.onDemandEffective.source,
+            saved: data.onDemandDomains ?? [],
+          });
+        }
+      }
+    } catch {
+      /* 乐观更新；下次打开重新读 */
+    }
+  }, []);
+
+  // 缓存保活的真实状态来自 Host 的 agent.state（不是设置页猜的默认值）。
+  useEffect(() => {
+    if (!sessionId) {
+      setCacheWarming(null);
+      return;
+    }
+    let alive = true;
+    fetch(`/api/agent/${encodeURIComponent(sessionId)}`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data: { state?: { cacheWarming?: CacheWarmingStatusView } } | null) => {
+        if (alive) setCacheWarming(data?.state?.cacheWarming ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [sessionId]);
 
   const update = useCallback(async (patch: Partial<SettingsSnapshot>) => {
     setSettings((prev) => (prev ? { ...prev, ...patch } : prev));
@@ -330,14 +416,73 @@ export function GeneralSettingsModal({ sessionId, cwd, onClose }: GeneralSetting
               onChange={(next) => void update({ retryEnabled: next })}
             />
           </Row>
-          <Row label="空闲时缓存预热" hint="会用少量 tokens 换取下一轮更快、更便宜">
+          <Row
+            label="缓存保活"
+            hint={
+              cacheWarming
+                ? `生效值 ${cacheWarming.mode} · 当前 ${cacheWarming.state}${
+                    cacheWarming.reason ? `（${cacheWarming.reason}）` : ""
+                  }${cacheWarming.prewarm ? ` · 预热${cacheWarming.prewarm.sent ? "已发" : "跳过"}` : ""}`
+                : "按模型声明的 TTL 重放前缀（maxTokens=1）；换取下一轮更快、更便宜"
+            }
+          >
             <Segmented
-              value={settings?.cacheWarming ?? "off"}
+              value={settings?.cacheWarming ?? "idle"}
               options={CACHE_WARMING_OPTIONS}
               disabled={!settings}
               onChange={(value) => void update({ cacheWarming: value })}
             />
           </Row>
+          <Row
+            label="按需工具域"
+            hint={
+              onDemand
+                ? `${formatOnDemandSummary(onDemand)}${
+                    isSettingsOverriddenByEnv(onDemand.source)
+                      ? "（环境变量生效，设置项暂不生效）"
+                      : "（改动对新建会话生效，当前会话需重新加载）"
+                  }`
+                : "勾选的域默认不声明，首次使用时用 tool_search 激活"
+            }
+          >
+            <div className="flex flex-wrap gap-1.5">
+              {ON_DEMAND_DOMAIN_OPTIONS.map((option) => {
+                const checked = (onDemand?.saved ?? []).includes(option.value);
+                const disabled = isSettingsOverriddenByEnv(onDemand?.source ?? "default");
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    aria-pressed={checked}
+                    aria-label={option.label}
+                    disabled={disabled}
+                    onClick={() =>
+                      void saveOnDemand(
+                        checked
+                          ? (onDemand?.saved ?? []).filter((name) => name !== option.value)
+                          : [...(onDemand?.saved ?? []), option.value]
+                      )
+                    }
+                    className={`rounded-full border px-2 py-0.5 text-[11px] transition-colors ${
+                      checked
+                        ? "border-[#BFD3F7] bg-[#E8EFFB] text-[#2563EB]"
+                        : "border-[#E3E3E7] bg-white text-ink-muted"
+                    } ${disabled ? "opacity-50" : "hover:border-[#C9D9F2]"}`}
+                  >
+                    {option.value}
+                  </button>
+                );
+              })}
+            </div>
+          </Row>
+          {onDemand && onDemandWarning(onDemand.saved) && (
+            <p className="px-1 text-[11px] leading-4 text-[#B45309]">{onDemandWarning(onDemand.saved)}</p>
+          )}
+          {onDemand && !isSettingsOverriddenByEnv(onDemand.source) && onDemand.saved.length === 0 && (
+            <p className="px-1 text-[11px] leading-4 text-ink-muted">
+              没有勾选 = 全部常驻（等价于 PIFORGE_ON_DEMAND_DOMAINS=0）。
+            </p>
+          )}
           <Row label="技能命令" hint="把已安装技能注册成斜杠命令">
             <Toggle
               checked={settings?.enableSkillCommands ?? false}

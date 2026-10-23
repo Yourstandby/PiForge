@@ -2,6 +2,7 @@ import test, { mock } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { AgentSessionWrapper, getRpcSessionRegistry, startRpcSession } from "./rpc-manager.ts";
+import { PLAN_TOOLS } from "../lib/approval-policy.ts";
 
 type SubscribeFn = (cb: (event: unknown) => void) => () => void;
 
@@ -25,18 +26,14 @@ test("startRpcSession does not pass a hardcoded default tool allowlist", () => {
 
 test("startRpcSession registers desktopLtmInlineExtension", () => {
   assert.match(source, /desktopLtmInlineExtension\(\{\s*getCwd:\s*\(\)\s*=>\s*cwd\s*\}\)/);
-  assert.match(source, /withMemoryTools/);
 });
 
-test("startRpcSession passes agentMode to withMemoryTools so plan drops write tools (S2)", () => {
-  // Regression: the start/restore path previously called
-  // withMemoryTools(effectiveToolsForMode(...)) without mode, so a plan
-  // session restored from history re-enabled memory_save/memory_forget
-  // (LTM write/delete) with no Ask confirm.
-  assert.match(
-    source,
-    /withMemoryTools\(\s*effectiveToolsForMode\(agentMode, toolPreset\),\s*agentMode\s*\)/
-  );
+test("memory is an on-demand domain: the start path no longer force-declares it", () => {
+  // v0.8.3 第 3 步：memory 改成 tool_search 激活的按需域，声明集合由
+  // desktop-runtime-tools 统一决定；plan 模式的只读 recall 由 PLAN_TOOLS 承担。
+  assert.match(source, /const effectiveTools = effectiveToolsForMode\(agentMode, toolPreset\)/);
+  assert.doesNotMatch(source, /withMemoryTools\(/);
+  assert.ok(PLAN_TOOLS.includes("memory"), "plan mode keeps the read-only memory facade");
 });
 
 function makeStubInner(overrides: {
@@ -820,10 +817,10 @@ test("set_agent_mode plan forces read tools", async () => {
   w.initPolicy("ask", "default");
   const result = await w.send({ type: "set_agent_mode", mode: "plan" }) as { agentMode: string };
   assert.equal(result.agentMode, "plan");
-  // Plan is read-only: memory_recall stays, write/delete channels are dropped.
+  // Plan is read-only: the memory facade stays (recall only), writes are gated per action.
   assert.deepEqual(
     applied.at(-1)?.slice().sort(),
-    ["find", "grep", "ls", "memory_recall", "read", "tool_history_get"]
+    ["find", "grep", "ls", "memory", "read", "tool_history_get"]
   );
 });
 
@@ -999,3 +996,99 @@ test("destroy() unsubscribes before aborting to stop event delivery (P2-5)", asy
   assert.deepEqual(order, ["unsubscribe", "abort"]);
 });
 
+
+// ---------------------------------------------------------------------------
+// 人工介入（HITL）：指令必须落到既有队列里，且不能丢
+// ---------------------------------------------------------------------------
+
+test("intervention steers the running loop with the exact skip instruction", async () => {
+  const steered: string[] = [];
+  const inner = makeStubInner({
+    isStreaming: true,
+    steer: async (msg: string) => { steered.push(msg); },
+  });
+  const w = new AgentSessionWrapper(inner);
+  w.start();
+  try {
+    const outcome = await w.deliverIntervention(
+      "[系统提示] 当前工具执行因无进展被系统强制跳过。请反思刚才为什么卡住，并立刻尝试其他替代方案继续完成任务。",
+    );
+    assert.equal(outcome.delivered, "steer");
+    assert.deepEqual(steered, [
+      "[系统提示] 当前工具执行因无进展被系统强制跳过。请反思刚才为什么卡住，并立刻尝试其他替代方案继续完成任务。",
+    ]);
+  } finally {
+    await w.destroy();
+  }
+});
+
+test("intervention opens a fresh turn when the session is idle", async () => {
+  const prompted: string[] = [];
+  const inner = makeStubInner({ prompt: async (msg: string) => { prompted.push(msg); } });
+  const w = new AgentSessionWrapper(inner);
+  w.start();
+  try {
+    const outcome = await w.deliverIntervention("你之前在 bash 之后似乎卡住了，请分析原因并给出新的执行方案。");
+    assert.equal(outcome.delivered, "prompt");
+    assert.equal(prompted.length, 1);
+    assert.match(prompted[0]!, /你之前在 bash 之后似乎卡住了/);
+  } finally {
+    await w.destroy();
+  }
+});
+
+/** 读私有队列（避免把内部字段暴露成公共 API）。 */
+const queueOf = (w: AgentSessionWrapper) =>
+  (w as unknown as { followUpQueue: { snapshot(): { items: Array<{ message: string }> } } }).followUpQueue;
+
+test("intervention jumps ahead of already queued follow-ups", async () => {
+  const prompted: string[] = [];
+  let receive: (event: unknown) => void = () => {};
+  const inner = makeStubInner({
+    isStreaming: false,
+    prompt: async (msg: string) => { prompted.push(msg); },
+    subscribe: (cb) => { receive = cb; return () => {}; },
+  });
+  const w = new AgentSessionWrapper(inner);
+  w.start();
+  try {
+    // agent_end 已到、settled 还没到 → 排队中的消息不会被立刻派发（真实存在的瞬态）。
+    receive({ type: "agent_end", messages: [] });
+    await w.send({ type: "follow_up", message: "用户排队的一条消息" });
+    assert.equal(queueOf(w).snapshot().items.length, 1);
+
+    const outcome = await w.deliverIntervention("[系统提示] 跳过当前工具");
+    assert.equal(outcome.delivered, "queue");
+    // 介入指令插到队首，优先级高于此前排队的用户消息。
+    const items = queueOf(w).snapshot().items;
+    assert.equal(items.length, 2);
+    assert.equal(items[0]?.message, "[系统提示] 跳过当前工具");
+    assert.equal(items[1]?.message, "用户排队的一条消息");
+    assert.deepEqual(prompted, [], "这一轮还没 settled，不能抢跑");
+  } finally {
+    await w.destroy();
+  }
+});
+
+test("a failing steer falls back to the queue instead of dropping the instruction", async () => {
+  const errors: string[] = [];
+  const inner = makeStubInner({
+    isStreaming: true,
+    steer: async () => { throw new Error("no active loop"); },
+    prompt: async () => {},
+  });
+  const w = new AgentSessionWrapper(inner);
+  w.start();
+  w.onEvent((event) => {
+    if (event.type === "agent_error") errors.push(String(event.errorMessage));
+  });
+  try {
+    const outcome = await w.deliverIntervention("[系统提示] 跳过当前工具");
+    assert.equal(outcome.delivered, "queue");
+    const items = queueOf(w).snapshot().items;
+    assert.equal(items[0]?.message, "[系统提示] 跳过当前工具");
+    assert.ok(errors.some((text) => text.includes("no active loop")), "失败原因要报给 UI");
+  } finally {
+    await w.destroy();
+  }
+});

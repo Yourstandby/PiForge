@@ -9,6 +9,8 @@ import { SidebarIcon } from "./SidebarIcon";
 import { useI18n } from "../I18nProvider";
 import { apiJson } from "../apiJson";
 import { useDismissOnOutsideClick } from "@/hooks/useDismissOnOutsideClick";
+import { useSessionStatusDot } from "@/hooks/useWatchdogStatus";
+import { StatusPointer } from "@/components/watchdog/StatusDot";
 
 interface SessionTreeItemProps {
   node: SessionTreeNode;
@@ -73,6 +75,8 @@ function SessionItem({
   const cancelRenameRef = useRef(false);
   const title = sessionTitle(session);
   const menuOpen = menuPos !== null;
+  /** 看门狗状态灯（只读）：卡死 = 红色呼吸，运行中 = 蓝色静态，空闲/已完成不显示。 */
+  const statusDot = useSessionStatusDot(session.id);
 
   useEffect(() => {
     if (renaming) { inputRef.current?.focus(); inputRef.current?.select(); }
@@ -170,6 +174,11 @@ function SessionItem({
               />
             )}
             <span className="sidebar-session-title">{title}</span>
+            {statusDot && (
+              /* 状态灯：卡死=红色呼吸 / 失败=红色静态 / 运行中=蓝色静态 / 空闲=不显示。
+                 悬浮显示「系统检测到该任务已停滞 N 秒」，不用点进去。 */
+              <StatusPointer tone={statusDot.tone} text={statusDot.tooltip} />
+            )}
             <time className="sidebar-session-time" dateTime={session.modified}>{formatRelativeTime(session.modified, locale, true)}</time>
           </button>
           <button ref={triggerRef} className="sidebar-icon-button sidebar-session-actions" aria-label={t("common.moreActions")} title={t("common.moreActions")} aria-haspopup="menu" aria-expanded={menuOpen} onClick={(event) => {

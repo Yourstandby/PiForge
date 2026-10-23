@@ -74,9 +74,26 @@ test("registers only run_bg / process_read / process_wait (no stop/restart tools
     const names = env.tools.map((entry) => entry.name);
     assert.ok(!names.includes("process_stop"));
     assert.ok(!names.includes("process_restart"));
-    const toolInfos = env.tools.map((entry) => ({ name: entry.name, description: "" }));
-    assert.ok(desktopRuntimeTools("full", "default", false, toolInfos, []).includes("process_read"));
-    assert.ok(desktopRuntimeTools("full", "default", false, toolInfos, []).includes("process_wait"));
+    // 三个动作收进 shell 多态工具：旧名字只以 deferred 注册（可调用、不声明）。
+    for (const entry of env.tools) {
+      assert.equal(
+        (entry as { exposure?: string }).exposure,
+        "deferred",
+        `${entry.name} must stay callable but undeclared`,
+      );
+    }
+    const toolInfos = [
+      ...env.tools.map((entry) => ({ name: entry.name, description: "" })),
+      { name: "shell", description: "" },
+    ];
+    // 第 8 步：shell 默认按需 —— 未激活时不声明，激活后才连同 run/read/wait 一起声明。
+    const beforeActivation = desktopRuntimeTools("full", "default", false, toolInfos, []);
+    assert.ok(!beforeActivation.includes("shell"), "shell waits for tool_search by default");
+    const declared = desktopRuntimeTools("full", "default", false, toolInfos, ["shell"]);
+    assert.ok(declared.includes("shell"), "after activation the shell facade carries run/read/wait");
+    for (const legacy of ["run_bg", "process_read", "process_wait"]) {
+      assert.ok(!declared.includes(legacy), `${legacy} must not be declared on its own`);
+    }
   } finally {
     void env.cleanup();
   }

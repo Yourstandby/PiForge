@@ -6,6 +6,7 @@
  * guardrail (verified: false when no test/build evidence exists).
  */
 import { Type } from "typebox";
+import { registerDomainAction } from "./domain-tools.ts";
 import type { ThinkingLevel } from "./sdk-adapter.ts";
 import type { ExtensionAPI, ExtensionFactory, InlineExtension } from "./sdk-adapter.ts";
 import type { Model } from "./sdk-adapter.ts";
@@ -83,7 +84,7 @@ const StopParams = Type.Object({
 
 export function createDesktopHerdrFactory(): ExtensionFactory {
   return (pi: ExtensionAPI) => {
-    pi.registerTool({
+    registerDomainAction(pi, "fleet", "launch", {
       name: HERDR_SPAWN_TOOL_NAME,
       label: "Herdr Spawn",
       description:
@@ -129,7 +130,7 @@ export function createDesktopHerdrFactory(): ExtensionFactory {
       },
     });
 
-    pi.registerTool({
+    registerDomainAction(pi, "fleet", "status", {
       name: HERDR_STATUS_TOOL_NAME,
       label: "Herdr Status",
       description: "Read the status/output of one fleet agent, or list the whole fleet. Read-only.",
@@ -158,7 +159,7 @@ export function createDesktopHerdrFactory(): ExtensionFactory {
       },
     });
 
-    pi.registerTool({
+    registerDomainAction(pi, "fleet", "message", {
       name: HERDR_MESSAGE_TOOL_NAME,
       label: "Herdr Message",
       description: "Send a follow-up message to a running fleet agent and wait for its response (bounded by timeoutMs).",
@@ -192,7 +193,7 @@ export function createDesktopHerdrFactory(): ExtensionFactory {
         }
       },
     });
-    pi.registerTool({
+    registerDomainAction(pi, "fleet", "stop", {
       name: HERDR_STOP_TOOL_NAME,
       label: "Herdr Stop",
       description: "Stop (sleep) a fleet agent or the whole fleet. Frees a fleet slot; the config can be woken again.",

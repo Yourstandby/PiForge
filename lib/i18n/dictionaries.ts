@@ -552,9 +552,13 @@ export const en = {
   "usage.tooltip.cacheRead": "Cache Read: {count}",
   "usage.tooltip.cacheWrite": "Cache Write: {count}",
   "usage.tooltip.cacheHit": "Cache Hit: {rate}%",
-  "usage.tooltip.cost": "Cost: ${cost}",
+  "usage.tooltip.cost": "Cost: {cost}",
   "usage.tooltip.context": "Context: {percent} of {total} tokens",
   "usage.tooltip.quota": "{name} quota",
+  "usage.strip.cost": "Cost",
+  "usage.strip.context": "Context",
+  "usage.strip.cacheHit": "Cache",
+  "usage.strip.quota": "Quota",
 } as const;
 
 export type TranslationKey = keyof typeof en;
@@ -1114,7 +1118,11 @@ export const zhCN: Record<TranslationKey, string> = {
   "usage.tooltip.cacheRead": "缓存读取：{count}",
   "usage.tooltip.cacheWrite": "缓存写入：{count}",
   "usage.tooltip.cacheHit": "缓存命中率：{rate}%",
-  "usage.tooltip.cost": "费用：${cost}",
+  "usage.tooltip.cost": "费用：{cost}",
   "usage.tooltip.context": "上下文：{percent}（共 {total} tokens）",
   "usage.tooltip.quota": "{name} 配额",
+  "usage.strip.cost": "费用",
+  "usage.strip.context": "上下文",
+  "usage.strip.cacheHit": "缓存命中",
+  "usage.strip.quota": "额度",
 };

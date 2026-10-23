@@ -86,6 +86,8 @@ export type UseSessionCommandsOptions = {
   onPendingSteerFailed: (id: string) => void;
   onPendingPromptQueued: (item: { id: string; message: string }) => void;
   onPendingPromptFailed: (id: string) => void;
+  /** 发送失败时的提示（宿主 / 网络错误），避免“输入没反应”。 */
+  onPromptError?: (message: string) => void;
 };
 
 export function useSessionCommands(opts: UseSessionCommandsOptions) {
@@ -129,6 +131,7 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
     onPendingSteerFailed,
     onPendingPromptQueued,
     onPendingPromptFailed,
+    onPromptError,
   } = opts;
   const promptDispatchStateRef = useRef<PromptDispatchState>({ current: false });
 
@@ -364,6 +367,7 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
         }
       } catch (e) {
         console.error("Failed to send message:", e);
+        onPromptError?.(e instanceof Error ? e.message : String(e));
         finishPromptDispatch(promptDispatchStateRef.current);
         onPendingPromptFailed(clientMessageId);
         setAgentRunning(false);
@@ -399,6 +403,7 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
       promptTrust,
       onPendingPromptQueued,
       onPendingPromptFailed,
+      onPromptError,
     ]
   );
 

@@ -11,7 +11,9 @@ import {
   type ExtensionAPI,
   type ExtensionFactory,
   type InlineExtension,
+  type ToolDefinition,
 } from "./sdk-adapter.ts";
+import { registerDomainAction } from "./domain-tools.ts";
 
 export function createDesktopPowerShellFactory(
   getCwd: () => string,
@@ -19,7 +21,13 @@ export function createDesktopPowerShellFactory(
   return (pi: ExtensionAPI) => {
     if (process.platform !== "win32") return;
     if (pi.getAllTools().some((tool) => tool.name === "powershell")) return;
-    pi.registerTool(createPowerShellToolDefinition(getCwd()) as never);
+    // 收进 shell 多态工具：执行时由 `shell{action:"exec"}` 分派回来。
+    registerDomainAction(
+      pi,
+      "shell",
+      "exec",
+      createPowerShellToolDefinition(getCwd()) as unknown as ToolDefinition
+    );
   };
 }
 
