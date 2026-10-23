@@ -31,6 +31,8 @@ function parseArgs(argv) {
     maxHostReady: null,
     maxWindow: null,
     maxRssMb: null,
+    /** host（agent-host 角色）单进程 RSS 上限（Step 4 · L1 的验收线）。 */
+    maxHostRssMb: null,
     maxIdleCpu: null,
     skipPortCheck: false,
     /** 不等 Host 稳定就直接采样（只看启动耗时用）。 */
@@ -72,6 +74,10 @@ function parseArgs(argv) {
         break;
       case "--max-rss-mb":
         args.maxRssMb = Number(next);
+        i += 1;
+        break;
+      case "--max-host-rss-mb":
+        args.maxHostRssMb = Number(next);
         i += 1;
         break;
       case "--max-idle-cpu":
@@ -373,6 +379,8 @@ const report = {
   totalRssMb,
   totalCpuPercentSingleCore: totalCpu,
   hasNextServerProcess: rows.some((row) => row.role === "next-server"),
+  hostRssMb: Number((byRole.get("agent-host")?.rssMb ?? 0).toFixed(1)),
+  hostCpuPercent: Number((byRole.get("agent-host")?.cpuPercent ?? 0).toFixed(2)),
   internalPortOpen: portOpen,
   byRole: [...byRole.values()]
     .map((entry) => ({
@@ -398,6 +406,9 @@ if (args.maxWindow !== null && windowMs !== null && windowMs > args.maxWindow) {
 if (args.maxRssMb !== null && totalRssMb > args.maxRssMb) {
   failures.push(`总 RSS ${totalRssMb} MB > ${args.maxRssMb} MB`);
 }
+if (args.maxHostRssMb !== null && report.hostRssMb > args.maxHostRssMb) {
+  failures.push(`host RSS ${report.hostRssMb} MB > ${args.maxHostRssMb} MB`);
+}
 if (args.maxIdleCpu !== null && totalCpu > args.maxIdleCpu) {
   failures.push(`空闲 CPU ${totalCpu}%（单核口径）> ${args.maxIdleCpu}%`);
 }
@@ -415,7 +426,7 @@ if (args.json) {
   console.log(`  ${"spawn → 窗口就绪(实测)".padEnd(28)} ${String(report.spawnToWindowMs).padStart(6)}`);
   console.log("");
   console.log(
-    `内存 ${report.totalRssMb} MB / ${report.processCount} 进程 · CPU ${report.totalCpuPercentSingleCore}%（单核口径，采样 ${report.sampledSeconds}s） · next-server=${report.hasNextServerProcess} · 30141=${report.internalPortOpen}`,
+    `host ${report.hostRssMb} MB · 内存 ${report.totalRssMb} MB / ${report.processCount} 进程 · CPU ${report.totalCpuPercentSingleCore}%（单核口径，采样 ${report.sampledSeconds}s） · next-server=${report.hasNextServerProcess} · 30141=${report.internalPortOpen}`,
   );
   console.log("");
   if (series.length > 0) {

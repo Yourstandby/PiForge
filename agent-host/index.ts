@@ -5,6 +5,9 @@
  * Node process under `scripts/dev.mjs` / the handshake smoke test. It must not
  * import Electron APIs — only the contract and Node built-ins.
  */
+import { appendFileSync } from "node:fs";
+import { PerformanceObserver } from "node:perf_hooks";
+import v8 from "node:v8";
 import process from "node:process";
 import { PROTOCOL_VERSION, type ParentMessage } from "../contract/protocol.ts";
 import { createAgentHostServer } from "./server.ts";
@@ -26,6 +29,66 @@ function logError(message: string, detail?: unknown): void {
  * 诊断：`PIFORGE_DEBUG_HOST_CPU=1` 时每 5s 打一条自身 CPU/RSS/活跃句柄。
  * 用来回答"空闲时这 6% CPU 到底是谁在烧"——外部采样只能看到进程级总量。
  */
+/** 只统计 GC 次数/耗时（perf_hooks），用于 soak 时判断"堆压小了是不是 scavenge 变多"。 */
+const gcStats = { count: 0, totalMs: 0, maxMs: 0 };
+
+function startGcHistogram(): void {
+  try {
+    const observer = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        gcStats.count += 1;
+        gcStats.totalMs += entry.duration;
+        if (entry.duration > gcStats.maxMs) gcStats.maxMs = entry.duration;
+      }
+    });
+    observer.observe({ entryTypes: ["gc"] });
+    // 观测器常驻，不 unref（它本身不产生句柄）。
+  } catch {
+    // 某些运行时没有 GC 观测能力：忽略，不影响主流程。
+  }
+}
+
+/**
+ * OOM 取证：把"堆爆"的证据落盘到 `<userData>/host-oom.json`（由 Main 通过
+ * `PIFORGE_HOST_OOM_FILE` 指定），用于 L1（收紧 V8 堆）后的 soak 校验。
+ *
+ * 只在真正的堆耗尽时写（`isHeapExhaustion` 判定），普通崩溃不污染这个文件。
+ */
+function recordOomEvidence(source: string, error: unknown): void {
+  const file = process.env.PIFORGE_HOST_OOM_FILE?.trim();
+  if (!file) return;
+  const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error ?? "");
+  const lower = message.toLowerCase();
+  const looksLikeOom =
+    lower.includes("heap out of memory") ||
+    lower.includes("allocation failed") ||
+    (lower.includes("fatal error") && lower.includes("heap"));
+  if (!looksLikeOom) return;
+  const memory = process.memoryUsage();
+  const record = {
+    at: new Date().toISOString(),
+    source,
+    message,
+    limits: {
+      maxOldSpaceMb: Number(process.env.PIFORGE_HOST_HEAP_OLD_MB ?? 0) || null,
+      maxSemiSpaceMb: Number(process.env.PIFORGE_HOST_HEAP_SEMI_MB ?? 0) || null,
+    },
+    memory: {
+      rssMb: Math.round(memory.rss / 1048576),
+      heapUsedMb: Math.round(memory.heapUsed / 1048576),
+      heapTotalMb: Math.round(memory.heapTotal / 1048576),
+      externalMb: Math.round(memory.external / 1048576),
+    },
+    gc: { count: gcStats.count, totalMs: Math.round(gcStats.totalMs), maxMs: Math.round(gcStats.maxMs) },
+  };
+  try {
+    appendFileSync(file, `${JSON.stringify(record)}
+`, "utf8");
+  } catch {
+    // 取证失败不能影响退出流程
+  }
+}
+
 function startCpuDiagnostics(): void {
   let last = process.cpuUsage();
   let lastAt = Date.now();
@@ -47,6 +110,7 @@ function startCpuDiagnostics(): void {
         `heapTotal=${(memory.heapTotal / 1048576).toFixed(0)}MB ` +
         `external=${(memory.external / 1048576).toFixed(0)}MB ` +
         `arrayBuffers=${(memory.arrayBuffers / 1048576).toFixed(0)}MB ` +
+        `gc=${gcStats.count}/${Math.round(gcStats.totalMs)}ms/${Math.round(gcStats.maxMs)}ms ` +
         `resources=${JSON.stringify(counts)}`,
     );
     // 1s 粒度：burst 与"稳定占用"必须能分开看，5s 的平均值会把一次性峰值摊平。
@@ -66,6 +130,26 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
+  startGcHistogram();
+
+  /**
+   * L1 取证：确认 V8 堆参数真的生效（Electron 的 `utilityProcess.execArgv` 只有
+   * `--js-flags=<单个 flag>` 形式会应用，见 electron/host-heap.ts 的实测记录）。
+   */
+  {
+    const stats = v8.getHeapStatistics();
+    console.log(
+      `[agent-host] heap flags: execArgv=${JSON.stringify(process.execArgv)} ` +
+        `limitMb=${Math.round(stats.heap_size_limit / 1048576)} ` +
+        `totalAvailableMb=${Math.round(stats.total_available_size / 1048576)}`,
+    );
+  }
+
+  /**
+   * 新生代大小**不在这里调**：实测 `v8.setFlagsFromString("--max-semi-space-size=8")`
+   * 会把 Chromium 在 V8 初始化时应用的 `--js-flags=--max-old-space-size=192` 一起冲掉
+   * （host 的 heap_size_limit 从 288 MB 回到 4192 MB）。所以只保留 js-flags 里的老生代。
+   */
   if (process.env.PIFORGE_DEBUG_HOST_CPU === "1") startCpuDiagnostics();
 
   const parentPort = getParentPort();
@@ -110,10 +194,12 @@ async function main(): Promise<void> {
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
   process.on("uncaughtException", (error) => {
+    recordOomEvidence("uncaughtException", error);
     logError("uncaught exception", error);
     void shutdown("uncaughtException", 1);
   });
   process.on("unhandledRejection", (reason) => {
+    recordOomEvidence("unhandledRejection", reason);
     logError("unhandled rejection", reason);
     void shutdown("unhandledRejection", 1);
   });

@@ -37,6 +37,7 @@
     "measure:prefix": "node scripts/measure-prefix.mjs",
     "measure:startup": "node scripts/measure-startup.mjs",
     "measure:processes": "node scripts/measure-app-processes.mjs",
+    "soak:host-heap": "node scripts/soak-host-heap.mjs",
     "measure:packaged": "node scripts/measure-packaged.mjs --exe release/win-unpacked/PiForge.exe",
     "smoke:packaged-static": "node scripts/smoke-packaged-static.mjs",
     "smoke:packaged-layout": "node scripts/smoke-packaged-layout.mjs",

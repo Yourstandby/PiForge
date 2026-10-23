@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, protocol, session, shell, utilityProcess, WebContentsView, webContents } from "electron";
 import type { UpdateInfo } from "electron-updater";
 import path from "path";
+import v8 from "node:v8";
 import { randomBytes } from "crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { spawn, spawnSync } from "child_process";
@@ -27,6 +28,7 @@ import {
   STATIC_APP_ORIGIN,
   STATIC_APP_SCHEME,
 } from "./static-app";
+import { isHeapExhaustion, resolveHostHeapFlags } from "./host-heap";
 import {
   describeReEvaluation,
   GPU_EVIDENCE_FILE,
@@ -362,15 +364,30 @@ function agentHostEnvVars(): Record<string, string> {
   return {
     PIFORGE_AGENT_ENDPOINT: agentHostEndpoint,
     PIFORGE_AGENT_TOKEN: agentHostToken,
+    // OOM 取证落盘位置（L1 收紧堆参数后的 soak 校验读它）。
+    PIFORGE_HOST_OOM_FILE: path.join(app.getPath("userData"), "host-oom.json"),
   };
 }
+
+/** L1 生效中的堆上限（OOM 证据里要记录"当时限制"，否则没法判断是不是压太狠）。 */
+let activeHostHeapLimits: { semiSpaceMb: number | null; oldSpaceMb: number | null } = {
+  semiSpaceMb: null,
+  oldSpaceMb: null,
+};
 
 function agentHostProcessEnv(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(childProcessEnv(process.env))) {
     if (value !== undefined) env[key] = value;
   }
-  return { ...env, ...agentHostEnvVars() };
+  const heapEnv: Record<string, string> = {};
+  if (activeHostHeapLimits.semiSpaceMb !== null) {
+    heapEnv.PIFORGE_HOST_HEAP_SEMI_MB = String(activeHostHeapLimits.semiSpaceMb);
+  }
+  if (activeHostHeapLimits.oldSpaceMb !== null) {
+    heapEnv.PIFORGE_HOST_HEAP_OLD_MB = String(activeHostHeapLimits.oldSpaceMb);
+  }
+  return { ...env, ...agentHostEnvVars(), ...heapEnv };
 }
 
 function isHostReadyMessage(value: unknown): boolean {
@@ -402,9 +419,30 @@ async function startAgentHost(): Promise<void> {
   // 用来定位"空闲还烧 CPU"的具体调用栈（产出的 .cpuprofile 可在
   // chrome://tracing 或 node --cpu-prof 后处理工具里打开）。
   const profileDir = process.env.PIFORGE_HOST_CPU_PROFILE?.trim();
-  const execArgv = profileDir
+  const profileFlags = profileDir
     ? ["--cpu-prof", "--cpu-prof-dir", path.resolve(profileDir), "--cpu-prof-interval", "500"]
-    : undefined;
+    : [];
+
+  /**
+   * L1：只给 **host**（utilityProcess）收紧 V8 堆，不动 main / 渲染进程。
+   * 实测 host RSS 289–357 MB → 173–195 MB（见 electron/host-heap.ts）；
+   * `PIFORGE_HOST_HEAP=default` 回退到不干预。
+   */
+  const hostHeap = resolveHostHeapFlags({ env: process.env });
+  activeHostHeapLimits = { semiSpaceMb: hostHeap.semiSpaceMb, oldSpaceMb: hostHeap.oldSpaceMb };
+  // execArgv 顺序：L1 堆参数（`--js-flags=--max-old-space-size=N`）→ CPU profile → 实验参数。
+  const extraExecArgv = (process.env.PIFORGE_HOST_EXEC_ARGV ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  const execArgvParts = [...hostHeap.execArgv, ...profileFlags, ...extraExecArgv];
+  const execArgv = execArgvParts.length > 0 ? execArgvParts : undefined;
+  logInfo("Agent Host heap flags", {
+    execArgv: execArgvParts,
+    reason: hostHeap.reason,
+    semiSpaceMb: hostHeap.semiSpaceMb,
+    oldSpaceMb: hostHeap.oldSpaceMb,
+  });
 
   const child = utilityProcess.fork(entry, [], {
     cwd: app.isPackaged ? path.join(process.resourcesPath, "standalone") : app.getAppPath(),
@@ -425,7 +463,12 @@ async function startAgentHost(): Promise<void> {
     agentHostReady = false;
     setHostReadiness(markHostStopped());
     if (agentHostProcess === child) agentHostProcess = null;
-    logError("Agent Host exited", { code });
+    // OOM 归因：exit 134 / SIGABRT 基本都是堆爆（L1 收紧了 old-space，必须能分辨）。
+    logError("Agent Host exited", {
+      code,
+      heapExhaustionSuspected: isHeapExhaustion({ exitCode: code }),
+      heapLimits: activeHostHeapLimits,
+    });
     scheduleAgentHostRestart();
   });
 
@@ -1558,6 +1601,9 @@ app.whenReady().then(async () => {
     v8: process.versions.v8,
     gpuSwitches: gpuSwitchesFrom(process.argv),
     gpuEnvFlags: gpuFlagsEnv ?? null,
+    // L1 取证：主进程侧看到的 V8 堆上限（`--js-flags` 是否真的生效）。
+    heapLimitMb: Math.round(v8.getHeapStatistics().heap_size_limit / 1048576),
+    jsFlags: app.commandLine.getSwitchValue("js-flags"),
     hardwareAccelerationDisabled: process.env.PIFORGE_DISABLE_HW_ACCEL === "1",
     gpuFeatureStatus: (() => {
       try {
@@ -1696,11 +1742,15 @@ app.whenReady().then(async () => {
           `(async () => {
              const health = await fetch("/api/health", { cache: "no-store" }).then((r) => r.json()).catch((e) => ({ error: String(e) }));
              const sessions = await fetch("/api/sessions", { cache: "no-store" }).then((r) => r.ok).catch(() => false);
+             // Token 护栏（P2-2 / P2-3a）是否渲染：只读 DOM 属性，不触发任何请求。
+             const guard = document.querySelector("[data-token-guard]");
              return {
                url: location.href,
                title: document.title,
                bodyLength: document.body.innerText.length,
                hasComposer: Boolean(document.querySelector("textarea")),
+               guard: guard ? guard.getAttribute("data-token-guard") : null,
+               guardText: guard ? guard.textContent?.slice(0, 80) ?? null : null,
                health,
                sessionsOk: sessions,
              };
