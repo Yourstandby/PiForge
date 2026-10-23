@@ -27,6 +27,13 @@ import { desktopApprovalInlineExtension, type AgentModeRef } from "./desktop-app
 import { desktopLtmInlineExtension } from "./desktop-ltm-extension.ts";
 import { readDesktopSettings } from "../lib/desktop-settings.ts";
 import { desktopRuntimeTools } from "./desktop-runtime-tools.ts";
+import {
+  applyCacheWarmingPolicy,
+  describeCacheWarming,
+  hasReplayablePrefix,
+  warmPromptPrefix,
+  type PrewarmResult,
+} from "./cache-warming.ts";
 import { canonicalToolOrder } from "./prompt-prefix.ts";
 import { desktopProcessInlineExtension } from "./desktop-process-extension.ts";
 import { desktopPowerShellInlineExtension } from "./desktop-powershell-extension.ts";
@@ -124,6 +131,8 @@ export class AgentSessionWrapper {
    */
   private settleWatchdog: ReturnType<typeof setInterval> | null = null;
   private lastAgentEventAt = 0;
+  /** 最后一次首轮预热的结果（get_state 里上报，便于排查"为什么没预热"）。 */
+  private prewarm: PrewarmResult | null = null;
   /** 静默多久判定 settled 丢失。测试里会调小。 */
   static settleSilenceMs = 20_000;
   private suppressQueuedDispatchOnSettled = false;
@@ -539,6 +548,11 @@ export class AgentSessionWrapper {
     return reasoning;
   }
 
+  /** 记录首轮预热结果（恢复会话的预热在 binding 里完成）。 */
+  recordPrewarm(result: PrewarmResult): void {
+    this.prewarm = result;
+  }
+
   private buildStateSnapshot(): Record<string, unknown> {
     const model = this.inner.model;
     const contextUsage = this.inner.getContextUsage();
@@ -566,6 +580,22 @@ export class AgentSessionWrapper {
         ? { percent: contextUsage.percent, contextWindow: contextUsage.contextWindow, tokens: contextUsage.tokens }
         : null,
       contextBudget,
+      // 前缀棘轮审计：除按需域首次激活外，相邻两轮前缀必须字节一致。
+      prefixAudit: this._modeRef.prefixAudit ?? {
+        turns: 0,
+        stableTurns: 0,
+        expectedChanges: 0,
+        unexpectedChanges: 0,
+      },
+      // 缓存保活的真实状态（模式 + warmer 状态 + 预热结果），设置页据此显示。
+      cacheWarming: {
+        ...describeCacheWarming(
+          this.inner as unknown as Parameters<typeof describeCacheWarming>[0],
+          (this.inner.settingsManager?.getSettings?.() as { cacheWarming?: unknown } | undefined)
+            ?.cacheWarming
+        ),
+        ...(this.prewarm ? { prewarm: this.prewarm } : {}),
+      },
       sessionStats: sessionStats
         ? {
             tokens: {
@@ -840,6 +870,13 @@ export class AgentSessionWrapper {
         if (this._agentMode === "plan") this._toolPresetBeforePlan = this._toolPreset;
         this.applyAgentMode(this._agentMode);
         return null;
+      }
+
+      case "prewarm": {
+        // 手动预热（设置页/诊断用）：用 maxTokens:1 重放当前前缀。
+        const result = await warmPromptPrefix(this.inner);
+        this.recordPrewarm(result);
+        return result;
       }
 
       case "set_agent_mode": {
@@ -1157,6 +1194,11 @@ export async function startRpcSession(
     });
 
     sessionForCompaction = inner as unknown as AgentSessionLike;
+    // 缓存保活：把「原始设置 → 有效模式」落到会话上（桌面默认 idle）。
+    const cacheWarmingMode = applyCacheWarmingPolicy(
+      inner as unknown as AgentSessionLike,
+      (inner.settingsManager.getSettings() as { cacheWarming?: unknown } | undefined)?.cacheWarming
+    );
 
     if (effectiveTools.length > 0) {
       inner.setActiveToolsByName(canonicalToolOrder([...effectiveTools, ...inner.getActiveToolNames()]));
@@ -1191,6 +1233,18 @@ export async function startRpcSession(
           });
         }
         wrapper.applyAgentMode(agentMode);
+        /**
+         * 首轮预热必须在**装载落定之后**：applyAgentMode 之前 `state.tools` 还是
+         * 默认集合（少 tool_search / tool_history_get），重放出的前缀与真实请求
+         * 不一致 —— 写进缓存的是另一条前缀，白付一次写入。
+         */
+        if (cacheWarmingMode !== "off" && hasReplayablePrefix(inner as unknown as AgentSessionLike)) {
+          const result = await warmPromptPrefix(inner as unknown as AgentSessionLike);
+          wrapper.recordPrewarm(result);
+          if (process.env.PIFORGE_DEBUG_CACHE === "1") {
+            console.log("[cache] prewarm", result.sent ? "sent" : "skipped", result.reason);
+          }
+        }
       })(),
     );
 

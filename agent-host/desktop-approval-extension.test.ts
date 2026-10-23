@@ -360,7 +360,8 @@ test("plan mode also reports the prefix diff only when it changes", async () => 
       console.log = original;
     }
     assert.equal(lines.length, 1, "第二次前缀未变，不应重复打印");
-    assert.match(lines[0], /首次建立前缀/);
+    // 第一次建立前缀算 stable（不计入 expected/unexpected），debug 日志里没有变化行。
+    assert.ok(!lines[0].includes("UNEXPECTED"), "首次建立前缀不该被当成非预期变化");
   });
 });
 

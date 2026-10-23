@@ -13,6 +13,8 @@ npm run measure:prefix -- --baseline docs/measurements/prefix-baseline-v0.8.3.js
 npm run measure:prefix -- --api anthropic-messages      # 验 cache_control 断点布局
 npm run measure:prefix -- --no-addons                   # 关掉两个可关的提示词附加项
 npm run measure:prefix -- --turns 4 --language message  # 回复语言放在用户消息侧（位置实验）
+npm run measure:prefix -- --cache-stats --cache-warming idle --cache-ttl-ms 15000 --pause-ms 20000
+npm run measure:prefix -- --resume --cache-stats        # 恢复会话的首轮预热
 npm run measure:prefix -- --probe orchestrator:status   # 真调一次多态工具，验证分派链路
 npm run smoke:prefix-budget                             # 回归护栏：前缀 ≤7200 tok + 分派探针
 ```
@@ -101,6 +103,61 @@ npm run smoke:prefix-budget                             # 回归护栏：前缀 
 - **设置项开关**（`--no-addons`）：system 3 798 → 3 491 tok，前缀 6 970 → 6 786 tok。
 - **UI/审批兼容**：`lib/normalize.ts` 把 `shell{action:"run"}` 还原成 `run_bg{...}`，
   前端渲染、图标、i18n、Ask 确认、运行指示器全部沿用旧工具名（1146 个测试未改一行 UI 断言）。
+
+## 第 4 步：缓存保活 + 首轮预热
+
+recorder 现在按「最长公共前缀 + TTL」模拟 Anthropic prompt cache（`--cache-ttl-ms`），
+所以每轮真实请求的 `cacheRead / cacheCreation / input` 都能看见。相关开关：
+
+```bash
+# 停顿超过 TTL（默认 5 分钟；这里缩到 15s 便于观察）
+node scripts/measure-prefix.mjs --mode host --api anthropic-messages --turns 3   --cache-ttl-ms 15000 --pause-ms 20000 --cache-stats
+# 同一停顿，但开着 idle 保活（--cache-econ-force 抬高假模型价格，让 pi 的经济性判断通过）
+node scripts/measure-prefix.mjs --mode host --api anthropic-messages --turns 3   --cache-ttl-ms 15000 --pause-ms 20000 --cache-warming idle --cache-econ-force --cache-stats
+# 恢复会话时的首轮预热
+node scripts/measure-prefix.mjs --mode host --api anthropic-messages --turns 2 --resume --cache-stats
+```
+
+### 停顿超过 TTL（前缀 6 431 tok，TTL 15s，停顿 20s）
+
+| 场景 | 停顿后的下一轮 | 结果 |
+| --- | --- | --- |
+| `cacheWarming=off` | `cacheRead 0 / cacheCreate 6 466` | 缓存过期，整段前缀按写入重算 |
+| `cacheWarming=idle` | 停顿期间 4 次 warm（每次 `read 6 431 / create 0`），之后 `read 6 431 / create 35` | 缓存被保活，只付新增消息 |
+
+> 注意：pi 的 warmer 要求 ①模型声明 `cost` + `promptCache`，②预计省下的钱 ≥ $0.05。
+> 6.3k token 的前缀在真实定价下约值 $0.004，**达不到门槛**，所以真实会话里通常是
+> `state=inactive reason=expected savings below threshold`。这不是没接通，是 pi 的
+> 决策；前缀涨到 ~25k 以上才会真的开始保活。设置页现在显示的就是这个真实状态
+> （`mode` + `state` + `reason`），不再把 `undefined` 显示成 `off`。
+
+### 首轮预热（恢复会话）
+
+| 请求 | kind | maxTokens | input | cacheRead | cacheCreate |
+| --- | --- | --- | ---: | ---: | ---: |
+| 1 | title | 48 | 0 | 0 | 96 |
+| 2 | turn（第一次对话） | 16384 | 0 | 0 | 6 431 |
+| 3 | **warm（恢复时预热）** | **1** | 0 | 6 431 | 16 |
+| 4 | turn（恢复后第一条消息） | 16384 | 0 | 6 446 | 20 |
+
+预热请求必须与真实请求**同前缀**才划算：第一版在 `applyAgentMode` 之前预热，
+`state.tools` 还缺 `tool_search` / `tool_history_get`，写进缓存的是另一条前缀（白付一次
+写入）；改成「装载落定后再预热 + 过滤 transcript 里的 system 消息」之后，预热只花 16 tok。
+
+### 激活前后（按需域）
+
+`--probe-search memory` 现在的输出：
+
+```
+✓ tool_search("memory") 激活后该域进入声明集合
+✓ 前缀棘轮: turns=3 stable=2 expectedChanges=1 unexpectedChanges=0
+✓ 激活后连续两轮 prefixHash 一致: 367f613f167e / 367f613f167e
+```
+
+`expectedChanges=1` 就是「memory 第一次进入声明集合」那一次；之后 `stays latched`。
+`get_state.prefixAudit` 里能直接读到 `turns/stableTurns/expectedChanges/unexpectedChanges`
+与最后一次变化的差异段（`lastChange`）。`smoke:prefix-budget` 会把
+`unexpectedChanges > 0` 当失败（退出码 4/5）。
 
 ## 用它来验收后续步骤
 

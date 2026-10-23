@@ -18,8 +18,12 @@ import {
   buildPrefixSnapshot,
   canonicalToolOrder,
   diffPrefixSnapshots,
+  emptyPrefixAudit,
   estimatePrefixTokens,
+  isExpectedPrefixChange,
+  recordPrefixChange,
   userContextBlock,
+  type PrefixAudit,
   type PrefixSnapshot,
 } from "./prompt-prefix.ts";
 import {
@@ -49,6 +53,8 @@ export type AgentModeRef = {
    * 静态段落，不改工具、不改上下文长度。
    */
   promptAddons?: { outputStyle?: boolean; responseLanguage?: boolean };
+  /** 前缀棘轮审计（每轮 before_agent_start 更新，get_state 上报）。 */
+  prefixAudit?: PrefixAudit;
 };
 
 /**
@@ -267,18 +273,37 @@ export function createDesktopApprovalFactory(modeRef: AgentModeRef): ExtensionFa
           ? [contextBlock, RESPONSE_LANGUAGE_PROMPT].filter(Boolean).join("\n\n")
           : contextBlock;
 
-      /** 前缀审计（只在环境变量打开时打印，避免污染正常日志）。 */
-      if (process.env.PIFORGE_DEBUG_PREFIX === "1") {
+      /**
+       * 前缀棘轮审计：同一会话里除「按需域首次激活」外，相邻两轮必须字节一致。
+       * 不一致 → 整段历史缓存作废，所以这里既计数（get_state 里能看到）也告警。
+       *   PIFORGE_DEBUG_PREFIX=1  打印每次变化的差异段
+       */
+      {
         const snapshot = buildPrefixSnapshot(event.systemPromptOptions, tools);
+        const firstBuild = lastPrefix === null;
         const diff = diffPrefixSnapshots(lastPrefix, snapshot);
         lastPrefix = snapshot;
+        // 首次建立前缀不算「变化」，之后只允许「按需域首次激活」这一种变化。
+        const expected = firstBuild || isExpectedPrefixChange(diff, ON_DEMAND_DOMAINS);
+        const audit = modeRef.prefixAudit ?? emptyPrefixAudit();
+        modeRef.prefixAudit = firstBuild
+          ? { ...audit, turns: audit.turns + 1, stableTurns: audit.stableTurns + 1 }
+          : recordPrefixChange(audit, diff, expected);
         if (!diff.identical) {
-          console.log("[prefix]", diff.summary, {
-            tools: tools.join(","),
-            toolCount: tools.length,
-            approxTokens: estimatePrefixTokens(snapshot),
-            sections: Object.keys(snapshot.sections).length,
-          });
+          if (!expected) {
+            console.warn("[prefix] UNEXPECTED change (cache invalidated)", {
+              summary: diff.summary,
+              toolsAdded: diff.toolsAdded,
+              toolsRemoved: diff.toolsRemoved,
+              sectionsChanged: diff.sectionsChanged,
+              toolsReordered: diff.toolsReordered,
+            });
+          } else if (process.env.PIFORGE_DEBUG_PREFIX === "1") {
+            console.log("[prefix] expected on-demand activation", {
+              added: diff.toolsAdded,
+              approxTokens: estimatePrefixTokens(snapshot),
+            });
+          }
         }
       }
 

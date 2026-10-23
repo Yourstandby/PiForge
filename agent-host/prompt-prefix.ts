@@ -144,6 +144,80 @@ function excerpt(value: string, at: number, radius = 24): string {
   return `${start > 0 ? "…" : ""}${value.slice(start, end).replace(/\n/g, "⏎")}${end < value.length ? "…" : ""}`;
 }
 
+/**
+ * 前缀棘轮审计（第 4 步）：同一会话里，除了「按需域第一次被激活」那一次，
+ * 相邻两轮的 system prompt + tools 必须字节一致。不一致就说明有东西在悄悄抖动
+ * （工具顺序、动态插值、cwd 之类），那是整段历史缓存作废的起点。
+ */
+export interface PrefixAudit {
+  turns: number;
+  /** 与前一轮一致（或首次建立）的次数。 */
+  stableTurns: number;
+  /** 允许的变化：按需域首次激活。 */
+  expectedChanges: number;
+  /** 不允许的变化：同样的声明集合却换了字节。 */
+  unexpectedChanges: number;
+  lastChange?: {
+    expected: boolean;
+    summary: string;
+    toolsAdded: string[];
+    toolsRemoved: string[];
+    sectionsChanged: string[];
+    toolsReordered: boolean;
+  };
+}
+
+export function emptyPrefixAudit(): PrefixAudit {
+  return { turns: 0, stableTurns: 0, expectedChanges: 0, unexpectedChanges: 0 };
+}
+
+/**
+ * 判断这次前缀变化是不是「按需域首次激活」。
+ *
+ * 允许的唯一变化：tools 增加且只增加一个已知的按需域；system prompt 各段完全不变；
+ * 已有工具的相对顺序不变。
+ */
+export function isExpectedPrefixChange(
+  diff: PrefixDiff,
+  onDemandDomains: readonly string[]
+): boolean {
+  if (diff.identical) return true;
+  if (diff.toolsRemoved.length > 0) return false;
+  if (diff.sectionsAdded.length > 0 || diff.sectionsRemoved.length > 0) return false;
+  // `sections.tools` 就是声明集合的镜像：工具变了它必然变，不能算「别的段落也在动」。
+  const otherSections = diff.sectionsChanged.filter((name) => name !== "tools");
+  if (otherSections.length > 0) return false;
+  if (diff.toolsReordered) return false;
+  return diff.toolsAdded.length === 1 && onDemandDomains.includes(diff.toolsAdded[0]);
+}
+
+/** 把一次 diff 计入审计（纯函数，便于单测）。 */
+export function recordPrefixChange(
+  audit: PrefixAudit,
+  diff: PrefixDiff,
+  expected: boolean
+): PrefixAudit {
+  const next: PrefixAudit = {
+    ...audit,
+    turns: audit.turns + 1,
+    stableTurns: diff.identical ? audit.stableTurns + 1 : audit.stableTurns,
+    expectedChanges: expected && !diff.identical ? audit.expectedChanges + 1 : audit.expectedChanges,
+    unexpectedChanges:
+      !expected && !diff.identical ? audit.unexpectedChanges + 1 : audit.unexpectedChanges,
+  };
+  if (!diff.identical) {
+    next.lastChange = {
+      expected,
+      summary: diff.summary,
+      toolsAdded: [...diff.toolsAdded],
+      toolsRemoved: [...diff.toolsRemoved],
+      sectionsChanged: [...diff.sectionsChanged],
+      toolsReordered: diff.toolsReordered,
+    };
+  }
+  return next;
+}
+
 /** 比较两份前缀快照。`previous` 为 null 表示这是本会话的第一次。 */
 export function diffPrefixSnapshots(
   previous: PrefixSnapshot | null,

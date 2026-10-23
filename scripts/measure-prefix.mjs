@@ -64,6 +64,18 @@ const languageInMessage = valueOf("--language") === "message";
  */
 const probeArg = valueOf("--probe");
 const probeSearchArg = valueOf("--probe-search");
+/** 缓存模拟 TTL（默认 5 分钟，与 Anthropic short retention 一致）。 */
+const cacheTtlMs = Number(valueOf("--cache-ttl-ms") ?? 300_000);
+/** 两轮之间的停顿（模拟用户思考），用于观察 TTL 与保活。 */
+const pauseMs = Number(valueOf("--pause-ms") ?? 0);
+/** 打印逐请求 input / cacheRead / cacheCreation 表。 */
+const cacheStats = args.includes("--cache-stats");
+/** 第一轮后销毁并重新打开会话，触发「恢复时首轮预热」。 */
+const resumeCheck = args.includes("--resume");
+/** 缓存保活模式：默认 off（度量前缀用），观察保活时传 idle / streaming。 */
+const cacheWarmingMode = valueOf("--cache-warming") ?? "off";
+/** pi 只在预计省钱 >= $0.05 时保活；这个开关抬高假模型价格以验证保活机制本身。 */
+const cacheEconForce = args.includes("--cache-econ-force");
 const probe = (() => {
   if (probeArg) {
     const [tool, action] = probeArg.split(":");
@@ -97,6 +109,18 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** 等会话空闲（不 streaming），避免下一条 prompt 被 "Session is streaming" 拒掉。 */
+async function waitIdle(client, sessionId, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    client.send({ kind: "req", id: 950, method: "agent.state", params: { sessionId } });
+    const frame = await client.waitFor((entry) => entry.kind === "res" && entry.id === 950);
+    if (frame?.result?.state?.isStreaming !== true) return true;
+    await sleep(150);
+  }
+  return false;
+}
+
 async function waitFor(predicate, message) {
   const deadline = Date.now() + TIMEOUT_MS;
   while (Date.now() < deadline) {
@@ -117,7 +141,24 @@ function writeAgentDir(agentDir, baseUrl, apiShape = "openai-completions") {
             baseUrl,
             api: apiShape,
             apiKey: "measure-key",
-            models: [{ id: "measure-1", name: "Measure 1", contextWindow: 200_000 }],
+            models: [
+              {
+                id: "measure-1",
+                name: "Measure 1",
+                contextWindow: 200_000,
+                maxTokens: 16_384,
+                // pi 的 CacheWarmer 靠 cost + promptCache 判断「保活是否划算」；
+                // 缺任一项它就静默停掉（economics unavailable）。
+                cost: {
+                  input: cacheEconForce ? 500 : 3,
+                  output: cacheEconForce ? 2000 : 15,
+                  cacheRead: cacheEconForce ? 50 : 0.3,
+                  cacheWrite: cacheEconForce ? 625 : 3.75,
+                },
+                // promptCache 单位是秒（与内置 Anthropic 模型一致：short=300）。
+                promptCache: { short: Math.max(11, Math.round(cacheTtlMs / 1000)), long: 3600 },
+              },
+            ],
           },
         },
       },
@@ -132,7 +173,7 @@ function writeAgentDir(agentDir, baseUrl, apiShape = "openai-completions") {
         defaultProvider: "measure",
         defaultModel: "measure-1",
         defaultProjectTrust: "always",
-        cacheWarming: "off",
+        cacheWarming: cacheWarmingMode,
       },
       null,
       2
@@ -248,6 +289,7 @@ async function measureHost(recorder) {
   const endpoint = createEndpoint();
   const token = `measure-${Math.random().toString(36).slice(2)}`;
   const logs = [];
+  let state = null;
   const captured = () => recorder.requests.slice(start).map((entry) => entry.body);
 
   const child = spawn(process.execPath, [hostEntry], {
@@ -298,7 +340,45 @@ async function measureHost(recorder) {
       "no model request with tools was captured (host mode)"
     );
 
+    if (probe) {
+      // 探针没跑完就发下一轮 prompt 会打断工具循环（模型还在等 tool_search 的结果）。
+      await waitFor(() => recorder.probeDone(), "probe did not finish");
+      await waitIdle(client, sessionId);
+    }
+
+    if (resumeCheck) {
+      // 恢复会话 → Host 应在装载落定后立刻发一次 maxTokens:1 的前缀预热。
+      client.send({ kind: "req", id: 90, method: "agent.state", params: { sessionId } });
+      const stateFrame = await client.waitFor((frame) => frame.kind === "res" && frame.id === 90);
+      const filePath = stateFrame?.result?.state?.sessionFile;
+      if (!filePath) throw new Error("resume check: no sessionFile in state");
+      client.send({ kind: "req", id: 91, method: "agent.destroy", params: { sessionId } });
+      await client.waitFor((frame) => frame.kind === "res" && frame.id === 91);
+      const warmBefore = recorder.requests.filter((entry) => entry.cache?.kind === "warm").length;
+      client.send({
+        kind: "req",
+        id: 92,
+        method: "agent.ensure",
+        params: { sessionId, filePath, cwd: repoRoot },
+      });
+      await client.waitFor((frame) => frame.kind === "res" && frame.id === 92);
+      await sleep(1500);
+      const warmAfter = recorder.requests.filter((entry) => entry.cache?.kind === "warm").length;
+      if (warmAfter > warmBefore) {
+        console.log("  ✓ 恢复会话时发出了预热请求（maxTokens=1）");
+      } else {
+        client.send({ kind: "req", id: 93, method: "agent.state", params: { sessionId } });
+        const after = await client.waitFor((frame) => frame.kind === "res" && frame.id === 93);
+        const prewarm = after?.result?.state?.cacheWarming?.prewarm;
+        console.warn(
+          `  ! 恢复会话未发出预热：${prewarm ? `${prewarm.sent ? "sent" : "skipped"} (${prewarm.reason})` : "no prewarm record"}`
+        );
+      }
+    }
+
     for (let turn = 2; turn <= turns; turn += 1) {
+      await waitIdle(client, sessionId);
+      if (pauseMs > 0) await sleep(pauseMs);
       const before = recorder.requests.length;
       client.send({
         kind: "req",
@@ -309,13 +389,38 @@ async function measureHost(recorder) {
           command: { type: "prompt", message: `measure turn ${turn}: reply ok` },
         },
       });
-      await client.waitFor((frame) => frame.kind === "res" && frame.id === 100 + turn);
+      const ack = await client.waitFor((frame) => frame.kind === "res" && frame.id === 100 + turn);
+      if (ack?.ok === false) {
+        // 偶发：上一条 prompt 还在收尾 → 等空闲再试一次。
+        await waitIdle(client, sessionId);
+        const retryBefore = recorder.requests.length;
+        client.send({
+          kind: "req",
+          id: 200 + turn,
+          method: "agent.command",
+          params: { sessionId, command: { type: "prompt", message: `measure turn ${turn}: reply ok` } },
+        });
+        await client.waitFor((frame) => frame.kind === "res" && frame.id === 200 + turn);
+        await waitFor(
+          () => recorder.requests.length > retryBefore,
+          `turn ${turn} produced no request after retry (host mode)`
+        );
+        await sleep(1200);
+        continue;
+      }
       await waitFor(
         () => recorder.requests.length > before,
         `turn ${turn} produced no request (host mode)`
       );
       await sleep(1200);
     }
+
+    // 最后读一次 Host 状态：缓存保活 + 前缀审计都在 get_state 里。
+    client.send({ kind: "req", id: 900, method: "agent.state", params: { sessionId } });
+    const stateFrame = await client
+      .waitFor((entry) => entry.kind === "res" && entry.id === 900)
+      .catch(() => null);
+    state = stateFrame?.result?.state ?? null;
   } finally {
     await stopChild(child);
     cleanupDir(agentDir);
@@ -324,7 +429,7 @@ async function measureHost(recorder) {
     }
   }
 
-  return { label: "PiForge", requests: captured() };
+  return { label: "PiForge", requests: captured(), state };
 }
 
 /** B. pi CLI 基线：进程内直接建会话，不挂任何桌面扩展。 */
@@ -399,11 +504,13 @@ function analysesOf(requests) {
 }
 
 async function main() {
-  const recorder = await startRecorder(probe ? { probe } : {});
+  const recorder = await startRecorder({ ...(probe ? { probe } : {}), cacheTtlMs });
   const reports = {};
+  let hostState = null;
   try {
     if (mode === "host" || mode === "both") {
-      const { label, requests } = await measureHostWith(recorder);
+      const { label, requests, state } = await measureHostWith(recorder);
+      hostState = state;
       reports[label] = buildReport(label, analysesOf(requests));
     }
     if (mode === "pi" || mode === "both") {
@@ -456,10 +563,18 @@ async function main() {
     console.log("");
     console.log("== 多态工具分派探针 ==");
     const steps = probe.steps;
-    // 最后一条请求：既带着最后一步的工具结果，也带着「激活后」的声明集合。
-    const lastRequest = recorder.requests.at(-1)?.body ?? {};
-    const result = readProbeResult(lastRequest);
-    const declared = declaredTools(lastRequest);
+    // 找承载「最后一步工具结果」的那条请求：它同时带着激活后的声明集合。
+    const stepCount = steps.length;
+    const probeRequest =
+      [...recorder.requests]
+        .reverse()
+        .find(
+          (entry) =>
+            Array.isArray(entry.body?.messages) &&
+            entry.body.messages.filter((message) => message?.role === "tool").length >= stepCount
+        )?.body ?? {};
+    const result = readProbeResult(probeRequest);
+    const declared = declaredTools(probeRequest);
     if (!result) {
       console.error(`  ✗ ${steps.at(-1).tool} 没有产生工具结果`);
       process.exitCode = 3;
@@ -477,6 +592,62 @@ async function main() {
       console.log(`  结果: ${result.content.split("\n")[0]}`);
       if (steps.length > 1) {
         console.log(`  首次使用该域的新增往返: ${steps.length - 1} 次`);
+        // 主判据用 Host 的棘轮审计（它知道每一轮，且能区分"按需域首次激活"）。
+        const audit = hostState?.prefixAudit;
+        const hashes = reports.PiForge.turns.map((turn) => turn.prefixHash);
+        const hashStable = hashes.length >= 2 && hashes.at(-1) === hashes.at(-2);
+        if (audit) {
+          const ok = audit.unexpectedChanges === 0;
+          console.log(
+            `  ${ok ? "✓" : "✗"} 前缀棘轮: turns=${audit.turns} stable=${audit.stableTurns} expectedChanges=${audit.expectedChanges} unexpectedChanges=${audit.unexpectedChanges}` +
+              (audit.lastChange && !audit.lastChange.expected
+                ? ` | unexpected: +${audit.lastChange.toolsAdded.join(",")} -${audit.lastChange.toolsRemoved.join(",")} sections=${audit.lastChange.sectionsChanged.join(",")} reordered=${audit.lastChange.toolsReordered}`
+                : "")
+          );
+          if (!ok) process.exitCode = 5;
+        }
+        if (hashStable) {
+          console.log(`  ✓ 激活后连续两轮 prefixHash 一致: ${hashes.slice(-2).join(" / ")}`);
+        } else {
+          console.log(
+            `  · 最后两轮 hash 不同（激活发生在其中一轮，见上面的棘轮审计）: ${hashes.slice(-2).join(" / ")}`
+          );
+        }
+      }
+    }
+  }
+
+  if (cacheStats) {
+    console.log("");
+    console.log("== 逐请求缓存账本（模拟 Anthropic prompt cache：最长公共前缀 + TTL） ==");
+    console.log(
+      `${"#".padStart(3)} ${"kind".padEnd(5)} ${"maxTok".padStart(6)} ${"input".padStart(6)} ${"cacheRead".padStart(9)} ${"cacheCreate".padStart(11)}`
+    );
+    recorder.requests.forEach((entry, index) => {
+      const c = entry.cache;
+      if (!c) return;
+      const input = c.totalTokens - c.cacheReadTokens - c.cacheCreationTokens;
+      console.log(
+        `${String(index + 1).padStart(3)} ${String(c.kind).padEnd(5)} ${String(c.maxTokens ?? "-").padStart(6)} ${String(input).padStart(6)} ${String(c.cacheReadTokens).padStart(9)} ${String(c.cacheCreationTokens).padStart(11)}`
+      );
+    });
+    if (hostState?.cacheWarming) {
+      const cw = hostState.cacheWarming;
+      console.log("");
+      console.log(
+        `缓存保活: mode=${cw.mode} state=${cw.state}${cw.reason ? ` reason=${cw.reason}` : ""}${
+          cw.prewarm ? ` prewarm=${cw.prewarm.sent ? "sent" : `skipped(${cw.prewarm.reason})`}` : ""
+        }`
+      );
+    }
+    if (hostState?.prefixAudit) {
+      const audit = hostState.prefixAudit;
+      console.log(
+        `前缀审计: turns=${audit.turns} stable=${audit.stableTurns} expectedChanges=${audit.expectedChanges} unexpectedChanges=${audit.unexpectedChanges}`
+      );
+      if (audit.unexpectedChanges > 0) {
+        console.error("  ✗ 出现非预期前缀变化（相邻两轮本应字节一致）");
+        process.exitCode = 4;
       }
     }
   }

@@ -56,7 +56,9 @@ function openAIChunk({ id, model, delta, finishReason, usage }) {
   })}\n\n`;
 }
 
-function writeAnthropicStream(res, { model, index }) {
+function writeAnthropicStream(res, { model, index, accounting }) {
+  const created = accounting?.cacheCreationTokens ?? 1;
+  const cacheRead = accounting?.cacheReadTokens ?? 0;
   const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   send("message_start", {
     type: "message_start",
@@ -68,7 +70,12 @@ function writeAnthropicStream(res, { model, index }) {
       content: [],
       stop_reason: null,
       stop_sequence: null,
-      usage: { input_tokens: 1, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      usage: {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_input_tokens: cacheRead,
+        cache_creation_input_tokens: created,
+      },
     },
   });
   send("content_block_start", { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
@@ -91,8 +98,77 @@ function writeAnthropicStream(res, { model, index }) {
  *   用来验证「tool_search 激活 → 下一轮按 schema 调用 → ctx.executeTool → 旧工具」
  *   这条链路真的通（度量本身只看请求体，不看工具结果）。
  */
+/**
+ * 模拟 Anthropic 的 prompt cache：按「最长公共前缀 + TTL」记账。
+ * 真 provider 由服务端决定；这里验证的是**客户端发出的前缀是否真的可命中**。
+ */
+export function createCacheSimulator(ttlMs) {
+  const entries = [];
+  return {
+    account(text) {
+      const now = Date.now();
+      let readChars = 0;
+      for (const entry of entries) {
+        if (now - entry.at > ttlMs) continue;
+        let i = 0;
+        const limit = Math.min(entry.text.length, text.length);
+        while (i < limit && entry.text.charCodeAt(i) === text.charCodeAt(i)) i += 1;
+        if (i > readChars) readChars = i;
+      }
+      entries.push({ text, at: now });
+      if (entries.length > 8) entries.shift();
+      return {
+        cacheReadTokens: estimateTokens(text.slice(0, readChars)),
+        cacheCreationTokens: estimateTokens(text.slice(readChars)),
+        totalTokens: estimateTokens(text),
+      };
+    },
+  };
+}
+
+/** 去掉 cache_control 标记：SDK 每轮把断点挪到最后一条消息，标记本身不占 token。 */
+function stripCacheControl(value) {
+  if (Array.isArray(value)) return value.map(stripCacheControl);
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const [key, entry] of Object.entries(value)) {
+      if (key === "cache_control") continue;
+      out[key] = stripCacheControl(entry);
+    }
+    return out;
+  }
+  return value;
+}
+
+/** anthropic body.system 可能是 JSON 字符串：先解析再比，否则标记差异会假性断前缀。 */
+function parseMaybeJson(value) {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("[") && !trimmed.startsWith("{")) return value;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * 缓存前缀的字节序：**tools -> system -> messages**（与 provider 的内容顺序一致）。
+ * 若把 messages 排前面，追加一条消息会让 system 整体后移，按字节比公共前缀会假性断裂。
+ */
+export function cacheTextOf(body) {
+  const tools = canonicalJson(stripCacheControl(body?.tools ?? null));
+  const system = canonicalJson(stripCacheControl(parseMaybeJson(body?.system ?? null)));
+  const messages = canonicalJson(
+    stripCacheControl(Array.isArray(body?.messages) ? body.messages : [])
+  );
+  return tools + "|" + system + "|" + messages;
+}
+
 export async function startRecorder(options = {}) {
   const probeSteps = options.probe?.steps ?? [];
+  let probeSent = 0;
+  const cache = createCacheSimulator(options.cacheTtlMs ?? 300_000);
   const requests = [];
   const server = createServer((req, res) => {
     let raw = "";
@@ -115,11 +191,20 @@ export async function startRecorder(options = {}) {
       const anthropic = /\/messages/.test(req.url ?? "");
       const model = body?.model ?? "measure-1";
       const id = `chatcmpl-measure-${requests.length}`;
+      const accounting = cache.account(cacheTextOf(body));
+      const isWarm = Number(body?.max_tokens ?? body?.max_completion_tokens ?? 0) === 1;
+      requests[requests.length - 1].cache = {
+        kind: isWarm ? "warm" : "turn",
+        maxTokens: body?.max_tokens ?? body?.max_completion_tokens ?? null,
+        cacheReadTokens: accounting.cacheReadTokens,
+        cacheCreationTokens: accounting.cacheCreationTokens,
+        totalTokens: accounting.totalTokens,
+      };
       const usage = {
-        prompt_tokens: 1,
+        prompt_tokens: accounting.totalTokens,
         completion_tokens: 2,
-        total_tokens: 3,
-        prompt_tokens_details: { cached_tokens: 0 },
+        total_tokens: accounting.totalTokens + 2,
+        prompt_tokens_details: { cached_tokens: accounting.cacheReadTokens },
       };
       res.writeHead(200, {
         "content-type": "text/event-stream",
@@ -127,13 +212,24 @@ export async function startRecorder(options = {}) {
         connection: "keep-alive",
       });
       if (anthropic) {
-        writeAnthropicStream(res, { model, index: requests.length });
+        if (probeSteps.length > 0) {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(
+            JSON.stringify({
+              type: "error",
+              error: { type: "invalid_request_error", message: "--probe requires --api openai-completions" },
+            })
+          );
+          return;
+        }
+        writeAnthropicStream(res, { model, index: requests.length, accounting });
         return;
       }
       const messages = Array.isArray(body?.messages) ? body.messages : [];
       const toolResults = messages.filter((message) => message?.role === "tool").length;
       const step = probeSteps[toolResults];
       if (step) {
+        probeSent += 1;
         res.write(openAIChunk({ id, model, delta: { role: "assistant", content: "" } }));
         res.write(
           openAIChunk({
@@ -168,6 +264,9 @@ export async function startRecorder(options = {}) {
   return {
     baseUrl: `http://127.0.0.1:${port}/v1`,
     requests,
+    /** probe 的每一步是否都已发出（用于等待探针跑完再继续多轮）。 */
+    probeDone: () => probeSteps.length === 0 || probeSent >= probeSteps.length,
+    probeSteps,
     close: () => new Promise((done) => server.close(done)),
   };
 }

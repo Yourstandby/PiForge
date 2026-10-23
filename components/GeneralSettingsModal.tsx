@@ -35,8 +35,17 @@ const ENTER_OPTIONS = [
 
 const CACHE_WARMING_OPTIONS = [
   { label: "关闭", value: "off" },
-  { label: "空闲时预热", value: "warm" },
+  { label: "流式期间", value: "streaming" },
+  { label: "空闲时保活", value: "idle" },
 ];
+
+/** agent.state 上报的真实缓存保活状态（见 agent-host/cache-warming.ts）。 */
+interface CacheWarmingStatusView {
+  mode: string;
+  state: string;
+  reason?: string;
+  prewarm?: { sent: boolean; reason: string };
+}
 
 export interface SettingsSnapshot {
   defaultThinkingLevel: string;
@@ -144,6 +153,7 @@ export function GeneralSettingsModal({ sessionId, cwd, onClose }: GeneralSetting
   const { preference, setPreference } = useI18n();
   const [scale, setScale] = useState(1);
   const [settings, setSettings] = useState<SettingsSnapshot | null>(null);
+  const [cacheWarming, setCacheWarming] = useState<CacheWarmingStatusView | null>(null);
   const [saving, setSaving] = useState(false);
   const [reloading, setReloading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -175,6 +185,24 @@ export function GeneralSettingsModal({ sessionId, cwd, onClose }: GeneralSetting
   useEffect(() => {
     void loadUpstream(false);
   }, [loadUpstream]);
+
+  // 缓存保活的真实状态来自 Host 的 agent.state（不是设置页猜的默认值）。
+  useEffect(() => {
+    if (!sessionId) {
+      setCacheWarming(null);
+      return;
+    }
+    let alive = true;
+    fetch(`/api/agent/${encodeURIComponent(sessionId)}`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data: { state?: { cacheWarming?: CacheWarmingStatusView } } | null) => {
+        if (alive) setCacheWarming(data?.state?.cacheWarming ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [sessionId]);
 
   const update = useCallback(async (patch: Partial<SettingsSnapshot>) => {
     setSettings((prev) => (prev ? { ...prev, ...patch } : prev));
@@ -330,9 +358,18 @@ export function GeneralSettingsModal({ sessionId, cwd, onClose }: GeneralSetting
               onChange={(next) => void update({ retryEnabled: next })}
             />
           </Row>
-          <Row label="空闲时缓存预热" hint="会用少量 tokens 换取下一轮更快、更便宜">
+          <Row
+            label="缓存保活"
+            hint={
+              cacheWarming
+                ? `生效值 ${cacheWarming.mode} · 当前 ${cacheWarming.state}${
+                    cacheWarming.reason ? `（${cacheWarming.reason}）` : ""
+                  }${cacheWarming.prewarm ? ` · 预热${cacheWarming.prewarm.sent ? "已发" : "跳过"}` : ""}`
+                : "按模型声明的 TTL 重放前缀（maxTokens=1）；换取下一轮更快、更便宜"
+            }
+          >
             <Segmented
-              value={settings?.cacheWarming ?? "off"}
+              value={settings?.cacheWarming ?? "idle"}
               options={CACHE_WARMING_OPTIONS}
               disabled={!settings}
               onChange={(value) => void update({ cacheWarming: value })}
