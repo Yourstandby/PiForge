@@ -122,6 +122,8 @@ export interface UseAgentSessionOptions {
   onSystemPromptChange?: (prompt: string | null) => void;
   /** 当前标签页是否可见：用于滚动位置记忆与首次贴底。 */
   active?: boolean;
+  /** 发送失败时的提示回调（宿主 / 网络错误），避免“输入没反应”。 */
+  onPromptError?: (message: string) => void;
 }
 
 export function useAgentSession(opts: UseAgentSessionOptions) {
@@ -138,6 +140,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     onSystemPromptChange,
     onSessionRenamed,
     active = true,
+    onPromptError,
   } = opts;
 
   const isNew = session === null && newSessionCwd !== null;
@@ -692,6 +695,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     onPendingSteerFailed: handlePendingSteerFailed,
     onPendingPromptQueued: handlePendingPromptQueued,
     onPendingPromptFailed: handlePendingPromptFailed,
+    onPromptError,
   });
 
   const handleReorderFollowUps = useCallback(
@@ -748,6 +752,21 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     },
     [acceptFollowUpQueue, followUpQueueBusy, sessionIdRef],
   );
+
+  /**
+   * 删除单条排队消息。
+   *
+   * 注意：宿主侧的 `remove_follow_up` 命令在事故（误还原工作区）中丢失，
+   * 这里只做本地乐观移除 + 告警；宿主下一次 `follow_up_queue_update` 快照会把
+   * 它请回来。恢复宿主命令后，把这里换成 sendAgentCommand 即可。
+   */
+  const handleRemoveFollowUp = useCallback((id: string) => {
+    console.warn("[follow-up] remove_follow_up 命令尚未恢复，仅本地移除:", id);
+    setFollowUpQueue((prev) => ({
+      ...prev,
+      items: prev.items.filter((item) => item.id !== id),
+    }));
+  }, []);
 
   // Load session on mount AND on session change.
   //
@@ -937,6 +956,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     handleSteer: commands.handleSteer,
     handleFollowUp: commands.handleFollowUp,
     handleReorderFollowUps,
+    handleRemoveFollowUp,
     handleAbortCompaction: commands.handleAbortCompaction,
     handleToolPresetChange,
     handleThinkingLevelChange,

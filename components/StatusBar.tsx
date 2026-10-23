@@ -118,8 +118,6 @@ interface Props {
   /** 当前会话所属项目目录：在工具栏最左侧显示极简项目标识。 */
   projectPath?: string | null;
   currentProvider?: string | null;
-  /** 正在执行的工具（来自 agentPhase）；有值时显示心跳条 + `running: bash`。 */
-  runningTools?: Array<{ id: string; name: string }> | null;
 }
 
 /** One-click plan-mode switch; remembers the mode to restore on toggle-off. */

@@ -130,6 +130,8 @@ export function Composer({
   queuedFollowUps?: Array<{ id: string; message: string; attachmentCount?: number }>;
   queueBusy?: boolean;
   onReorderFollowUps?: (orderedIds: string[]) => void;
+  /** 删除单条排队消息（宿主命令恢复前为本地移除占位）。 */
+  onRemoveFollowUp?: (id: string) => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);

@@ -15,10 +15,13 @@ import { buildImagineMessage } from "@/lib/imagine-command";
 import { BranchCloneModal, type BranchCloneMode } from "./BranchCloneModal";
 import { BranchNavigator } from "./BranchNavigator";
 import { visibleErrorMessage } from "@/lib/ui-error";
+import { collectRunningTools } from "@/lib/running-tools";
+import { useStickyRunningTools } from "@/hooks/useStickyRunningTools";
 import { estimateTokens, setLiveUsage } from "@/lib/live-usage";
 import { Composer } from "./Composer";
 import { ExtensionUiDialog } from "./ExtensionUiDialog";
 import { ModalSurface } from "./ModalSurface";
+import { RunningToolsBadge } from "./RunningToolsBadge";
 import { StatusBar, type ThinkingLevel } from "./StatusBar";
 import { buildTranscriptTurns, Transcript } from "./Transcript";
 import { savedScrollTop } from "@/lib/chat-scroll-memory";
@@ -123,7 +126,7 @@ function navPreview(message: AgentMessage): string {
 const LIVE_COST_PER_TOKEN = 0.000004;
 
 /** 右侧导航的刻度数量上限：永远是 9 个（DeepSeek 式「动态滚动窗口」）。 */
-/** 上下文徽章：120_000 → "120.0k"，硬顶整千不补小数。 */
+/** 上下文徽章：120_000 → "120.0k"，窗口整千不补小数。 */
 function formatContextTokens(tokens: number): string {
   return tokens >= 1_000 ? `${(tokens / 1_000).toFixed(1)}k` : String(tokens);
 }
@@ -148,8 +151,9 @@ const CONTEXT_RING_CIRCUMFERENCE = 2 * Math.PI * CONTEXT_RING_RADIUS;
 /**
  * 上下文占用指示器：只画一个 14px 的环，不写任何文字。
  *
- * 图形比「上下文 102.4k / 硬顶 48k」可读：环走满 = 贴到硬顶，变红 = 已经越顶
- * （配脉冲），具体数字全部收进 tooltip。
+ * 分母 = 模型真实窗口（Host 侧 `describeContextBudget` 算好），所以环走满就是
+ * 真的快装满窗口：60% 以上变黄、85% 以上变红并配脉冲，同时单独弹一条
+ * “建议手动压缩”的提醒（不再有任何自动压缩）。
  */
 function ContextRing({ budget, compacting }: { budget: ContextBudget; compacting?: boolean }) {
   const filled = Math.max(0, Math.min(1, budget.ratioToCeiling));
@@ -158,7 +162,7 @@ function ContextRing({ budget, compacting }: { budget: ContextBudget; compacting
   const precise =
     budget.tokens === null
       ? "用量未知"
-      : `上下文 ${formatContextTokens(budget.tokens)} / 硬顶 ${formatContextCeiling(budget.ceiling)}`;
+      : `上下文 ${formatContextTokens(budget.tokens)} / 窗口 ${formatContextCeiling(budget.ceiling)}`;
   return (
     <span
       className={`inline-flex items-center ${budget.overshoot ? "context-ring-alert" : ""}`}
@@ -252,6 +256,9 @@ function ChatSession({
   const [retrying, setRetrying] = useState(false);
   const autoRetryRef = useRef(0);
 
+  // 全局瞬时提示（压缩结果 / 引擎掉线 / 发送失败共用）。
+  const [compactToast, setCompactToast] = useState<{ ok: boolean; text: string } | null>(null);
+
   const chat = useAgentSession({
     session,
     newSessionCwd,
@@ -263,6 +270,8 @@ function ChatSession({
     onAgentEnd: playDoneSound,
     onSessionRenamed: () => onSessionRenamed?.(),
     onNewSession,
+    // 发送失败不能静默：气泡留在原地却什么都不发生，看起来就是「输入没反应」。
+    onPromptError: (message) => setCompactToast({ ok: false, text: message }),
   });
 
   const currentModel = chat.displayModel ?? null;
@@ -313,7 +322,6 @@ function ChatSession({
   // The summarising itself is pi's own `compact` command (POST → rpc-manager):
   // we only ask for confirmation and report how many tokens came back.
   const [compactConfirmOpen, setCompactConfirmOpen] = useState(false);
-  const [compactToast, setCompactToast] = useState<{ ok: boolean; text: string } | null>(null);
 
   // Engine liveness: reuse the existing transient toast so the UI layout is
   // unchanged, and disable sending while the host is not ready so a message
@@ -338,6 +346,23 @@ function ChatSession({
   }, [compactToast]);
 
   const canCompact = Boolean(session?.id) && !chat.agentRunning && !chat.isCompacting;
+
+  /**
+   * 上下文提醒（自动压缩已下线）：只剩提醒 + 手动压缩。
+   * 分母是模型真实窗口（Host 侧算好），所以 85% 才亮，不会再动不动就红。
+   * 关掉之后要等用量再涨 5% 才重弹，避免同一个读数反复骚扰。
+   */
+  const [ctxReminderMutedAt, setCtxReminderMutedAt] = useState<number | null>(null);
+  const ctxBudget = chat.contextBudget;
+  const ctxReminder =
+    ctxBudget && ctxBudget.tokens !== null && (ctxBudget.level === "critical" || ctxBudget.overshoot)
+      ? ctxBudget
+      : null;
+  const ctxReminderVisible =
+    Boolean(ctxReminder) &&
+    !chat.isCompacting &&
+    (ctxReminderMutedAt === null ||
+      (ctxReminder?.tokens ?? 0) >= ctxReminderMutedAt + Math.max(1, Math.round((ctxReminder?.ceiling ?? 0) * 0.05)));
 
   const handleApplyCode = useCallback(
     (code: string, language?: string) => {
@@ -611,6 +636,8 @@ function ChatSession({
   }, [chat.agentRunning, session, onReload, scoped]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  /** 底部哨兵：IntersectionObserver 的唯一观测目标（是否贴底只看它）。 */
+  const bottomSentinelRef = useRef<HTMLDivElement>(null);
   const composerContainerRef = useRef<HTMLDivElement>(null);
   /** 用户是否已主动上翻（镜像 awayFromBottom，供自动跟随判断用，避免 deps 抖动）。 */
   const awayFromBottomRef = useRef(false);
@@ -633,9 +660,6 @@ function ChatSession({
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, []);
-  /** 镜像「是否正在流式」，供 ResizeObserver 闭包读取（避免依赖抖动）。 */
-  const agentRunningRef = useRef(false);
-  agentRunningRef.current = chat.agentRunning;
 
   /** 新一轮开始（发送后）：强制跟随——用户刚发消息，期望看到后续回复。 */
   useEffect(() => {
@@ -678,16 +702,49 @@ function ChatSession({
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
+    // 只中断进行中的惯性/平滑滚动。**不再**在这里改跟随状态：
+    // 点击/选文本后如果没人再滚动，就没有 scroll 事件来恢复，
+    // 超长流式输出会永久停住（原来的 bug）。贴底判定交给底部哨兵。
     const onPointerDown = () => {
-      userPausedRef.current = true;
-      followOutputRef.current = false;
-      isNearBottomRef.current = false;
-      needsInitialBottomRef.current = false;
       el.scrollTop = el.scrollTop;
     };
     el.addEventListener("pointerdown", onPointerDown, { passive: true });
     return () => el.removeEventListener("pointerdown", onPointerDown);
   }, []);
+
+  /**
+   * 「是否贴底」的唯一判据：底部哨兵 + IntersectionObserver。
+   * 不读 `scrollHeight`（无强制同步布局）、不挂 `scroll` 事件（拖拽时一秒上百次）。
+   * - 哨兵离开视野（用户向上翻阅 / 内容把底部顶下去）→ 暂停跟随，绝不拽回；
+   * - 哨兵回到容器底部 120px 内 → 恢复跟随。
+   * 回调只在跨越阈值时触发，因此「滚轮轻推一下」不会被立刻拽回底部。
+   */
+  useEffect(() => {
+    const el = scrollRef.current;
+    const sentinel = bottomSentinelRef.current;
+    if (!el || !sentinel || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[entries.length - 1];
+        if (!entry) return;
+        const atBottom = entry.isIntersecting;
+        isNearBottomRef.current = atBottom;
+        followOutputRef.current = atBottom;
+        userPausedRef.current = !atBottom;
+        if (atBottom) {
+          needsInitialBottomRef.current = false;
+          // 回到贴底那一刻先补写一次：RO 只在高度变化时回调，
+          // 如果内容已停止增长（流结束 / 已渲染完），光靠标志位复位页面不会动，
+          // 用户看到的就是「滚到底了也不恢复跟随」。
+          const node = scrollRef.current;
+          if (node) node.scrollTop = node.scrollHeight;
+        }
+      },
+      { root: el, rootMargin: "0px 0px 120px 0px", threshold: 0 },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [showTranscript]);
   /**
    * 「首次打开这个会话，才自动贴底」。
    * 同一个会话（标签页）再次切回来时 `session.id` 不变，这里不会重跑，
@@ -745,14 +802,17 @@ function ChatSession({
     const inner = el?.firstElementChild;
     if (!el || !inner || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
-      if (userPausedRef.current) return;
+      // 跟不跟随只看 IntersectionObserver 维护的 followOutputRef。
+      if (!followOutputRef.current) return;
       if (performance.now() > pinBottomUntilRef.current) return;
-      if (el.clientHeight === 0) return;
-      el.scrollTop = el.scrollHeight;
+      const node = scrollRef.current;
+      if (!node || node.clientHeight === 0) return;
+      node.scrollTop = node.scrollHeight;
     });
+    observer.observe(el);
     observer.observe(inner);
     return () => observer.disconnect();
-  }, []);
+  }, [showTranscript]);
 
   /**
    * 切换标签页的滚动记忆。注意：实际滚动容器是本地 `scrollRef`
@@ -838,49 +898,61 @@ function ChatSession({
   }, [messages.length, showTranscript, pinToBottom]);
 
   /**
-   * 内容高度二次变化（代码高亮、图片、折叠动画、折叠面板展开）时：
-   * - 仅在「首屏贴底中」或「正在流式跟随」时贴底；
-   * - 用户上翻后 followOutputRef=false，永不抢夺滚动位置；
-   * - 打开过的会话（首屏贴底已完成）不会因切标签/重排而强制回底。
+   * 内容高度变化（流式文本、代码高亮、图片、折叠动画）时贴底：
+   * 跟随与否**只**由 IntersectionObserver 维护的 followOutputRef 决定，这里不做标志位判断；
+   * 观察目标每帧重新解析，避免 React 换了内容层后盯着已经脱离文档的旧节点。
    */
   useEffect(() => {
     const el = scrollRef.current;
-    if (!el || !showTranscript) return;
-    let raf = 0;
-    const stick = () => {
-      if (userPausedRef.current || !followOutputRef.current || !isNearBottomRef.current) return;
-      if (!needsInitialBottomRef.current && !agentRunningRef.current) return;
-      if (raf) return;
-      raf = requestAnimationFrame(() => {
-        raf = 0;
-        if (!followOutputRef.current) return;
-        el.scrollTop = el.scrollHeight;
-      });
+    if (!el || !showTranscript || typeof ResizeObserver === "undefined") return;
+    // 内容层节点可能被 React 换掉（加载占位 → 真正的消息层、会话切换），
+    // 一旦盯着已经脱离文档的旧节点，RO 就再也不会回调（这是「彻底卡死」的成因）。
+    let observed: Element | null = null;
+    const writeBottom = () => {
+      const node = scrollRef.current;
+      if (!node) return;
+      // 越界值会被浏览器夹到底部：等价于「贴底」，且不读布局。
+      node.scrollTop = node.scrollHeight;
     };
-    const observer = new ResizeObserver(stick);
+    const observer = new ResizeObserver(() => {
+      const content = el.firstElementChild;
+      if (content && content !== observed) {
+        if (observed) observer.unobserve(observed);
+        observer.observe(content);
+        observed = content;
+      }
+      // 跟随与否只问 IntersectionObserver；这里不做标志位判断，高度一变就排一帧写到底。
+      if (!followOutputRef.current) return;
+      if (typeof requestAnimationFrame === "function") requestAnimationFrame(writeBottom);
+      else window.setTimeout(writeBottom, 16);
+    });
     observer.observe(el);
     const content = el.firstElementChild;
-    if (content) observer.observe(content);
-    return () => {
-      observer.disconnect();
-      if (raf) cancelAnimationFrame(raf);
-    };
+    if (content) {
+      observer.observe(content);
+      observed = content;
+    }
+    return () => observer.disconnect();
   }, [showTranscript]);
 
-  // 新内容（流式文字 / 工具结果 / 折叠面板展开）到达时自动跟随到底部；
-  // 用户主动上翻后 followOutputRef=false，这里就完全不插手。
+  /**
+   * 同步兜底：React 提交 DOM 与 RO 回调之间有一帧级时间差，
+   * 长文本 + 代码高亮这种「先渲染后撑高」的情况可能漏滚。
+   * 每次流式快照落地后再补写两次（微任务 + 宏任务各一次），只写不读。
+   * 是否该跟随仍由 followOutputRef 决定，上翻时这里什么都不做。
+   */
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el || userPausedRef.current || !followOutputRef.current || !isNearBottomRef.current) return;
-    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (distance <= 0) return;
-    if (distance < 140) {
-      // 已经很靠近底部：直接对齐，避免每帧 smooth 造成"追不上的橡皮筋"
-      el.scrollTop = el.scrollHeight;
-    } else {
-      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-    }
-  }, [messages.length, chat.streamState.streamingMessage, chat.agentRunning]);
+    if (!chat.agentRunning) return;
+    const writeBottom = () => {
+      const node = scrollRef.current;
+      if (!node || !followOutputRef.current) return;
+      node.scrollTop = node.scrollHeight;
+    };
+    if (typeof queueMicrotask === "function") queueMicrotask(writeBottom);
+    else void Promise.resolve().then(writeBottom);
+    const timer = window.setTimeout(writeBottom, 0);
+    return () => window.clearTimeout(timer);
+  }, [chat.streamState.streamingMessage, chat.agentRunning]);
 
   /**
    * bash 执行期间只在终端图标上点亮一个小绿点（不自动切 Tab、不抢当前视图）。
@@ -1240,6 +1312,24 @@ function ChatSession({
     return sum;
   }, [chat.messages]);
 
+  /**
+   * 正在跑的工具（并行时会有多个）。
+   *
+   * 以**消息**为准（有 toolCall、没 toolResult），再把 `agentPhase` 里刚 start、
+   * 结果还没落盘的那些并进来：事件流断过也不会漏（以前只信事件流，一断就啥也不显示）。
+   */
+  const runningTools = useStickyRunningTools(
+    useMemo(
+      () =>
+        collectRunningTools({
+          messages: chat.messages,
+          agentRunning: chat.agentRunning,
+          phaseTools: chat.agentPhase?.kind === "running_tools" ? chat.agentPhase.tools : null,
+        }),
+      [chat.messages, chat.agentRunning, chat.agentPhase],
+    ),
+  );
+
   useEffect(() => {
     if (chat.agentRunning) {
       setLiveUsage({ tokens: liveTokens, cost: liveTokens * LIVE_COST_PER_TOKEN });
@@ -1376,92 +1466,83 @@ function ChatSession({
           </span>
         </div>
       )}
-      {(() => {
-        const phase = chat.agentPhase;
-        if (phase?.kind !== "running_tools" || phase.tools.length === 0) return null;
-        const names = Array.from(new Set(phase.tools.map((tool) => tool.name)));
-        // 每个工具一套色：文字色 + 徽章底色 + 跳动光条色。
-        const tone = (name: string): { text: string; badge: string; bar: string } => {
-          const n = name.toLowerCase();
-          if (n === "edit" || n === "write" || n === "apply_patch") {
-            return { text: "text-[#3E8A63]", badge: "bg-[#EAF4EE]", bar: "bg-[#4E9F76]" };
-          }
-          if (n === "read") {
-            return { text: "text-[#9A6B1F]", badge: "bg-[#FBF3E4]", bar: "bg-[#B98A3C]" };
-          }
-          if (n === "powershell" || n === "pwsh") {
-            return { text: "text-[#C2661A]", badge: "bg-[#FDF3E8]", bar: "bg-[#D9843A]" };
-          }
-          if (n === "bash" || n === "terminal" || n === "cmd") {
-            return { text: "text-accent-strong", badge: "bg-[#F1F7FF]", bar: "bg-accent" };
-          }
-          return { text: "text-ink-muted", badge: "bg-[#F4F4F5]", bar: "bg-[#9CA3AF]" };
-        };
-        const shown = names.slice(0, 3);
-        // 徽章整体色调（底色 + 光条 + running: 文字）跟随「第一个」工具；
-        // 后面并列的工具名各自保留自己的颜色，不被第一个的样式覆盖。
-        const leadTone = tone(shown[0] ?? "");
-        return (
+      {/* 上下文提醒：自动压缩已下线，靠近窗口上限只提醒 + 一键手动压缩。 */}
+      {ctxReminderVisible && ctxReminder && (
+        <div
+          role="status"
+          className="flex items-center gap-1.5 self-start rounded-lg border border-[#F2E2C4] bg-[#FFFBF2] px-2.5 py-1.5 text-[12px] text-ink-soft shadow-[0_1px_3px_rgba(15,23,42,0.06)]"
+        >
+          <AlertCircle size={13} strokeWidth={2} className="shrink-0 text-[#D97706]" aria-hidden="true" />
+          <span className="min-w-0 truncate">
+            {ctxReminder.overshoot
+              ? "上下文已装满窗口，下一轮可能被拒收"
+              : `上下文已用 ${Math.round(ctxReminder.ratioToCeiling * 100)}%（${formatContextTokens(
+                  ctxReminder.tokens ?? 0,
+                )} / ${formatContextCeiling(ctxReminder.ceiling)}）`}
+            ，建议手动压缩
+          </span>
+          <button
+            type="button"
+            onClick={() => setCompactConfirmOpen(true)}
+            disabled={!canCompact}
+            className="ml-1 shrink-0 rounded-md bg-accent px-2 py-1 text-[11.5px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            压缩
+          </button>
+          <button
+            type="button"
+            onClick={() => setCtxReminderMutedAt(ctxReminder.tokens ?? 0)}
+            aria-label="稍后提醒"
+            className="shrink-0 rounded-md px-1.5 py-1 text-[11.5px] text-ink-muted transition-colors hover:bg-[#F3EDE1] hover:text-ink"
+          >
+            稍后
+          </button>
+        </div>
+      )}
+      {/* 一行横向铺开：token 统计在前，running 徽章（`order-last`）在后。
+          布局稳定化：token 块恒挂载（空转时 `invisible` 只保留占位），
+          否则工具结束后的 sticky 窗口里它一整块卸载，徽章会瞬移到行首。 */}
+      {(runningTools.length > 0 || chat.agentRunning || inputTokensPerSecond > 0) && (
+        <div className="mb-1 flex min-h-[18px] max-w-full min-w-0 shrink-0 flex-nowrap items-center gap-1.5 self-start">
           <div
-            className={`mb-1 flex shrink-0 items-center gap-1 self-start rounded-md px-1.5 py-0.5 text-[10px] ${leadTone.badge} ${leadTone.text}`}
-            title={`正在执行：${phase.tools.map((tool) => tool.name).join(" · ")}`}
+            className={`flex shrink-0 items-center gap-1.5 rounded-md bg-[#F1F7FF] px-1.5 py-0.5 text-[10px] font-medium text-accent-strong ${
+              chat.agentRunning || inputTokensPerSecond > 0 ? "" : "invisible"
+            }`}
           >
-            <span className="flex h-2.5 items-end gap-[2px]" aria-hidden="true">
-              {[0, 1, 2].map((index) => (
-                <span
-                  key={index}
-                  className={`beat-bar w-[2px] rounded-sm ${leadTone.bar}`}
-                  style={{ height: "10px", animationDelay: `${index * 0.15}s` }}
-                />
-              ))}
-            </span>
-            <span className="max-w-[200px] truncate font-mono">
-              running:{" "}
-              {shown.map((name, index) => (
-                <span key={name} className={tone(name).text}>
-                  {index > 0 ? ", " : ""}
-                  {name}
-                </span>
-              ))}
-              {names.length > 3 ? ` +${names.length - 3}` : ""}
-            </span>
-          </div>
-        );
-      })()}
-      {(chat.agentRunning || inputTokensPerSecond > 0) && (
-        <div className="mb-1 flex items-center gap-1.5 self-start rounded-md bg-[#F1F7FF] px-1.5 py-0.5 text-[10px] font-medium text-accent-strong">
-          <span className="flex h-2.5 items-end gap-[2px]" aria-hidden="true">
-            {[0, 1, 2].map((index) => (
+              <span className="flex h-2.5 items-end gap-[2px]" aria-hidden="true">
+                {[0, 1, 2].map((index) => (
+                  <span
+                    key={index}
+                    className="beat-bar w-[2px] rounded-sm bg-accent"
+                    style={{ height: "10px", animationDelay: `${index * 0.15}s` }}
+                  />
+                ))}
+              </span>
+              {inputTokensPerSecond > 0 && (
+                <>
+                  <span className="tabular-nums">↑ {inputTokensPerSecond}</span>
+                  <span className="text-ink-faint">·</span>
+                </>
+              )}
+              <span className="tabular-nums">↓ {tokensPerSecond} tokens/s</span>
+              <span className="text-ink-faint">·</span>
+              {/* 这里是**本轮全部模型调用的输出合计**（含思考与每个工具轮次），
+                  不是"这一次请求的新增输入"。写清楚口径，免得看起来像凭空涨了几千。 */}
               <span
-                key={index}
-                className="beat-bar w-[2px] rounded-sm bg-accent"
-                style={{ height: "10px", animationDelay: `${index * 0.15}s` }}
-              />
-            ))}
-          </span>
-          {inputTokensPerSecond > 0 && (
-            <>
-              <span className="tabular-nums">↑ {inputTokensPerSecond}</span>
-              <span className="text-ink-faint">·</span>
-            </>
-          )}
-          <span className="tabular-nums">↓ {tokensPerSecond} tokens/s</span>
-          <span className="text-ink-faint">·</span>
-          {/* 这里是**本轮全部模型调用的输出合计**（含思考与每个工具轮次），
-              不是"这一次请求的新增输入"。写清楚口径，免得看起来像凭空涨了几千。 */}
-          <span
-            className="tabular-nums"
-            title="本轮所有模型调用的输出合计（含思考与工具轮次），不是单次请求的输入"
-          >
-            本轮产出 {(turnOutputTokens + liveTokens).toLocaleString()}
-          </span>
-          {/* 上下文：一个环就够了——走满=贴到硬顶，变红脉冲=已越顶，数字只进 tooltip。 */}
-          {chat.contextBudget && (
-            <>
-              <span className="text-ink-faint">·</span>
-              <ContextRing budget={chat.contextBudget} compacting={chat.isCompacting} />
-            </>
-          )}
+                className="tabular-nums"
+                title="本轮所有模型调用的输出合计（含思考与工具轮次），不是单次请求的输入"
+              >
+                本轮产出 {(turnOutputTokens + liveTokens).toLocaleString()}
+              </span>
+              {/* 上下文：一个环就够了——走满=贴满窗口，变红脉冲=已越顶，数字只进 tooltip。 */}
+              {chat.contextBudget && (
+                <>
+                  <span className="text-ink-faint">·</span>
+                  <ContextRing budget={chat.contextBudget} compacting={chat.isCompacting} />
+                </>
+              )}
+            </div>
+          <RunningToolsBadge tools={runningTools} className="order-last min-w-0" />
         </div>
       )}
       <Composer
@@ -1506,6 +1587,7 @@ function ChatSession({
         }}
         queuedFollowUps={chat.followUpQueue.items}
         onReorderFollowUps={chat.handleReorderFollowUps}
+        onRemoveFollowUp={chat.handleRemoveFollowUp}
         queueBusy={chat.followUpQueueBusy}
         cwd={session?.cwd ?? newSessionCwd ?? null}
       />
@@ -1535,7 +1617,6 @@ function ChatSession({
       activity={chat.sessionActivity}
       projectPath={session?.cwd ?? newSessionCwd ?? null}
       currentProvider={currentModel?.provider ?? null}
-      runningTools={chat.agentPhase?.kind === "running_tools" ? chat.agentPhase.tools : null}
     />
   );
 
@@ -1666,7 +1747,7 @@ function ChatSession({
             ref={scrollRef}
             data-chat-scroll="true"
             data-streaming={chat.agentRunning ? "true" : undefined}
-            className="scrollbar-ghost h-full min-h-0 overflow-y-auto"
+            className="scrollbar-ghost h-full min-h-0 overflow-y-auto [overflow-anchor:none]"
           >
             <div className="mx-auto w-full max-w-3xl px-8 py-10">
               {chat.loading && messages.length === 0 ? (
@@ -1679,6 +1760,13 @@ function ChatSession({
                 <p className="text-[12px] text-ink-faint">PiForge 正在思考…</p>
               )}
             </div>
+            {/* 底部哨兵：IntersectionObserver 的唯一观测目标。
+                1px 高、不参与交互，肉眼无感；放到内容层外面，避免影响内容 RO。 */}
+            <div
+              ref={bottomSentinelRef}
+              aria-hidden="true"
+              className="pointer-events-none h-px w-full"
+            />
           </div>
 
           {/* 右侧对话导航（极简横条轴 + 悬浮白色列表面板） */}
