@@ -22,6 +22,34 @@ function logError(message: string, detail?: unknown): void {
   console.error(`[agent-host] ${message}`, detail ?? "");
 }
 
+/**
+ * 诊断：`PIFORGE_DEBUG_HOST_CPU=1` 时每 5s 打一条自身 CPU/RSS/活跃句柄。
+ * 用来回答"空闲时这 6% CPU 到底是谁在烧"——外部采样只能看到进程级总量。
+ */
+function startCpuDiagnostics(): void {
+  let last = process.cpuUsage();
+  let lastAt = Date.now();
+  const timer = setInterval(() => {
+    const now = Date.now();
+    const elapsedMs = Math.max(1, now - lastAt);
+    lastAt = now;
+    // `process.cpuUsage(prev)` 返回相对 prev 的差值（微秒）。
+    const delta = process.cpuUsage(last);
+    last = process.cpuUsage();
+    const percent = ((delta.user + delta.system) / 1000 / elapsedMs) * 100;
+    const memory = process.memoryUsage();
+    const resources = process.getActiveResourcesInfo();
+    const counts: Record<string, number> = {};
+    for (const name of resources) counts[name] = (counts[name] ?? 0) + 1;
+    console.log(
+      `[host-cpu] ${percent.toFixed(2)}% over=${elapsedMs}ms rss=${(memory.rss / 1048576).toFixed(0)}MB ` +
+        `heapUsed=${(memory.heapUsed / 1048576).toFixed(0)}MB resources=${JSON.stringify(counts)}`,
+    );
+    // 1s 粒度：burst 与"稳定占用"必须能分开看，5s 的平均值会把一次性峰值摊平。
+  }, 1_000);
+  timer.unref?.();
+}
+
 function getParentPort(): ParentPort | undefined {
   return (process as unknown as { parentPort?: ParentPort }).parentPort;
 }
@@ -33,6 +61,8 @@ async function main(): Promise<void> {
     logError("PIFORGE_AGENT_ENDPOINT and PIFORGE_AGENT_TOKEN are required");
     process.exit(2);
   }
+
+  if (process.env.PIFORGE_DEBUG_HOST_CPU === "1") startCpuDiagnostics();
 
   const parentPort = getParentPort();
   let shuttingDown = false;
