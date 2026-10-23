@@ -642,7 +642,8 @@ function ChatSession({
         prefixAudit: chat.prefixAudit,
         dismissed: dismissedGuards,
       }),
-    [chat.contextUsage?.tokens, chat.prefixAudit, messages.length, dismissedGuards],
+    // messages 用于估算上下文（未运行会话没有 contextUsage）；依赖整数组才能跟上内容变化。
+    [chat.contextUsage?.tokens, chat.prefixAudit, messages, dismissedGuards],
   );
 
   // Reconcile with the server when the run ends without us seeing agent_end.
