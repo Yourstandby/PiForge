@@ -33,7 +33,7 @@ import {
   toolStubPromptSection,
 } from "./tool-stubs.ts";
 import {
-  ALWAYS_DECLARED_DOMAINS,
+  DOMAIN_TOOL_NAMES,
   enabledOnDemandDomains,
   PLAN_READONLY_LEGACY_TOOLS,
   isPlanAllowedDomainCall,
@@ -160,12 +160,11 @@ export function createDesktopApprovalFactory(modeRef: AgentModeRef): ExtensionFa
       const pinnedTools = [
         ...(registered.some((tool) => tool.name === "tool_search") ? ["tool_search"] : []),
         ...(registered.some((tool) => tool.name === TOOL_USE_TOOL_NAME) ? [TOOL_USE_TOOL_NAME] : []),
-        // 常驻域：browser / shell / fleet 是默认入口，被存根就等于把桌面能力藏起来。
-        ...ALWAYS_DECLARED_DOMAINS.filter((name) => registered.some((tool) => tool.name === name)),
-        // 按需域：一旦被 tool_search 激活就必须持续声明（否则模型刚拿到又失去）。
-        ...enabledOnDemandDomains().filter(
+        // 多态工具：没被开关点名的恒常驻；被点名的只在激活后常驻（否则模型刚拿到又失去）。
+        ...DOMAIN_TOOL_NAMES.filter(
           (name) =>
-            registered.some((tool) => tool.name === name) && pi.getActiveTools().includes(name)
+            registered.some((tool) => tool.name === name) &&
+            (!enabledOnDemandDomains().includes(name) || pi.getActiveTools().includes(name))
         ),
       ];
       const extensionTools = available.filter(

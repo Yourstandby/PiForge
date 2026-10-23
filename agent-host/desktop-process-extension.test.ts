@@ -86,8 +86,11 @@ test("registers only run_bg / process_read / process_wait (no stop/restart tools
       ...env.tools.map((entry) => ({ name: entry.name, description: "" })),
       { name: "shell", description: "" },
     ];
-    const declared = desktopRuntimeTools("full", "default", false, toolInfos, []);
-    assert.ok(declared.includes("shell"), "the shell facade carries run/read/wait");
+    // 第 8 步：shell 默认按需 —— 未激活时不声明，激活后才连同 run/read/wait 一起声明。
+    const beforeActivation = desktopRuntimeTools("full", "default", false, toolInfos, []);
+    assert.ok(!beforeActivation.includes("shell"), "shell waits for tool_search by default");
+    const declared = desktopRuntimeTools("full", "default", false, toolInfos, ["shell"]);
+    assert.ok(declared.includes("shell"), "after activation the shell facade carries run/read/wait");
     for (const legacy of ["run_bg", "process_read", "process_wait"]) {
       assert.ok(!declared.includes(legacy), `${legacy} must not be declared on its own`);
     }

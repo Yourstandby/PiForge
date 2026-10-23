@@ -84,18 +84,28 @@ const maxMedianInput = Number(valueOf("--max-median-input") ?? 0);
 const dumpRequestsDir = valueOf("--dump-requests");
 /** 校验发送给模型的 transcript 只带模型需要的字段（不带 details/usage/UI 元数据）。 */
 const assertLeanTranscript = args.includes("--assert-lean-transcript");
+/** 每个域探针用真实存在的动作与参数（否则会在参数校验处失败，测不到分派链路）。 */
+const PROBE_ARGS = {
+  memory: { action: "recall", query: "token cost" },
+  orchestrator: { action: "status" },
+  fleet: { action: "status" },
+  browser: { action: "read" },
+  shell: { action: "run", command: "echo piforge-probe" },
+};
+
 const probe = (() => {
   if (probeArg) {
     const [tool, action] = probeArg.split(":");
     if (!tool || !action) {
       throw new Error("--probe expects <tool>:<action>, e.g. --probe shell:status");
     }
-    return { steps: [{ tool, args: { action } }] };
+    const preset = PROBE_ARGS[tool];
+    const args = preset && preset.action === action ? preset : { action };
+    return { steps: [{ tool, args }] };
   }
   if (probeSearchArg) {
     // 按需域的两步验证：先 tool_search 激活，再按声明出来的 schema 调一次该域的动作。
-    const args =
-      probeSearchArg === "memory" ? { action: "recall", query: "token cost" } : { action: "status" };
+    const args = PROBE_ARGS[probeSearchArg] ?? { action: "status" };
     return {
       domain: probeSearchArg,
       steps: [
@@ -622,6 +632,38 @@ async function main() {
           );
         }
       }
+    }
+  }
+
+  // tool_search 的名字对齐断言：结果里列的每个名字，都必须是下一条请求真正声明的工具。
+  {
+    const mismatches = [];
+    for (const entry of recorder.requests) {
+      const body = entry.body ?? {};
+      const declared = new Set(
+        (Array.isArray(body.tools) ? body.tools : []).map((tool) =>
+          String((tool?.function ?? tool)?.name ?? "")
+        )
+      );
+      const messages = Array.isArray(body.messages) ? body.messages : [];
+      for (const message of messages) {
+        if (message?.role !== "tool") continue;
+        const text = typeof message.content === "string" ? message.content : "";
+        if (!/^Loaded \d+ tool/m.test(text.trim())) continue;
+        const names = [...text.matchAll(/^- ([A-Za-z0-9_.:-]+):/gm)].map((match) => match[1]);
+        for (const name of names) {
+          if (!declared.has(name)) mismatches.push({ name, declared: [...declared] });
+        }
+      }
+    }
+    console.log("");
+    if (mismatches.length === 0) {
+      console.log("tool_search 命名对齐: ✓ 返回的名字都在下一条请求的声明集合里");
+    } else {
+      console.error(
+        `tool_search 命名对齐: ✗ ${mismatches.map((entry) => entry.name).join(", ")} 未在声明集合中`
+      );
+      process.exitCode = 9;
     }
   }
 

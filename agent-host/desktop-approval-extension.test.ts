@@ -179,7 +179,7 @@ test("prefix purity: identical state yields byte-identical tools and prompt", as
     second.systemPromptOptions,
     "同一状态两次请求的提示词输入必须完全相等",
   );
-  // 第 5 步实测后：memory / orchestrator 默认常驻（按需模式改由 env 打开）。
+  // 第 8 步：中频域 shell 默认按需（未激活时不声明），其余常驻。
   assert.deepEqual(activeTools[0], [
     "bash",
     "browser",
@@ -188,11 +188,11 @@ test("prefix purity: identical state yields byte-identical tools and prompt", as
     "memory",
     "orchestrator",
     "read",
-    "shell",
     "tool_history_get",
     "tool_search",
     "write",
   ]);
+  assert.ok(!activeTools[0].includes("shell"), "shell 默认等 tool_search 激活");
   for (const legacy of ["browser_read", "run_bg", "spawn_agent", "herdr_spawn"]) {
     assert.ok(!activeTools[0].includes(legacy), `${legacy} 已收进多态工具，不得单独声明`);
   }

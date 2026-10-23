@@ -38,10 +38,28 @@ export const ALWAYS_DECLARED_DOMAINS: readonly DomainToolName[] = ["browser", "s
  */
 export const ON_DEMAND_DOMAINS: readonly DomainToolName[] = ["memory", "orchestrator"];
 
+/**
+ * 默认对**中频域**开启按需：`shell`。
+ *
+ * 第 8 步 A/B 实测（30 轮 deepseek，shell 真实调用 4 次）：
+ *   前缀 6 961 → 6 220（每轮省 741 tok），激活只花 4 600 tok，
+ *   回本 ≈ 6.2 轮，30 轮净收益 ≈ +13 000 tok，命中率 97.9%（A 98.0%）。
+ * memory / orchestrator 仍是负收益（第 5 步实测），**不**默认开启。
+ */
+export const DEFAULT_ON_DEMAND_DOMAINS: readonly DomainToolName[] = ["shell"];
+
 export function enabledOnDemandDomains(
   env: Record<string, string | undefined> = process.env
 ): readonly DomainToolName[] {
-  return env.PIFORGE_ON_DEMAND_DOMAINS === "1" ? ON_DEMAND_DOMAINS : [];
+  const raw = env.PIFORGE_ON_DEMAND_DOMAINS?.trim();
+  // `0` = 全部常驻（等价于第 5 步的 A 组）
+  if (raw === "0") return [];
+  if (!raw) return DEFAULT_ON_DEMAND_DOMAINS;
+  // `1` = 两个低频域（第 3–5 步的历史行为，供无缓存 provider 用）
+  if (raw === "1") return ON_DEMAND_DOMAINS;
+  // 显式列表：`shell` / `browser,shell` / `memory,orchestrator,shell`
+  const wanted = new Set(raw.split(",").map((entry) => entry.trim()).filter(Boolean));
+  return DOMAIN_TOOL_NAMES.filter((domain) => wanted.has(domain));
 }
 
 export function isOnDemandDomain(

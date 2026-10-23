@@ -26,7 +26,7 @@ npm run measure:increment                               # 工具结果去重 A/B
 | 口径 | 怎么测 | 这个数字能回答什么 | 不能回答什么 |
 | --- | --- | --- | --- |
 | **记录型 provider 稳定段** | `measure:prefix` / `smoke:prefix-budget`（假 provider，固定假回复） | 我们自己发出的请求体是否稳定：前缀大小、命中率、每轮新增 token 中位数（实测 **29 tok**）、transcript 字段、棘轮 | 真实模型/真实缓存的价格与 TTL 行为 |
-| **真实 deepseek 30 轮会话** | `measure:long-session`（真凭据、真缓存） | 真实环境下的命中率（96–98%）、每轮未缓存 input 中位数（实测 **437–446 tok**）、停顿/激活的尖峰 | 与 pi CLI 的逐轮对比（CLI 无 headless 多轮接口） |
+| **真实 deepseek 30 轮会话** | `measure:long-session`（真凭据、真缓存） | 真实环境下的命中率（96–98%）、每轮未缓存 input 中位数（实测 **395–446 tok**）、停顿/激活的尖峰 | 与 pi CLI 的逐轮对比（CLI 无 headless 多轮接口）；跨会话缓存会污染「总量」类对比 |
 | **重复场景 A/B** | `measure:increment`（假 provider，脚本化重复调用） | 去重省了多少：最后一条请求体 **−17.2%**、工具结果字符 −52%、错误是否完整 | 日常会话的平均收益（取决于重复读的频率） |
 
 > 典型误读：把「29 tok/轮」当成真实会话的每轮成本（那是假 provider 的新增 token），
@@ -41,6 +41,7 @@ npm run measure:increment                               # 工具结果去重 A/B
 | 第 5 步 | 实测后回退按需域 → 常驻声明 | **6 988** | **12** | 94.9% | 414 tok |
 | 第 6 步 | 工具结果去重 + transcript 字段护栏 | **6 991** | 12 | 96.3% | 446 tok |
 | 第 7 步 | CI 固化 + 口径澄清（无行为变更） | 6 991 | 12 | —（未改代码） | — |
+| 第 8 步 | shell 默认按需 + tool_search 命名对齐 | **6 240** | **11** | 97.98% | 425 tok |
 
 三件不变的事实：**核心四件套 710 tok**（三个版本一致）、`prefixAudit.unexpectedChanges=0`、
 记录型 provider 的稳定段命中率 99.6%。
@@ -242,6 +243,19 @@ node scripts/measure-prefix.mjs --mode host --api anthropic-messages --turns 2 -
 关键问题：**没有释放机制**。「释放原文」要么压缩历史（本项目明确不做自动压缩），
 要么靠 provider 的上下文窗口裁剪（不可控）。纯提示词只能改变模型行为，删不掉已存在的
 token，所以**不合并**，也不留任何默认开关。
+
+## 第 8 步：按需工具激活（中频域 A/B）
+
+详见 [`on-demand-tools.md`](./on-demand-tools.md)。
+
+- **命名对齐**：`tool_search` 以前会把内部注册名（`run_bg`/`browser_read`…）返回给模型，
+  wire name 对不上 → `unsupported call`。现在只返回可调用的 wire name、撤掉内部名的激活、
+  **按 canonical 顺序重排 active**（否则激活那轮是追加序、下一轮变字典序 = 两次前缀写入），
+  并在结果里写明「新工具下一轮再调，不要同轮连调」。
+- **A/B**：只把中频域 `shell` 改成按需。前缀 6 988 → 6 240（每轮省 748），激活 4 600，
+  回本 6.2 轮，30 轮净收益 ≈ +13 200 tok，命中率不变（97.98% vs 97.98%）→ **默认开启**。
+- `memory` / `orchestrator` 仍是负收益，保持常驻；`PIFORGE_ON_DEMAND_DOMAINS=0` 可一键回到全常驻，
+  `=1` 是「两个低频域按需」的历史配置，也接受 `browser,shell` 这种显式列表。
 
 ## 用它来验收后续步骤
 

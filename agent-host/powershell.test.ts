@@ -44,9 +44,11 @@ test("PowerShell is folded into the shell facade, never declared on its own", ()
   assert.ok(
     !desktopRuntimeTools("full", "default", false, shellRegistered, [], undefined, "win32").includes("powershell"),
   );
-  // 声明的是 shell 多态工具。
+  // 声明的是 shell 多态工具 —— 第 8 步起它默认按需，激活后才会被声明。
   assert.ok(
-    desktopRuntimeTools("full", "default", false, shellRegistered, [], undefined, "win32").includes("shell"),
+    desktopRuntimeTools("full", "default", false, shellRegistered, ["shell"], undefined, "win32").includes(
+      "shell"
+    ),
   );
   // plan 模式只读：shell 只在只读动作白名单里出现（由 policy 逐动作判定）。
   assert.ok(

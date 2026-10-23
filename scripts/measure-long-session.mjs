@@ -49,10 +49,12 @@ const minHitRate = Number(valueOf("--min-hit-rate") ?? 0);
 const maxMedianInput = Number(valueOf("--max-median-input") ?? 0);
 /** CI 里没有 ~/.pi/auth.json：允许用环境变量提供凭据。 */
 const envApiKey = process.env.DEEPSEEK_API_KEY?.trim();
+/** 第 8 步 A/B 用：把 prompt 换成「中频域（shell）真的会被调用 4 次」的一组。 */
+const scenario = valueOf("--scenario") ?? "default";
 const TIMEOUT_MS = 180_000;
 
 /** 30 轮的任务脚本：每轮都真的需要工具，且第 3 / 17 轮会触发按需域激活。 */
-const PROMPTS = [
+const DEFAULT_PROMPTS = [
   "读 package.json，只回答 version 字段的值。",
   "用 bash 跑 `echo pi-long-session`，只回答输出。",
   "用 memory 工具回忆关于 token 预算的项目记忆（先搜索工具再调用），只回答命中的条数。",
@@ -84,6 +86,70 @@ const PROMPTS = [
   "用 bash 跑 `ls docs/measurements`，原样回答文件名。",
   "总结：刚才这 29 轮里你一共调用过哪些工具（名字列表）。",
 ];
+
+/** shell 域专用的 30 轮脚本：前 8 轮里真实调用 run/read/wait 4 次，其余保持真实工作。 */
+const ON_DEMAND_PROMPTS = [
+  "启动一个后台常驻进程跑 `node -e \"setInterval(()=>{},1000)\"`。必须使用 shell 工具：如果你当前没有 shell 工具，先用 tool_search 搜索 shell（它会在下一轮生效），下一轮再调用 shell 的 run 动作；不要用 bash 替代。只回答 processId 的前 8 位。",
+  "用 shell 工具的 read 动作读一下上一步那个进程的日志前 10 行。",
+  "读 package.json 的 version 字段，只回答值。",
+  "用 bash 跑 `echo plain-bash`，只回答输出。",
+  "grep 一下 agent-host 目录里 `cacheWarming` 出现的文件数量，只给数字。",
+  "再用 shell 工具的 run 动作起一个后台进程跑 `node -e \"console.log('ready')\"`（没有 shell 工具就先 tool_search），拿到 processId 后只回答前 8 位。",
+  "用 shell 工具的 wait 动作（for=exit）等上一个进程结束，只回答退出码。",
+  "用 bash 看 `git rev-parse --short HEAD`，只回答哈希。",
+  "读 docs/measurements/README.md 的第一个标题行，原样回答。",
+  "grep `prefixAudit` 在 agent-host 下出现的次数。",
+  "用 bash 统计 `ls components | wc -l`，只回答数字。",
+  "读 lib/domain-tools.ts 里 ON_DEMAND_DOMAINS 的值，原样回答。",
+  "用 bash 跑 `node -e \"console.log(2+2)\"`，只回答结果。",
+  "grep `applyCacheWarmingPolicy` 的定义在哪个文件。",
+  "读 app/api/settings/route.ts 里 cacheWarming 那一行，原样回答。",
+  "用 bash 看 `git status --short | wc -l`，只回答数字。",
+  "读 components/TitleBar.tsx 的前 10 行，回答它是不是客户端组件。",
+  "用 bash 跑 `date +%Y-%m-%d`，只回答日期。",
+  "grep `staleTime` 在 hooks 下出现的文件数量。",
+  "读 tsconfig.json 里的 target 值。",
+  "用 bash 看 `wc -l agent-host/rpc-manager.ts`，只回答数字。",
+  "读 lib/approval-policy.ts 里 PLAN_TOOLS 数组，原样回答。",
+  "grep `PIFORGE_DEBUG_PREFIX` 出现的文件路径（最多 3 个）。",
+  "用 bash 跑 `git log --oneline -1`，原样回答。",
+  "读 docs/measurements/README.md 里「静态前缀」那一行表格，原样回答。",
+  "用 bash 统计 `rg -c cacheRead agent-host 2>/dev/null | wc -l`。",
+  "grep `promptCache` 在 node_modules 之外出现的次数。",
+  "读 agent-host/desktop-approval-extension.ts 的 import 区块，回答引入了几个本地模块。",
+  "用 bash 跑 `ls docs/measurements`，原样回答文件名。",
+  "总结：刚才这些轮里你一共调用过哪些工具（名字列表）。",
+];
+
+const PROMPTS = scenario === "on-demand" ? ON_DEMAND_PROMPTS : DEFAULT_PROMPTS;
+
+/** 从会话 JSONL 里统计工具调用次数（用来确认 A/B 的调用序列/频率）。 */
+function tallyToolCalls(sessionFile) {
+  const tally = {};
+  if (!sessionFile || !existsSync(sessionFile)) return tally;
+  const lines = readFileSync(sessionFile, "utf8").split(String.fromCharCode(10)).filter(Boolean);
+  const walk = (value) => {
+    if (Array.isArray(value)) {
+      for (const entry of value) walk(entry);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    const record = value;
+    if (record.type === "toolCall") {
+      const name = typeof record.name === "string" ? record.name : record.toolName;
+      if (typeof name === "string") tally[name] = (tally[name] ?? 0) + 1;
+    }
+    for (const entry of Object.values(record)) walk(entry);
+  };
+  for (const line of lines) {
+    try {
+      walk(JSON.parse(line));
+    } catch {
+      /* 跳过损坏行 */
+    }
+  }
+  return tally;
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -225,6 +291,9 @@ const sourceAuth = path.join(
 
   const rows = [];
   let sessionId = "";
+  /** 最后一次 agent.state（会话文件路径、缓存状态都在里面）。 */
+  let state = null;
+  let sessionToolTally = {};
   try {
     await waitForReady(child, logs);
     const client = await createClient(endpoint);
@@ -262,7 +331,7 @@ const sourceAuth = path.join(
         if (ack?.ok === false) throw new Error(`turn ${turn} rejected: ${JSON.stringify(ack)}`);
         void before;
       }
-      const state = await waitIdle(client, sessionId);
+      state = await waitIdle(client, sessionId);
       if (!state) throw new Error(`turn ${turn}: no state`);
       const stats = state.sessionStats ?? { tokens: {}, cost: {} };
       const tokens = stats.tokens ?? {};
@@ -291,6 +360,8 @@ const sourceAuth = path.join(
         `  turn ${String(turn).padStart(2)}: in=${String(delta.input).padStart(6)} read=${String(delta.cacheRead).padStart(6)} write=${String(delta.cacheWrite).padStart(5)} out=${String(delta.output).padStart(4)} ctx=${String(contextTokens ?? "-").padStart(6)} ${state.cacheWarming?.state ?? ""}\n`
       );
     }
+    // 会话文件在临时 agentDir 里，必须在清理前读。
+    sessionToolTally = tallyToolCalls(state?.sessionFile);
   } finally {
     try {
       child.kill();
@@ -336,6 +407,7 @@ const sourceAuth = path.join(
         ? inputs[(inputs.length - 1) / 2]
         : Math.round((inputs[inputs.length / 2 - 1] + inputs[inputs.length / 2]) / 2);
 
+  const toolTally = sessionToolTally;
   const report = {
     label,
     provider,
@@ -345,6 +417,8 @@ const sourceAuth = path.join(
     stableTurns: stable.length,
     stableHitRate: Number(hitRate.toFixed(2)),
     medianInputTokens: medianInput,
+    scenario,
+    toolTally,
     totals: { ...totals, denominator },
     rows,
   };
@@ -355,6 +429,12 @@ const sourceAuth = path.join(
   }
   console.log(`\n稳定段（${stable.length} 轮）cacheRead 命中率: ${hitRate.toFixed(1)}%`);
   console.log(`median uncached input per stable turn: ${medianInput} tok`);
+  console.log(
+    `tool calls: ${Object.entries(toolTally)
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, count]) => `${name}×${count}`)
+      .join(", ")}`
+  );
   if (minHitRate > 0 && hitRate < minHitRate) {
     console.error(`低于阈值 ${minHitRate}%`);
     process.exit(3);

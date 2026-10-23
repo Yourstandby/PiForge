@@ -52,6 +52,10 @@ const budget = await run([
 ]);
 if (budget !== 0) process.exit(budget);
 
+// 默认配置下唯一按需的域：shell。探针同时验证命名对齐 + 激活后棘轮（measure-prefix 内断言）。
+const shellActivation = await run(["--mode", "host", "--turns", "3", "--probe-search", "shell"]);
+if (shellActivation !== 0) process.exit(shellActivation);
+
 const activation = await run(
   ["--mode", "host", "--turns", "3", "--probe-search", "memory"],
   { PIFORGE_ON_DEMAND_DOMAINS: "1" }

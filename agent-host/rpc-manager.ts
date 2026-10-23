@@ -28,6 +28,7 @@ import { desktopLtmInlineExtension } from "./desktop-ltm-extension.ts";
 import { readDesktopSettings } from "../lib/desktop-settings.ts";
 import { desktopRuntimeTools } from "./desktop-runtime-tools.ts";
 import { desktopDedupeInlineExtension } from "./desktop-dedupe-extension.ts";
+import { desktopToolSearchAlignmentInlineExtension } from "./desktop-tool-search-alignment.ts";
 import {
   applyCacheWarmingPolicy,
   describeCacheWarming,
@@ -1137,6 +1138,8 @@ export async function startRpcSession(
         createToolSearchExtension(),
         createMcpExtension({ loadConfig: (ctx) => loadDesktopMcpConfig(agentDir, ctx.cwd, ctx.isProjectTrusted()) }),
         desktopApprovalInlineExtension(modeRef),
+        // tool_search 结果必须只含可调用的 wire name（旧注册名会让模型调不通）。
+        desktopToolSearchAlignmentInlineExtension(),
         // 每轮增量去重：重复 read / 重复命令只回一句或尾部差异（错误永远完整返回）。
         desktopDedupeInlineExtension(),
         desktopCompactionInlineExtension({

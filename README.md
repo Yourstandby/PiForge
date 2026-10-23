@@ -216,7 +216,7 @@ npm run dev:electron   # 桌面窗口（同时编译 Host 与 Electron 主进程
 Prompt 缓存按**字节级前缀**命中：system prompt 或 `tools` 数组抖一下，后面整段历史就按未命中重新计费。所以：
 
 1. **工具定序 + 装载锁定** —— 工具名强制 ASCII 字典序，同一状态原样复用上一份数组；默认只声明核心工具（`bash`/`edit`/`read`/`write`）+ 5 个多态工具。
-2. **多态工具（v0.8.3）** —— 20 个扩展工具按域收成 5 个：`browser` / `shell` / `fleet` / `orchestrator` / `memory`，用 `action` 分派。旧工具仍以 `deferred` 注册（`ctx.executeTool` 可调、UI 与审批沿用旧名字），只是不再各带一份 schema。实测扩展工具 3 035 → 2 585 tok，声明工具数 23 → 12。
+2. **多态工具（v0.8.3）** —— 20 个扩展工具按域收成 5 个：`browser` / `shell` / `fleet` / `orchestrator` / `memory`，用 `action` 分派。旧工具仍以 `deferred` 注册（`ctx.executeTool` 可调、UI 与审批沿用旧名字），只是不再各带一份 schema。实测扩展工具 3 035 → 1 913 tok，声明工具数 23 → 11。
 3. **动态工具存根** —— 扩展工具 > 5 个时只发「名字 + 一句话」目录；模型用 `tool_search` 或 `desktop_use_tool` 点名后才注入完整 schema。5 个多态工具与通道工具常驻声明，永远可调。
 4. **前缀度量基线** —— `npm run measure:prefix` 用本地记录型 provider 把真实请求体拆成 system/tools/历史三段算账，并与 pi CLI（仅 4 个核心工具）对比；`npm run smoke:prefix-budget` 是回归护栏。详见 `docs/measurements/README.md`。
 5. **工具输出预算** —— 命令/日志类 100 行 / 8KB，`read` 300 行 / 16KB，超出换成 `[输出过长已截断，共 X 行]` + grep/sed 续读提示；原文落盘，`tool_history_get` 可翻页；模型自己给的分页提示原样保留。
@@ -231,6 +231,29 @@ Prompt 缓存按**字节级前缀**命中：system prompt 或 `tools` 数组抖�
 | read 2000 行源码 | 37,087 | 2,679 | 93% |
 | bash 1500 行构建日志 | 17,590 | 985 | 94% |
 | browser_read 12KB 正文 | 5,779 | 1,600 | 72% |
+
+### 第 8 步：中频域按需激活（默认 `shell`）
+
+**做了什么**：把**中频域** `shell`（PowerShell + 后台进程）从「每轮声明」改成「首次用时
+`tool_search` 激活，之后棘轮常驻」。核心四件套与其余域不变。
+
+**为什么只对它**：30 轮真实会话里 `shell` 是除 `bash/read` 外唯一被真实调用的域（`shell×4`），
+其余域为 0 次 —— 把它们按需化只会付发现往返（第 5 步实测 memory/orchestrator 净收益为负，已回退）。
+`shell` 的 A/B：前缀 6 988 → **6 240**（每轮省 748），激活 4 600、回本 6.2 轮，
+30 轮净收益 ≈ **+13 200 tok**，命中率不变（97.98% vs 97.98%）。
+
+**同时修掉的根因**：`tool_search` 以前会把内部注册名（`run_bg`/`browser_read`…）返回给模型，
+wire name 对不上 → `unsupported call`。现在只返回可调用的 wire name、撤掉内部名的激活、
+并把 active 按 canonical 顺序重排（否则激活那轮是追加序、下一轮变字典序 = 两次前缀写入），
+结果文本里明确写「新工具下一轮再调，不要同轮连调」。
+
+**开关**：
+```bash
+PIFORGE_ON_DEMAND_DOMAINS=0            # 全部常驻（A 组，前缀 6 988）
+PIFORGE_ON_DEMAND_DOMAINS=1            # 两个低频域按需（历史配置）
+PIFORGE_ON_DEMAND_DOMAINS=browser,shell# 显式列表
+# 默认：shell
+```
 
 ### 第 7 步：当前状态与三条硬约束
 

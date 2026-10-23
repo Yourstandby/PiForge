@@ -3,6 +3,7 @@ import test from "node:test";
 import { desktopRuntimeTools } from "./desktop-runtime-tools.ts";
 import {
   ALWAYS_DECLARED_DOMAINS,
+  DEFAULT_ON_DEMAND_DOMAINS,
   ON_DEMAND_DOMAINS,
   enabledOnDemandDomains,
 } from "../lib/domain-tools.ts";
@@ -18,10 +19,10 @@ const REGISTERED = [
   { name: "tool_search", description: "" },
 ];
 
-function withOnDemand<T>(enabled: boolean, fn: () => T): T {
+function withEnvValue<T>(value: string | undefined, fn: () => T): T {
   const previous = process.env.PIFORGE_ON_DEMAND_DOMAINS;
-  if (enabled) process.env.PIFORGE_ON_DEMAND_DOMAINS = "1";
-  else delete process.env.PIFORGE_ON_DEMAND_DOMAINS;
+  if (value === undefined) delete process.env.PIFORGE_ON_DEMAND_DOMAINS;
+  else process.env.PIFORGE_ON_DEMAND_DOMAINS = value;
   try {
     return fn();
   } finally {
@@ -30,28 +31,42 @@ function withOnDemand<T>(enabled: boolean, fn: () => T): T {
   }
 }
 
-test("on-demand domains are OFF by default (step 5 measurement: the spike outweighs the saving)", () => {
-  assert.deepEqual(enabledOnDemandDomains({}), []);
-  assert.deepEqual(enabledOnDemandDomains({ PIFORGE_ON_DEMAND_DOMAINS: "1" }), [
-    ...ON_DEMAND_DOMAINS,
+test("defaults: shell is on-demand (step 8 A/B), low-frequency domains stay declared", () => {
+  assert.deepEqual(enabledOnDemandDomains({}), [...DEFAULT_ON_DEMAND_DOMAINS]);
+  assert.deepEqual([...DEFAULT_ON_DEMAND_DOMAINS], ["shell"]);
+  assert.deepEqual(enabledOnDemandDomains({ PIFORGE_ON_DEMAND_DOMAINS: "0" }), []);
+  assert.deepEqual(enabledOnDemandDomains({ PIFORGE_ON_DEMAND_DOMAINS: "1" }), [...ON_DEMAND_DOMAINS]);
+  assert.deepEqual(enabledOnDemandDomains({ PIFORGE_ON_DEMAND_DOMAINS: "browser,shell" }), [
+    "browser",
+    "shell",
   ]);
-  withOnDemand(false, () => {
+});
+
+test("with the default switch, only shell waits for tool_search", () => {
+  withEnvValue(undefined, () => {
     const declared = desktopRuntimeTools("full", "default", false, REGISTERED, []);
+    assert.ok(!declared.includes("shell"), "shell waits for tool_search by default");
     for (const domain of ON_DEMAND_DOMAINS) {
       assert.ok(declared.includes(domain), `${domain} is declared by default`);
+    }
+    for (const domain of ALWAYS_DECLARED_DOMAINS) {
+      if (DEFAULT_ON_DEMAND_DOMAINS.includes(domain)) continue;
+      assert.ok(declared.includes(domain), `${domain} must be declared by default`);
     }
   });
 });
 
-test("always-on domains are declared without activation", () => {
-  const declared = desktopRuntimeTools("full", "default", false, REGISTERED, []);
-  for (const domain of ALWAYS_DECLARED_DOMAINS) {
-    assert.ok(declared.includes(domain), `${domain} must be declared by default`);
-  }
+test("PIFORGE_ON_DEMAND_DOMAINS=0 declares everything (A group of the A/B)", () => {
+  withEnvValue("0", () => {
+    const declared = desktopRuntimeTools("full", "default", false, REGISTERED, []);
+    for (const domain of [...ALWAYS_DECLARED_DOMAINS, ...ON_DEMAND_DOMAINS]) {
+      assert.ok(declared.includes(domain), `${domain} must be declared with =0`);
+    }
+  });
 });
 
-test("with PIFORGE_ON_DEMAND_DOMAINS=1 the domains wait for tool_search", () => {
-  withOnDemand(true, () => {
+test("PIFORGE_ON_DEMAND_DOMAINS=1 moves memory/orchestrator behind tool_search", () => {
+  withEnvValue("1", () => {
     const declared = desktopRuntimeTools("full", "default", false, REGISTERED, []);
     for (const domain of ON_DEMAND_DOMAINS) {
       assert.ok(!declared.includes(domain), `${domain} must stay undeclared until activated`);

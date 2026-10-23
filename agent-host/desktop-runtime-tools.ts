@@ -1,10 +1,6 @@
 import type { ToolInfo } from "../lib/pi-types.ts";
 import { effectiveToolsForMode, type AgentMode, type ToolPreset } from "../lib/approval-policy.ts";
-import {
-  ALWAYS_DECLARED_DOMAINS,
-  ON_DEMAND_DOMAINS,
-  enabledOnDemandDomains,
-} from "../lib/domain-tools.ts";
+import { DOMAIN_TOOL_NAMES, enabledOnDemandDomains } from "../lib/domain-tools.ts";
 import { CLASSIFY_DECISION_TOOL_NAME, GENERATE_IMAGE_TOOL_NAME } from "./aux-tool-names.ts";
 import { TOOL_HISTORY_TOOL_NAME } from "./tool-outputs.ts";
 import { TOOL_USE_TOOL_NAME } from "./tool-stubs.ts";
@@ -36,16 +32,15 @@ export function desktopRuntimeTools(mode: AgentMode, preset: ToolPreset, codemod
   if (registered.some((tool) => tool.name === "tool_search")) names.push("tool_search");
   // 存根的点名加载通道（MCP 直曝 / 插件工具只能靠它拉回来）。
   if (registered.some((tool) => tool.name === TOOL_USE_TOOL_NAME)) names.push(TOOL_USE_TOOL_NAME);
-  // 多态工具：常驻域恒声明；按需域必须先被 `tool_search` 激活（active）才声明 ——
-  // 这一声明变化只发生一次，之后 latched loadout 保证前缀字节稳定。
-  for (const domain of ALWAYS_DECLARED_DOMAINS) {
-    if (registered.some((tool) => tool.name === domain)) names.push(domain);
-  }
+  // 多态工具：默认全常驻；被 `PIFORGE_ON_DEMAND_DOMAINS` 点名的域要等
+  // `tool_search` 激活（active）后才声明 —— 这一变化只发生一次，之后 latched
+  // loadout 保证前缀字节稳定。核心域（browser/shell/fleet/memory/orchestrator）
+  // 一视同仁，是否按需只由开关决定。
   const onDemand = enabledOnDemandDomains();
-  for (const domain of ON_DEMAND_DOMAINS) {
+  for (const domain of DOMAIN_TOOL_NAMES) {
     if (!registered.some((tool) => tool.name === domain)) continue;
-    // 默认（未开启按需）两个域常驻声明；开启后只有被 tool_search 激活过的才声明。
-    if (!onDemand.includes(domain) || active.includes(domain)) names.push(domain);
+    if (onDemand.includes(domain) && !active.includes(domain)) continue;
+    names.push(domain);
   }
   // Oversized tool outputs are persisted; the agent reads them back by page.
   if (registered.some((tool) => tool.name === TOOL_HISTORY_TOOL_NAME)) names.push(TOOL_HISTORY_TOOL_NAME);
