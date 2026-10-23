@@ -232,6 +232,27 @@ Prompt 缓存按**字节级前缀**命中：system prompt 或 `tools` 数组抖�
 | bash 1500 行构建日志 | 17,590 | 985 | 94% |
 | browser_read 12KB 正文 | 5,779 | 1,600 | 72% |
 
+### 第 7 步：当前状态与三条硬约束
+
+| 硬约束 | 落实结果 | 护栏 |
+| --- | --- | --- |
+| 不降质量 | 工具合并保留全部动作语义；按需域实测后回退常驻（避免发现往返与尖峰）；去重只作用于成功且重复的内容，错误永远完整 | `measure:increment`（错误原样）、`prefix-ratchet` 单测、真实会话 30 轮 |
+| 不删可感知功能 | 旧工具名仍可调用，UI/审批/i18n 沿用；设置页显示缓存保活真实状态 | `smoke:prefix-budget` 两种配置 + 全量测试 |
+| 不引入自动压缩 | 没有任何自动压缩/上下文改写；`applyAutoCompactionPolicy` 仍是「显式设置才开」 | `agent-host/rpc-manager.test.ts` |
+| 核心四件套 710 tok | 三个版本一致 | `measure:prefix` 的 core 列 |
+| 前缀 6 991 | 6 988–6 991（±3 来自仓库文档体积） | `smoke:prefix-budget --max-prefix 7200` |
+| 稳定段命中率 ≥ 98% | 记录型 provider 99.6%；真实会话 96–98%（provider 计费抖动） | 记录型 90% 硬门槛 + `measure:long-session --min-hit-rate 90` |
+
+**还没走的路**（按代价从低到高）：
+
+| 方案 | 预期收益 | 代价 |
+| --- | --- | --- |
+| 前缀瘦身的最后一公里：per-action 说明压到 1 句 | ≈ −1 000 tok/轮 | 语义降级，违反「不降质量」 |
+| 长会话（>100 轮）开启 `PIFORGE_ON_DEMAND_DOMAINS=1` | −617 tok/轮 | 首次使用 +1 往返 + 一次前缀重写 |
+| 关闭输出风格/回复语言附加项（设置项已存在） | −298 tok/轮 | 用户可感知的风格约束消失 |
+| 用 provider 侧上下文裁剪替代历史摘要 | 上下文线性下降 | 信息丢失不可控，且触碰「不自动压缩」红线 |
+| 自建 tokenizer 精确计费联动 | 更准的成本显示 | 维护成本高、收益只是可观测性 |
+
 调试开关：`PIFORGE_DEBUG_PREFIX=1`（打印前缀哪一段变了 + 首个差异字符）、`PIFORGE_DEBUG_COMPACT=1`（压缩触发原因与体积）、`PIFORGE_PREFIX_STRIP_CWD=1`（把 cwd 从 system prompt 挪进用户消息，默认关闭 —— 会话内 cwd 是常量，挪走反而多付 token）。
 
 ## 📦 打包与发布

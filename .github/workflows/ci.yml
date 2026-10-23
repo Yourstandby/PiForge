@@ -50,6 +50,51 @@ jobs:
         timeout-minutes: 5
         run: npm test
 
+  token-guards:
+    name: token guards (prefix · cache · dedupe)
+    runs-on: ubuntu-latest
+    # 只有配置了 secret 才会跑真实模型会话；其余护栏不需要任何凭据。
+    env:
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build agent host
+        run: npm run build:agent-host
+
+      # 静态前缀 ≤7200、稳定段命中率 ≥90%、每轮新增 token 中位数 ≤200、
+      # transcript 字段白名单、按需域激活 + 前缀棘轮（两种配置）。
+      - name: Prefix / cache / transcript guards
+        timeout-minutes: 10
+        run: npm run smoke:prefix-budget
+
+      # 工具结果去重 A/B：命中 ≥1、错误原样、请求体下降。
+      - name: Tool-result dedupe A/B
+        timeout-minutes: 10
+        run: npm run measure:increment
+
+      # 真实模型会话（需要仓库 secret DEEPSEEK_API_KEY；没有就跳过并说明）。
+      - name: Real 30-turn session (skips without secret)
+        id: long_session
+        if: ${{ env.DEEPSEEK_API_KEY != '' }}
+        timeout-minutes: 25
+        run: npm run measure:long-session
+
+      - name: Note when the real-session guard was skipped
+        if: ${{ env.DEEPSEEK_API_KEY == '' }}
+        run: echo "::notice::DEEPSEEK_API_KEY not configured — skipping measure:long-session"
+
   build:
     name: build (next.js)
     runs-on: ubuntu-latest

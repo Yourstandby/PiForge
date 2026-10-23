@@ -47,6 +47,8 @@ const outFile = valueOf("--out");
 const minHitRate = Number(valueOf("--min-hit-rate") ?? 0);
 /** 稳定段每轮未缓存 input 的中位数上限（0 = 不检查）。 */
 const maxMedianInput = Number(valueOf("--max-median-input") ?? 0);
+/** CI 里没有 ~/.pi/auth.json：允许用环境变量提供凭据。 */
+const envApiKey = process.env.DEEPSEEK_API_KEY?.trim();
 const TIMEOUT_MS = 180_000;
 
 /** 30 轮的任务脚本：每轮都真的需要工具，且第 3 / 17 轮会触发按需域激活。 */
@@ -189,14 +191,24 @@ const sourceAuth = path.join(
   process.env.PI_CODING_AGENT_DIR ?? path.join(homeDir, ".pi", "agent"),
   "auth.json"
 );
-  if (!existsSync(sourceAuth)) {
-    console.error(`no auth.json at ${sourceAuth} — 真实模型实测需要登录凭据`);
+  if (!envApiKey && !existsSync(sourceAuth)) {
+    console.error(
+      `no auth.json at ${sourceAuth} and no DEEPSEEK_API_KEY — 真实模型实测需要登录凭据`
+    );
     process.exit(2);
   }
 
   const agentDir = mkdtempSync(path.join(tmpdir(), "piforge-long-agent-"));
   mkdirSync(agentDir, { recursive: true });
-  copyFileSync(sourceAuth, path.join(agentDir, "auth.json"));
+  if (envApiKey) {
+    writeFileSync(
+      path.join(agentDir, "auth.json"),
+      `${JSON.stringify({ deepseek: { type: "api_key", key: envApiKey } }, null, 2)}
+`
+    );
+  } else {
+    copyFileSync(sourceAuth, path.join(agentDir, "auth.json"));
+  }
   writeFileSync(
     path.join(agentDir, "settings.json"),
     `${JSON.stringify({ defaultProvider: provider, defaultModel: modelId, defaultProjectTrust: "always", cacheWarming: "idle" }, null, 2)}\n`
@@ -293,6 +305,13 @@ const sourceAuth = path.join(
     } catch {
       /* keep temp dir */
     }
+  }
+
+  // 认证/配额失败时 provider 不报错、只是没有任何输出：显式失败，避免 CI 静默变绿。
+  const producedOutput = rows.some((row) => row.delta.output > 0);
+  if (!producedOutput) {
+    console.error("no model output in any turn — 检查凭据 / 配额 / 网络（不做命中率断言）");
+    process.exit(2);
   }
 
   // 稳定段命中率：跳过第 1 轮（冷启动）与任何 cacheWrite 明显的轮次（激活/前缀变化）。
