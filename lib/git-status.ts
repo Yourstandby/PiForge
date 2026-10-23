@@ -123,8 +123,87 @@ export async function resolveGitRepoRoot(
   return path.resolve(root);
 }
 
+/**
+ * 扫描结果缓存 + 单飞（single-flight）。
+ *
+ * 为什么必须做：文件树（每 20s）、Git 面板（每 12s）、刷新键变化（agent 每次写文件）
+ * 三条路径会**同时**要 `git status`，而每次扫描 = 新建一个 worker + 两个 git 进程。
+ * 本机实测同一仓库并发 4 次扫描时，每次从 250ms 涨到 2.5–4s（git 抢 index.lock），
+ * 这段时间全落在 Agent Host 的 CPU 上（空闲实测 5–7% 全在这里）。
+ *
+ * 语义：
+ *   - 3s 内的重复请求直接吃缓存（同 cwd + 同 runner）；
+ *   - 正在跑的扫描被后续请求复用（不再并发起 worker）；
+ *   - 写操作后想立刻看结果时用 `invalidateGitStatus(cwd)` 显式失效。
+ */
+const GIT_STATUS_TTL_MS = 3_000;
+const statusCache = new Map<
+  string,
+  { at: number; value?: GitStatusResult; promise?: Promise<GitStatusResult> }
+>();
+
+/**
+ * 缓存键 = 扫描器身份 + 规范化 cwd。
+ *
+ * 生产只有默认 runner（`runGitProcess`），因此等价于"按 cwd 缓存"；
+ * 测试注入不同的 fake runner 时各用各的键，不会互相串味（同一个 fake 仍然
+ * 命中缓存，单飞/TTL 才可测）。
+ */
+const runnerIds = new WeakMap<GitRunner, number>();
+let nextRunnerId = 0;
+function cacheKey(runner: GitRunner, cwd: string): string {
+  let id = runnerIds.get(runner);
+  if (id === undefined) {
+    nextRunnerId += 1;
+    id = nextRunnerId;
+    runnerIds.set(runner, id);
+  }
+  return `${id}|${path.resolve(cwd)}`;
+}
+
+/** 读写操作（commit/apply）之后调用，让下一次读一定重新扫描。 */
+export function invalidateGitStatus(cwd?: string): void {
+  if (!cwd) {
+    statusCache.clear();
+    branchCache.clear();
+    return;
+  }
+  const suffix = `|${path.resolve(cwd)}`;
+  for (const key of [...statusCache.keys()]) {
+    if (key.endsWith(suffix)) statusCache.delete(key);
+  }
+  for (const key of [...branchCache.keys()]) {
+    if (key.endsWith(suffix)) branchCache.delete(key);
+  }
+}
+
 /** Changed files of the repository containing `cwd`, mapped back to cwd-relative paths. */
 export async function readGitStatus(
+  cwd: string,
+  runner: GitRunner = runGitProcess,
+): Promise<GitStatusResult> {
+  const key = cacheKey(runner, cwd);
+  const cached = statusCache.get(key);
+  const now = Date.now();
+  if (cached) {
+    if (cached.promise) return cached.promise;
+    if (cached.value && now - cached.at < GIT_STATUS_TTL_MS) return cached.value;
+  }
+
+  const promise = scanGitStatus(cwd, runner)
+    .then((value) => {
+      statusCache.set(key, { at: Date.now(), value });
+      return value;
+    })
+    .catch((error: unknown) => {
+      statusCache.delete(key);
+      throw error;
+    });
+  statusCache.set(key, { at: now, promise });
+  return promise;
+}
+
+async function scanGitStatus(
   cwd: string,
   runner: GitRunner = runGitProcess,
 ): Promise<GitStatusResult> {
@@ -179,6 +258,24 @@ export async function readGitStatus(
   return { repoRoot, files };
 }
 
+export interface GitSnapshotResult extends GitStatusResult {
+  /** 当前分支；detached HEAD 时为 null（与 `readGitBranch` 一致）。 */
+  branch: string | null;
+}
+
+/**
+ * 文件树 / Git 面板要的完整快照：status + branch，共用一份缓存。
+ *
+ * 之前路由里是 `readGitStatus()` 再 `readGitBranch()`，后者每次还要两个 git 进程；
+ * 现在合并成一次 `git status` + 一次 `rev-parse`（复用 status 已经算出的 repoRoot），
+ * 并且在 3s 内重复请求直接命中缓存。
+ */
+export async function readGitSnapshot(cwd: string): Promise<GitSnapshotResult> {
+  const status = await readGitStatus(cwd);
+  const branch = await readGitBranch(cwd, runGitProcess, status.repoRoot);
+  return { ...status, branch };
+}
+
 function assertInsideCwd(cwd: string, target: string): string {
   const resolvedCwd = path.resolve(cwd);
   const resolvedTarget = path.isAbsolute(target)
@@ -229,12 +326,36 @@ export async function readGitDiff(
 }
 
 /** Current branch name, or null when detached / unavailable. */
+/**
+ * 分支名缓存（与 status 同一个 TTL 语义）。
+ *
+ * 为什么必须缓存：`readGitBranch` 每次要**两个** git 进程（toplevel + abbrev-ref），
+ * 本机实测单次 228 ms —— 而 Git 面板与文件树每次刷新都会问一次，纯浪费。
+ * 传入 `knownRepoRoot` 可以省掉第一个进程。
+ */
+const branchCache = new Map<string, { at: number; promise: Promise<string | null> }>();
+
 export async function readGitBranch(
   cwd: string,
   runner: GitRunner = runGitProcess,
+  knownRepoRoot?: string,
+): Promise<string | null> {
+  const key = cacheKey(runner, cwd);
+  const cached = branchCache.get(key);
+  if (cached && Date.now() - cached.at < GIT_STATUS_TTL_MS) return cached.promise;
+
+  const promise = scanGitBranch(cwd, runner, knownRepoRoot).catch(() => null);
+  branchCache.set(key, { at: Date.now(), promise });
+  return promise;
+}
+
+async function scanGitBranch(
+  cwd: string,
+  runner: GitRunner = runGitProcess,
+  knownRepoRoot?: string,
 ): Promise<string | null> {
   try {
-    const repoRoot = await resolveGitRepoRoot(cwd, runner);
+    const repoRoot = knownRepoRoot ?? (await resolveGitRepoRoot(cwd, runner));
     const result = await runner(["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repoRoot });
     const branch = result.stdout.trim();
     if (result.code !== 0 || !branch) return null;

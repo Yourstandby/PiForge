@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { errorMessage, getRequestId, jsonError, logApiError } from "@/lib/api-error";
 import { authorizeHostPath, hostFileAccessError } from "@/lib/host-files";
-import { GitStatusError, readGitBranch, readGitStatus } from "@/lib/git-status";
+import { GitStatusError, readGitSnapshot } from "@/lib/git-status";
 
 export const dynamic = "force-dynamic";
 
@@ -17,10 +17,10 @@ export async function GET(req: Request) {
     } catch (error) {
       return hostFileAccessError(req, error, "/api/git/status", "GET");
     }
-    const result = await readGitStatus(cwd);
-    // Branch name is best-effort: a detached HEAD must not fail the listing.
-    const branch = await readGitBranch(cwd);
-    return NextResponse.json({ ...result, branch });
+    // status + branch 合成一次快照：共用 3s 缓存，branch 复用 status 已算出的
+    // repoRoot，省掉一次 `git rev-parse --show-toplevel`（实测每次 228ms）。
+    const snapshot = await readGitSnapshot(cwd);
+    return NextResponse.json(snapshot);
   } catch (error) {
     if (error instanceof GitStatusError && error.code === "NOT_GIT_REPOSITORY") {
       return NextResponse.json({ repoRoot: null, files: [], branch: null, notGitRepo: true });
