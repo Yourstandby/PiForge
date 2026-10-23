@@ -46,6 +46,7 @@
     "smoke:shell": "node scripts/check-pack-order.mjs && node scripts/smoke-static-freshness.mjs",
     "measure:idle": "node scripts/measure-app-processes.mjs --seconds 8 --max-idle-cpu 10",
     "smoke:prefix-budget": "node scripts/smoke-prefix-budget.mjs",
+    "audit:subagent": "node scripts/audit-subagent-share.mjs",
     "audit:token": "node scripts/audit-token-usage.mjs",
     "audit:route-heap": "node scripts/audit-route-heap.mjs",
     "measure:long-session": "node scripts/measure-long-session.mjs --turns 30 --model deepseek-flash --min-hit-rate 90 --max-median-input 1500",

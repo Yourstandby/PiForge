@@ -61,20 +61,39 @@
     采纳后 7 天内该用户 cacheRead 中位变化；
   - 样本：同一用户内部 A/B（按会话奇偶轮换），≥40 次提示机会。
 
-### L-C subagent 上下文隔离
+### L-C subagent 上下文隔离（**已量化 → 不立项**）
 
-- **做法**：orchestrator/subagent 会话默认**不继承**父会话 transcript（只传任务描述 +
-  必要上下文），避免父上下文（可能 200k+）在每个子 agent 的每次调用里被重复 cacheRead。
-- **预估影响**：本样本 57/60 会话在开发目录、含大量 subagent —— 这条**可能是最大的**，
-  但目前**无实测分解**（审计脚本没有按 parentSessionId 归组子会话的成本）。
-  需要先补审计：把 cacheRead 按 `parentSessionId` 聚合，看子会话占多少。
-- **成功率风险**：**中高**。子 agent 缺上下文会重复探查（多轮 grep/read），
-  端到端可能更慢、更贵。
-- **A/B 设计**：先做**观测项**（见 §5 的 P0 前置），再决定是否实验：
-  - 观测：`route-heap` 同级加一个 `audit-subagent-context.mjs`，统计
-    "子会话 cacheRead 总量 / 父会话 cacheRead 总量"；
-  - 若占比 ≥25%，再做 A/B：A=继承（现状）/B=隔离；
-  - 指标：端到端任务耗时、总 tok、成功率。
+> 实测脚本：`node scripts/audit-subagent-share.mjs --days 365`（数据：本机 60 个会话 /
+> 10 390 次请求 / cacheRead 2 152 884 864 tok / $23.10）。
+
+**先纠正一个前提**：这条杠杆描述的"子会话继承父 transcript 导致重复 cacheRead"在
+PiForge **已经不存在**：
+
+| 事实（读 `agent-host/subagents.ts`） | 实测 |
+|---|---|
+| 子 Agent 会话是 `SessionManager.inMemory(cwd)` | ✅ 不落盘、**不继承父 transcript** |
+| `noContextFiles: true` / `noExtensions` / `noSkills` | ✅ 不读父级上下文文件 |
+| 独立 `childSystemPrompt`（固定文案 ≈ **71 tok** + 工具清单 + cwd） | ✅ 与父前缀 6 640 tok 无关 |
+| `MAX_DISCUSSION_TURNS = 3`（第 4 轮直接拒绝） | ✅ 硬闸门 |
+| `CONTEXT_BREAKER_TOKENS = 10 000`（单轮超限即中断） | ✅ 硬闸门 |
+| `MAX_PARENT_REPORT_CHARS = 1 200`（回包摘要上限） | ✅ 硬闸门 |
+
+**占比实测**（口径写在脚本里，避免把推导当实测）：
+
+- **派发频率**：60 个会话里 **2 个**（3.33%）用过派发，共 **3 次**派发调用
+  （`herdr_spawn` 1 / `orchestrator_spawn` 1 / `spawn_agent` 1），占全部工具调用 **0.027%**；
+- **有派发的会话并不更贵**：这些父会话每调用 cacheRead **89 911 tok**，
+  反而低于无派发会话的 **214 187 tok**（请求级中位 146 176 / p90 491 392）；
+- **子 Agent 成本上界**：3 轮 × 10 000 tok = **30 000 tok/次**，
+  3 次合计 **90 000 tok**，占观测 cacheRead 的 **0.004%**；
+  换算成父调用：**一次派发 ≈ 0.21 次父调用**。
+
+**结论**：L-C 的实测占比上界 **0.004%**（远低于 25% 的立项线），且隔离机制**已在代码里**，
+再做"隔离改造"没有可省的 token。**不立项**，从 P0/P3 中移除；保留为"已具备的能力"记录。
+
+- **唯一还能做的小事**（可选，0.1 天）：Agent 面板显示每次派发的实际 tok
+  （现在只有 `assistantTurns` 与 `contextTokens`，没有累计 cacheRead），
+  纯粹为了可观测性，不影响行为。
 
 ### L-D 长工具输出落盘阈值
 
@@ -96,7 +115,7 @@
 | **L-D 长工具输出落盘阈值** | −5~15k（低风险、可逆） | 低 | 0.5 天 | **先做**（最安全的第一个实验） |
 | **L-B 会话拆分建议** | 截断长尾（本样本 66% 成本集中） | 低（纯提示） | 1 天 | **先做**（与 L-D 并行） |
 | L-A 压缩触发点前移 | 143k → 95–110k（主收益） | 中 | 1–2 天 | 第二个（需要 L-D 的 A/B 经验） |
-| L-C subagent 上下文隔离 | 可能最大，**未量化** | 中高 | 2–3 天 | 先补观测再立项 |
+| ~~L-C subagent 上下文隔离~~ | **实测占比上界 0.004%**，且已隔离 | — | — | **不立项**（见 L-C 节） |
 
 ## 4. 成功判据（硬指标）
 
@@ -117,10 +136,10 @@
 
 | 阶段 | 内容 | 产出 | 前置 |
 |---|---|---|---|
-| P0（0.5 天） | 补观测：把 cacheRead 按 `parentSessionId` 聚合，量化 subagent 占比 | `audit-token-usage.mjs --by-session-tree` | 无 |
-| P1（1.5 天） | L-D + L-B 的 A/B（两者互不影响，可同时跑） | 两个 A/B 报告 | P0 |
+| P0（已完成） | ~~量化 subagent 占比~~ | `scripts/audit-subagent-share.mjs` → **0.004%** | 无 |
+| P1（1 天） | L-D + L-B 的 A/B（两者互不影响，可同时跑） | `docs/optimizations/context-governance-ab.md` + 两份 A/B 报告 | P0 |
 | P2（2 天） | L-A 压缩阈值 A/B | A/B 报告 + 是否默认开启的结论 | P1 |
-| P3（按 P0 结论） | L-C subagent 隔离 | 立项或放弃 | P0 占比 ≥25% |
+| ~~P3~~ | ~~L-C subagent 隔离~~ | **不立项**：已隔离且占比上界 0.004% | — |
 
 **门禁**：任何一项要"默认开启"，必须同时满足 §4 的四条；否则只保留设置项/提示，
 不改默认行为。每一轮改动后仍要 `npm run smoke:prefix-budget` exit 0
