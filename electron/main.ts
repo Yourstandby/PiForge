@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, nativeImage, protocol, session, sh
 import type { UpdateInfo } from "electron-updater";
 import path from "path";
 import { randomBytes } from "crypto";
-import { appendFileSync, existsSync, mkdirSync } from "fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { spawn, spawnSync } from "child_process";
 import net from "net";
 import { createTray } from "./tray";
@@ -27,6 +27,13 @@ import {
   STATIC_APP_ORIGIN,
   STATIC_APP_SCHEME,
 } from "./static-app";
+import {
+  GPU_EVIDENCE_FILE,
+  parseGpuEvidence,
+  recordGpuObservation,
+  resolveGpuMode,
+  type GpuEvidence,
+} from "./gpu-preference";
 import { getAppIconPath } from "./app-icon";
 import { applyTitleBarOverlayTheme, titleBarOverlayOptions } from "./title-bar-overlay";
 import { normalizeWindowPath } from "./window-path";
@@ -64,10 +71,70 @@ if (process.env.SMOKE_BROWSER === "1") {
  * 干净的 PiForge 采内存/启动数据。单实例锁是跟着 userData 走的，所以必须在
  * `requestSingleInstanceLock()` 之前改路径。
  */
+/**
+ * 隔离 userData（`PIFORGE_USER_DATA`）。
+ *
+ * 必须在最前面：单实例锁与「GPU 证据文件」都跟着 userData 走。
+ * 用途：`measure-packaged` 在不影响正在使用的实例的前提下起干净实例采样。
+ */
 const userDataOverride = process.env.PIFORGE_USER_DATA?.trim();
 if (userDataOverride) {
   app.setPath("userData", path.resolve(userDataOverride));
 }
+
+/**
+ * GPU/版本取证（B 项需要跨机器对齐时的事实来源）。
+ *
+ * 记录三样东西，全部来自运行中的进程：
+ *   1. `process.versions`（Electron / Chromium / Node / V8）；
+ *   2. `app.getGPUFeatureStatus()`（硬件加速到底有没有生效、哪些特性被 blocklist）；
+ *   3. 与合成相关的 Chromium switch（GPU 进程的 RSS 主要由它们决定）。
+ *
+ * 分析 gpu 进程内存时如果只有 RSS 没有这三样，等于没法判断"版本差"还是"基线"。
+ */
+const GPU_SWITCH_PREFIXES = ["--disable-gpu", "--use-gl", "--use-angle", "--enable-features", "--disable-features", "--enable-gpu", "--force-device-scale-factor", "--in-process-gpu"];
+
+function gpuSwitchesFrom(argv: string[]): string[] {
+  return argv.filter((arg) => GPU_SWITCH_PREFIXES.some((prefix) => arg.startsWith(prefix)));
+}
+
+/**
+ * 自适应 GPU 策略（见 electron/gpu-preference.ts 的推理与实测数据）。
+ *
+ * 读上一轮落盘的 `gpu-evidence.json`：连续 2 次观察到"软件合成"才在本轮
+ * 加 `--disable-gpu`（省 ~100 MB gpu 进程，实测 254.7 → 155.7 MB）。
+ * 硬件加速可用的机器永远不会被切（证据里是 `enabled`）。
+ */
+function readGpuEvidence(): GpuEvidence | null {
+  try {
+    const file = path.join(app.getPath("userData"), GPU_EVIDENCE_FILE);
+    return parseGpuEvidence(existsSync(file) ? readFileSync(file, "utf8") : null);
+  } catch {
+    return null;
+  }
+}
+
+const gpuDecision = resolveGpuMode({ evidence: readGpuEvidence(), env: process.env });
+for (const name of gpuDecision.switches) app.commandLine.appendSwitch(name);
+
+/**
+ * 实验用 GPU 开关：`PIFORGE_GPU_FLAGS="--disable-gpu-compositing,--use-angle=d3d11"`。
+ * 只在 `app.ready` 之前生效，且**不改变默认行为**（不设就是 Chromium 默认）。
+ */
+const gpuFlagsEnv = process.env.PIFORGE_GPU_FLAGS?.trim();
+if (gpuFlagsEnv) {
+  for (const flag of gpuFlagsEnv.split(",").map((entry) => entry.trim()).filter(Boolean)) {
+    const [name, value] = flag.split("=");
+    if (value === undefined) app.commandLine.appendSwitch(name.replace(/^--/, ""));
+    else app.commandLine.appendSwitch(name.replace(/^--/, ""), value);
+  }
+}
+
+/** 实验用：`PIFORGE_DISABLE_HW_ACCEL=1` 走软件合成（等价于关硬件加速）。 */
+if (process.env.PIFORGE_DISABLE_HW_ACCEL === "1") {
+  app.disableHardwareAcceleration();
+}
+
 
 // ---------------------------------------------------------------------------
 // Single Instance Lock
@@ -1473,6 +1540,50 @@ app.whenReady().then(async () => {
   }
   startupStartedAt = Date.now();
   logStartupTiming("app ready");
+  logInfo("Runtime versions", {
+    electron: process.versions.electron,
+    chromium: process.versions.chrome,
+    node: process.versions.node,
+    v8: process.versions.v8,
+    gpuSwitches: gpuSwitchesFrom(process.argv),
+    gpuEnvFlags: gpuFlagsEnv ?? null,
+    hardwareAccelerationDisabled: process.env.PIFORGE_DISABLE_HW_ACCEL === "1",
+    gpuFeatureStatus: (() => {
+      try {
+        return app.getGPUFeatureStatus();
+      } catch {
+        return null;
+      }
+    })(),
+  });
+  // 记录本轮 GPU 观测，供下一轮 decide（softwareLaunches 计数 + 30 天过期）。
+  try {
+    const observed = (() => {
+      try {
+        return app.getGPUFeatureStatus().gpu_compositing;
+      } catch {
+        return null;
+      }
+    })();
+    const evidence = recordGpuObservation(readGpuEvidence(), observed);
+    mkdirSync(app.getPath("userData"), { recursive: true });
+    writeFileSync(
+      path.join(app.getPath("userData"), GPU_EVIDENCE_FILE),
+      `${JSON.stringify(evidence, null, 2)}
+`,
+      "utf8",
+    );
+    logInfo("GPU mode", {
+      mode: gpuDecision.mode,
+      reason: gpuDecision.reason,
+      switches: gpuDecision.switches,
+      observedCompositing: observed,
+      evidence,
+    });
+  } catch (error) {
+    logError("Failed to record GPU evidence", error);
+  }
+
   registerIpcHandlers();
   installWebviewGuests();
 
