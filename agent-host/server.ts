@@ -763,6 +763,27 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
         status: response.status,
         headers: responseHeaders,
         bodyBase64: buffer.toString("base64"),
+        // `PIFORGE_HEAP_PROBE=1`：把 Host 当前 heap 一起回报，
+        // 供 scripts/audit-route-heap.mjs 归档"每条路由首载把多少字节变成常驻"。
+        ...(process.env.PIFORGE_HEAP_PROBE === "1"
+          ? {
+              // 先强制 GC 再读：这样 heapUsed 是"被保留下来的常驻字节"，
+              // 不含本次请求的临时分配（否则每条路由都 +几 MB 假增量）。
+              // 需要宿主以 `node --expose-gc` 启动（audit-route-heap.mjs 会这么起）。
+              hostHeapUsed: (() => {
+                // @types/node 已声明 `gc?: GCFunction`（--expose-gc 才存在）。
+                const gc = globalThis.gc;
+                if (typeof gc === "function") {
+                  try {
+                    gc();
+                  } catch {
+                    // 忽略：没有 --expose-gc 时退化为普通读取
+                  }
+                }
+                return process.memoryUsage().heapUsed;
+              })(),
+            }
+          : {}),
       });
       return;
     }

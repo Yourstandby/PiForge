@@ -1,0 +1,495 @@
+{
+  "generatedAt": "2026-10-23T13:39:51.644Z",
+  "routes": [
+    {
+      "route": "/api/auth/all-providers",
+      "status": 200,
+      "ms": 189,
+      "hostHeapKb": 39741,
+      "heapDeltaKb": 2587
+    },
+    {
+      "route": "/api/upstream/versions",
+      "status": 200,
+      "ms": 1054,
+      "hostHeapKb": 41200,
+      "heapDeltaKb": 726
+    },
+    {
+      "route": "/api/auth/login/[provider]",
+      "status": 400,
+      "ms": 11,
+      "hostHeapKb": 36912,
+      "heapDeltaKb": 282
+    },
+    {
+      "route": "/api/sessions/[id]/branches",
+      "status": 500,
+      "ms": 430,
+      "hostHeapKb": 36995,
+      "heapDeltaKb": 268
+    },
+    {
+      "route": "/api/models",
+      "status": 200,
+      "ms": 95,
+      "hostHeapKb": 42233,
+      "heapDeltaKb": 266
+    },
+    {
+      "route": "/api/models/auxiliary",
+      "status": 200,
+      "ms": 45,
+      "hostHeapKb": 40464,
+      "heapDeltaKb": 249
+    },
+    {
+      "route": "/api/usage/upstream",
+      "status": 200,
+      "ms": 303,
+      "hostHeapKb": 41388,
+      "heapDeltaKb": 188
+    },
+    {
+      "route": "/api/auth/providers",
+      "status": 200,
+      "ms": 92,
+      "hostHeapKb": 39921,
+      "heapDeltaKb": 180
+    },
+    {
+      "route": "/api/extensions",
+      "status": 200,
+      "ms": 38,
+      "hostHeapKb": 41799,
+      "heapDeltaKb": 166
+    },
+    {
+      "route": "/api/environment",
+      "status": 200,
+      "ms": 1384,
+      "hostHeapKb": 41633,
+      "heapDeltaKb": 145
+    },
+    {
+      "route": "/api/fx",
+      "status": 200,
+      "ms": 835,
+      "hostHeapKb": 41963,
+      "heapDeltaKb": 135
+    },
+    {
+      "route": "/api/git/commit",
+      "status": 405,
+      "ms": 14,
+      "hostHeapKb": 40048,
+      "heapDeltaKb": 119
+    },
+    {
+      "route": "/api/agent/[id]/events",
+      "status": 404,
+      "ms": 68,
+      "hostHeapKb": 36564,
+      "heapDeltaKb": 87
+    },
+    {
+      "route": "/api/files/apply",
+      "status": 405,
+      "ms": 11,
+      "hostHeapKb": 39929,
+      "heapDeltaKb": 87
+    },
+    {
+      "route": "/api/files/[...path]",
+      "status": 403,
+      "ms": 15,
+      "hostHeapKb": 41429,
+      "heapDeltaKb": 75
+    },
+    {
+      "route": "/api/upstream",
+      "status": 200,
+      "ms": 319,
+      "hostHeapKb": 40472,
+      "heapDeltaKb": 73
+    },
+    {
+      "route": "/api/sessions/[id]/export",
+      "status": 404,
+      "ms": 14,
+      "hostHeapKb": 37151,
+      "heapDeltaKb": 59
+    },
+    {
+      "route": "/api/sessions/[id]/clone",
+      "status": 405,
+      "ms": 12,
+      "hostHeapKb": 37050,
+      "heapDeltaKb": 55
+    },
+    {
+      "route": "/api/auth/logout/[provider]",
+      "status": 405,
+      "ms": 12,
+      "hostHeapKb": 36963,
+      "heapDeltaKb": 51
+    },
+    {
+      "route": "/api/memory/health",
+      "status": 200,
+      "ms": 17,
+      "hostHeapKb": 40182,
+      "heapDeltaKb": 45
+    },
+    {
+      "route": "/api/sessions/[id]/context",
+      "status": 404,
+      "ms": 12,
+      "hostHeapKb": 37092,
+      "heapDeltaKb": 42
+    },
+    {
+      "route": "/api/agent/[id]/intervene",
+      "status": 405,
+      "ms": 11,
+      "hostHeapKb": 36603,
+      "heapDeltaKb": 39
+    },
+    {
+      "route": "/api/auth/api-key/[provider]",
+      "status": 400,
+      "ms": 11,
+      "hostHeapKb": 36630,
+      "heapDeltaKb": 27
+    },
+    {
+      "route": "/api/mcp/auth",
+      "status": 400,
+      "ms": 13,
+      "hostHeapKb": 40101,
+      "heapDeltaKb": 26
+    },
+    {
+      "route": "/api/sessions/[id]",
+      "status": 404,
+      "ms": 14,
+      "hostHeapKb": 41455,
+      "heapDeltaKb": 26
+    },
+    {
+      "route": "/api/skills/install",
+      "status": 405,
+      "ms": 14,
+      "hostHeapKb": 40496,
+      "heapDeltaKb": 25
+    },
+    {
+      "route": "/api/fleet",
+      "status": 200,
+      "ms": 11,
+      "hostHeapKb": 41828,
+      "heapDeltaKb": 25
+    },
+    {
+      "route": "/api/subagents",
+      "status": 200,
+      "ms": 11,
+      "hostHeapKb": 40375,
+      "heapDeltaKb": 25
+    },
+    {
+      "route": "/api/desktop-settings",
+      "status": 200,
+      "ms": 18,
+      "hostHeapKb": 41488,
+      "heapDeltaKb": 24
+    },
+    {
+      "route": "/api/mcp",
+      "status": 200,
+      "ms": 15,
+      "hostHeapKb": 41967,
+      "heapDeltaKb": 21
+    },
+    {
+      "route": "/api/git/diff",
+      "status": 400,
+      "ms": 12,
+      "hostHeapKb": 40066,
+      "heapDeltaKb": 18
+    },
+    {
+      "route": "/api/skills",
+      "status": 400,
+      "ms": 11,
+      "hostHeapKb": 40333,
+      "heapDeltaKb": 18
+    },
+    {
+      "route": "/api/statusline",
+      "status": 400,
+      "ms": 11,
+      "hostHeapKb": 40350,
+      "heapDeltaKb": 17
+    },
+    {
+      "route": "/api/models-config/test",
+      "status": 405,
+      "ms": 12,
+      "hostHeapKb": 40215,
+      "heapDeltaKb": 14
+    },
+    {
+      "route": "/api/providers",
+      "status": 200,
+      "ms": 12,
+      "hostHeapKb": 42194,
+      "heapDeltaKb": 14
+    },
+    {
+      "route": "/api/trust",
+      "status": 400,
+      "ms": 11,
+      "hostHeapKb": 40399,
+      "heapDeltaKb": 14
+    },
+    {
+      "route": "/api/mcp/resources",
+      "status": 400,
+      "ms": 11,
+      "hostHeapKb": 40113,
+      "heapDeltaKb": 12
+    },
+    {
+      "route": "/api/herdr",
+      "status": 200,
+      "ms": 12,
+      "hostHeapKb": 41941,
+      "heapDeltaKb": 12
+    },
+    {
+      "route": "/api/plugins",
+      "status": 200,
+      "ms": 12,
+      "hostHeapKb": 42169,
+      "heapDeltaKb": 11
+    },
+    {
+      "route": "/api/processes",
+      "status": 200,
+      "ms": 13,
+      "hostHeapKb": 42180,
+      "heapDeltaKb": 11
+    },
+    {
+      "route": "/api/memory/stats",
+      "status": 400,
+      "ms": 11,
+      "hostHeapKb": 40201,
+      "heapDeltaKb": 10
+    },
+    {
+      "route": "/api/tool-outputs",
+      "status": 405,
+      "ms": 12,
+      "hostHeapKb": 40385,
+      "heapDeltaKb": 10
+    },
+    {
+      "route": "/api/git/status",
+      "status": 400,
+      "ms": 12,
+      "hostHeapKb": 40075,
+      "heapDeltaKb": 9
+    },
+    {
+      "route": "/api/mcp/test",
+      "status": 405,
+      "ms": 12,
+      "hostHeapKb": 40122,
+      "heapDeltaKb": 9
+    },
+    {
+      "route": "/api/mcp/toggle",
+      "status": 405,
+      "ms": 13,
+      "hostHeapKb": 40131,
+      "heapDeltaKb": 9
+    },
+    {
+      "route": "/api/memory/remember",
+      "status": 405,
+      "ms": 11,
+      "hostHeapKb": 40191,
+      "heapDeltaKb": 9
+    },
+    {
+      "route": "/api/default-cwd",
+      "status": 405,
+      "ms": 14,
+      "hostHeapKb": 41464,
+      "heapDeltaKb": 9
+    },
+    {
+      "route": "/api/orchestrator",
+      "status": 200,
+      "ms": 11,
+      "hostHeapKb": 42158,
+      "heapDeltaKb": 9
+    },
+    {
+      "route": "/api/select-directory",
+      "status": 405,
+      "ms": 11,
+      "hostHeapKb": 42202,
+      "heapDeltaKb": 8
+    },
+    {
+      "route": "/api/projects/create",
+      "status": 405,
+      "ms": 12,
+      "hostHeapKb": 40471,
+      "heapDeltaKb": 7
+    },
+    {
+      "route": "/api/memory/forget",
+      "status": 405,
+      "ms": 11,
+      "hostHeapKb": 40137,
+      "heapDeltaKb": 6
+    },
+    {
+      "route": "/api/home",
+      "status": 200,
+      "ms": 12,
+      "hostHeapKb": 41946,
+      "heapDeltaKb": 5
+    },
+    {
+      "route": "/api/file-index",
+      "status": 400,
+      "ms": 10,
+      "hostHeapKb": 41803,
+      "heapDeltaKb": 4
+    },
+    {
+      "route": "/api/agent/new",
+      "status": 405,
+      "ms": 12,
+      "hostHeapKb": 37154,
+      "heapDeltaKb": 3
+    },
+    {
+      "route": "/api/memory/recall",
+      "status": 400,
+      "ms": 14,
+      "hostHeapKb": 40182,
+      "heapDeltaKb": 0
+    },
+    {
+      "route": "/api/mcp/resources/read",
+      "status": 405,
+      "ms": 20,
+      "hostHeapKb": 36477,
+      "heapDeltaKb": null
+    },
+    {
+      "route": "/api/config/events",
+      "status": 200,
+      "ms": 6,
+      "hostHeapKb": null,
+      "heapDeltaKb": null
+    },
+    {
+      "route": "/api/fleet/events",
+      "status": 200,
+      "ms": 3,
+      "hostHeapKb": null,
+      "heapDeltaKb": null
+    },
+    {
+      "route": "/api/processes/events",
+      "status": 200,
+      "ms": 3,
+      "hostHeapKb": null,
+      "heapDeltaKb": null
+    },
+    {
+      "route": "/api/subagents/events",
+      "status": 200,
+      "ms": 3,
+      "hostHeapKb": null,
+      "heapDeltaKb": null
+    },
+    {
+      "route": "/api/terminal/events",
+      "status": 200,
+      "ms": 2,
+      "hostHeapKb": null,
+      "heapDeltaKb": null
+    },
+    {
+      "route": "/api/skills/search",
+      "status": 500,
+      "ms": 11,
+      "hostHeapKb": 40474,
+      "heapDeltaKb": -22
+    },
+    {
+      "route": "/api/watchdog",
+      "status": 200,
+      "ms": 10,
+      "hostHeapKb": 40449,
+      "heapDeltaKb": -23
+    },
+    {
+      "route": "/api/agent/[id]",
+      "status": 200,
+      "ms": 13,
+      "hostHeapKb": 41354,
+      "heapDeltaKb": -34
+    },
+    {
+      "route": "/api/health",
+      "status": 200,
+      "ms": 11,
+      "hostHeapKb": 41929,
+      "heapDeltaKb": -34
+    },
+    {
+      "route": "/api/settings",
+      "status": 200,
+      "ms": 14,
+      "hostHeapKb": 40315,
+      "heapDeltaKb": -75
+    },
+    {
+      "route": "/api/browser/bridge",
+      "status": 200,
+      "ms": 12,
+      "hostHeapKb": 39842,
+      "heapDeltaKb": -79
+    },
+    {
+      "route": "/api/models-config",
+      "status": 200,
+      "ms": 12,
+      "hostHeapKb": 42149,
+      "heapDeltaKb": -84
+    },
+    {
+      "route": "/api/sessions/[id]/branch",
+      "status": 405,
+      "ms": 13,
+      "hostHeapKb": 36727,
+      "heapDeltaKb": -236
+    },
+    {
+      "route": "/api/sessions",
+      "status": 200,
+      "ms": 288,
+      "hostHeapKb": 40390,
+      "heapDeltaKb": -1812
+    }
+  ]
+}

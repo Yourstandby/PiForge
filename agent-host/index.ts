@@ -43,7 +43,11 @@ function startCpuDiagnostics(): void {
     for (const name of resources) counts[name] = (counts[name] ?? 0) + 1;
     console.log(
       `[host-cpu] ${percent.toFixed(2)}% over=${elapsedMs}ms rss=${(memory.rss / 1048576).toFixed(0)}MB ` +
-        `heapUsed=${(memory.heapUsed / 1048576).toFixed(0)}MB resources=${JSON.stringify(counts)}`,
+        `heapUsed=${(memory.heapUsed / 1048576).toFixed(0)}MB ` +
+        `heapTotal=${(memory.heapTotal / 1048576).toFixed(0)}MB ` +
+        `external=${(memory.external / 1048576).toFixed(0)}MB ` +
+        `arrayBuffers=${(memory.arrayBuffers / 1048576).toFixed(0)}MB ` +
+        `resources=${JSON.stringify(counts)}`,
     );
     // 1s 粒度：burst 与"稳定占用"必须能分开看，5s 的平均值会把一次性峰值摊平。
   }, 1_000);
