@@ -1,9 +1,86 @@
 # Changelog
 
 迁移条目按「改了什么 / 默认行为变没变 / 开关怎么用」组织。详细数据见 `docs/measurements/`
-（三个口径：记录型 provider、真实 deepseek 会话、重复场景 A/B）。
+（三个口径：记录型 provider、真实 deepseek 会话、重复场景 A/B，三者不要混读）。
 
-## Unreleased — v0.8.3
+## v0.9.0 — Watchdog 零 Token 监控 · 人工介入 · 用量条
+
+主题：**卡住看得见，介入点一下**。监控与介入全部在程序层，不产生任何 LLM 请求；
+前缀、核心四件套、命中率三个硬数字保持不变。
+
+### 新增
+
+- **无进展看门狗（Watchdog）**：`agent-host/watchdog.ts` + `progress-tracker.ts`，定时器 + 内存
+  状态机，**零模型调用、零 prompt 注入**（通知只进内存环形队列，`watchdog.status` 只读回给 UI）。
+  两把尺子：`lastActivityAt`（有效进展：成功且不重复的动作 / 正文增量）与 `lastLivenessAt`
+  （活的迹象：含工具启动与流式输出）；并发时每个工具按 `toolCallId` 独立建档。
+  **默认行为变了：默认开启**（`PIFORGE_WATCHDOG=0` 可完全关闭）。
+- **人工介入（HITL）**：`agent.intervene` 三档动作 `skip`（强制跳过）/ `ask_brief`（极简询问，
+  默认）/ `ask`（深度诊断），复用既有 steer → 队首排队 → prompt 三条通路，不新增模型直连。
+  **默认行为没变**：不点按钮不会发出任何指令。
+- **右侧「系统监控」面板**（`components/watchdog/`）：心跳、逐工具计时、疑似阻塞点、退避通知、
+  JSON 详情、停滞阈值下拉框；另有三处只读状态灯（会话列表 / 标签栏 / 工具卡）。
+  **默认行为变了：面板标签新增一项**（其余面板不变）。
+- **用量条 `UsageStrip`**：Token / 缓存命中 / 上下文占用 / 上游额度常驻输入框下方，点开仍是原
+  「用量与额度」弹窗。**默认行为变了：统计从底栏迁到输入框下方**（统计位置变化，底栏只留模式与项目名）。
+- **窄视口浮层侧栏**：视口 ≤ 1080px 时左右栏改为浮层并默认收起。
+  **默认行为变了：仅窄窗口**；宽窗口仍是三栏常驻。
+
+### 变更
+
+- 上游额度只请求一次：`ChatSurface` 拉取后经 props 下传给用量条与弹窗（原先底栏与弹窗各拉一次）；
+  `useUpstreamUsage` 另加 `options.enabled` 开关备用（当前无调用方传 false）。
+  **默认行为没变**，只是少一次同源请求。
+- 思考档位菜单 3 → 4 档（`auto` / `high` / `medium` / `low`），不再按模型能力过滤，不支持的
+  档位由后端收敛。**默认行为变了：菜单多出「低质量（low）」**；老会话持久化的 `off/minimal/
+  xhigh/max` 仍正常回显。
+- 会话状态灯优先级：看门狗红（停滞）> 运行中蓝 > 等待操作琥珀 > 后台完成绿。
+  **默认行为没变**，只是停滞时灯变红。
+- 停滞阈值可在面板运行期切换（15 / 30 / 60 / 90 秒），只写 Host 内存配置：不重建定时器、
+  不重置任务、不产生通知（Host 侧钳制在 5s–10min）。
+
+### 修复
+
+- 图片灯箱「复制」此前永远显示失败：Chromium/Electron 的 `clipboard.write` 只接受
+  `image/png`，现在先把当前图重绘成 PNG 再写剪贴板。
+- 灯箱优先显示原图（`previewUrl`）而不是发给模型的降采样版本（长边 1568），大图不再糊。
+- 灯箱右键菜单 `Esc` 先关菜单再关查看器；工具栏在 Electron 窗口拖拽条下让位（Windows/macOS 分别留白）。
+- **其他 / 护栏**：`smoke:agent-host` 增加 `watchdog.status`、`watchdog.task`、`agent.intervene`
+  断言（默认阈值 20s、非法 action 拒绝、会话不存在拒绝）；`prefix-measure` 支持
+  `anthropic-messages` 形状的探针（缓存断点验证）；新增看门狗 / 介入 / 进度追踪 / 面板 / 路由单测。
+
+### 迁移
+
+- **无强制动作**。默认前缀、核心四件套、声明工具数、命中率均未变（见下表）。
+- 想完全回到 v0.8.2 行为：`PIFORGE_WATCHDOG=0`（不建定时器、不记状态，`watchdog.status`
+  只回 `{ enabled: false }`）＋ `PIFORGE_ON_DEMAND_DOMAINS=0`（全部工具常驻，前缀回到 6 988）。
+- **v0.8.3 未单独发布**，其改动（工具合并 23 → 12、按需域、结果去重、缓存保活）随本版一起
+  发布；该部分的迁移说明见下方 v0.8.3 小节。
+- **不在本版**：工作区里未提交的自动更新（`electron/app-update*`、`auto-update-controller`、
+  `hooks/useAppUpdater`、`components/AppUpdateRow`）与流式合帧
+  （`hooks/agent-session/frame-coalescer.ts`）仍是 WIP，未进入 v0.9.0，也没有默认开关。
+
+### 数字（与 v0.8.3 一致，无回归）
+
+| 项 | v0.8.3 | v0.9.0（默认） | 口径 |
+| --- | --- | --- | --- |
+| 静态前缀 | 6 244 | **6 244**（记录型复测 6 240，±4 为仓库文档体积） | 记录型 provider |
+| 声明工具数 | 11（`shell` 按需）/ 12（全常驻） | **11 / 12**（不变） | `measure:prefix` |
+| 核心四件套 | 710 tok | **710 tok** | `measure:prefix` |
+| 稳定段命中率 | 99.5% / 97.98% | **99.5% / 97.98%** | 记录型 / 真实 deepseek 30 轮 |
+| 自动压缩 | 关闭 | **仍然关闭** | `rpc-manager.test.ts` |
+
+### 验证
+
+- `npx tsc --noEmit` 0 错；`npm run lint` 0 error（4 warning）。
+- `npm run smoke:prefix-budget` 退出码 0（默认 6 240 / 11 工具 / 核心 710；3 轮 cacheRead 命中 99.5%）。
+  口径注意：`HOME` 下若有 `~/.agents/skills`，`<skills>` 段会进 system prompt（+1 598 字符 ≈ +400 tok →
+  prefix 6 640），属于环境差异，不属于代码回归；上表数字取清空技能目录后的口径。
+- `npm test` 1 253 项：1 248 通过、3 项按平台跳过。另有 2 项失败位于**未跟踪的 WIP 测试**
+  （`electron/auto-update-controller.test.ts` 缺 `.ts` 后缀的 import、`lib/agent-host-client.test.ts`
+  等待尚未实现的握手重试），不属于本版改动。
+
+## Unreleased — v0.8.3（随 v0.9.0 一起发布，见上）
 
 ### 改了什么
 
