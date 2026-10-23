@@ -1,6 +1,7 @@
 # L1 传输层验证：`ELECTRON_RUN_AS_NODE` 子进程（临时分支验证，未合并）
 
-> 分支：`probe/run-as-node`（验证完即删）。**运行时代码一行未改** ——
+> 验证在临时分支 `probe/run-as-node` 上完成，**验证完已删分支**，只带回探针脚本与本文。
+> **运行时代码一行未改** ——
 > 验证脚本 `scripts/probe-host-runtime.mjs` 只是一个外部探针：启动 host、走真实
 > 命名管道握手、调 `host.health`、空闲采样 RSS。
 > 目标：确认"换成 `ELECTRON_RUN_AS_NODE` 子进程后，heap limit 能到 280 MB、

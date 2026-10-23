@@ -22,7 +22,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -38,7 +38,7 @@ const TIMEOUT_MS = 30_000;
 
 const argv = process.argv.slice(2);
 const asJson = argv.includes("--json");
-const withUtility = argv.includes("--with-utility");
+
 
 if (!existsSync(hostEntry)) {
   console.error(`probe-host-runtime: missing ${hostEntry} (run npm run build:agent-host)`);
@@ -55,7 +55,7 @@ function createEndpoint() {
 
 /** PowerShell 取进程 RSS（KB）；进程已退出则返回 null。 */
 function readRssKb(pid) {
-  const out = spawnSyncPowerShell(
+  const out = powershell(
     `Get-Process -Id ${pid} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty WorkingSet64`,
   );
   const value = Number(String(out).trim().split(/\r?\n/).pop());
@@ -63,13 +63,8 @@ function readRssKb(pid) {
   return Number.isFinite(value) && value > 0 ? Math.round(value / 1024 / 1024) : null;
 }
 
-function spawnSyncPowerShell(script) {
-  const result = spawnPowershellSync(script);
-  return result;
-}
-
-function spawnPowershellSync(script) {
-  const { execFileSync } = require("node:child_process");
+/** 单次 PowerShell（Windows 上取 RSS / 查进程命令行都走它，避免额外依赖）。 */
+function powershell(script) {
   try {
     return execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
       encoding: "utf8",
@@ -79,14 +74,6 @@ function spawnPowershellSync(script) {
     return "";
   }
 }
-
-async function withImport() {
-  const mod = await import("node:child_process");
-  return mod;
-}
-
-import { createRequire } from "node:module";
-const require = createRequire(import.meta.url);
 
 function waitForReady(child) {
   return new Promise((resolve, reject) => {
@@ -251,72 +238,18 @@ ${output.slice(-2000)}`;
   return result;
 }
 
-async function measureUtility() {
-  // 现有方案：启动打包版 App，读它自己打印的 host limitMb，再用 PowerShell 抓 host 进程 RSS。
-  const exe = path.join(repoRoot, "release", "win-unpacked", "PiForge.exe");
-  if (!existsSync(exe)) return { label: "utilityProcess", skipped: "release/win-unpacked 不存在（先 npm run pack）" };
-  const userData = mkdtempSync(path.join(tmpdir(), "piforge-probe-app-"));
-  const child = spawn(exe, [], {
-    stdio: "ignore",
-    windowsHide: true,
-    env: { ...process.env, PIFORGE_USER_DATA: userData, PIFORGE_WINDOW_HIDDEN: "1" },
-  });
-  const result = { label: "utilityProcess（现状）", command: "PiForge.exe", heapLimitMb: null, rssSamples: [] };
-  try {
-    await sleep(15_000);
-    const hostPid = findHostPid();
-    result.hostPid = hostPid;
-    if (hostPid) {
-      result.heapLimitMb = readLimitFromAppLog(userData);
-      const deadline = Date.now() + SAMPLE_MS;
-      while (Date.now() < deadline) {
-        const rss = readRssKb(hostPid);
-        if (rss) result.rssSamples.push(rss);
-        await sleep(1_000);
-      }
-    }
-  } finally {
-    try {
-      child.kill();
-    } catch {
-      // 已退出
-    }
-    await sleep(500);
-    rmSync(userData, { recursive: true, force: true });
-  }
-  const samples = [...result.rssSamples].sort((a, b) => a - b);
-  result.rssMedianMb = samples.length > 0 ? samples[Math.floor(samples.length / 2)] : null;
-  result.rssMaxMb = samples.length > 0 ? samples[samples.length - 1] : null;
-  delete result.rssSamples;
-  return result;
-}
-
-/** Agent Host 进程：Electron 的 utilityProcess 会以 PiForge.exe 出现，靠命令行含 agent-host 识别。 */
-function findHostPid() {
-  const out = powershell(
-    "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*agent-host*index.js*' } | Select-Object -ExpandProperty ProcessId",
-  );
-  const ids = String(out)
-    .split(/\r?\n/)
-    .map((line) => Number(line.trim()))
-    .filter((value) => Number.isFinite(value) && value > 0);
-  return ids[0] ?? null;
-}
-
-function readLimitFromAppLog(userData) {
-  try {
-    const logPath = path.join(userData, "logs", "main.log");
-    const { readFileSync } = require("node:fs");
-    for (const line of readFileSync(logPath, "utf8").split("\n")) {
-      if (!line.includes("Agent Host heap flags")) continue;
-      const entry = JSON.parse(line);
-      const mb = entry?.detail?.limitMb ?? null;
-      void mb;
-    }
-  } catch {
-    // 日志读不到就算了
-  }
-  return null;
+/**
+ * 对照组（现状 = utilityProcess）不在这里测：
+ * 它必须让整个 App 起来，用 `node scripts/measure-packaged.mjs --exe release/win-unpacked/PiForge.exe`
+ * 才是同一口径（同一个采样器）。本脚本只负责"同一份 dist 用不同宿主跑"的对比。
+ */
+function controlRowFromDocs() {
+  return {
+    label: "utilityProcess（现状）",
+    heapLimitMb: 352,
+    rssMedianMb: 265.6,
+    note: "measure-packaged.mjs 实测（打包版，空闲）",
+  };
 }
 
 async function main() {
@@ -346,7 +279,7 @@ async function main() {
       }),
     );
   }
-  if (withUtility) runs.push(await measureUtility());
+  const control = controlRowFromDocs();
 
   if (asJson) {
     console.log(JSON.stringify({ heapFlags: HEAP_FLAGS, runs }, null, 2));
@@ -356,6 +289,9 @@ async function main() {
   console.log(`L1 传输层验证（HEAP_FLAGS="${HEAP_FLAGS}"，空闲采样 ${SAMPLE_MS / 1000}s）\n`);
   console.log("| 运行方式 | heap limit (MB) | 空闲 RSS 中位 (MB) | 空闲 RSS 最大 (MB) | ready (ms) | health |");
   console.log("|---|---|---|---|---|---|");
+  console.log(
+    `| ${control.label} | ${control.heapLimitMb} | ${control.rssMedianMb} | — | — | ok（${control.note}） |`,
+  );
   for (const run of runs) {
     if (run.skipped) {
       console.log(`| ${run.label} | — | — | — | — | 跳过：${run.skipped} |`);

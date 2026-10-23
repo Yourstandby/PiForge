@@ -21,8 +21,8 @@
  * 为什么默认不跑：一次 20 题 × 4 组 = 80 次真实任务，按本机 cacheRead 中位
  * 146k tok/调用估，约 $8–12。跑之前必须先有人审过判分集与开关实现。
  */
-import { execFileSync, spawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -44,8 +44,7 @@ export const GROUPS = {
   "L-B": { PIFORGE_SESSION_SPLIT_HINT: "1" },
   "L-D+L-B": { PIFORGE_TOOL_OUTPUT_CHARS: "2000", PIFORGE_SESSION_SPLIT_HINT: "1" },
 };
-/** 对照组基线（用于文档里的成本估算）。 */
-const BASELINE_CACHE_READ_PER_CALL = 146_176;
+/** 对照组基线（用于文档里的成本估算）：cacheRead 中位 146 176 tok/调用。 */
 /** 实测均值成本/调用（audit:token：$22.36 / 10 227 次调用）。 */
 const BASELINE_COST_PER_CALL = 0.0022;
 /** 一个 agentic 任务平均要发多少次模型请求（含工具循环；按本机 session 统计取 15）。 */

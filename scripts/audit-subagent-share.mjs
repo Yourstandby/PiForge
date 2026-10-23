@@ -146,11 +146,6 @@ function median(values) {
   return sorted.length % 2 === 0 ? Math.round((sorted[mid - 1] + sorted[mid]) / 2) : sorted[mid];
 }
 
-function pct(numerator, denominator) {
-  if (!denominator) return "n/a";
-  return `${((numerator / denominator) * 100).toFixed(2)}%`;
-}
-
 /** [实测 2] 代码事实：子 Agent 是否已经隔离上下文（读源码，不做推测）。 */
 function readIsolationFacts() {
   const facts = { inMemory: false, noContextFiles: false, childSystemPrompt: false, guards: [] };
