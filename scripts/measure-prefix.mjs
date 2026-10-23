@@ -78,6 +78,12 @@ const cacheWarmingMode = valueOf("--cache-warming") ?? "off";
 const cacheEconForce = args.includes("--cache-econ-force");
 /** 稳定段命中率下限（默认 0 = 不检查）。smoke 用 90。 */
 const minHitRate = Number(valueOf("--assert-hit-rate") ?? 0);
+/** 稳定段每轮未缓存 input 的中位数上限（0 = 不检查）。 */
+const maxMedianInput = Number(valueOf("--max-median-input") ?? 0);
+/** 把每条请求体写到目录里（排查 resume 回放字段、去重实际返回内容）。 */
+const dumpRequestsDir = valueOf("--dump-requests");
+/** 校验发送给模型的 transcript 只带模型需要的字段（不带 details/usage/UI 元数据）。 */
+const assertLeanTranscript = args.includes("--assert-lean-transcript");
 const probe = (() => {
   if (probeArg) {
     const [tool, action] = probeArg.split(":");
@@ -619,6 +625,18 @@ async function main() {
     }
   }
 
+  if (dumpRequestsDir) {
+    mkdirSync(dumpRequestsDir, { recursive: true });
+    recorder.requests.forEach((entry, index) => {
+      writeFileSync(
+        path.join(dumpRequestsDir, `request-${String(index + 1).padStart(2, "0")}.json`),
+        `${JSON.stringify(entry.body, null, 2)}
+`
+      );
+    });
+    console.log(`请求体已写入 ${dumpRequestsDir}（${recorder.requests.length} 条）`);
+  }
+
   if (cacheStats) {
     console.log("");
     console.log("== 逐请求缓存账本（模拟 Anthropic prompt cache：最长公共前缀 + TTL） ==");
@@ -651,6 +669,67 @@ async function main() {
         console.error("  ✗ 出现非预期前缀变化（相邻两轮本应字节一致）");
         process.exitCode = 4;
       }
+    }
+  }
+
+  if (assertLeanTranscript) {
+    // 只允许这些键：消息级 role/content/tool_calls/tool_call_id/name，块级 type/text 等。
+    const allowedMessageKeys = new Set([
+      "role",
+      "content",
+      "tool_calls",
+      "tool_call_id",
+      "name",
+      "tool_call",
+      "reasoning_content",
+    ]);
+    const forbidden = new Set([
+      "details",
+      "usage",
+      "customType",
+      "display",
+      "entryId",
+      "timestamp",
+      "cost",
+      "cacheRead",
+      "cacheWrite",
+      "thinkingSignature",
+    ]);
+    const leaks = [];
+    for (const entry of recorder.requests) {
+      const messages = Array.isArray(entry.body?.messages) ? entry.body.messages : [];
+      for (const message of messages) {
+        for (const key of Object.keys(message ?? {})) {
+          if (forbidden.has(key)) leaks.push(`message.${key}`);
+          else if (!allowedMessageKeys.has(key)) leaks.push(`message.${key}`);
+        }
+      }
+    }
+    console.log("");
+    console.log(`transcript 字段裁剪: ${leaks.length === 0 ? "✓ 只含模型需要的字段" : `✗ 泄漏 ${[...new Set(leaks)].join(", ")}`}`);
+    if (leaks.length > 0) process.exitCode = 7;
+  }
+
+  if (maxMedianInput > 0) {
+    const turnsWithCache = recorder.requests
+      .map((entry) => entry.cache)
+      .filter((cache) => cache && cache.kind === "turn");
+    const stable = turnsWithCache.filter(
+      (cache, position) => position > 0 && cache.cacheCreationTokens <= Math.max(200, cache.totalTokens * 0.2)
+    );
+    // recorder 里没有「provider 未缓存 input」的概念：每轮真正新增的 token
+    // 就是 cacheCreationTokens（新消息 + 任何前缀重写）。
+    const inputs = stable.map((cache) => cache.cacheCreationTokens).sort((a, b) => a - b);
+    const median =
+      inputs.length === 0
+        ? 0
+        : inputs.length % 2 === 1
+          ? inputs[(inputs.length - 1) / 2]
+          : Math.round((inputs[inputs.length / 2 - 1] + inputs[inputs.length / 2]) / 2);
+    console.log(`稳定段每轮新增 token 中位数: ${median} tok（cacheCreation）`);
+    if (median > maxMedianInput) {
+      console.error(`  ✗ 超过上限 ${maxMedianInput}`);
+      process.exitCode = 8;
     }
   }
 

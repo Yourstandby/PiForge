@@ -44,6 +44,9 @@ const budget = await run([
   "7200",
   "--assert-hit-rate",
   "90",
+  "--max-median-input",
+  "200",
+  "--assert-lean-transcript",
   "--turns",
   "4",
 ]);

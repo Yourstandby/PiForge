@@ -45,6 +45,8 @@ const pauseMs = Number(valueOf("--pause-ms") ?? 0);
 const cwd = path.resolve(valueOf("--cwd") ?? repoRoot);
 const outFile = valueOf("--out");
 const minHitRate = Number(valueOf("--min-hit-rate") ?? 0);
+/** 稳定段每轮未缓存 input 的中位数上限（0 = 不检查）。 */
+const maxMedianInput = Number(valueOf("--max-median-input") ?? 0);
 const TIMEOUT_MS = 180_000;
 
 /** 30 轮的任务脚本：每轮都真的需要工具，且第 3 / 17 轮会触发按需域激活。 */
@@ -307,6 +309,14 @@ const sourceAuth = path.join(
   const denominator = totals.read + totals.write + totals.input;
   const hitRate = denominator > 0 ? (totals.read / denominator) * 100 : 0;
 
+  const inputs = stable.map((row) => row.delta.input).sort((a, b) => a - b);
+  const medianInput =
+    inputs.length === 0
+      ? 0
+      : inputs.length % 2 === 1
+        ? inputs[(inputs.length - 1) / 2]
+        : Math.round((inputs[inputs.length / 2 - 1] + inputs[inputs.length / 2]) / 2);
+
   const report = {
     label,
     provider,
@@ -315,6 +325,7 @@ const sourceAuth = path.join(
     measuredAt: new Date().toISOString(),
     stableTurns: stable.length,
     stableHitRate: Number(hitRate.toFixed(2)),
+    medianInputTokens: medianInput,
     totals: { ...totals, denominator },
     rows,
   };
@@ -324,9 +335,14 @@ const sourceAuth = path.join(
     console.log(`\n写入 ${outFile}`);
   }
   console.log(`\n稳定段（${stable.length} 轮）cacheRead 命中率: ${hitRate.toFixed(1)}%`);
+  console.log(`median uncached input per stable turn: ${medianInput} tok`);
   if (minHitRate > 0 && hitRate < minHitRate) {
     console.error(`低于阈值 ${minHitRate}%`);
     process.exit(3);
+  }
+  if (maxMedianInput > 0 && medianInput > maxMedianInput) {
+    console.error(`每轮未缓存 input 中位数 ${medianInput} 超过上限 ${maxMedianInput}`);
+    process.exit(4);
   }
   if (!sessionId) process.exit(1);
 }

@@ -18,6 +18,7 @@ npm run measure:prefix -- --resume --cache-stats        # 恢复会话的首轮�
 npm run measure:prefix -- --probe orchestrator:status   # 真调一次多态工具，验证分派链路
 npm run smoke:prefix-budget                             # 护栏：前缀 ≤7200 + 命中率 ≥90% + 按需域探针（两种配置）
 npm run measure:long-session                            # 30 轮真实模型会话（需要 auth.json）
+npm run measure:increment                               # 工具结果去重 A/B（记录型 provider）
 ```
 
 口径：`cjk=1 token/char`，其他 `4 chars/token`（与 `lib/live-usage.ts` 完全一致）。
@@ -176,6 +177,18 @@ node scripts/measure-prefix.mjs --mode host --api anthropic-messages --turns 2 -
 `smoke:prefix-budget` 现在跑两种配置：默认（前缀 ≤7 200、稳定段命中率 ≥90%、
 无非预期前缀变化）与 `PIFORGE_ON_DEMAND_DOMAINS=1`（tool_search 激活 + 激活后
 连续两轮 prefixHash 一致）。
+
+## 第 6 步：每轮增量去重 + resume 字段裁剪
+
+详见 [`increment-dedup.md`](./increment-dedup.md)。
+
+- `read` 同路径同区间、`bash` 同命令的重复结果不再整段回放（相同输出一句话、输出变长时
+  只回尾部差异）；**错误永远完整返回**；文件被改过/区间不同照常回全文。
+  A/B：最后一条请求体 11 234 → 9 320 tok（−17%），工具结果字符 −52%。
+- resume 请求体实测**只带** `role/content/tool_calls/tool_call_id` —— SDK 已在 provider
+  边界裁掉 `details/usage/customType`，这一步无字段可削；新增
+  `--assert-lean-transcript` 护栏防止将来泄漏。
+- 新增 `npm run measure:increment`（去重 A/B，记录型 provider）。
 
 ## 用它来验收后续步骤
 
