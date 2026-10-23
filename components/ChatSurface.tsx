@@ -8,6 +8,8 @@ import { useAgentSession } from "@/hooks/useAgentSession";
 import { useSmoothTypewriter } from "@/hooks/useSmoothTypewriter";
 import { useAudio } from "@/hooks/useAudio";
 import { useHostHealth } from "@/hooks/useHostHealth";
+import { resolveTokenGuards, type TokenGuardKind } from "@/lib/token-guard";
+import { TokenGuardBanner } from "./TokenGuardBanner";
 import { useSessionScope } from "@/hooks/useSessionScope";
 import { conversationToMarkdown } from "@/lib/conversation-markdown";
 import { buildBranchSwitchMap } from "@/lib/session-branches-view";
@@ -622,6 +624,25 @@ function ChatSession({
 
   /** 会话作用域：切会话时把上一个会话残留的定时器/观察者一次性清掉。 */
   const scoped = useSessionScope(session?.id ?? null);
+
+  /**
+   * Token 护栏（P2-2 / P2-3a）——纯提示，只读 `contextUsage.tokens` 与 `prefixAudit`。
+   * 关掉的类型记在本组件里（按会话重置），不写任何持久化状态。
+   */
+  const [dismissedGuards, setDismissedGuards] = useState<TokenGuardKind[]>([]);
+  useEffect(() => {
+    setDismissedGuards([]);
+  }, [session?.id]);
+  const tokenGuardHints = useMemo(
+    () =>
+      resolveTokenGuards({
+        contextTokens: chat.contextUsage?.tokens ?? null,
+        hasMessages: messages.length > 0,
+        prefixAudit: chat.prefixAudit,
+        dismissed: dismissedGuards,
+      }),
+    [chat.contextUsage?.tokens, chat.prefixAudit, messages.length, dismissedGuards],
+  );
 
   // Reconcile with the server when the run ends without us seeing agent_end.
   useEffect(() => {
@@ -1814,6 +1835,12 @@ function ChatSession({
               {trustCard}
               {/* 看门狗的可视化已全部收拢到右侧「系统监控」面板；
                   主聊天界面不订阅任何看门狗状态，也不会因此重渲染。 */}
+              {/* Token 护栏：前缀失效（P2-2）/ 恢复成本（P2-3a），纯提示可关闭 */}
+              <TokenGuardBanner
+                hints={tokenGuardHints}
+                onDismiss={(kind) => setDismissedGuards((prev) => (prev.includes(kind) ? prev : [...prev, kind]))}
+                onNewSession={onNewSession}
+              />
               {/* 输入面板 + 浮在它右上角外侧的「回到最新对话」按钮 */}
               <div className="relative" ref={composerContainerRef} onFocusCapture={stickToBottomIfNear}>
                 {composer}
