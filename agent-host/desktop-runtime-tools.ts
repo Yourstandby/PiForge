@@ -1,6 +1,10 @@
 import type { ToolInfo } from "../lib/pi-types.ts";
 import { effectiveToolsForMode, type AgentMode, type ToolPreset } from "../lib/approval-policy.ts";
-import { ALWAYS_DECLARED_DOMAINS, ON_DEMAND_DOMAINS } from "../lib/domain-tools.ts";
+import {
+  ALWAYS_DECLARED_DOMAINS,
+  ON_DEMAND_DOMAINS,
+  enabledOnDemandDomains,
+} from "../lib/domain-tools.ts";
 import { CLASSIFY_DECISION_TOOL_NAME, GENERATE_IMAGE_TOOL_NAME } from "./aux-tool-names.ts";
 import { TOOL_HISTORY_TOOL_NAME } from "./tool-outputs.ts";
 import { TOOL_USE_TOOL_NAME } from "./tool-stubs.ts";
@@ -37,8 +41,11 @@ export function desktopRuntimeTools(mode: AgentMode, preset: ToolPreset, codemod
   for (const domain of ALWAYS_DECLARED_DOMAINS) {
     if (registered.some((tool) => tool.name === domain)) names.push(domain);
   }
+  const onDemand = enabledOnDemandDomains();
   for (const domain of ON_DEMAND_DOMAINS) {
-    if (registered.some((tool) => tool.name === domain) && active.includes(domain)) names.push(domain);
+    if (!registered.some((tool) => tool.name === domain)) continue;
+    // 默认（未开启按需）两个域常驻声明；开启后只有被 tool_search 激活过的才声明。
+    if (!onDemand.includes(domain) || active.includes(domain)) names.push(domain);
   }
   // Oversized tool outputs are persisted; the agent reads them back by page.
   if (registered.some((tool) => tool.name === TOOL_HISTORY_TOOL_NAME)) names.push(TOOL_HISTORY_TOOL_NAME);

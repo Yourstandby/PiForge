@@ -1,0 +1,1241 @@
+{
+  "label": "HEAD (v0.8.3-dev)",
+  "provider": "deepseek",
+  "modelId": "deepseek-flash",
+  "turns": 30,
+  "measuredAt": "2026-10-23T03:02:02.427Z",
+  "stableTurns": 29,
+  "stableHitRate": 93.41,
+  "totals": {
+    "read": 693376,
+    "write": 0,
+    "input": 48954,
+    "denominator": 742330
+  },
+  "rows": [
+    {
+      "turn": 1,
+      "delta": {
+        "input": 424,
+        "cacheRead": 13056,
+        "cacheWrite": 0,
+        "output": 70
+      },
+      "contextTokens": 6787,
+      "cacheHitRate": 96.85459940652818,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 1,
+        "stableTurns": 1,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 2,
+      "delta": {
+        "input": 380,
+        "cacheRead": 13312,
+        "cacheWrite": 0,
+        "output": 66
+      },
+      "contextTokens": 6890,
+      "cacheHitRate": 97.22465673385918,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 2,
+        "stableTurns": 2,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 3,
+      "delta": {
+        "input": 1023,
+        "cacheRead": 22912,
+        "cacheWrite": 0,
+        "output": 101
+      },
+      "contextTokens": 8546,
+      "cacheHitRate": 95.72592437852518,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 3,
+        "stableTurns": 3,
+        "expectedChanges": 0,
+        "unexpectedChanges": 0
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 4,
+      "delta": {
+        "input": 7785,
+        "cacheRead": 7552,
+        "cacheWrite": 0,
+        "output": 99
+      },
+      "contextTokens": 7726,
+      "cacheHitRate": 49.24039903501337,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 4,
+        "stableTurns": 3,
+        "expectedChanges": 1,
+        "unexpectedChanges": 0,
+        "lastChange": {
+          "expected": true,
+          "summary": "+工具 memory / 改段 tools；首处差异 @41 (tools): …top_use_tool,edit,fleet,read,shell,tool_history_… → …top_use_tool,edit,fleet,memory,read,shell,tool_h…",
+          "toolsAdded": [
+            "memory"
+          ],
+          "toolsRemoved": [],
+          "sectionsChanged": [
+            "tools"
+          ],
+          "toolsReordered": false
+        }
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 5,
+      "delta": {
+        "input": 1205,
+        "cacheRead": 23424,
+        "cacheWrite": 0,
+        "output": 244
+      },
+      "contextTokens": 8857,
+      "cacheHitRate": 95.10739372284705,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 5,
+        "stableTurns": 4,
+        "expectedChanges": 1,
+        "unexpectedChanges": 0,
+        "lastChange": {
+          "expected": true,
+          "summary": "+工具 memory / 改段 tools；首处差异 @41 (tools): …top_use_tool,edit,fleet,read,shell,tool_history_… → …top_use_tool,edit,fleet,memory,read,shell,tool_h…",
+          "toolsAdded": [
+            "memory"
+          ],
+          "toolsRemoved": [],
+          "sectionsChanged": [
+            "tools"
+          ],
+          "toolsReordered": false
+        }
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 6,
+      "delta": {
+        "input": 448,
+        "cacheRead": 17664,
+        "cacheWrite": 0,
+        "output": 357
+      },
+      "contextTokens": 9506,
+      "cacheHitRate": 97.52650176678446,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 6,
+        "stableTurns": 5,
+        "expectedChanges": 1,
+        "unexpectedChanges": 0,
+        "lastChange": {
+          "expected": true,
+          "summary": "+工具 memory / 改段 tools；首处差异 @41 (tools): …top_use_tool,edit,fleet,read,shell,tool_history_… → …top_use_tool,edit,fleet,memory,read,shell,tool_h…",
+          "toolsAdded": [
+            "memory"
+          ],
+          "toolsRemoved": [],
+          "sectionsChanged": [
+            "tools"
+          ],
+          "toolsReordered": false
+        }
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 7,
+      "delta": {
+        "input": 445,
+        "cacheRead": 18688,
+        "cacheWrite": 0,
+        "output": 65
+      },
+      "contextTokens": 9610,
+      "cacheHitRate": 97.67417550828411,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 7,
+        "stableTurns": 6,
+        "expectedChanges": 1,
+        "unexpectedChanges": 0,
+        "lastChange": {
+          "expected": true,
+          "summary": "+工具 memory / 改段 tools；首处差异 @41 (tools): …top_use_tool,edit,fleet,read,shell,tool_history_… → …top_use_tool,edit,fleet,memory,read,shell,tool_h…",
+          "toolsAdded": [
+            "memory"
+          ],
+          "toolsRemoved": [],
+          "sectionsChanged": [
+            "tools"
+          ],
+          "toolsReordered": false
+        }
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 8,
+      "delta": {
+        "input": 330,
+        "cacheRead": 19072,
+        "cacheWrite": 0,
+        "output": 93
+      },
+      "contextTokens": 9780,
+      "cacheHitRate": 98.29914441810122,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 8,
+        "stableTurns": 7,
+        "expectedChanges": 1,
+        "unexpectedChanges": 0,
+        "lastChange": {
+          "expected": true,
+          "summary": "+工具 memory / 改段 tools；首处差异 @41 (tools): …top_use_tool,edit,fleet,read,shell,tool_history_… → …top_use_tool,edit,fleet,memory,read,shell,tool_h…",
+          "toolsAdded": [
+            "memory"
+          ],
+          "toolsRemoved": [],
+          "sectionsChanged": [
+            "tools"
+          ],
+          "toolsReordered": false
+        }
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 9,
+      "delta": {
+        "input": 430,
+        "cacheRead": 19328,
+        "cacheWrite": 0,
+        "output": 133
+      },
+      "contextTokens": 9999,
+      "cacheHitRate": 97.8236663629922,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 9,
+        "stableTurns": 8,
+        "expectedChanges": 1,
+        "unexpectedChanges": 0,
+        "lastChange": {
+          "expected": true,
+          "summary": "+工具 memory / 改段 tools；首处差异 @41 (tools): …top_use_tool,edit,fleet,read,shell,tool_history_… → …top_use_tool,edit,fleet,memory,read,shell,tool_h…",
+          "toolsAdded": [
+            "memory"
+          ],
+          "toolsRemoved": [],
+          "sectionsChanged": [
+            "tools"
+          ],
+          "toolsReordered": false
+        }
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 10,
+      "delta": {
+        "input": 404,
+        "cacheRead": 19712,
+        "cacheWrite": 0,
+        "output": 62
+      },
+      "contextTokens": 10097,
+      "cacheHitRate": 97.99164843905349,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 10,
+        "stableTurns": 9,
+        "expectedChanges": 1,
+        "unexpectedChanges": 0,
+        "lastChange": {
+          "expected": true,
+          "summary": "+工具 memory / 改段 tools；首处差异 @41 (tools): …top_use_tool,edit,fleet,read,shell,tool_history_… → …top_use_tool,edit,fleet,memory,read,shell,tool_h…",
+          "toolsAdded": [
+            "memory"
+          ],
+          "toolsRemoved": [],
+          "sectionsChanged": [
+            "tools"
+          ],
+          "toolsReordered": false
+        }
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 11,
+      "delta": {
+        "input": 823,
+        "cacheRead": 20096,
+        "cacheWrite": 0,
+        "output": 104
+      },
+      "contextTokens": 10819,
+      "cacheHitRate": 96.06577752282614,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 11,
+        "stableTurns": 10,
+        "expectedChanges": 1,
+        "unexpectedChanges": 0,
+        "lastChange": {
+          "expected": true,
+          "summary": "+工具 memory / 改段 tools；首处差异 @41 (tools): …top_use_tool,edit,fleet,read,shell,tool_history_… → …top_use_tool,edit,fleet,memory,read,shell,tool_h…",
+          "toolsAdded": [
+            "memory"
+          ],
+          "toolsRemoved": [],
+          "sectionsChanged": [
+            "tools"
+          ],
+          "toolsReordered": false
+        }
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 12,
+      "delta": {
+        "input": 392,
+        "cacheRead": 21376,
+        "cacheWrite": 0,
+        "output": 66
+      },
+      "contextTokens": 10925,
+      "cacheHitRate": 98.19919147372289,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 12,
+        "stableTurns": 11,
+        "expectedChanges": 1,
+        "unexpectedChanges": 0,
+        "lastChange": {
+          "expected": true,
+          "summary": "+工具 memory / 改段 tools；首处差异 @41 (tools): …top_use_tool,edit,fleet,read,shell,tool_history_… → …top_use_tool,edit,fleet,memory,read,shell,tool_h…",
+          "toolsAdded": [
+            "memory"
+          ],
+          "toolsRemoved": [],
+          "sectionsChanged": [
+            "tools"
+          ],
+          "toolsReordered": false
+        }
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 13,
+      "delta": {
+        "input": 508,
+        "cacheRead": 21760,
+        "cacheWrite": 0,
+        "output": 135
+      },
+      "contextTokens": 11364,
+      "cacheHitRate": 97.71869947907311,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 13,
+        "stableTurns": 12,
+        "expectedChanges": 1,
+        "unexpectedChanges": 0,
+        "lastChange": {
+          "expected": true,
+          "summary": "+工具 memory / 改段 tools；首处差异 @41 (tools): …top_use_tool,edit,fleet,read,shell,tool_history_… → …top_use_tool,edit,fleet,memory,read,shell,tool_h…",
+          "toolsAdded": [
+            "memory"
+          ],
+          "toolsRemoved": [],
+          "sectionsChanged": [
+            "tools"
+          ],
+          "toolsReordered": false
+        }
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 14,
+      "delta": {
+        "input": 474,
+        "cacheRead": 22528,
+        "cacheWrite": 0,
+        "output": 264
+      },
+      "contextTokens": 11777,
+      "cacheHitRate": 97.93930962524998,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 14,
+        "stableTurns": 13,
+        "expectedChanges": 1,
+        "unexpectedChanges": 0,
+        "lastChange": {
+          "expected": true,
+          "summary": "+工具 memory / 改段 tools；首处差异 @41 (tools): …top_use_tool,edit,fleet,read,shell,tool_history_… → …top_use_tool,edit,fleet,memory,read,shell,tool_h…",
+          "toolsAdded": [
+            "memory"
+          ],
+          "toolsRemoved": [],
+          "sectionsChanged": [
+            "tools"
+          ],
+          "toolsReordered": false
+        }
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 15,
+      "delta": {
+        "input": 382,
+        "cacheRead": 23296,
+        "cacheWrite": 0,
+        "output": 64
+      },
+      "contextTokens": 11879,
+      "cacheHitRate": 98.38668806487034,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 15,
+        "stableTurns": 14,
+        "expectedChanges": 1,
+        "unexpectedChanges": 0,
+        "lastChange": {
+          "expected": true,
+          "summary": "+工具 memory / 改段 tools；首处差异 @41 (tools): …top_use_tool,edit,fleet,read,shell,tool_history_… → …top_use_tool,edit,fleet,memory,read,shell,tool_h…",
+          "toolsAdded": [
+            "memory"
+          ],
+          "toolsRemoved": [],
+          "sectionsChanged": [
+            "tools"
+          ],
+          "toolsReordered": false
+        }
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 16,
+      "delta": {
+        "input": 460,
+        "cacheRead": 23552,
+        "cacheWrite": 0,
+        "output": 86
+      },
+      "contextTokens": 12133,
+      "cacheHitRate": 98.08429118773945,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 16,
+        "stableTurns": 15,
+        "expectedChanges": 1,
+        "unexpectedChanges": 0,
+        "lastChange": {
+          "expected": true,
+          "summary": "+工具 memory / 改段 tools；首处差异 @41 (tools): …top_use_tool,edit,fleet,read,shell,tool_history_… → …top_use_tool,edit,fleet,memory,read,shell,tool_h…",
+          "toolsAdded": [
+            "memory"
+          ],
+          "toolsRemoved": [],
+          "sectionsChanged": [
+            "tools"
+          ],
+          "toolsReordered": false
+        }
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 17,
+      "delta": {
+        "input": 14536,
+        "cacheRead": 25728,
+        "cacheWrite": 0,
+        "output": 73
+      },
+      "contextTokens": 14078,
+      "cacheHitRate": 63.89827140870257,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 17,
+        "stableTurns": 16,
+        "expectedChanges": 1,
+        "unexpectedChanges": 0,
+        "lastChange": {
+          "expected": true,
+          "summary": "+工具 memory / 改段 tools；首处差异 @41 (tools): …top_use_tool,edit,fleet,read,shell,tool_history_… → …top_use_tool,edit,fleet,memory,read,shell,tool_h…",
+          "toolsAdded": [
+            "memory"
+          ],
+          "toolsRemoved": [],
+          "sectionsChanged": [
+            "tools"
+          ],
+          "toolsReordered": false
+        }
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 18,
+      "delta": {
+        "input": 13164,
+        "cacheRead": 12800,
+        "cacheWrite": 0,
+        "output": 68
+      },
+      "contextTokens": 13029,
+      "cacheHitRate": 49.299029425358185,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 18,
+        "stableTurns": 16,
+        "expectedChanges": 2,
+        "unexpectedChanges": 0,
+        "lastChange": {
+          "expected": true,
+          "summary": "+工具 orchestrator / 改段 tools；首处差异 @48 (tools): …_tool,edit,fleet,memory,read,shell,tool_history_… → …_tool,edit,fleet,memory,orchestrator,read,shell,…",
+          "toolsAdded": [
+            "orchestrator"
+          ],
+          "toolsRemoved": [],
+          "sectionsChanged": [
+            "tools"
+          ],
+          "toolsReordered": false
+        }
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 19,
+      "delta": {
+        "input": 713,
+        "cacheRead": 38912,
+        "cacheWrite": 0,
+        "output": 243
+      },
+      "contextTokens": 13418,
+      "cacheHitRate": 98.2006309148265,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 19,
+        "stableTurns": 17,
+        "expectedChanges": 2,
+        "unexpectedChanges": 0,
+        "lastChange": {
+          "expected": true,
+          "summary": "+工具 orchestrator / 改段 tools；首处差异 @48 (tools): …_tool,edit,fleet,memory,read,shell,tool_history_… → …_tool,edit,fleet,memory,orchestrator,read,shell,…",
+          "toolsAdded": [
+            "orchestrator"
+          ],
+          "toolsRemoved": [],
+          "sectionsChanged": [
+            "tools"
+          ],
+          "toolsReordered": false
+        }
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 20,
+      "delta": {
+        "input": 488,
+        "cacheRead": 26496,
+        "cacheWrite": 0,
+        "output": 116
+      },
+      "contextTokens": 13583,
+      "cacheHitRate": 98.19152090127483,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 20,
+        "stableTurns": 18,
+        "expectedChanges": 2,
+        "unexpectedChanges": 0,
+        "lastChange": {
+          "expected": true,
+          "summary": "+工具 orchestrator / 改段 tools；首处差异 @48 (tools): …_tool,edit,fleet,memory,read,shell,tool_history_… → …_tool,edit,fleet,memory,orchestrator,read,shell,…",
+          "toolsAdded": [
+            "orchestrator"
+          ],
+          "toolsRemoved": [],
+          "sectionsChanged": [
+            "tools"
+          ],
+          "toolsReordered": false
+        }
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 21,
+      "delta": {
+        "input": 421,
+        "cacheRead": 26880,
+        "cacheWrite": 0,
+        "output": 66
+      },
+      "contextTokens": 13696,
+      "cacheHitRate": 98.45793194388483,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 21,
+        "stableTurns": 19,
+        "expectedChanges": 2,
+        "unexpectedChanges": 0,
+        "lastChange": {
+          "expected": true,
+          "summary": "+工具 orchestrator / 改段 tools；首处差异 @48 (tools): …_tool,edit,fleet,memory,read,shell,tool_history_… → …_tool,edit,fleet,memory,orchestrator,read,shell,…",
+          "toolsAdded": [
+            "orchestrator"
+          ],
+          "toolsRemoved": [],
+          "sectionsChanged": [
+            "tools"
+          ],
+          "toolsReordered": false
+        }
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 22,
+      "delta": {
+        "input": 959,
+        "cacheRead": 41088,
+        "cacheWrite": 0,
+        "output": 231
+      },
+      "contextTokens": 14539,
+      "cacheHitRate": 97.7192189692487,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 22,
+        "stableTurns": 20,
+        "expectedChanges": 2,
+        "unexpectedChanges": 0,
+        "lastChange": {
+          "expected": true,
+          "summary": "+工具 orchestrator / 改段 tools；首处差异 @48 (tools): …_tool,edit,fleet,memory,read,shell,tool_history_… → …_tool,edit,fleet,memory,orchestrator,read,shell,…",
+          "toolsAdded": [
+            "orchestrator"
+          ],
+          "toolsRemoved": [],
+          "sectionsChanged": [
+            "tools"
+          ],
+          "toolsReordered": false
+        }
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 23,
+      "delta": {
+        "input": 368,
+        "cacheRead": 28928,
+        "cacheWrite": 0,
+        "output": 164
+      },
+      "contextTokens": 14801,
+      "cacheHitRate": 98.74385581649372,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 23,
+        "stableTurns": 21,
+        "expectedChanges": 2,
+        "unexpectedChanges": 0,
+        "lastChange": {
+          "expected": true,
+          "summary": "+工具 orchestrator / 改段 tools；首处差异 @48 (tools): …_tool,edit,fleet,memory,read,shell,tool_history_… → …_tool,edit,fleet,memory,orchestrator,read,shell,…",
+          "toolsAdded": [
+            "orchestrator"
+          ],
+          "toolsRemoved": [],
+          "sectionsChanged": [
+            "tools"
+          ],
+          "toolsReordered": false
+        }
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 24,
+      "delta": {
+        "input": 432,
+        "cacheRead": 29312,
+        "cacheWrite": 0,
+        "output": 88
+      },
+      "contextTokens": 14949,
+      "cacheHitRate": 98.54760623991393,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 24,
+        "stableTurns": 22,
+        "expectedChanges": 2,
+        "unexpectedChanges": 0,
+        "lastChange": {
+          "expected": true,
+          "summary": "+工具 orchestrator / 改段 tools；首处差异 @48 (tools): …_tool,edit,fleet,memory,read,shell,tool_history_… → …_tool,edit,fleet,memory,orchestrator,read,shell,…",
+          "toolsAdded": [
+            "orchestrator"
+          ],
+          "toolsRemoved": [],
+          "sectionsChanged": [
+            "tools"
+          ],
+          "toolsReordered": false
+        }
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 25,
+      "delta": {
+        "input": 501,
+        "cacheRead": 29568,
+        "cacheWrite": 0,
+        "output": 109
+      },
+      "contextTokens": 15131,
+      "cacheHitRate": 98.33383218597226,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 25,
+        "stableTurns": 23,
+        "expectedChanges": 2,
+        "unexpectedChanges": 0,
+        "lastChange": {
+          "expected": true,
+          "summary": "+工具 orchestrator / 改段 tools；首处差异 @48 (tools): …_tool,edit,fleet,memory,read,shell,tool_history_… → …_tool,edit,fleet,memory,orchestrator,read,shell,…",
+          "toolsAdded": [
+            "orchestrator"
+          ],
+          "toolsRemoved": [],
+          "sectionsChanged": [
+            "tools"
+          ],
+          "toolsReordered": false
+        }
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 26,
+      "delta": {
+        "input": 350,
+        "cacheRead": 30080,
+        "cacheWrite": 0,
+        "output": 96
+      },
+      "contextTokens": 15273,
+      "cacheHitRate": 98.84981925731186,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 26,
+        "stableTurns": 24,
+        "expectedChanges": 2,
+        "unexpectedChanges": 0,
+        "lastChange": {
+          "expected": true,
+          "summary": "+工具 orchestrator / 改段 tools；首处差异 @48 (tools): …_tool,edit,fleet,memory,read,shell,tool_history_… → …_tool,edit,fleet,memory,orchestrator,read,shell,…",
+          "toolsAdded": [
+            "orchestrator"
+          ],
+          "toolsRemoved": [],
+          "sectionsChanged": [
+            "tools"
+          ],
+          "toolsReordered": false
+        }
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 27,
+      "delta": {
+        "input": 352,
+        "cacheRead": 30336,
+        "cacheWrite": 0,
+        "output": 90
+      },
+      "contextTokens": 15397,
+      "cacheHitRate": 98.85297184567257,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 27,
+        "stableTurns": 25,
+        "expectedChanges": 2,
+        "unexpectedChanges": 0,
+        "lastChange": {
+          "expected": true,
+          "summary": "+工具 orchestrator / 改段 tools；首处差异 @48 (tools): …_tool,edit,fleet,memory,read,shell,tool_history_… → …_tool,edit,fleet,memory,orchestrator,read,shell,…",
+          "toolsAdded": [
+            "orchestrator"
+          ],
+          "toolsRemoved": [],
+          "sectionsChanged": [
+            "tools"
+          ],
+          "toolsReordered": false
+        }
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 28,
+      "delta": {
+        "input": 695,
+        "cacheRead": 30720,
+        "cacheWrite": 0,
+        "output": 227
+      },
+      "contextTokens": 16144,
+      "cacheHitRate": 97.78768104408722,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 28,
+        "stableTurns": 26,
+        "expectedChanges": 2,
+        "unexpectedChanges": 0,
+        "lastChange": {
+          "expected": true,
+          "summary": "+工具 orchestrator / 改段 tools；首处差异 @48 (tools): …_tool,edit,fleet,memory,read,shell,tool_history_… → …_tool,edit,fleet,memory,orchestrator,read,shell,…",
+          "toolsAdded": [
+            "orchestrator"
+          ],
+          "toolsRemoved": [],
+          "sectionsChanged": [
+            "tools"
+          ],
+          "toolsReordered": false
+        }
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 29,
+      "delta": {
+        "input": 299,
+        "cacheRead": 32128,
+        "cacheWrite": 0,
+        "output": 88
+      },
+      "contextTokens": 16292,
+      "cacheHitRate": 99.0779288864218,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 29,
+        "stableTurns": 27,
+        "expectedChanges": 2,
+        "unexpectedChanges": 0,
+        "lastChange": {
+          "expected": true,
+          "summary": "+工具 orchestrator / 改段 tools；首处差异 @48 (tools): …_tool,edit,fleet,memory,read,shell,tool_history_… → …_tool,edit,fleet,memory,orchestrator,read,shell,…",
+          "toolsAdded": [
+            "orchestrator"
+          ],
+          "toolsRemoved": [],
+          "sectionsChanged": [
+            "tools"
+          ],
+          "toolsReordered": false
+        }
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 30,
+      "delta": {
+        "input": 187,
+        "cacheRead": 16128,
+        "cacheWrite": 0,
+        "output": 592
+      },
+      "contextTokens": 16907,
+      "cacheHitRate": 98.85381550720196,
+      "cacheWarming": {
+        "mode": "idle",
+        "state": "inactive",
+        "reason": "cache lifetime unavailable",
+        "prewarm": {
+          "sent": false,
+          "reason": "no system prompt yet (new session: the first turn writes the cache)"
+        }
+      },
+      "prefixAudit": {
+        "turns": 30,
+        "stableTurns": 28,
+        "expectedChanges": 2,
+        "unexpectedChanges": 0,
+        "lastChange": {
+          "expected": true,
+          "summary": "+工具 orchestrator / 改段 tools；首处差异 @48 (tools): …_tool,edit,fleet,memory,read,shell,tool_history_… → …_tool,edit,fleet,memory,orchestrator,read,shell,…",
+          "toolsAdded": [
+            "orchestrator"
+          ],
+          "toolsRemoved": [],
+          "sectionsChanged": [
+            "tools"
+          ],
+          "toolsReordered": false
+        }
+      },
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    }
+  ]
+}

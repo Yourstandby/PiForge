@@ -76,6 +76,8 @@ const resumeCheck = args.includes("--resume");
 const cacheWarmingMode = valueOf("--cache-warming") ?? "off";
 /** pi 只在预计省钱 >= $0.05 时保活；这个开关抬高假模型价格以验证保活机制本身。 */
 const cacheEconForce = args.includes("--cache-econ-force");
+/** 稳定段命中率下限（默认 0 = 不检查）。smoke 用 90。 */
+const minHitRate = Number(valueOf("--assert-hit-rate") ?? 0);
 const probe = (() => {
   if (probeArg) {
     const [tool, action] = probeArg.split(":");
@@ -649,6 +651,26 @@ async function main() {
         console.error("  ✗ 出现非预期前缀变化（相邻两轮本应字节一致）");
         process.exitCode = 4;
       }
+    }
+  }
+
+  if (minHitRate > 0) {
+    // 稳定段 = 跳过首轮（冷启动）、warm 请求，以及 cacheCreate 明显偏大的轮次（前缀变化）。
+    const turnsWithCache = recorder.requests
+      .map((entry, index) => ({ index, cache: entry.cache }))
+      .filter((entry) => entry.cache && entry.cache.kind === "turn");
+    const stable = turnsWithCache.filter(
+      (entry, position) =>
+        position > 0 && entry.cache.cacheCreationTokens <= Math.max(200, entry.cache.totalTokens * 0.2)
+    );
+    const read = stable.reduce((sum, entry) => sum + entry.cache.cacheReadTokens, 0);
+    const created = stable.reduce((sum, entry) => sum + entry.cache.cacheCreationTokens, 0);
+    const rate = read + created > 0 ? (read / (read + created)) * 100 : 0;
+    console.log("");
+    console.log(`稳定段 cacheRead 命中率: ${rate.toFixed(1)}% (${stable.length} 轮)`);
+    if (rate < minHitRate) {
+      console.error(`  ✗ 低于阈值 ${minHitRate}%`);
+      process.exitCode = 6;
     }
   }
 

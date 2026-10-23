@@ -16,7 +16,8 @@ npm run measure:prefix -- --turns 4 --language message  # 回复语言放在用�
 npm run measure:prefix -- --cache-stats --cache-warming idle --cache-ttl-ms 15000 --pause-ms 20000
 npm run measure:prefix -- --resume --cache-stats        # 恢复会话的首轮预热
 npm run measure:prefix -- --probe orchestrator:status   # 真调一次多态工具，验证分派链路
-npm run smoke:prefix-budget                             # 回归护栏：前缀 ≤7200 tok + 分派探针
+npm run smoke:prefix-budget                             # 护栏：前缀 ≤7200 + 命中率 ≥90% + 按需域探针（两种配置）
+npm run measure:long-session                            # 30 轮真实模型会话（需要 auth.json）
 ```
 
 口径：`cjk=1 token/char`，其他 `4 chars/token`（与 `lib/live-usage.ts` 完全一致）。
@@ -159,10 +160,27 @@ node scripts/measure-prefix.mjs --mode host --api anthropic-messages --turns 2 -
 与最后一次变化的差异段（`lastChange`）。`smoke:prefix-budget` 会把
 `unexpectedChanges > 0` 当失败（退出码 4/5）。
 
+## 第 5 步：超长会话实测后的两处调整
+
+30 轮真实会话（deepseek-flash，含工具调用/停顿/激活）的完整报告见
+[`long-session.md`](./long-session.md)。结论直接改了默认配置：
+
+1. **memory / orchestrator 恢复常驻声明**（`ON_DEMAND_DOMAINS` 默认关闭，
+   `PIFORGE_ON_DEMAND_DOMAINS=1` 才开）。实测按需版本 30 轮未缓存 input 49 378 tok，
+   常驻版本 37 731，v0.8.2 23 903 —— 激活的一次性开销盖过了 617 tok/轮的节省。
+   前缀因此回到 **6 988 tok / 12 个工具**（仍比 v0.8.2 的 8 146 / 23 个低 14%）。
+2. **缓存保活**在 deepseek 上全程 `inactive`（模型无 `promptCache` 元数据，
+   且 6 988 tok 的省钱期望 < $0.05 门槛）。保活机制本身改用记录型 provider 验证
+   （合成模型 + TTL 15s + 强制经济性）：停顿期间 4 次 warm 全命中。
+
+`smoke:prefix-budget` 现在跑两种配置：默认（前缀 ≤7 200、稳定段命中率 ≥90%、
+无非预期前缀变化）与 `PIFORGE_ON_DEMAND_DOMAINS=1`（tool_search 激活 + 激活后
+连续两轮 prefixHash 一致）。
+
 ## 用它来验收后续步骤
 
 1. 前缀稳定化：多跑几个「带工具调用」的回合，`prefixHash` 不该变；
    一变就要看到 `!! 前缀在两轮之间变化` 与作废 token 数。
 2. 内容去重：`turn N body` 的增长速度应慢于历史条数增长速度。
 3. 回归护栏：`npm run smoke:prefix-budget` 在 CI/发布前跑；阈值 **6 500 tok**
-   （当前 6 339 + 2.5% 余量），并且会跑 memory / orchestrator 两个「搜索 → 激活 → 分派」探针。
+   （当前 6 988 + 3% 余量），并跑「稳定段命中率 ≥ 90%」与按需域的激活探针（两种配置）。

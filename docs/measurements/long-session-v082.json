@@ -1,0 +1,527 @@
+{
+  "label": "v0.8.2",
+  "provider": "deepseek",
+  "modelId": "deepseek-flash",
+  "turns": 30,
+  "measuredAt": "2026-10-23T03:06:34.647Z",
+  "stableTurns": 29,
+  "stableHitRate": 98.31,
+  "totals": {
+    "read": 894080,
+    "write": 0,
+    "input": 15340,
+    "denominator": 909420
+  },
+  "rows": [
+    {
+      "turn": 1,
+      "delta": {
+        "input": 8563,
+        "cacheRead": 8320,
+        "cacheWrite": 0,
+        "output": 66
+      },
+      "contextTokens": 8489,
+      "cacheHitRate": 49.28034117159273,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 2,
+      "delta": {
+        "input": 325,
+        "cacheRead": 16768,
+        "cacheWrite": 0,
+        "output": 63
+      },
+      "contextTokens": 8589,
+      "cacheHitRate": 98.09863686889369,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 3,
+      "delta": {
+        "input": 566,
+        "cacheRead": 25856,
+        "cacheWrite": 0,
+        "output": 291
+      },
+      "contextTokens": 8940,
+      "cacheHitRate": 97.8578457346151,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 4,
+      "delta": {
+        "input": 494,
+        "cacheRead": 17536,
+        "cacheWrite": 0,
+        "output": 90
+      },
+      "contextTokens": 9068,
+      "cacheHitRate": 97.26012201885746,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 5,
+      "delta": {
+        "input": 1355,
+        "cacheRead": 27520,
+        "cacheWrite": 0,
+        "output": 214
+      },
+      "contextTokens": 10285,
+      "cacheHitRate": 95.3073593073593,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 6,
+      "delta": {
+        "input": 1100,
+        "cacheRead": 55680,
+        "cacheWrite": 0,
+        "output": 1596
+      },
+      "contextTokens": 12394,
+      "cacheHitRate": 98.06269813314547,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 7,
+      "delta": {
+        "input": 461,
+        "cacheRead": 24448,
+        "cacheWrite": 0,
+        "output": 65
+      },
+      "contextTokens": 12498,
+      "cacheHitRate": 98.14926331847926,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 8,
+      "delta": {
+        "input": 423,
+        "cacheRead": 24832,
+        "cacheWrite": 0,
+        "output": 98
+      },
+      "contextTokens": 12745,
+      "cacheHitRate": 98.3250841417541,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 9,
+      "delta": {
+        "input": 627,
+        "cacheRead": 38144,
+        "cacheWrite": 0,
+        "output": 294
+      },
+      "contextTokens": 13156,
+      "cacheHitRate": 98.3828118954889,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 10,
+      "delta": {
+        "input": 446,
+        "cacheRead": 25984,
+        "cacheWrite": 0,
+        "output": 62
+      },
+      "contextTokens": 13254,
+      "cacheHitRate": 98.31252364737041,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 11,
+      "delta": {
+        "input": 583,
+        "cacheRead": 26368,
+        "cacheWrite": 0,
+        "output": 114
+      },
+      "contextTokens": 13700,
+      "cacheHitRate": 97.83681496048385,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 12,
+      "delta": {
+        "input": 394,
+        "cacheRead": 27136,
+        "cacheWrite": 0,
+        "output": 66
+      },
+      "contextTokens": 13806,
+      "cacheHitRate": 98.56883399927352,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 13,
+      "delta": {
+        "input": 684,
+        "cacheRead": 27392,
+        "cacheWrite": 0,
+        "output": 151
+      },
+      "contextTokens": 14291,
+      "cacheHitRate": 97.56375552072944,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 14,
+      "delta": {
+        "input": 408,
+        "cacheRead": 28416,
+        "cacheWrite": 0,
+        "output": 178
+      },
+      "contextTokens": 14609,
+      "cacheHitRate": 98.58451290591174,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 15,
+      "delta": {
+        "input": 414,
+        "cacheRead": 28928,
+        "cacheWrite": 0,
+        "output": 64
+      },
+      "contextTokens": 14711,
+      "cacheHitRate": 98.58905323427169,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 16,
+      "delta": {
+        "input": 364,
+        "cacheRead": 29312,
+        "cacheWrite": 0,
+        "output": 74
+      },
+      "contextTokens": 14953,
+      "cacheHitRate": 98.77341959832862,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 17,
+      "delta": {
+        "input": 676,
+        "cacheRead": 44416,
+        "cacheWrite": 0,
+        "output": 73
+      },
+      "contextTokens": 15082,
+      "cacheHitRate": 98.50084272154706,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 18,
+      "delta": {
+        "input": 466,
+        "cacheRead": 29824,
+        "cacheWrite": 0,
+        "output": 68
+      },
+      "contextTokens": 15192,
+      "cacheHitRate": 98.46153846153847,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 19,
+      "delta": {
+        "input": 720,
+        "cacheRead": 45312,
+        "cacheWrite": 0,
+        "output": 264
+      },
+      "contextTokens": 15535,
+      "cacheHitRate": 98.43587069864442,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 20,
+      "delta": {
+        "input": 336,
+        "cacheRead": 30848,
+        "cacheWrite": 0,
+        "output": 67
+      },
+      "contextTokens": 15639,
+      "cacheHitRate": 98.92252437147255,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 21,
+      "delta": {
+        "input": 437,
+        "cacheRead": 30976,
+        "cacheWrite": 0,
+        "output": 66
+      },
+      "contextTokens": 15752,
+      "cacheHitRate": 98.60885620602934,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 22,
+      "delta": {
+        "input": 947,
+        "cacheRead": 31360,
+        "cacheWrite": 0,
+        "output": 158
+      },
+      "contextTokens": 16607,
+      "cacheHitRate": 97.06874671123906,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 23,
+      "delta": {
+        "input": 399,
+        "cacheRead": 33024,
+        "cacheWrite": 0,
+        "output": 151
+      },
+      "contextTokens": 16841,
+      "cacheHitRate": 98.80621129162552,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 24,
+      "delta": {
+        "input": 416,
+        "cacheRead": 33408,
+        "cacheWrite": 0,
+        "output": 86
+      },
+      "contextTokens": 16987,
+      "cacheHitRate": 98.77010406811732,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 25,
+      "delta": {
+        "input": 477,
+        "cacheRead": 33664,
+        "cacheWrite": 0,
+        "output": 105
+      },
+      "contextTokens": 17165,
+      "cacheHitRate": 98.60285287484257,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 26,
+      "delta": {
+        "input": 422,
+        "cacheRead": 34048,
+        "cacheWrite": 0,
+        "output": 72
+      },
+      "contextTokens": 17279,
+      "cacheHitRate": 98.77574702639976,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 27,
+      "delta": {
+        "input": 363,
+        "cacheRead": 34432,
+        "cacheWrite": 0,
+        "output": 196
+      },
+      "contextTokens": 17550,
+      "cacheHitRate": 98.95674665900273,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 28,
+      "delta": {
+        "input": 426,
+        "cacheRead": 34944,
+        "cacheWrite": 0,
+        "output": 219
+      },
+      "contextTokens": 17929,
+      "cacheHitRate": 98.79558948261237,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 29,
+      "delta": {
+        "input": 419,
+        "cacheRead": 35584,
+        "cacheWrite": 0,
+        "output": 94
+      },
+      "contextTokens": 18089,
+      "cacheHitRate": 98.83620809376995,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    },
+    {
+      "turn": 30,
+      "delta": {
+        "input": 192,
+        "cacheRead": 17920,
+        "cacheWrite": 0,
+        "output": 541
+      },
+      "contextTokens": 18653,
+      "cacheHitRate": 98.93992932862191,
+      "cacheWarming": null,
+      "prefixAudit": null,
+      "model": {
+        "id": "deepseek-flash",
+        "provider": "deepseek"
+      }
+    }
+  ]
+}

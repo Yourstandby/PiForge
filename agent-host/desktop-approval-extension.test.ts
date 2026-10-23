@@ -179,20 +179,20 @@ test("prefix purity: identical state yields byte-identical tools and prompt", as
     second.systemPromptOptions,
     "同一状态两次请求的提示词输入必须完全相等",
   );
-  // 常驻域（browser/shell/fleet）+ 通道工具；按需域（memory/orchestrator）默认不声明。
+  // 第 5 步实测后：memory / orchestrator 默认常驻（按需模式改由 env 打开）。
   assert.deepEqual(activeTools[0], [
     "bash",
     "browser",
     "edit",
     "fleet",
+    "memory",
+    "orchestrator",
     "read",
     "shell",
     "tool_history_get",
     "tool_search",
     "write",
   ]);
-  assert.ok(!activeTools[0].includes("memory"), "memory 是 tool_search 激活的按需域");
-  assert.ok(!activeTools[0].includes("orchestrator"), "orchestrator 是 tool_search 激活的按需域");
   for (const legacy of ["browser_read", "run_bg", "spawn_agent", "herdr_spawn"]) {
     assert.ok(!activeTools[0].includes(legacy), `${legacy} 已收进多态工具，不得单独声明`);
   }
@@ -365,7 +365,10 @@ test("plan mode also reports the prefix diff only when it changes", async () => 
   });
 });
 
-test("activated on-demand domains (memory/orchestrator) join the declaration and stay latched", async () => {
+test("activated on-demand domains join the declaration and stay latched (PIFORGE_ON_DEMAND_DOMAINS=1)", async () => {
+  const previousEnv = process.env.PIFORGE_ON_DEMAND_DOMAINS;
+  process.env.PIFORGE_ON_DEMAND_DOMAINS = "1";
+  try {
   const registered: RegisteredTool[] = [
     { name: "browser", description: "Browser actions" },
     { name: "shell", description: "Shell actions" },
@@ -388,4 +391,8 @@ test("activated on-demand domains (memory/orchestrator) join the declaration and
   await handlers.get("before_agent_start")?.(prefixEvent());
   assert.ok(activeTools[2].includes("memory"));
   assert.deepEqual(activeTools[1], activeTools[2], "激活后前缀字节稳定");
+  } finally {
+    if (previousEnv === undefined) delete process.env.PIFORGE_ON_DEMAND_DOMAINS;
+    else process.env.PIFORGE_ON_DEMAND_DOMAINS = previousEnv;
+  }
 });

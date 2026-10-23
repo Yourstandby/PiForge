@@ -258,8 +258,11 @@ test("registerDeferredTool mirrors without joining any domain", () => {
   assert.equal(registeredDomainActions().length, 0);
 });
 
-test("on-demand domains (memory/orchestrator) are registered deferred, always-on ones direct", () => {
-  const { api } = fakePi();
+test("on-demand domains (memory/orchestrator) are registered deferred when the flag is on", () => {
+  const previous = process.env.PIFORGE_ON_DEMAND_DOMAINS;
+  process.env.PIFORGE_ON_DEMAND_DOMAINS = "1";
+  try {
+    const { api } = fakePi();
   registerDomainAction(api as never, "shell", "run", toolDefinition("run_bg", "Start bg.", {}));
   registerDomainAction(api as never, "memory", "recall", toolDefinition("memory_recall", "Search.", {}));
   registerDomainAction(
@@ -275,6 +278,10 @@ test("on-demand domains (memory/orchestrator) are registered deferred, always-on
   assert.equal(byName.get("memory")?.exposure, "deferred");
   assert.equal(byName.get("memory")?.defaultActive, false);
   assert.equal(byName.get("orchestrator")?.exposure, "deferred");
-  // tool_search 只回显 description 的第一行：第一行必须是「域: 动作列表」。
-  assert.match(byName.get("memory")?.description ?? "", /^Memory: recall\./);
+    // tool_search 只回显 description 的第一行：第一行必须是「域: 动作列表」。
+    assert.match(byName.get("memory")?.description ?? "", /^Memory: recall\./);
+  } finally {
+    if (previous === undefined) delete process.env.PIFORGE_ON_DEMAND_DOMAINS;
+    else process.env.PIFORGE_ON_DEMAND_DOMAINS = previous;
+  }
 });

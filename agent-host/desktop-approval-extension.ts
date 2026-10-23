@@ -34,7 +34,7 @@ import {
 } from "./tool-stubs.ts";
 import {
   ALWAYS_DECLARED_DOMAINS,
-  ON_DEMAND_DOMAINS,
+  enabledOnDemandDomains,
   PLAN_READONLY_LEGACY_TOOLS,
   isPlanAllowedDomainCall,
 } from "../lib/domain-tools.ts";
@@ -163,7 +163,7 @@ export function createDesktopApprovalFactory(modeRef: AgentModeRef): ExtensionFa
         // 常驻域：browser / shell / fleet 是默认入口，被存根就等于把桌面能力藏起来。
         ...ALWAYS_DECLARED_DOMAINS.filter((name) => registered.some((tool) => tool.name === name)),
         // 按需域：一旦被 tool_search 激活就必须持续声明（否则模型刚拿到又失去）。
-        ...ON_DEMAND_DOMAINS.filter(
+        ...enabledOnDemandDomains().filter(
           (name) =>
             registered.some((tool) => tool.name === name) && pi.getActiveTools().includes(name)
         ),
@@ -284,7 +284,7 @@ export function createDesktopApprovalFactory(modeRef: AgentModeRef): ExtensionFa
         const diff = diffPrefixSnapshots(lastPrefix, snapshot);
         lastPrefix = snapshot;
         // 首次建立前缀不算「变化」，之后只允许「按需域首次激活」这一种变化。
-        const expected = firstBuild || isExpectedPrefixChange(diff, ON_DEMAND_DOMAINS);
+        const expected = firstBuild || isExpectedPrefixChange(diff, enabledOnDemandDomains());
         const audit = modeRef.prefixAudit ?? emptyPrefixAudit();
         modeRef.prefixAudit = firstBuild
           ? { ...audit, turns: audit.turns + 1, stableTurns: audit.stableTurns + 1 }

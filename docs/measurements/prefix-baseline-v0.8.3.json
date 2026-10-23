@@ -1,6 +1,6 @@
 {
   "PiForge": {
-    "generatedAt": "2026-10-23T01:59:41.320Z",
+    "generatedAt": "2026-10-23T03:15:12.207Z",
     "label": "PiForge",
     "turns": [
       {
@@ -10,21 +10,21 @@
           "system",
           "user"
         ],
-        "systemChars": 10110,
-        "systemTokens": 3772,
-        "toolsCount": 10,
-        "toolsTokens": 2567,
+        "systemChars": 10212,
+        "systemTokens": 3798,
+        "toolsCount": 12,
+        "toolsTokens": 3190,
         "coreToolsTokens": 710,
-        "extensionToolsTokens": 1857,
-        "prefixTokens": 6339,
-        "bodyTokens": 6489,
+        "extensionToolsTokens": 2480,
+        "prefixTokens": 6988,
+        "bodyTokens": 7138,
         "cacheBreakpoints": {
           "system": false,
           "tools": false,
           "messages": 0,
           "total": 0
         },
-        "prefixHash": "d01746c22270"
+        "prefixHash": "b222d22ed25c"
       },
       {
         "turn": 2,
@@ -35,21 +35,21 @@
           "assistant",
           "user"
         ],
-        "systemChars": 10110,
-        "systemTokens": 3772,
-        "toolsCount": 10,
-        "toolsTokens": 2567,
+        "systemChars": 10212,
+        "systemTokens": 3798,
+        "toolsCount": 12,
+        "toolsTokens": 3190,
         "coreToolsTokens": 710,
-        "extensionToolsTokens": 1857,
-        "prefixTokens": 6339,
-        "bodyTokens": 6517,
+        "extensionToolsTokens": 2480,
+        "prefixTokens": 6988,
+        "bodyTokens": 7166,
         "cacheBreakpoints": {
           "system": false,
           "tools": false,
           "messages": 0,
           "total": 0
         },
-        "prefixHash": "d01746c22270"
+        "prefixHash": "b222d22ed25c"
       }
     ],
     "tools": [
@@ -66,10 +66,22 @@
         "core": false
       },
       {
+        "name": "orchestrator",
+        "chars": 1377,
+        "tokens": 344,
+        "core": false
+      },
+      {
         "name": "edit",
         "chars": 1179,
         "tokens": 295,
         "core": true
+      },
+      {
+        "name": "memory",
+        "chars": 1114,
+        "tokens": 279,
+        "core": false
       },
       {
         "name": "browser",
@@ -114,13 +126,13 @@
         "core": false
       }
     ],
-    "systemText": "<omitted: npm run measure:prefix -- --dump tmp/prefix-dump>",
+    "systemText": "<omitted>",
     "prefixChangedBetweenTurns": false,
     "invalidatedOnPrefixChange": 0,
     "estimator": "cjk=1 token/char, other=4 chars/token (identical to lib/live-usage.ts)"
   },
   "pi CLI": {
-    "generatedAt": "2026-10-23T01:59:44.742Z",
+    "generatedAt": "2026-10-23T03:15:14.823Z",
     "label": "pi CLI",
     "turns": [
       {
@@ -198,7 +210,7 @@
         "core": true
       }
     ],
-    "systemText": "<omitted: npm run measure:prefix -- --dump tmp/prefix-dump>",
+    "systemText": "<omitted>",
     "prefixChangedBetweenTurns": false,
     "invalidatedOnPrefixChange": 0,
     "estimator": "cjk=1 token/char, other=4 chars/token (identical to lib/live-usage.ts)"

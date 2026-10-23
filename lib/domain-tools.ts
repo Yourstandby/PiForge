@@ -28,14 +28,27 @@ export const DOMAIN_TOOL_NAMES: readonly DomainToolName[] = [
 export const ALWAYS_DECLARED_DOMAINS: readonly DomainToolName[] = ["browser", "shell", "fleet"];
 
 /**
- * 按需域：注册成 `deferred`，模型先 `tool_search` 才会被声明（下一轮起生效）。
- * 这两个域用得少（memory 平均每几十轮一次、orchestrator 更少），但 schema 不便宜
- * （合计 ≈ 617 tok/轮），所以用「一次发现往返」换每轮固定省钱。
+ * 可选的「按需域」候选：memory / orchestrator。
+ *
+ * **默认关闭**（第 5 步实测结论）：这两个域收起来只省 617 tok/轮，但第一次使用时
+ * 要付 ①一次 tool_search 往返 ②一次前缀重写（缓存全部作废）。实测 30 轮真实会话：
+ * 激活那两轮多出 ~21k 未缓存 token，而 29 轮稳态只省回 ~18k（且缓存读单价通常只有
+ * 输入价的 10%，换算成钱更不划算）。所以默认恢复成常驻声明；
+ * `PIFORGE_ON_DEMAND_DOMAINS=1` 可显式打开（长会话 >100 轮或不支持前缀缓存的模型）。
  */
 export const ON_DEMAND_DOMAINS: readonly DomainToolName[] = ["memory", "orchestrator"];
 
-export function isOnDemandDomain(name: string): name is DomainToolName {
-  return (ON_DEMAND_DOMAINS as readonly string[]).includes(name);
+export function enabledOnDemandDomains(
+  env: Record<string, string | undefined> = process.env
+): readonly DomainToolName[] {
+  return env.PIFORGE_ON_DEMAND_DOMAINS === "1" ? ON_DEMAND_DOMAINS : [];
+}
+
+export function isOnDemandDomain(
+  name: string,
+  env: Record<string, string | undefined> = process.env
+): name is DomainToolName {
+  return (enabledOnDemandDomains(env) as readonly string[]).includes(name);
 }
 
 export interface DomainRoute {
