@@ -28,6 +28,7 @@ import {
   STATIC_APP_SCHEME,
 } from "./static-app";
 import {
+  describeReEvaluation,
   GPU_EVIDENCE_FILE,
   parseGpuEvidence,
   recordGpuObservation,
@@ -114,8 +115,18 @@ function readGpuEvidence(): GpuEvidence | null {
   }
 }
 
-const gpuDecision = resolveGpuMode({ evidence: readGpuEvidence(), env: process.env });
+const gpuEvidenceAtBoot = readGpuEvidence();
+const gpuDecision = resolveGpuMode({ evidence: gpuEvidenceAtBoot, env: process.env });
 for (const name of gpuDecision.switches) app.commandLine.appendSwitch(name);
+
+/**
+ * 决策轨迹：只在**模式或依据变化**时输出一行
+ * `gpu mode re-evaluated: <prev>→<next>, reason=<code>`。
+ *
+ * 注意这里只计算不写日志 —— `app.getPath("logs")` 在 `ready` 之前取不到（Windows），
+ * 提前写会被 writeLog 的 try/catch 静默吞掉（本机踩过）。真正的落盘在 ready 之后。
+ */
+const gpuReEvaluation = describeReEvaluation(gpuEvidenceAtBoot?.decision ?? null, gpuDecision);
 
 /**
  * 实验用 GPU 开关：`PIFORGE_GPU_FLAGS="--disable-gpu-compositing,--use-angle=d3d11"`。
@@ -1565,7 +1576,21 @@ app.whenReady().then(async () => {
         return null;
       }
     })();
-    const evidence = recordGpuObservation(readGpuEvidence(), observed);
+    const featureStatus = (() => {
+      try {
+        return app.getGPUFeatureStatus() as unknown as Record<string, string>;
+      } catch {
+        return null;
+      }
+    })();
+    const evidence = recordGpuObservation(
+      readGpuEvidence(),
+      {
+        compositing: observed,
+        featureStatus,
+        decision: { mode: gpuDecision.mode, code: gpuDecision.code },
+      },
+    );
     mkdirSync(app.getPath("userData"), { recursive: true });
     writeFileSync(
       path.join(app.getPath("userData"), GPU_EVIDENCE_FILE),
@@ -1573,11 +1598,15 @@ app.whenReady().then(async () => {
 `,
       "utf8",
     );
+    // 独立的可 grep 行（自愈 / 强制覆盖 / 首次决策都会出现）。
+    if (gpuReEvaluation) logInfo(gpuReEvaluation);
     logInfo("GPU mode", {
       mode: gpuDecision.mode,
+      code: gpuDecision.code,
       reason: gpuDecision.reason,
       switches: gpuDecision.switches,
       observedCompositing: observed,
+      reEvaluated: gpuReEvaluation,
       evidence,
     });
   } catch (error) {

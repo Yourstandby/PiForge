@@ -84,3 +84,41 @@ Chromium 的典型行为：合成与光栅化都在软件路径上。既然硬�
 | E. 接受基线、B 关闭 | gpu 255 MB | 与 PAD 差 100 MB | 仅在你看重"零自动开关"时 |
 
 > 说明：本轮**没有**改 Electron 版本（无证据支持）；也没有把 `--disable-gpu` 写死。
+
+## 6. 可观测性（方案 1 收尾）
+
+`gpu-evidence.json` 现在记录（v2，兼容读 v1 并把 `recordedAt` 迁移为 `probedAt`）：
+
+```json
+{
+  "version": 2,
+  "softwareLaunches": 2,
+  "lastGpuCompositing": "disabled_software",
+  "probedAt": 1792764225881,
+  "gpuFeatureStatus": { "gpu_compositing": "disabled_software", "opengl": "disabled_off", "...": "..." },
+  "decision": { "mode": "nogpu", "code": "consecutive_software" }
+}
+```
+
+`code` 是机器可读依据：`no_evidence` / `observing` / `consecutive_software` /
+`hardware_ok` / `expired` / `force_override`。
+
+决策**变化**时打一行独立日志（可 grep，30 天过期重探也留痕）：
+
+```
+gpu mode re-evaluated: <prev>→<next>, reason=<code>
+```
+
+验收（本机，同一隔离 userData 连续启动）：
+
+| 启动 | 环境 | decision | 日志 |
+|---|---|---|---|
+| 1 | 未设置 | `default / no_evidence` | `gpu mode re-evaluated: none→default, reason=no_evidence` |
+| 2 | 未设置 | `default / observing` | `default→default, reason=observing` |
+| 3 | 未设置 | `nogpu / consecutive_software` | `default→nogpu, reason=consecutive_software` |
+| 4 | `PIFORGE_GPU_MODE=default` | `default / force_override` | `nogpu→default, reason=force_override` |
+| 5 | `PIFORGE_GPU_MODE=nogpu` | `nogpu / force_override` | `default→nogpu, reason=force_override` |
+| 6 | 把 `probedAt` 改到 31 天前 | `default / expired` | `nogpu→default, reason=expired` |
+
+切到 nogpu 后复测无回退：gpu **154.1 MB**、总 **879.8 MB**、空闲 CPU **0.32%**（≤3%）、
+renderer 161.8 MB（≤200）。
