@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fauxAssistantMessage, fauxProvider } from "./sdk-adapter.ts";
+import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "./sdk-adapter.ts";
 import type { SubagentLifecycleEvent } from "../contract/domains/subagents.ts";
 import {
   SubagentError,
@@ -242,7 +242,6 @@ test("turn cap returns a need_help report naming turns and the last effective ac
     const { writeFileSync } = await import("node:fs");
     const target = join(env.dir, "note.txt");
     writeFileSync(target, "hello");
-    const { fauxToolCall } = await import("@earendil-works/pi-ai");
     const faux = await registerFaux("subagent-turn-cap", []);
     faux.setResponses(
       Array.from({ length: 8 }, () => fauxAssistantMessage([fauxToolCall("read", { path: target })])),
@@ -273,7 +272,6 @@ test("turn cap returns a need_help report naming turns and the last effective ac
 test("progress-guard report is distinguishable from the turn-cap report", { timeout: 30000 }, async () => {
   const env = setupEnv();
   try {
-    const { fauxToolCall } = await import("@earendil-works/pi-ai");
     const faux = await registerFaux("subagent-progress", []);
     // tool_search 是「元动作」：不算进展，所以连续几轮就会被 progress-guard 停掉。
     faux.setResponses(

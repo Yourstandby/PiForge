@@ -69,14 +69,14 @@ test("native MCP handshake, discovery, invocation and Codemode nested permission
     const search = session.extensionRunner.getAllRegisteredTools().find(tool => tool.definition.name === "tool_search")!;
     await search.definition.execute("test-search", { query: "echo", limit: 1 }, undefined, undefined, ctx);
     assert.ok(session.getActiveToolNames().includes("mcp__fixture__echo"));
-    await session.extensionRunner.emitBeforeAgentStart("next prompt", undefined, { cwd: dir });
+    await session.extensionRunner.emitBeforeAgentStart({ messageType: "user", prompt: "next prompt" }, { cwd: dir });
     assert.ok(session.getActiveToolNames().includes("mcp__fixture__echo"), "search activation must survive the next prompt");
     ref.current = "ask";
     const blocked = await ctx.executeTool("mcp__fixture__echo", { text: "must-not-run" });
     assert.equal(blocked.isError, true);
     assert.match(JSON.stringify(blocked), /Blocked/);
     ref.current = "plan";
-    await session.extensionRunner.emitBeforeAgentStart("plan prompt", undefined, { cwd: dir });
+    await session.extensionRunner.emitBeforeAgentStart({ messageType: "user", prompt: "plan prompt" }, { cwd: dir });
     assert.ok(!session.getActiveToolNames().includes("mcp__fixture__echo"), "Plan must still remove MCP declarations");
     const event = { type: "tool_call" as const, toolName: "codemode", toolCallId: "test-parent", input: code };
     assert.equal((await session.extensionRunner.emitToolCall(event))?.block, true);
@@ -108,7 +108,7 @@ test("native MCP rejects project provider auth before creating a transport", { t
   const { session } = await createAgentSession({ cwd: projectDir, agentDir: dir, resourceLoader: loader, sessionManager: SessionManager.inMemory(projectDir), noTools: "builtin" });
   try {
     await session.bindExtensions({ mode: "rpc", uiContext: { notify: () => {} } as never });
-    await session.extensionRunner.emitBeforeAgentStart("test", undefined, { cwd: projectDir });
+    await session.extensionRunner.emitBeforeAgentStart({ messageType: "user", prompt: "test" }, { cwd: projectDir });
     assert.equal(transportCalls, 0);
     assert.ok(!session.getAllTools().some(tool => tool.name.startsWith("mcp__unsafe__")));
   } finally {

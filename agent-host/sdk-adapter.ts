@@ -68,7 +68,7 @@ export type {
   Model,
   TextContent,
 } from "@earendil-works/pi-ai";
-export { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
+export { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 export type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 
 // MCP transport/OAuth surface used only by mcp-service.ts.
