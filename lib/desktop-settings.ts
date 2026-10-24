@@ -30,10 +30,25 @@ export interface AutoRoutingModelSelection {
 /** Auxiliary (non-chat) model selection: image generation or decision/classifier. */
 export type AuxModelSelection = AutoRoutingModelSelection;
 
+/**
+ * `on`：普通工具照常声明给模型，脚本只是第二种调用方式。
+ * `only`：工具不再声明，全部经脚本调用 —— 提示词里少一整套工具 schema，
+ * 且天然逼出「一次脚本办多件事」的批量调用（调用次数下降的主要杠杆）。
+ */
+export type CodemodeMode = "on" | "only";
+
+export const CODEMODE_MODES: readonly CodemodeMode[] = ["on", "only"];
+
+export function isCodemodeMode(value: unknown): value is CodemodeMode {
+  return value === "on" || value === "only";
+}
+
 export interface DesktopSettings {
   defaultAgentMode: AgentMode;
   defaultToolPreset: ToolPreset;
   codemodeEnabled?: boolean;
+  /** `codemodeEnabled` 打开时工具如何呈现给模型（默认 `only`）。 */
+  codemodeMode?: CodemodeMode;
   /** User-picked fast/strong models for the "Auto" routing mode. */
   autoRoutingFast?: AutoRoutingModelSelection;
   autoRoutingStrong?: AutoRoutingModelSelection;
@@ -72,7 +87,9 @@ export function defaultDesktopSettings(): DesktopSettings {
   return {
     defaultAgentMode: DEFAULT_AGENT_MODE,
     defaultToolPreset: DEFAULT_TOOL_PRESET,
-    codemodeEnabled: false,
+    // 批量执行层默认开：模型一次脚本内做完全部读/查/并行调用，而不是逐个工具往返。
+    codemodeEnabled: true,
+    codemodeMode: "only",
     // Browser capabilities are explicit opt-ins for the agent.
     browserReadEnabled: false,
     browserInteractEnabled: false,
@@ -114,7 +131,9 @@ export function mergeDesktopSettings(raw: unknown): DesktopSettings {
       : base.defaultToolPreset,
   };
   if (ltm) result.ltm = ltm;
-  result.codemodeEnabled = typeof obj.codemodeEnabled === "boolean" ? obj.codemodeEnabled : false;
+  result.codemodeEnabled =
+    typeof obj.codemodeEnabled === "boolean" ? obj.codemodeEnabled : base.codemodeEnabled === true;
+  result.codemodeMode = isCodemodeMode(obj.codemodeMode) ? obj.codemodeMode : base.codemodeMode;
   result.browserReadEnabled = obj.browserReadEnabled === true;
   result.browserInteractEnabled = obj.browserInteractEnabled === true;
   if (typeof obj.outputStyleGuidelines === "boolean") {
@@ -170,6 +189,9 @@ export function validateDesktopSettingsBody(body: unknown): string | null {
   const obj = body as Record<string, unknown>;
   if (obj.codemodeEnabled !== undefined && typeof obj.codemodeEnabled !== "boolean") {
     return "codemodeEnabled must be a boolean";
+  }
+  if (obj.codemodeMode !== undefined && !isCodemodeMode(obj.codemodeMode)) {
+    return "codemodeMode must be on | only";
   }
   for (const key of [
     "browserReadEnabled",

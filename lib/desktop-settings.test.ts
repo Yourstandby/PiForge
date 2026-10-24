@@ -56,15 +56,33 @@ test("validateDesktopSettingsBody", () => {
   assert.match(validateDesktopSettingsBody({ defaultAgentMode: "x" })!, /defaultAgentMode/);
   assert.match(validateDesktopSettingsBody({ codemodeEnabled: "yes" })!, /codemodeEnabled/);
   assert.equal(validateDesktopSettingsBody({ codemodeEnabled: true }), null);
+  assert.equal(validateDesktopSettingsBody({ codemodeMode: "only" }), null);
+  assert.match(validateDesktopSettingsBody({ codemodeMode: "off" })!, /codemodeMode/);
 });
 
-test("Codemode defaults off and persists alongside other desktop preferences", () => {
-  assert.equal(defaultDesktopSettings().codemodeEnabled, false);
+test("Codemode defaults on with script-only tools (batch execution layer)", () => {
+  const defaults = defaultDesktopSettings();
+  assert.equal(defaults.codemodeEnabled, true);
+  assert.equal(defaults.codemodeMode, "only");
+
+  // Invalid mode falls back to the default instead of silently dropping the field.
+  assert.equal(mergeDesktopSettings({ codemodeMode: "nope" }).codemodeMode, "only");
+  assert.equal(mergeDesktopSettings({ codemodeMode: "on" }).codemodeMode, "on");
+  // Explicit opt-out still wins over the new default.
+  assert.equal(mergeDesktopSettings({ codemodeEnabled: false }).codemodeEnabled, false);
+
   const dir = mkdtempSync(join(tmpdir(), "pi-desktop-codemode-"));
   try {
-    const saved = writeDesktopSettings(dir, { defaultAgentMode: "ask", defaultToolPreset: "full", codemodeEnabled: true, ltm: { enabled: false } });
+    const saved = writeDesktopSettings(dir, {
+      defaultAgentMode: "ask",
+      defaultToolPreset: "full",
+      codemodeEnabled: false,
+      codemodeMode: "on",
+      ltm: { enabled: false },
+    });
     assert.deepEqual(readDesktopSettings(dir), saved);
-    assert.equal(saved.codemodeEnabled, true);
+    assert.equal(saved.codemodeEnabled, false);
+    assert.equal(saved.codemodeMode, "on");
     assert.equal(saved.ltm?.enabled, false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
