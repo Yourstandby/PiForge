@@ -756,6 +756,64 @@ test("queued follow-ups are reordered and dispatched one at each settled boundar
   await w.destroy();
 });
 
+test("removing a queued follow-up dequeues it in the host and the snapshot sticks", async () => {
+  let emitInner: ((event: unknown) => void) | null = null;
+  const prompts: string[] = [];
+  const events: Array<{ type?: string; items?: Array<{ id: string; message: string }> }> = [];
+  const inner = makeStubInner({
+    isStreaming: true,
+    sessionManager: {
+      getBranch: () => [],
+      getHeader: () => ({ cwd: "D:/project" }),
+    },
+    subscribe: (cb) => {
+      emitInner = cb;
+      return () => {};
+    },
+    prompt: async (message) => {
+      prompts.push(message);
+    },
+  });
+  const w = new AgentSessionWrapper(inner);
+  w.onEvent((event) => events.push(event as (typeof events)[number]));
+  w.start();
+  const emit = (event: unknown) => {
+    const listener = emitInner as ((value: unknown) => void) | null;
+    assert.ok(listener);
+    listener(event);
+  };
+
+  const first = await w.send({ type: "follow_up", message: "drop me" }) as {
+    revision: number;
+    items: Array<{ id: string }>;
+  };
+  const second = await w.send({ type: "follow_up", message: "keep me" }) as {
+    revision: number;
+    items: Array<{ id: string }>;
+  };
+
+  await assert.rejects(
+    () => w.send({ type: "remove_follow_up", id: first.items[0].id, expectedRevision: first.revision - 1 }),
+    /queue changed/i,
+  );
+
+  const snapshot = await w.send({
+    type: "remove_follow_up",
+    id: first.items[0].id,
+    expectedRevision: second.revision,
+  }) as { items: Array<{ message: string }> };
+  assert.deepEqual(snapshot.items.map((item) => item.message), ["keep me"]);
+
+  const lastQueueEvent = [...events].reverse().find((event) => event.type === "follow_up_queue_update");
+  assert.deepEqual(lastQueueEvent?.items?.map((item) => item.message), ["keep me"]);
+
+  emit({ type: "agent_end", messages: [] });
+  emit({ type: "agent_settled" });
+  await flushMicrotasks();
+  assert.deepEqual(prompts, ["keep me"]);
+  await w.destroy();
+});
+
 test("agent_error reaches every listener even if an earlier listener throws", async () => {
   const events: unknown[] = [];
   const inner = makeStubInner({

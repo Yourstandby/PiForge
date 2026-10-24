@@ -17,6 +17,20 @@ test("queued follow-ups keep stable ids and can be reordered as the real send or
   assert.equal(queue.shift()?.item.message, "B");
 });
 
+test("removing a queued follow-up drops exactly that item and rejects stale revisions", () => {
+  const queue = new FollowUpQueue();
+  queue.enqueue({ id: "a", message: "A", createdAt: 1 });
+  queue.enqueue({ id: "b", message: "B", createdAt: 2 });
+
+  assert.throws(() => queue.remove("a", 1), /queue changed/i);
+  const remaining = queue.remove("a", 2);
+
+  assert.deepEqual(remaining.items.map((item) => item.id), ["b"]);
+  assert.equal(remaining.revision, 3);
+  assert.equal(queue.shift()?.item.message, "B");
+  assert.throws(() => queue.remove("missing", queue.snapshot().revision), /not found/i);
+});
+
 test("a stale reorder cannot overwrite a newer queue and queued images survive dispatch", () => {
   const queue = new FollowUpQueue();
   queue.enqueue({

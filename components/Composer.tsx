@@ -114,6 +114,7 @@ export function Composer({
   queuedFollowUps = [],
   queueBusy = false,
   onReorderFollowUps,
+  onRemoveFollowUp,
 }: {
   value: string;
   onValueChange: (value: string) => void;
@@ -130,7 +131,7 @@ export function Composer({
   queuedFollowUps?: Array<{ id: string; message: string; attachmentCount?: number }>;
   queueBusy?: boolean;
   onReorderFollowUps?: (orderedIds: string[]) => void;
-  /** 删除单条排队消息（宿主命令恢复前为本地移除占位）。 */
+  /** 删除单条排队消息（交给宿主真正出队，本地只是乐观更新）。 */
   onRemoveFollowUp?: (id: string) => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
