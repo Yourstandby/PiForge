@@ -957,13 +957,19 @@ function createWindow(options: { initialPath?: string; showStartup?: boolean } =
 
   // 诊断：`PIFORGE_DEBUG_RENDERER=1` 时把渲染进程的 console 转发到主进程日志
   // （用来定位"谁在定时发请求"这类问题；默认关闭，不影响正常日志体积）。
-  if (process.env.PIFORGE_DEBUG_RENDERER === "1") {
+  // `PIFORGE_SMOKE_UI=1` 也开（打包冒烟白屏时，CI 日志里必须能看到渲染进程的第一手报错）。
+  if (process.env.PIFORGE_DEBUG_RENDERER === "1" || process.env.PIFORGE_SMOKE_UI === "1") {
     window.webContents.on("console-message", (event) => {
       logInfo(`[renderer] ${event.message}`, {
         level: event.level,
         line: event.lineNumber,
         source: event.sourceId,
       });
+    });
+    // 资源 404 / 被 CSP 拦下 / 协议处理失败都会走到 did-fail-load，
+    // 这是"白屏但后端 API 正常"时最关键的一条线索。
+    window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
+      logError("renderer did-fail-load", { errorCode, errorDescription, validatedURL });
     });
   }
 
@@ -1838,13 +1844,35 @@ app.whenReady().then(async () => {
              const sessions = await fetch("/api/sessions", { cache: "no-store" }).then((r) => r.ok).catch(() => false);
              // Token 护栏（P2-2 / P2-3a）是否渲染：只读 DOM 属性，不触发任何请求。
              const guard = document.querySelector("[data-token-guard]");
+             const bodyLength = document.body.innerText.length;
+             // 白屏诊断：React 没挂载时要能区分“chunk 没加载”与“JS 跑了但抛错”。
+             // 只在失败分支采集，正常包不付代价。
+             let assets = null;
+             if (bodyLength < 500) {
+               const urls = [...document.querySelectorAll("script[src]")]
+                 .map((s) => s.getAttribute("src") || "")
+                 .filter((src) => src.startsWith("/"));
+               assets = await Promise.all(
+                 urls.map(async (url) => {
+                   try {
+                     const response = await fetch(url, { cache: "no-store" });
+                     return url + " -> " + response.status;
+                   } catch (error) {
+                     return url + " -> ERR " + String(error);
+                   }
+                 }),
+               );
+             }
              return {
                url: location.href,
                title: document.title,
-               bodyLength: document.body.innerText.length,
+               bodyLength,
                hasComposer: Boolean(document.querySelector("textarea")),
                guard: guard ? guard.getAttribute("data-token-guard") : null,
                guardText: guard ? guard.textContent?.slice(0, 80) ?? null : null,
+               bodyHtmlLength: document.body.innerHTML.length,
+               bodyHtmlHead: bodyLength < 500 ? document.body.innerHTML.slice(0, 400) : null,
+               assets,
                health,
                sessionsOk: sessions,
              };

@@ -19,6 +19,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { checkPackagedStaticAssets } from "./lib/packaged-static-assets.mjs";
 
 const args = process.argv.slice(2);
 const exeIndex = args.indexOf("--exe");
@@ -51,6 +52,12 @@ for (const check of checks) {
   if (!check.mustExist && present) problems.push(`${check.label} 仍在包里：${check.file}`);
 }
 
+// 静态资源完整性：index.html 引用的每个 `/_next/static/**` 必须真的在包里。
+// 少一个 chunk = 页面停在 SSR 空壳（正文约 160 字）、React 永远不 hydrate，
+// 但 `/api/**` 仍然正常 —— 这就是“后端好、前端白屏”的典型形状。
+const assets = checkPackagedStaticAssets(resourcesDir);
+for (const problem of assets.problems) problems.push(problem);
+
 if (problems.length > 0) {
   console.error("smoke-packaged-layout: FAIL（打包布局不对）");
   for (const problem of problems) console.error(`  - ${problem}`);
@@ -59,3 +66,6 @@ if (problems.length > 0) {
   process.exit(1);
 }
 console.log(`smoke-packaged-layout: PASS（${path.relative(process.cwd(), resourcesDir)}）`);
+console.log(
+  `  index.html 引用 ${assets.details.referenced} 个根绝对资源，全部在 resources/static 里`,
+);
