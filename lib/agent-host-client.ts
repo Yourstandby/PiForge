@@ -674,6 +674,18 @@ export function getAgentHostClient(): AgentHostClient {
   return globalThis.__piforgeAgentHostClient;
 }
 
+/**
+ * Open an extra, independent connection to the host.
+ *
+ * One socket's write queue is FIFO, so a burst of agent event frames (tool
+ * output, streaming tokens) delays every small RPC that shares it. Callers with
+ * latency-critical reads (file authorization) take their own connection.
+ * The caller owns the instance and is responsible for caching it.
+ */
+export function createAgentHostClient(): AgentHostClient {
+  return new PipeAgentHostClient();
+}
+
 /** Health probe used by `/api/health`; never throws. */
 export async function probeAgentHost(timeoutMs = 1_200): Promise<"ok" | "down"> {
   try {
