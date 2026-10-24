@@ -34,7 +34,7 @@ const StatusParams = Type.Object({
   id: Type.Optional(Type.String({ description: "Only return this worker id." })),
 });
 
-function summary(task: { name: string; status: string; cwd: string; branchName: string | null; output: string; verified: boolean; filesChanged: string[] }): string {
+function summary(task: { name: string; status: string; cwd: string; branchName: string | null; output: string; verified: boolean; filesChanged: string[]; repoRoot?: string | null }): string {
   return [
     `Worker ${task.name} (${task.status})`,
     `Worktree: ${task.cwd}`,
@@ -42,7 +42,40 @@ function summary(task: { name: string; status: string; cwd: string; branchName: 
     `Verified: ${task.verified ? "yes" : "no"}`,
     task.filesChanged.length ? `Changed files: ${task.filesChanged.join(", ")}` : "",
     task.output ? `Report:\n${task.output}` : "No report yet.",
+    mergeBackHint(task) ?? "",
   ].filter(Boolean).join("\n");
+}
+
+/**
+ * worker 的结果怎么回到主干：只给命令，不代跑。
+ *
+ * worktree 隔离的代价是「成果留在另一个目录里」：主干会话看不到、也 merge 不了
+ * 自己不知道存在的东西。这里把三条只读命令 + 一条写操作命令摆出来，让模型
+ * （或用户）自己判断合不合、怎么合。故意不自动 merge：脏工作区、冲突策略、
+ * 是否 squash 都应由人决定，工具只负责把事实和命令备好。
+ */
+export function mergeBackHint(task: {
+  repoRoot?: string | null;
+  cwd: string;
+  branchName: string | null;
+  status: string;
+}): string | null {
+  if (!task.branchName || !task.repoRoot) return null;
+  const quoting = (value: string) => (/\s/.test(value) ? `"${value}"` : value);
+  const repo = quoting(task.repoRoot);
+  const worktree = quoting(task.cwd);
+  const branch = quoting(task.branchName);
+  const lines = [
+    `Merge back (after the worker finishes):`,
+    `  git -C ${repo} log --oneline ${branch} --not HEAD   # what it committed`,
+    `  git -C ${repo} diff HEAD...${branch} --stat         # files it touched`,
+    `  git -C ${repo} merge --no-ff ${branch}              # or cherry-pick individual commits`,
+    `  git -C ${worktree} diff                            # work it never committed stays only here`,
+  ];
+  if (task.status === "running" || task.status === "starting") {
+    lines[0] = `Merge back (commands are safe to run after it finishes; it is still ${task.status}):`;
+  }
+  return lines.join("\n");
 }
 
 export function createDesktopOrchestratorFactory(): ExtensionFactory {

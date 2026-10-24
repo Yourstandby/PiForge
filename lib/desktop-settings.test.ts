@@ -218,7 +218,7 @@ test("collab guidelines default on, persist as a boolean and reject other types"
 
   const dir = mkdtempSync(join(tmpdir(), "pi-collab-guidelines-"));
   try {
-    writeDesktopSettings(dir, { collabGuidelines: false });
+    writeDesktopSettings(dir, { ...defaults, collabGuidelines: false });
     assert.equal(readDesktopSettings(dir).collabGuidelines, false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
