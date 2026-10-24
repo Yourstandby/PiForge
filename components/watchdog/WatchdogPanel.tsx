@@ -1,7 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, MessageCircleQuestion, Radar, ScanSearch, SkipForward, TriangleAlert } from "lucide-react";
+import {
+  CheckCircle2,
+  ChevronDown,
+  Hand,
+  MessageCircleQuestion,
+  Radar,
+  ScanSearch,
+  SkipForward,
+  Timer,
+  TriangleAlert,
+} from "lucide-react";
 import {
   STALL_MS_PRESETS,
   configureStallMs,
@@ -13,7 +23,11 @@ import {
   useWatchdogStore,
   useWatchdogTask,
 } from "@/hooks/useWatchdogStatus";
-import type { InterventionActionType } from "@/contract/domains/watchdog";
+import type {
+  InterventionActionType,
+  WatchdogAwaiting,
+  WatchdogVerdictDecision,
+} from "@/contract/domains/watchdog";
 import { WatchdogDot } from "./StatusDot";
 import {
   formatIdleSeconds,
@@ -183,6 +197,34 @@ export function WatchdogPanel({ sessionId }: { sessionId: string | null }) {
         <span className="ml-auto text-[10px] text-ink-faint">本地状态 · 不产生模型调用</span>
       </header>
 
+      {/* ---- 结论条：不点按钮就能拿到「该不该介入」 ---- */}
+      {task && (
+        <section
+          aria-live="polite"
+          className={`border-b border-[#EDF1F7] px-3 py-2 ${verdictSurface(task.verdict.decision)}`}
+        >
+          <div className="flex items-start gap-1.5">
+            <span aria-hidden="true" className="mt-[3px] shrink-0">
+              {verdictIcon(task.verdict.decision)}
+            </span>
+            <div className="min-w-0">
+              <p className="text-[11.5px] font-medium leading-snug text-ink">{task.verdict.headline}</p>
+              <p className="mt-0.5 text-[10px] text-ink-faint">
+                {awaitingLabel(task.awaiting)}
+                {verdictHint(task.verdict.decision)}
+              </p>
+            </div>
+          </div>
+          {task.verdict.evidence.length > 0 && (
+            <ul className="mt-1 space-y-0.5 pl-5 text-[10px] leading-relaxed text-ink-muted">
+              {task.verdict.evidence.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+
       {/* ---- 上半部分：实时心跳 ---- */}
       <section className="border-b border-[#EDF1F7] px-3 py-2.5">
         <div className="flex items-center gap-2">
@@ -337,9 +379,9 @@ export function WatchdogPanel({ sessionId }: { sessionId: string | null }) {
             icon={<ScanSearch size={12} strokeWidth={2} aria-hidden="true" />}
             label={pending === "ask" ? "发送中…" : "深度诊断"}
             onClick={() => void send("ask")}
-            disabled={disabled}
+            disabled={disabled || task?.verdict.decision !== "intervene"}
             tone="ghost"
-            hint="允许模型重新查状态，回复更长、消耗更多 Token，仅在必要时使用"
+            hint="允许模型重新查状态，回复更长、消耗更多 Token；只有结论是「该介入」时才需要"
           />
           {awaitingRecovery && (
             <span className="text-[10px] text-ink-faint">等待模型恢复输出…</span>
@@ -453,6 +495,43 @@ function InterventionButton({
       {label}
     </button>
   );
+}
+
+/** 结论条的底色：介入=警示红、等你确认=暖黄、其余=中性。 */
+function verdictSurface(decision: WatchdogVerdictDecision): string {
+  if (decision === "intervene") return "bg-[#FDF1F0]";
+  if (decision === "you") return "bg-[#FFFAEB]";
+  return "bg-[#F7FAFF]";
+}
+
+/** 结论图标：与底色同色系，不用文字也能一眼分辨。 */
+function verdictIcon(decision: WatchdogVerdictDecision) {
+  const className = "shrink-0";
+  if (decision === "intervene") {
+    return <TriangleAlert size={12} strokeWidth={2} className={`${className} text-[#B0443C]`} />;
+  }
+  if (decision === "you") {
+    return <Hand size={12} strokeWidth={2} className={`${className} text-[#8A6A16]`} />;
+  }
+  if (decision === "done") {
+    return <CheckCircle2 size={12} strokeWidth={2} className={`${className} text-[#2F7A55]`} />;
+  }
+  return <Timer size={12} strokeWidth={2} className={`${className} text-ink-muted`} />;
+}
+
+/** 「在等谁」——把笼统的「卡住」拆成三件不同的事。 */
+function awaitingLabel(awaiting: WatchdogAwaiting): string {
+  if (awaiting === "tool") return "在等工具执行";
+  if (awaiting === "user") return "在等你确认";
+  return "在等模型出 token";
+}
+
+/** 结论后面跟的一句「那我现在干什么」。 */
+function verdictHint(decision: WatchdogVerdictDecision): string {
+  if (decision === "intervene") return " · 先试「极简询问」，还不动再「强制跳过」";
+  if (decision === "you") return " · 需要你点一下确认，模型不会自己继续";
+  if (decision === "done") return "";
+  return " · 现在不用管";
 }
 
 function lightToneClass(tone: "running" | "stalled" | "failed" | "idle"): string {

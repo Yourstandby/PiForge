@@ -77,6 +77,7 @@ PiForge 是 Pi Coding Agent 的 Windows 桌面端，对标
 5. **Host ESM 打包**：`agent-host/dist` 复制到 `resources/standalone/agent-host/`，入口是稳定 wrapper + `{"type":"module"}`；Pi/pi-mcp/typebox 从共享的 `standalone/node_modules` 解析。
 6. **流式断线续传**：agent 事件带单调 seq；Next 断开时 Host 保持会话，重连默认从 `lastDeliveredSeq+1` 重放（**经命名管道 / Unix Socket，非 HTTP SSE**）；不要在 Next 维护事件队列。
 7. **文件白名单**：Host 返回 realpath 后 Next 才做 IO；新会话 cwd 由 Host 在 `agent.create/ensure` 时注册，Next 不再有 allowed-roots 缓存。
+8. **文件授权走独立连接**：`lib/host-files.ts` 用 `createAgentHostClient()` 自建一条 RPC 连接（`globalThis.__piforgeFilesHostClient`）。主连接上跑 agent 事件流，单 socket 写队列 FIFO，工具输出一多就会把 `files.authorize` 的响应挤到 15s 超时之后 —— 别把它改回主单例。
 
 ## globalThis 状态
 

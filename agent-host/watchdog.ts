@@ -17,14 +17,17 @@ import type {
   InterventionResult,
   StatusNotice,
   StatusNoticeKind,
+  WatchdogAwaiting,
   WatchdogConfigView,
   WatchdogSnapshot,
   WatchdogTaskStatus,
   WatchdogTaskView,
+  WatchdogVerdict,
 } from "../contract/domains/watchdog.ts";
 import {
   describeSuspectedBlocker,
   ProgressTracker,
+  toolDurationBaseline,
   type ProgressEvent,
   type TaskProgress,
 } from "./progress-tracker.ts";
@@ -271,6 +274,107 @@ export function observeAgentEvent(sessionId: string, event: ProgressEvent): void
   if (observed.recovered) pushNotice("recovered", observed.task, clock(), 0);
 }
 
+/** 现在在等谁：有工具在跑就是等工具，否则就是等模型出 token。 */
+export function deriveAwaiting(task: TaskProgress): WatchdogAwaiting {
+  return task.runningTools.length > 0 ? "tool" : "model";
+}
+
+/**
+ * 从既有观测信号推出「该不该介入」——纯函数，无副作用，不碰模型。
+ *
+ * 判据顺序（改之前先想清楚为什么是这个顺序）：
+ *   1. 已经 failed                        → intervene；
+ *   2. 工具还在吐输出                     → wait（管了只会打断正常长任务）；
+ *   3. 出现重复调用                       → intervene（最典型的空转）；
+ *   4. 还没到该工具的历史中位耗时         → wait（相对基线，不用绝对秒数）；
+ *   5. 沉默超过阈值（有输出或没输出都算） → intervene；
+ *   6. 其余                               → wait，并给出「还能等几秒」。
+ */
+export function deriveVerdict(
+  task: TaskProgress,
+  now: number,
+  cfg: WatchdogConfig = config,
+): WatchdogVerdict {
+  const idleSeconds = Math.max(0, Math.round((now - task.lastActivityAt) / 1000));
+  const stallSeconds = Math.round(cfg.stallMs / 1000);
+
+  if (task.status === "completed") {
+    return {
+      decision: "done",
+      headline: "任务已收尾",
+      evidence: [`最后成功动作：${task.lastSuccessAction ?? "无"}`],
+    };
+  }
+  if (task.status === "failed") {
+    return {
+      decision: "intervene",
+      headline: `已判失败：${idleSeconds} 秒无有效进展`,
+      evidence: [
+        `阈值 ${stallSeconds}s，退避提醒已用尽`,
+        `最后成功动作：${task.lastSuccessAction ?? "无"}`,
+      ],
+    };
+  }
+
+  // 沉默最久的那个工具决定「卡在哪个工具」。
+  const pending = [...task.runningTools].sort((a, b) => a.lastOutputAt - b.lastOutputAt)[0] ?? null;
+
+  if (!pending) {
+    // 没有工具在跑 = 在等模型出 token。
+    if (idleSeconds * 1000 <= cfg.stallMs) {
+      return {
+        decision: "wait",
+        headline: `等模型输出，已 ${idleSeconds}s / 阈值 ${stallSeconds}s`,
+        evidence: [],
+      };
+    }
+    return {
+      decision: "intervene",
+      headline: `模型侧 ${idleSeconds}s 没出 token（阈值 ${stallSeconds}s）`,
+      evidence: ["任务无进展，且没有工具在跑", `最后成功动作：${task.lastSuccessAction ?? "无"}`],
+    };
+  }
+
+  const silentMs = Math.max(0, now - pending.lastOutputAt);
+  const silentSeconds = Math.round(silentMs / 1000);
+  const baseline = toolDurationBaseline(pending.name);
+  const evidence: string[] = [`${pending.name} 无输出 ${silentSeconds}s（阈值 ${stallSeconds}s）`];
+  if (baseline) {
+    evidence.push(`历史中位 ${Math.round(baseline.medianMs / 1000)}s（${baseline.samples} 次）`);
+  }
+  if (task.duplicateAttempts > 0) evidence.push(`已出现 ${task.duplicateAttempts} 次重复调用`);
+
+  if (pending.hasOutput && silentMs < cfg.stallMs) {
+    return { decision: "wait", headline: `${pending.name} 仍在输出，先别介入`, evidence };
+  }
+  if (task.duplicateAttempts > 0 && silentMs * 2 >= cfg.stallMs) {
+    return {
+      decision: "intervene",
+      headline: `重复调用 ${pending.name}，建议强制跳过`,
+      evidence,
+    };
+  }
+  if (baseline && silentMs < Math.max(cfg.stallMs, baseline.medianMs * 2)) {
+    return {
+      decision: "wait",
+      headline: `${pending.name} 已 ${silentSeconds}s，仍在历史正常区间`,
+      evidence,
+    };
+  }
+  if (silentMs > cfg.stallMs) {
+    return {
+      decision: "intervene",
+      headline: `${pending.name} ${silentSeconds}s 无输出，建议先极简询问`,
+      evidence,
+    };
+  }
+  return {
+    decision: "wait",
+    headline: `${pending.name} 已 ${silentSeconds}s，还能再等 ${Math.max(0, stallSeconds - silentSeconds)}s`,
+    evidence,
+  };
+}
+
 function toView(task: TaskProgress, now: number): WatchdogTaskView {
   const tools = task.runningTools.map((tool) => {
     const idleMs = Math.max(0, now - tool.lastOutputAt);
@@ -311,6 +415,8 @@ function toView(task: TaskProgress, now: number): WatchdogTaskView {
     noticeCount: task.noticeCount,
     interventionCount: task.interventions,
     lastInterventionAt: task.lastInterventionAt,
+    awaiting: deriveAwaiting(task),
+    verdict: deriveVerdict(task, now),
   };
 }
 
