@@ -29,6 +29,7 @@ import { readDesktopSettings } from "../lib/desktop-settings.ts";
 import { desktopRuntimeTools } from "./desktop-runtime-tools.ts";
 import { desktopDedupeInlineExtension } from "./desktop-dedupe-extension.ts";
 import { desktopFileOriginInlineExtension } from "./desktop-file-origin-extension.ts";
+import { desktopCollabGuidanceInlineExtension } from "./desktop-collab-guidance-extension.ts";
 import { desktopToolSearchAlignmentInlineExtension } from "./desktop-tool-search-alignment.ts";
 import {
   applyCacheWarmingPolicy,
@@ -1206,6 +1207,7 @@ export async function startRpcSession(
       promptAddons: {
         outputStyle: desktop.outputStyleGuidelines !== false,
         responseLanguage: desktop.responseLanguageGuideline !== false,
+        collab: desktop.collabGuidelines !== false,
       },
     };
     /**
@@ -1252,6 +1254,10 @@ export async function startRpcSession(
         desktopPowerShellInlineExtension(() => cwd),
         desktopOutputStyleInlineExtension({
           enabled: () => modeRef.promptAddons?.outputStyle !== false,
+        }),
+        // 多会话协作协议：先看 git / 每步提交 / 见到署名先 diff / 独立活走 worktree。
+        desktopCollabGuidanceInlineExtension({
+          enabled: () => modeRef.promptAddons?.collab !== false,
         }),
         desktopBrowserInlineExtension(),
         desktopTerminalInlineExtension({ getCwd: () => cwd }),

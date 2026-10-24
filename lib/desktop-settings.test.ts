@@ -204,6 +204,27 @@ test("browser permissions default to off and persist booleans", () => {
   }
 });
 
+test("collab guidelines default on, persist as a boolean and reject other types", () => {
+  const defaults = defaultDesktopSettings();
+  assert.equal(defaults.collabGuidelines, undefined, "未设置时按默认开处理");
+
+  const off = mergeDesktopSettings({ collabGuidelines: false });
+  assert.equal(off.collabGuidelines, false);
+  const garbage = mergeDesktopSettings({ collabGuidelines: "off" });
+  assert.equal(garbage.collabGuidelines, undefined, "非布尔值直接忽略");
+
+  assert.equal(validateDesktopSettingsBody({ collabGuidelines: true }), null);
+  assert.match(validateDesktopSettingsBody({ collabGuidelines: 0 })!, /collabGuidelines/);
+
+  const dir = mkdtempSync(join(tmpdir(), "pi-collab-guidelines-"));
+  try {
+    writeDesktopSettings(dir, { collabGuidelines: false });
+    assert.equal(readDesktopSettings(dir).collabGuidelines, false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("onDemandDomains round-trips through the settings file", () => {
   const dir = mkdtempSync(join(tmpdir(), "pi-desktop-settings-"));
   try {
