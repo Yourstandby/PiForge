@@ -17,18 +17,13 @@ import { existsSync, mkdtempSync, openSync, closeSync, readFileSync, readdirSync
 import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { defaultTarget, resourcesDirFor } from "./lib/smoke-target.mjs";
 
 const args = process.argv.slice(2);
 const exeIndex = args.indexOf("--exe");
-const exe = path.resolve(
-  exeIndex === -1
-    ? process.platform === "win32"
-      ? "release/win-unpacked/PiForge.exe"
-      : "release/linux-unpacked/piforge"
-    : args[exeIndex + 1],
-);
+const exe = path.resolve(exeIndex === -1 ? defaultTarget() : args[exeIndex + 1]);
 
-const resourcesDir = path.join(path.dirname(exe), "resources");
+const resourcesDir = resourcesDirFor(exe, path);
 const staticIndex = path.join(resourcesDir, "static", "index.html");
 const nextServer = path.join(resourcesDir, "standalone", "server.js");
 const hostEntry = path.join(resourcesDir, "standalone", "agent-host", "index.js");
@@ -92,6 +87,19 @@ function tail(file, lines) {
   const text = readFileSync(file, "utf8").trimEnd();
   if (!text) return [];
   return text.split("\n").slice(-lines);
+}
+
+/**
+ * 从 main.log 里摘出渲染进程的证据：`[renderer] ...`（console 转发，含 React 抛错）
+ * 与 `did-fail-load`（资源 404 / 协议失败 / CSP 拦截）。
+ * 正文过短但进程活着时，这两类行就是根因所在。
+ */
+function rendererConsoleLines(limit = 20) {
+  if (!existsSync(logPath)) return [];
+  return readFileSync(logPath, "utf8")
+    .split("\n")
+    .filter((line) => line.includes("[renderer]") || line.includes("did-fail-load"))
+    .slice(-limit);
 }
 
 /** 没拿到结果时把能拿到的一切打出来，否则 CI 又只能报一句“没有回报”。 */
@@ -187,15 +195,28 @@ if (!resultText) {
 }
 
 const result = JSON.parse(resultText.replace(/'/g, '"'));
+/**
+ * 正文长度门槛：**只作诊断参考，不再是断言**。
+ *
+ * 老规则“≥ 500 字”在全新用户配置下必然假红：CI runner / 首次启动时应用停在
+ * “暂无项目”空状态，正文 150–180 字，而 SSR 空壳也是 160 字左右——两者靠字数
+ * 区分不开（v0.9.1 三个平台的假红：DOM 48 KB、12 个 chunk 全 200、正文 181 字）。
+ * 真正能区分“前端活着 / 只是没挂载”的是渲染进程打的 `data-piforge-hydrated` 标记。
+ * `PIFORGE_SMOKE_MIN_BODY` 可手动下门槛（默认不断言）。
+ */
+const minBody = Number(process.env.PIFORGE_SMOKE_MIN_BODY ?? "") || 0;
 const failures = [];
 if (result.url !== "piforge://app/") failures.push(`窗口 URL 不是 piforge://app/：${result.url}`);
+if (result.hydrated !== true) failures.push("React 没有 hydrate（data-piforge-hydrated 未置位：入口 JS 未执行或挂载时抛错）");
 if (!result.hasComposer) failures.push("Workbench 的输入框没有挂载（renderer 没起来？）");
-if (!result.bodyLength || result.bodyLength < 500) failures.push(`页面正文过短：${result.bodyLength}`);
+if (minBody > 0 && (!result.bodyLength || result.bodyLength < minBody)) {
+  failures.push(`页面正文过短：${result.bodyLength}（PIFORGE_SMOKE_MIN_BODY=${minBody}）`);
+}
 if (result.health?.host !== "ok") failures.push(`/api/health 未打通：${JSON.stringify(result.health)}`);
 if (result.sessionsOk !== true) failures.push("/api/sessions 未打通");
 
 console.log("smoke-packaged-static: UI 冒烟结果");
-console.log(`  url=${result.url} title=${result.title} bodyLength=${result.bodyLength} hasComposer=${result.hasComposer}`);
+console.log(`  url=${result.url} title=${result.title} bodyLength=${result.bodyLength} hydrated=${result.hydrated} hasComposer=${result.hasComposer}`);
 console.log(`  /api/health=${JSON.stringify(result.health)} /api/sessions ok=${result.sessionsOk}`);
 
 if (!args.includes("--keep-user-data")) {
@@ -207,6 +228,13 @@ if (failures.length > 0) {
   for (const failure of failures) console.error(`FAIL ${failure}`);
   // 白屏诊断：把渲染进程里采到的证据直接写到 CI 日志，
   // 免得只能从被删掉的 userData 里找（这一轮就是这么丢线索的）。
+  const rendererLines = rendererConsoleLines();
+  if (rendererLines.length > 0) {
+    console.error("  渲染进程 console / did-fail-load（最后 " + String(rendererLines.length) + " 条）：");
+    for (const line of rendererLines) console.error(`    ${line}`);
+  } else {
+    console.error("  渲染进程没有输出任何 console / did-fail-load（说明 JS 根本没执行）");
+  }
   if (Array.isArray(result.assets) && result.assets.length > 0) {
     console.error("  入口脚本加载情况：");
     for (const asset of result.assets) console.error(`    ${asset}`);

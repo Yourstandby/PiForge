@@ -1823,15 +1823,18 @@ app.whenReady().then(async () => {
       for (const waitUntil = Date.now() + 30_000; Date.now() < waitUntil && !agentHostReady; ) {
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
-      // 等页面真正有内容：容器挂载与首屏数据到达之间可能有几百毫秒到数秒的窗口，
+      // 等页面 hydrate：容器挂载与首屏数据到达之间可能有几百毫秒到数秒的窗口，
       // 单次读取会让冒烟偶发"bodyLength 过短"的假红（本轮踩过一次）。
+      // 判据已经从"正文有多少字"换成 `data-piforge-hydrated`：全新用户配置
+      // （CI runner）下应用本来就停在空状态，正文只有 150 字左右，
+      // 和 SSR 空壳的字数重叠，靠字数区分不出来。
       try {
         for (let attempt = 0; attempt < 40; attempt += 1) {
-          const length = await smokeWindow.webContents.executeJavaScript(
-            "document.body.innerText.length",
+          const hydrated = await smokeWindow.webContents.executeJavaScript(
+            "document.documentElement.dataset.piforgeHydrated === '1'",
             true,
           );
-          if (typeof length === "number" && length >= 500) break;
+          if (hydrated === true) break;
           await new Promise((resolve) => setTimeout(resolve, 250));
         }
       } catch {
@@ -1871,6 +1874,7 @@ app.whenReady().then(async () => {
                guard: guard ? guard.getAttribute("data-token-guard") : null,
                guardText: guard ? guard.textContent?.slice(0, 80) ?? null : null,
                bodyHtmlLength: document.body.innerHTML.length,
+               hydrated: document.documentElement.dataset.piforgeHydrated === "1",
                bodyHtmlHead: bodyLength < 500 ? document.body.innerHTML.slice(0, 400) : null,
                assets,
                health,
