@@ -3,6 +3,51 @@
 迁移条目按「改了什么 / 默认行为变没变 / 开关怎么用」组织。详细数据见 `docs/measurements/`
 （三个口径：记录型 provider、真实 deepseek 会话、重复场景 A/B，三者不要混读）。
 
+## v0.10.0 — 边界收口（分支 / 排队 / 看门狗 / 工具调度与超时）
+
+主题：**点了要有反应**。前端把「点了没反应」「点了要等」逐个拆掉；Host 侧新增工具执行
+调度器与 shell 超时硬护栏。默认行为有变的三处见「默认行为变没变」。
+
+### 改了什么
+
+- **分支**：下拉改用 `getBranches` 的完整分支图（旧实现依赖只含当前路径的 `tree`，
+  `hasBranch()` 恒 false）；多根 `.jsonl` 先合成虚拟根再判分支；切分支可勾「蒸馏要离开的分支」
+  （`navigateTree(target, { summarize: true })`，结论以 `branch_summary` 接回目标节点，不破坏前缀缓存）；
+  流式期间禁用分支/派生并给出原因，失败不再只打 console。
+- **排队消息**：可删除（hover 变红），Host 按 revision 出队，前端乐观更新 + 冲突重拉。
+- **看门狗**：`agent.intervene` 同步受理立即回执、投递走后台；强制跳过时工具已跑 >10 s 先
+  `abortBash()` 再投递；卡顿只标到真正卡住的那一行（`stuckToolCallIds`）；`verdict` 缺失时
+  不渲染结论条（兼容旧 Host）。
+- **文件授权走独立 RPC 连接**（`lib/host-files.ts` + `__piforgeFilesHostClient`）：不再和 agent
+  事件流共用主连接，工具跑着也能点文件。
+- **工具执行调度器**（`agent-host/desktop-tool-scheduler-extension.ts`，默认开）：全局 heavy 4 /
+  light 12、单会话 heavy 2 / light 6，超额在本调用的 `tool_call` 钩子里排队；60 s 等不到槽位就
+  放弃排队照常执行，15 min 强制回收，`session_shutdown` 清空；codemode / tool_search / 嵌套调用豁免。
+- **shell 超时硬护栏**（`agent-host/desktop-tool-guard-extension.ts`，默认开）：`tool_call` 阶段
+  补 `input.timeout`（普通 120 s、重型 900 s，上限 600 / 900），非法值修正而非抛错；单批并行 >8
+  时只在该批首个超限调用结果尾部提醒一次。
+- **提示词**：`BATCHING_RULES` 增补「同一批并行 ≤ 8」「重型命令显式传 `timeout`」，探索改成
+  「先 `rg -l` 拿文件名再定向 `read`」。仍是静态常量，前缀 +26 字符。
+- **度量**：`npm run measure:prefix -- --summary` 只打 ≤10 行决策数字。
+
+### 默认行为变没变
+
+变了，三处：
+
+1. 不显式传 `timeout` 的 shell 调用会在 120 s（重型 900 s）被打断；常驻进程 / 全量打包请显式传
+   `timeout`。
+2. 同一 Host 内并行工具调用开始按全局与单会话配额排队（只延后执行，参数与结果不变）。
+3. 逐项功能未变：分支下拉的可见性变多属修 bug；蒸馏开关仍**默认关**。
+
+### 开关怎么用
+
+- 关掉调度器：`PIFORGE_TOOL_SCHEDULER=0`；配额与等待走 `PIFORGE_SCHED_*`（`GLOBAL_HEAVY` /
+  `GLOBAL_LIGHT` / `SESSION_HEAVY` / `SESSION_LIGHT` / `MAX_WAIT_MS` / `QUEUE_HINT_MS` / `MAX_HOLD_MS`）。
+- 关掉超时护栏：`PIFORGE_TOOL_GUARD=0`；阈值走 `PIFORGE_TOOL_TIMEOUT_SECONDS` /
+  `PIFORGE_TOOL_TIMEOUT_HEAVY_SECONDS` / `PIFORGE_TOOL_TIMEOUT_MAX_SECONDS` / `PIFORGE_TOOL_MAX_PARALLEL`。
+- 蒸馏：分支下拉里的开关，写在 `localStorage["piforge:branch-distill"]`。
+- 完整说明见 [`docs/releases/v0.10.0.md`](docs/releases/v0.10.0.md)。
+
 ## v0.9.4 — 调用压缩（工具调用次数 / 思考预算）
 
 主题：**同样的任务少问几轮**。不删工具、不降能力，只压缩「模型往返次数」和「thinking 占 output」。
