@@ -96,3 +96,37 @@ export function buildBranchSwitchMap(
   }
   return map;
 }
+
+/** 合成根节点的 id：只用于渲染，永远不会成为切分支的目标。 */
+export const VIRTUAL_ROOT_ID = "__piforge_branch_root__";
+
+/**
+ * pi 的会话文件里 `session`、`model_change` 这类条目的 parentId 都是 null，
+ * 分支图因此有多个根。BranchNavigator 只渲染第一个根，真正的分叉落在别的根
+ * 上时会误报「当前会话没有分支」——合成一个虚拟根让它们并列。
+ */
+export function rootTreesOf(tree: readonly SessionTreeNode[]): SessionTreeNode[] {
+  if (tree.length <= 1) return tree as SessionTreeNode[];
+  // 空壳元数据根（session / model_change 自己不是任何条目的父节点）不承载
+  // 可跳转路径，渲染出来只会是噪音行，先剔除。
+  const carriers = tree.filter(
+    (node) => node.entry.type === "message" || node.children.length > 0,
+  );
+  if (carriers.length <= 1) return carriers.length === 1 ? carriers : (tree as SessionTreeNode[]);
+  return [
+    {
+      entry: { type: "other", id: VIRTUAL_ROOT_ID, parentId: null } as unknown as SessionEntry,
+      children: [...carriers],
+    },
+  ];
+}
+
+/** 树里是否存在任一分叉（含根层的多条并列根）。 */
+export function hasBranchPoint(nodes: readonly SessionTreeNode[]): boolean {
+  if (nodes.length > 1) return true;
+  for (const node of nodes) {
+    if (node.children.length > 1) return true;
+    if (hasBranchPoint(node.children)) return true;
+  }
+  return false;
+}

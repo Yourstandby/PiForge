@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import type { SessionEntry, SessionTreeNode } from "@/lib/types";
+import { hasBranchPoint, rootTreesOf } from "@/lib/session-branches-view";
 import { useI18n } from "./I18nProvider";
 
 /** 蒸馏开关的持久化键：切分支时默认是否把被放弃的分支蒸馏成摘要。 */
@@ -81,15 +82,6 @@ function getLabel(entry: SessionEntry): string {
     if (msg.role === "assistant") return "[assistant]";
   }
   return entry.type;
-}
-
-// Does the tree have any branching at all?
-function hasBranch(nodes: SessionTreeNode[]): boolean {
-  for (const node of nodes) {
-    if (node.children.length > 1) return true;
-    if (hasBranch(node.children)) return true;
-  }
-  return false;
 }
 
 /** 蒸馏开关：只有存在分支（有兄弟路径）时才渲染在树顶部。 */
@@ -326,9 +318,13 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, onBranch, on
     };
   }, [open, inline, containerRef]);
 
+  // pi 的 session / model_change 条目各自 parentId=null，是多根图；只渲染
+  // tree[0] 会漏掉真正的分叉，先合成一个虚拟根让各根并列。
+  const roots = useMemo(() => rootTreesOf(tree), [tree]);
+
   const activePathIds = useMemo(
-    () => buildActivePath(tree, activeLeafId),
-    [tree, activeLeafId]
+    () => buildActivePath(roots, activeLeafId),
+    [roots, activeLeafId]
   );
 
   const handleSelect = useCallback((id: string) => {
@@ -351,12 +347,12 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, onBranch, on
 
   const noBranchReason = !hasSession
     ? t("branch.noActiveSession")
-    : !hasBranch(tree)
+    : !hasBranchPoint(roots)
       ? t("branch.noSession")
       : null;
 
   // Find first meaningful node (skip pure linear prefix)
-  const compressed = tree.length > 0 ? compress(tree[0]) : null;
+  const compressed = roots.length > 0 ? compress(roots[0]) : null;
   const firstNode = compressed?.node ?? null;
   const hasContent = !noBranchReason && firstNode && firstNode.children.length > 1;
 
