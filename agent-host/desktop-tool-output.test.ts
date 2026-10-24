@@ -168,7 +168,8 @@ test("read output is capped by the file-content budget instead of being exempt",
     assert.ok(result, "a 3000-line read must be trimmed");
     const text = result.content[0]?.text ?? "";
     assert.match(text, /\[\.\.\.已截断 3000 行/);
-    assert.match(text, /请使用 grep、sed 等工具分段读取/);
+    assert.match(text, /不要逐条续读/);
+    assert.match(text, /tool_history_get/);
     assert.match(text, /offset=301/);
     assert.match(text, /output line 1\n/);
     // 头 + 尾窗口：尾部保留（收尾代码/最终报错常在这里），中段被裁掉。

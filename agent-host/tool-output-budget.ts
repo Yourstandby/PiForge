@@ -147,9 +147,9 @@ export function truncationNotice(totalLines: number, budget: ToolOutputBudget, o
   return `[...已截断 ${totalLines} 行${omitted}...]（${kept}）`;
 }
 
-/** 要求的续读引导。 */
+/** 要求的续读引导。只在本工具输出被截断时出现，稳态零 token 成本。 */
 export const TRUNCATION_HINT =
-  '如需查看完整内容，请使用 grep、sed 等工具分段读取（例：grep -n "关键词" 文件 | sed -n \'1,120p\'）。';
+  "不要逐条续读：用一次 codemode 脚本批量 grep/sed 多处，或用 tool_history_get 按 offset/limit 翻页。";
 
 export interface ToolOutputTruncation {
   /** 交给模型的文本（未截断时与入参完全一致）。 */
