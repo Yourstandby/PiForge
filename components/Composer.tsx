@@ -638,7 +638,7 @@ export function Composer({
                   disabled={queueBusy}
                   aria-label={`删除队列消息 ${index + 1}`}
                   title="删除队列消息"
-                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-ink-faint hover:bg-[#ECECEF] hover:text-ink disabled:opacity-30"
+                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-ink-faint hover:bg-[#FDF2F2] hover:text-[#DC2626] disabled:opacity-30"
                 >
                   <X size={11} strokeWidth={2} />
                 </button>
