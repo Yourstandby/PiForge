@@ -28,6 +28,7 @@ import { desktopLtmInlineExtension } from "./desktop-ltm-extension.ts";
 import { readDesktopSettings } from "../lib/desktop-settings.ts";
 import { desktopRuntimeTools } from "./desktop-runtime-tools.ts";
 import { desktopDedupeInlineExtension } from "./desktop-dedupe-extension.ts";
+import { desktopFileOriginInlineExtension } from "./desktop-file-origin-extension.ts";
 import { desktopToolSearchAlignmentInlineExtension } from "./desktop-tool-search-alignment.ts";
 import {
   applyCacheWarmingPolicy,
@@ -1224,6 +1225,9 @@ export async function startRpcSession(
         desktopToolSearchAlignmentInlineExtension(),
         // 每轮增量去重：重复 read / 重复命令只回一句或尾部差异（错误永远完整返回）。
         desktopDedupeInlineExtension(),
+        // 跨会话改动署名：别的会话改过的文件，read 时尾部多一行"谁改的"。
+        // 必须排在去重之后（去重先判等，署名再追加文本，顺序反了会污染去重哈希）。
+        desktopFileOriginInlineExtension(),
         // 上下文压缩**默认交给 pi 自己的策略**（`shouldCompact` +
         // `DEFAULT_COMPACTION_SETTINGS`，按模型窗口算，不掺任何绝对 token 硬顶）。
         // PiForge 自研的窗口 / 预算 / 硬顶触发只在显式打开时接管，用于 A/B：
