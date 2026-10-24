@@ -3,6 +3,46 @@
 迁移条目按「改了什么 / 默认行为变没变 / 开关怎么用」组织。详细数据见 `docs/measurements/`
 （三个口径：记录型 provider、真实 deepseek 会话、重复场景 A/B，三者不要混读）。
 
+## v0.9.2 — agent-host 冷启动 bundle · 上下文硬顶随窗口缩放
+
+主题：**冷启动从 32s 回到秒级**。host 打单文件 bundle，上下文预算改成跟模型窗口联动。
+
+### 改了什么
+
+- agent-host 打 esbuild 单文件 bundle（`agent-host/bundle/host.mjs`）：冷启动不再逐文件解析
+  5,917 个 ESM 模块（图加载 3.1–3.5 s → 0.70–0.74 s）。缺 bundle 时自动回退逐文件树。
+- 新增零依赖阶段打点（`agent-host/host-phases.ts`，`[agent-host] [phase] <name> ms=<n> delta=<n>`），
+  `bench/startup_stats.py` 解析 `main.log` 出每次启动的 p50/p95 与阶段表。
+- 上下文硬顶 `MAX_CONTEXT_TOKENS` 48k → 120k（保险丝），正常触发改用
+  `min(120k, 窗口 × 0.8)`（`resolveContextCeiling`）；窗口未知时退回 120k。
+  预算提示从百分比改为 `已用 / 窗口 token`。
+- 消息区懒渲染改双阈值滞回（水合 1200px / 卸载 2000px，单阈值会在边界反复抖），
+  上滚即锁住贴底接管，解除点是真正距底 < 40px。
+
+### 默认行为变没变
+
+- 工具名、参数形状、UI 协议、session 文件格式、`Startup timing:` 字段名全部未变。
+- 默认压缩阈值仍是 `45% × 窗口`；120k 只在读数异常 / 窗口声明离谱时兜底。
+- 打包产物多一个 `resources/standalone/agent-host/host.mjs`（约 15 MB）；
+  `standalone/node_modules` 仍保留（Next standalone 与用户扩展还在用它）。
+
+### 开关怎么用
+
+- 回到逐文件入口：删掉 `agent-host/bundle/host.mjs` 后重跑 `npm run build:standalone`，自动回退。
+- 单独重打 bundle：`npm run bundle:agent-host`；只测启动：`python bench/startup_stats.py`。
+
+### 数字
+
+| 项 | 改前 | 改后 |
+| --- | --- | --- |
+| host ready（app ready 起算） | 2670 / 2796 ms | **1194 / 1064 / 867** → p50 1064、p95 1194 |
+| ESM 模块图加载 | 3.1–3.5 s（5,917 文件） | 0.70–0.74 s |
+| UI 可交互（static app url loaded） | p50 982 ms | p50 785 ms |
+| 全新拷贝 + 全新 userData 首启（G2 代理） | — | 1799 ms |
+| 单测 | — | 1 398 项：1 394 通过 / 0 失败 / 4 跳过 |
+
+详细阶段表与前后对比见 `docs/releases/v0.9.2.md` 与 `docs/optimizations/host-cold-start-bundle.md`。
+
 ## v0.9.1 — 子 Agent 轮数阀门修复 · 输出契约 · Pi 核心 1.4.0
 
 主题：**子 Agent 不再两轮被判死**。只改阀门、结算顺序与失败回包，不动并行架构与提示词契约。
