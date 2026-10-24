@@ -218,7 +218,7 @@ function FleetCard({
       <div className="flex items-center gap-1.5">
         <span
           className={`h-1.5 w-1.5 shrink-0 rounded-full ${live && agent?.activity === "working" ? "animate-pulse" : ""}`}
-          style={{ background: live ? "#2563EB" : "#C9CFDA" }}
+          style={{ background: live ? "var(--accent)" : "#C9CFDA" }}
           aria-hidden="true"
         />
         <span className="shrink-0 rounded border border-[#D9E5FB] bg-[#F1F6FF] px-1 py-px text-[9px] font-medium text-accent-strong">

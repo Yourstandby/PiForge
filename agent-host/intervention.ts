@@ -25,9 +25,18 @@ export function isInterventionAction(value: unknown): value is InterventionActio
   return value === "skip" || value === "ask" || value === "ask_brief";
 }
 
-/** Skip：最高优先级系统指令，要求模型放弃当前卡住的工具并换方案。 */
+/**
+ * 所有介入指令共用的收尾约束。
+ *
+ * 缺了它，模型会把介入文本当成一条新的用户提问：答完就认为本轮结束，
+ * 原任务直接断在执行流中间（用户看到的“任务因为回答而终止”）。
+ */
+export const CONTINUE_AFTER_INTERVENTION =
+  "回答后立刻继续执行原任务，不要结束本轮、不要停下等我确认、不要做收尾总结。";
+
+/** Skip：最高优先级系统指令，要求模型放弃当前卡住的工具，用别的办法做完同一件事。 */
 export const SKIP_INSTRUCTION =
-  "[系统提示] 当前工具执行因无进展被系统强制跳过。请反思刚才为什么卡住，并立刻尝试其他替代方案继续完成任务。";
+  `[系统提示] 当前工具执行因无进展被系统强制跳过。请放弃这个卡住的工具，改用其他方式继续完成同一个目标，不要跳过任务本身。${CONTINUE_AFTER_INTERVENTION}`;
 
 /** Ask（深度诊断）：普通用户口吻的追问（`last_success_action` 未知时的兜底说法）。 */
 export const ASK_FALLBACK_STEP = "上一步";
@@ -41,11 +50,11 @@ export const ASK_FALLBACK_STEP = "上一步";
  *   3. 只问两个可回答的问题：卡在哪个工具、要不要跳过。
  */
 export const BRIEF_ASK_INSTRUCTION =
-  "[系统提示] 看门狗发现当前工具已超时无输出，请勿执行任何新工具核实。请直接用一句话（20字以内）告诉我：你卡在哪个工具了，是否需要我帮你跳过？";
+  `[系统提示] 看门狗发现当前工具已超时无输出，请勿执行任何新工具核实。请直接用一句话（20字以内）告诉我：你卡在哪个工具了，是否需要我帮你跳过？${CONTINUE_AFTER_INTERVENTION}`;
 
 export function buildAskMessage(lastSuccessAction: string | null | undefined): string {
   const step = lastSuccessAction?.trim() || ASK_FALLBACK_STEP;
-  return `你之前在 ${step} 之后似乎卡住了，请分析原因并给出新的执行方案。`;
+  return `你之前在 ${step} 之后似乎卡住了，请分析原因并给出新的执行方案。${CONTINUE_AFTER_INTERVENTION}`;
 }
 
 export function buildInterventionMessage(

@@ -52,9 +52,11 @@ export interface WatchdogConfig {
 
 export const DEFAULT_WATCHDOG_CONFIG: WatchdogConfig = {
   enabled: true,
-  tickMs: 10_000,
+  // 5s 扫描 + 连续 2 次超阈值 → 默认约 25s 就能亮红灯（旧值 10s×3 次约 40s+，
+  // 用户感知为“看门狗反应慢”）。
+  tickMs: 5_000,
   stallMs: 20_000,
-  stallScans: 3,
+  stallScans: 2,
   backoffMs: [30_000, 60_000, 120_000],
   noticeLimit: 50,
 };

@@ -1,54 +1,65 @@
 /**
- * 上下文预算（第四维度：让用户看见「离硬顶还有多远」）。
+ * 上下文预算（第四维度：让用户看见「真实窗口还剩多少」）。
  *
- * 日志里的 cacheRead ≈ 117k–121k 说明主要成本是每轮重放历史，但 UI 只显示
- * tokens/s 和本轮产出，用户看不出上下文已经贴到硬顶。这里把用量换算成
- * **相对硬顶**的进度和等级，前端只负责上色，不再各自猜阈值。
+ * 分母只有一个：模型自己报告的上下文窗口（`contextUsage.contextWindow`）。
+ * 这里不再掺任何压缩硬顶 / 自适应阈值——压缩是否发生与「窗口装了多少」
+ * 是两件事，混在一起会让 1M 窗口的模型在 16k 时就画成半个环。
+ *
+ * 阈值只决定颜色：60% 观察、85% 告警，环和文字共用同一份结果。
  *
  * 纯函数：不读文件、不依赖 SDK，方便直接单测。
  */
 import type { ContextBudget } from "../lib/pi-types.ts";
-import { MAX_CONTEXT_TOKENS } from "./compaction-plan.ts";
 
-/** 单一真相：硬顶常量只在 compaction-plan 定义，这里只做展示换算。 */
-export const DEFAULT_MAX_CONTEXT_TOKENS = MAX_CONTEXT_TOKENS;
-
-/** 到达硬顶的这个比例就必须提醒，再涨一轮就会触发压缩。 */
-const CRITICAL_RATIO = 0.85;
-/** 进入观察区的比例：还不会压，但成本已经开始明显。 */
+/** 到达这个比例就变黄：还装得下，但成本已经明显。 */
 const WARN_RATIO = 0.6;
+/** 到达这个比例就变红：再长就要真的压了。 */
+const CRITICAL_RATIO = 0.85;
 
-function normalizeCeiling(maxContextTokens: number | undefined): number {
-  if (
-    typeof maxContextTokens === "number" &&
-    Number.isFinite(maxContextTokens) &&
-    maxContextTokens > 0
-  ) {
-    return Math.round(maxContextTokens);
+/** 120_000 → "120k"；窗口取整，避免 "1.0M" 这种无信息的小数。 */
+function formatTokens(value: number): string {
+  if (value >= 1_000_000) {
+    const m = value / 1_000_000;
+    return `${Number.isInteger(m) ? m : m.toFixed(1)}M`;
   }
-  return DEFAULT_MAX_CONTEXT_TOKENS;
+  if (value >= 1_000) {
+    const k = value / 1_000;
+    return `${Number.isInteger(k) ? k : k.toFixed(1)}k`;
+  }
+  return String(value);
+}
+
+function normalizeCeiling(contextWindow: number | undefined): number {
+  if (typeof contextWindow === "number" && Number.isFinite(contextWindow) && contextWindow > 0) {
+    return Math.round(contextWindow);
+  }
+  return 0;
 }
 
 function budgetHint(input: {
   tokens: number | null;
   ceiling: number;
-  ratioToCeiling: number;
+  ratio: number;
   level: ContextBudget["level"];
 }): string {
   if (input.tokens === null) {
-    return "还没统计到这段对话占用的记忆，超上限时会自动压缩";
+    return "还没统计到这段对话占用的 token";
   }
-  const percent = Math.round(input.ratioToCeiling * 100);
-  if (input.ratioToCeiling >= 1) {
-    return "这段对话的记忆已经装不下了，这一轮结束就把旧内容压缩掉";
+  if (input.ceiling <= 0) {
+    return `已用 ${formatTokens(input.tokens)} token，当前模型没有报告上下文窗口，无法换算占比`;
+  }
+  const used = `${formatTokens(input.tokens)} / ${formatTokens(input.ceiling)} token`;
+  const percent = (input.ratio * 100).toFixed(input.ratio < 0.1 ? 1 : 0);
+  if (input.ratio >= 1) {
+    return `${used}，已超出窗口，这一轮之后旧内容会被裁剪`;
   }
   if (input.level === "critical") {
-    return `这段对话的记忆快满了（${percent}%），下一轮就会自动压缩旧内容`;
+    return `${used}（${percent}%），快装满了，建议先压缩再继续`;
   }
   if (input.level === "warn") {
-    return `这段对话的记忆用了 ${percent}%，再聊几轮就会自动压缩`;
+    return `${used}（${percent}%），用过半了`;
   }
-  return `这段对话的记忆用了 ${percent}%，还很宽裕`;
+  return `${used}（${percent}%），还很宽裕`;
 }
 
 /**
@@ -59,32 +70,28 @@ function budgetHint(input: {
 export function describeContextBudget(input: {
   tokens: number | null;
   contextWindow: number;
-  maxContextTokens?: number;
 }): ContextBudget {
-  const ceiling = normalizeCeiling(input.maxContextTokens);
+  const ceiling = normalizeCeiling(input.contextWindow);
   const tokens =
     input.tokens === null || !Number.isFinite(input.tokens)
       ? null
       : Math.max(0, Math.round(input.tokens));
-  const ratioToCeiling = tokens === null ? 0 : tokens / ceiling;
-  const ratioToWindow =
-    tokens === null || !(input.contextWindow > 0) ? 0 : tokens / input.contextWindow;
+  const ratio = tokens === null || ceiling <= 0 ? 0 : tokens / ceiling;
   const level: ContextBudget["level"] =
-    tokens === null
+    tokens === null || ceiling <= 0
       ? "ok"
-      : ratioToCeiling >= CRITICAL_RATIO
+      : ratio >= CRITICAL_RATIO
         ? "critical"
-        : ratioToCeiling >= WARN_RATIO
+        : ratio >= WARN_RATIO
           ? "warn"
           : "ok";
 
   return {
     tokens,
     ceiling,
-    ratioToCeiling,
-    ratioToWindow,
+    ratioToCeiling: ratio,
     level,
-    overshoot: ratioToCeiling >= 1,
-    hint: budgetHint({ tokens, ceiling, ratioToCeiling, level }),
+    overshoot: ratio >= 1,
+    hint: budgetHint({ tokens, ceiling, ratio, level }),
   };
 }

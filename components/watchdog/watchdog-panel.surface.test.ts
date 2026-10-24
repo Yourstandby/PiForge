@@ -102,7 +102,10 @@ test("ask is split into a token-cheap brief ask by default", () => {
 
   // 极简提示词：禁工具 + 限一句，且比深度诊断短得多。
   const host = read("agent-host/intervention.ts");
-  assert.match(host, /export const BRIEF_ASK_INSTRUCTION =\s*"\[系统提示\] 看门狗发现当前工具已超时无输出，请勿执行任何新工具核实。请直接用一句话（20字以内）告诉我：你卡在哪个工具了，是否需要我帮你跳过？"/);
+  assert.match(host, /export const BRIEF_ASK_INSTRUCTION =[\s\S]*?请勿执行任何新工具核实/);
+  assert.match(host, /请直接用一句话（20字以内）告诉我：你卡在哪个工具了，是否需要我帮你跳过？/);
+  // 回归：介入后必须继续原任务，否则模型答完就把原任务结束掉。
+  assert.match(host, /不要结束本轮/);
   assert.match(host, /if \(action === "ask_brief"\) return BRIEF_ASK_INSTRUCTION;/);
 
   // 三种动作都要能在契约层 / 校验层通过，否则前端发出去会被打回。

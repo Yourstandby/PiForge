@@ -28,6 +28,7 @@
 # electron
 /electron/dist/
 /agent-host/dist/
+/agent-host/bundle/
 /release/
 
 # misc

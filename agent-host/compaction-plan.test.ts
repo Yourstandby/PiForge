@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   CONTEXT_BUDGET_RATIO,
   KEEP_RECENT_ROUNDS,
+  MAX_CONTEXT_TOKENS,
   MAX_SUMMARY_CHARS,
   MIN_ROUNDS_TO_DROP,
   assembleCompactionSummary,
@@ -12,6 +13,7 @@ import {
   isUsableSummary,
   planCompactionCut,
   readRoundWindow,
+  resolveContextCeiling,
   serializeMessagesForSummary,
   type SessionEntryLike,
 } from "./compaction-plan.ts";
@@ -241,11 +243,13 @@ test("越过硬顶后即使区间很小也压，不把会话锁在超限状态",
   assert.equal(nothing.trigger, false);
 });
 
-test("summary instructions demand the four required sections", () => {
+test("summary instructions demand the required sections", () => {
   const instructions = compactionSummaryInstructions();
   for (const heading of [
     "核心任务目标",
+    "进度",
     "已确定的技术架构 / 方案",
+    "下一步",
     "当前报错或卡点",
     "用户明确偏好 / 限制条件",
   ]) {
@@ -253,6 +257,19 @@ test("summary instructions demand the four required sections", () => {
   }
   assert.match(instructions, /800–1500 token/);
   assert.match(instructions, /不要复述大段工具输出/);
+});
+
+test("硬顶随模型窗口缩放，未知窗口退回绝对上限", () => {
+  // 小窗口：0.8 × 16k 才叫接近撑满。
+  assert.equal(resolveContextCeiling(16_000), 12_800);
+  // 常见窗口：仍低于 120k 的绝对上限。
+  assert.equal(resolveContextCeiling(100_000), 80_000);
+  // 大窗口 / 1M 声明：被绝对上限钉住，不跟着一起膨胀。
+  assert.equal(resolveContextCeiling(200_000), MAX_CONTEXT_TOKENS);
+  assert.equal(resolveContextCeiling(1_000_000), MAX_CONTEXT_TOKENS);
+  // 窗口未知（usage 缺失）：退回绝对上限，仍然能压。
+  assert.equal(resolveContextCeiling(0), MAX_CONTEXT_TOKENS);
+  assert.equal(resolveContextCeiling(Number.NaN), MAX_CONTEXT_TOKENS);
 });
 
 test("file paths are extracted from write/read tool calls", () => {

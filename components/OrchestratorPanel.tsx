@@ -58,7 +58,7 @@ function Node({ node, depth, stopping, onStop }: { node: TreeNode; depth: number
           ) : (
             <span className="h-4 w-4" />
           )}
-          <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: STATUS_COLOR[task.status] ?? "#9CA3AF" }} />
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: STATUS_COLOR[task.status] ?? "var(--text-dim)" }} />
           <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-ink" title={task.task}>{task.name}</span>
           {task.verification.verified ? (
             <span title={task.verification.reason} className="rounded-full border border-[#CBE6D5] bg-[#F2FBF5] px-1.5 py-0.5 text-[9.5px] font-medium text-[#2F7A55]">已验证</span>

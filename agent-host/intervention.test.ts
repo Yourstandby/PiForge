@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   ASK_FALLBACK_STEP,
   BRIEF_ASK_INSTRUCTION,
+  CONTINUE_AFTER_INTERVENTION,
   SKIP_INSTRUCTION,
   buildAskMessage,
   buildInterventionMessage,
@@ -13,18 +14,30 @@ import {
   MAX_INTERVENTIONS_PER_TASK,
 } from "./intervention.ts";
 
-test("skip instruction is the exact system prompt the UI promises", () => {
+test("skip instruction keeps the task alive after skipping the stuck tool", () => {
   assert.equal(
     SKIP_INSTRUCTION,
-    "[系统提示] 当前工具执行因无进展被系统强制跳过。请反思刚才为什么卡住，并立刻尝试其他替代方案继续完成任务。",
+    "[系统提示] 当前工具执行因无进展被系统强制跳过。请放弃这个卡住的工具，改用其他方式继续完成同一个目标，不要跳过任务本身。" +
+      CONTINUE_AFTER_INTERVENTION,
   );
+  assert.match(SKIP_INSTRUCTION, /不要跳过任务本身/);
   assert.equal(buildInterventionMessage("skip", "bash"), SKIP_INSTRUCTION);
+});
+
+test("every intervention tells the model to keep going after answering", () => {
+  // 回归：介入文本曾被模型当成新提问，答完就结束本轮 → 原任务被“回答”顶掉。
+  for (const action of ["skip", "ask", "ask_brief"] as const) {
+    const message = buildInterventionMessage(action, "bash");
+    assert.match(message, /继续执行原任务/);
+    assert.match(message, /不要结束本轮/);
+  }
 });
 
 test("brief ask forbids tool calls and caps the reply at one short sentence", () => {
   assert.equal(
     BRIEF_ASK_INSTRUCTION,
-    "[系统提示] 看门狗发现当前工具已超时无输出，请勿执行任何新工具核实。请直接用一句话（20字以内）告诉我：你卡在哪个工具了，是否需要我帮你跳过？",
+    "[系统提示] 看门狗发现当前工具已超时无输出，请勿执行任何新工具核实。请直接用一句话（20字以内）告诉我：你卡在哪个工具了，是否需要我帮你跳过？" +
+      CONTINUE_AFTER_INTERVENTION,
   );
   // 三个关键约束缺一不可。
   assert.match(BRIEF_ASK_INSTRUCTION, /请勿执行任何新工具核实/);
@@ -43,18 +56,18 @@ test("brief ask forbids tool calls and caps the reply at one short sentence", ()
   // 深度诊断保留原有长提示词（允许模型去核实状态）。
   assert.equal(
     buildInterventionMessage("ask", "bash"),
-    "你之前在 bash 之后似乎卡住了，请分析原因并给出新的执行方案。",
+    `你之前在 bash 之后似乎卡住了，请分析原因并给出新的执行方案。${CONTINUE_AFTER_INTERVENTION}`,
   );
 });
 
 test("ask message names the last successful action, falling back gracefully", () => {
   assert.equal(
     buildAskMessage("bash"),
-    "你之前在 bash 之后似乎卡住了，请分析原因并给出新的执行方案。",
+    `你之前在 bash 之后似乎卡住了，请分析原因并给出新的执行方案。${CONTINUE_AFTER_INTERVENTION}`,
   );
   assert.equal(
     buildAskMessage(null),
-    `你之前在 ${ASK_FALLBACK_STEP} 之后似乎卡住了，请分析原因并给出新的执行方案。`,
+    `你之前在 ${ASK_FALLBACK_STEP} 之后似乎卡住了，请分析原因并给出新的执行方案。${CONTINUE_AFTER_INTERVENTION}`,
   );
   assert.equal(buildAskMessage("   ").includes(ASK_FALLBACK_STEP), true);
 });

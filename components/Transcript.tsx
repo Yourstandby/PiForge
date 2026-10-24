@@ -27,6 +27,13 @@ import {
 } from "@/lib/file-links";
 import { useToolStall } from "@/hooks/useWatchdogStatus";
 import { useWatchdogSessionId } from "./watchdog/WatchdogProvider";
+import {
+  groupProcessBlocks,
+  type ProcessBlock,
+  type RoundProcess,
+  type RoundProcessGroup,
+  type RoundProcessTool,
+} from "./transcript-process";
 
 type OpenFileHandler = (filePath: string, fileName: string, line?: number) => void;
 
@@ -891,10 +898,30 @@ function writeStickyOpen(key: string | undefined, value: boolean): void {
   stickyOpenState.set(key, value);
 }
 
-/** 一轮对话（用户提问 → 若干条 assistant 消息）里的过程数据。 */
-export interface RoundProcess {
-  thinking: Array<{ text: string; usage?: AssistantMessage["usage"]; entryId?: string }>;
-  tools: Array<{ block: Extract<TurnBlock, { kind: "tool" }>; usage?: AssistantMessage["usage"] }>;
+/**
+ * 一轮对话的过程数据（分组类型与折叠逻辑在 `transcript-process.ts`，便于直接跑测试）。
+ * `groups` **保持时间顺序**：思考与工具按真实交错顺序分组，不再拆成两个平行数组。
+ */
+export type {
+  RoundProcess,
+  RoundProcessGroup,
+  RoundProcessThinking,
+  RoundProcessTool,
+} from "./transcript-process";
+
+/** 消息时间（ms）→ 内容左下角的小标签：当天只给 `HH:MM`，跨天补上 `M/D`。 */
+function timeLabel(timestamp: number | undefined): string | null {
+  if (!timestamp || !Number.isFinite(timestamp)) return null;
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return null;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const clock = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  const now = new Date();
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  return sameDay ? clock : `${date.getMonth() + 1}/${date.getDate()} ${clock}`;
 }
 
 /** Token 数量：超过 1 万就缩写（zh: 123.4万 / en: 1.2M），避免一长串数字吓人。 */
@@ -1387,7 +1414,14 @@ function blockUsage(text: string, messageUsage?: AssistantMessage["usage"]): Blo
   return { tokens, cost };
 }
 
-/** 「思考链」一栏：默认收起，只留一行标题；展开后逐段显示 + 每段右下角用量。 */
+/**
+ * 思考链：
+ *  - 思考中（live）默认展开，边流边看，正文只渲染尾部并在内部容器里自动跟底；
+ *  - 思考结束（开始输出最终文字）自动收起成一行摘要；
+ *  - 用户手动点过的，自动展开/收起一律让路。
+ */
+const THINKING_LIVE_TAIL = 2400;
+
 function ThinkingSection({
   items,
   live,
@@ -1398,7 +1432,12 @@ function ThinkingSection({
   onFork,
   forkingEntryId,
 }: {
-  items: Array<{ text: string; usage?: AssistantMessage["usage"]; entryId?: string }>;
+  items: Array<{
+    text: string;
+    usage?: AssistantMessage["usage"];
+    entryId?: string;
+    timestamp?: number;
+  }>;
   live: boolean;
   tokensPerSecond?: number;
   currencySymbol: string;
@@ -1419,13 +1458,30 @@ function ThinkingSection({
     setCopiedIndex(index);
     window.setTimeout(() => setCopiedIndex((cur) => (cur === index ? null : cur)), 1200);
   };
-  // 默认收起；但用户手动点开过就记住（跨重挂载恢复）
-  const [open, setOpen] = useState(() => readStickyOpen(stateKey) ?? false);
+  // 思考中默认展开，结束后默认收起；用户手动点过就记住（跨重挂载恢复）
+  const [open, setOpen] = useState(() => readStickyOpen(stateKey) ?? live);
+  const userToggledRef = useRef(readStickyOpen(stateKey) !== undefined);
   const toggle = () => {
+    userToggledRef.current = true;
     const next = !open;
     writeStickyOpen(stateKey, next);
     setOpen(next);
   };
+  useEffect(() => {
+    if (userToggledRef.current) return;
+    setOpen(live);
+  }, [live]);
+  // 边想边看：容器内自动跟底（不滚动整页）；用户往上翻过就不再抢滚。
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const textLength = items.reduce((total, item) => total + item.text.length, 0);
+  useEffect(() => {
+    if (!live || !open) return;
+    const el = bodyRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distance > 80) return;
+    el.scrollTop = el.scrollHeight;
+  }, [live, open, textLength]);
   const speed = live && tokensPerSecond && tokensPerSecond > 0 ? tokensPerSecond : null;
   /** 「思考」一栏的合计消耗（折叠行右侧安静地显示一次）。 */
   const totalUsage = items.reduce(
@@ -1476,17 +1532,32 @@ function ThinkingSection({
         />
       </button>
       <Collapsible open={open}>
-        <div className="mt-1 space-y-1.5 border-l-2 border-[#EDEBE4] pl-3">
+        <div
+          ref={bodyRef}
+          className="mt-1 max-h-[240px] space-y-1.5 overflow-y-auto border-l-2 border-[#EDEBE4] pl-3"
+        >
           {items.map((item, index) => {
             const usage = blockUsage(item.text, item.usage);
             const money = usage ? formatMoney(usage.cost, currencySymbol) : null;
             const entryId = item.entryId;
+            const itemTime = timeLabel(item.timestamp);
+            // 流式中只渲染尾部：长思考逐帧挂全文会把滚动和输入框拖卡
+            const tailOnly = live && item.text.length > THINKING_LIVE_TAIL;
+            const shownText = tailOnly ? item.text.slice(-THINKING_LIVE_TAIL) : item.text;
             return (
               <div key={`thinking-${index}`} className="group/think">
+                {tailOnly && (
+                  <div className="mb-0.5 text-[10px] text-ink-faint">
+                    …已省略前 {item.text.length - THINKING_LIVE_TAIL} 字（结束后可展开全文）
+                  </div>
+                )}
                 <div className="whitespace-pre-wrap break-words text-[12px] leading-6 text-ink-faint">
-                  {item.text}
+                  {shownText}
                 </div>
                 <div className="mt-0.5 flex items-center justify-end gap-1 text-[10px]">
+                  {itemTime && (
+                    <span className="mr-auto tabular-nums text-ink-faint">{itemTime}</span>
+                  )}
                   {usage && (
                     <span className="tabular-nums text-ink-faint">
                       {usage.tokens.toLocaleString()} tokens{money ? ` · ${money}` : ""}
@@ -1543,8 +1614,84 @@ function ThinkingSection({
 }
 
 /**
+ * 工具卡片栈：手风琴（同一时刻只展开一张）+ 执行中的那张自动展开。
+ * 两处复用：没有前置思考的「工具」一栏，以及挂在某段思考下方的工具调用。
+ */
+function ToolCardStack({
+  items,
+  nestedExecutions,
+  running,
+  tokensPerSecond,
+  currencySymbol,
+  liveOutputs,
+  liveOutputFor,
+  stateKey,
+  onUserInteract,
+}: {
+  items: RoundProcessTool[];
+  nestedExecutions?: Record<string, NestedExecutionView>;
+  running: boolean;
+  tokensPerSecond?: number;
+  currencySymbol: string;
+  liveOutputs?: Record<string, string>;
+  liveOutputFor?: (toolName: string) => string | undefined;
+  stateKey?: string;
+  onUserInteract?: () => void;
+}) {
+  /**
+   * 并行调用时自动展开的是**最新**那个（数组末尾的未完成项），不是第一个：
+   * 并行派发下第一个往往早就跑完了，一直盯着它反而看不到正在跑的那个。
+   */
+  const lastPendingIndex = (list: typeof items): number => {
+    for (let index = list.length - 1; index >= 0; index -= 1) {
+      if (!list[index].block.result) return index;
+    }
+    return -1;
+  };
+  const [openIndex, setOpenIndex] = useState<number | null>(() => {
+    if (!running) return null;
+    const idx = lastPendingIndex(items);
+    return idx >= 0 ? idx : null;
+  });
+  const runningIndex = lastPendingIndex(items);
+  useEffect(() => {
+    if (running && runningIndex >= 0) setOpenIndex(runningIndex);
+  }, [running, runningIndex]);
+
+  return (
+    <>
+      {items.map((item, index) => (
+        <ToolCallCard
+          key={`${item.block.name}-${index}`}
+          name={item.block.name}
+          input={item.block.input}
+          result={item.block.result}
+          details={item.block.result?.details}
+          nestedExecutions={nestedExecutions}
+          open={openIndex === index}
+          onToggleOpen={() => setOpenIndex((prev) => (prev === index ? null : index))}
+          streaming={running && !item.block.result}
+          tokensPerSecond={tokensPerSecond}
+          usage={blockUsage(
+            `${item.block.name} ${JSON.stringify(item.block.input)} ${
+              item.block.result ? resultText(item.block.result) : ""
+            }`,
+            item.usage,
+          )}
+          currencySymbol={currencySymbol}
+          liveOutput={liveOutputFor ? liveOutputFor(item.block.name) : liveOutputs?.[item.block.name]}
+          stateKey={stateKey ? `${stateKey}:tool:${index}` : undefined}
+          onUserInteract={onUserInteract}
+        />
+      ))}
+    </>
+  );
+}
+
+/**
  * 「工具」一栏：执行期间默认展开（逐个卡片摊开 + 日志跟随 + 速度徽标），
  * 一旦开始输出最终文字就整栏自动收起，只留一行 `已执行 N 个操作 (bash x2)`。
+ * 只用于**没有前置思考**的工具调用；挂在思考下的走 ToolCardStack。
  */
 function ToolsSection({
   items,
@@ -1627,26 +1774,6 @@ function ToolsSection({
     { tokens: 0, cost: 0 },
   );
   const totalMoney = formatMoney(totalUsage.cost, currencySymbol);
-  // 手风琴：同一时刻只展开一张工具卡；执行中的那张自动展开。
-  /**
-   * 并行调用时自动展开的是**最新**那个（数组末尾的未完成项），不是第一个：
-   * 并行派发下第一个往往早就跑完了，一直盯着它反而看不到正在跑的那个。
-   */
-  const lastPendingIndex = (list: typeof items): number => {
-    for (let index = list.length - 1; index >= 0; index -= 1) {
-      if (!list[index].block.result) return index;
-    }
-    return -1;
-  };
-  const [openIndex, setOpenIndex] = useState<number | null>(() => {
-    if (!running) return null;
-    const idx = lastPendingIndex(items);
-    return idx >= 0 ? idx : null;
-  });
-  const runningIndex = lastPendingIndex(items);
-  useEffect(() => {
-    if (running && runningIndex >= 0) setOpenIndex(runningIndex);
-  }, [running, runningIndex]);
 
   return (
     <div className="mt-0.5">
@@ -1697,37 +1824,106 @@ function ToolsSection({
       </button>
       <Collapsible open={open}>
         <div className="mt-1 divide-y divide-[#F3F5F9] border-l-2 border-[#EDEBE4] pl-2">
-          {items.map((item, index) => (
-            <ToolCallCard
-              key={`${item.block.name}-${index}`}
-              name={item.block.name}
-              input={item.block.input}
-              result={item.block.result}
-              details={item.block.result?.details}
-              nestedExecutions={nestedExecutions}
-              open={openIndex === index}
-              onToggleOpen={() => setOpenIndex((prev) => (prev === index ? null : index))}
-              streaming={running && !item.block.result}
-              tokensPerSecond={tokensPerSecond}
-              usage={blockUsage(
-                `${item.block.name} ${JSON.stringify(item.block.input)} ${
-                  item.block.result ? resultText(item.block.result) : ""
-                }`,
-                item.usage,
-              )}
-              currencySymbol={currencySymbol}
-              liveOutput={
-                liveOutputFor ? liveOutputFor(item.block.name) : liveOutputs?.[item.block.name]
-              }
-              stateKey={stateKey ? `${stateKey}:tool:${index}` : undefined}
-              onUserInteract={() => {
-                userToggledRef.current = true;
-              }}
-            />
-          ))}
+          <ToolCardStack
+            items={items}
+            nestedExecutions={nestedExecutions}
+            running={running}
+            tokensPerSecond={tokensPerSecond}
+            currencySymbol={currencySymbol}
+            liveOutputs={liveOutputs}
+            liveOutputFor={liveOutputFor}
+            stateKey={stateKey}
+            onUserInteract={() => {
+              userToggledRef.current = true;
+            }}
+          />
         </div>
       </Collapsible>
     </div>
+  );
+}
+
+/**
+ * 一组过程：一段思考 + 紧跟其后的工具调用（无思考时只剩工具）。
+ * 思考与工具不再各占据一个折叠框，而是按真实因果排在一起：
+ * 展开哪段思考，它的工具就在它下面。
+ */
+function ProcessGroupRow({
+  group,
+  live,
+  finalStarted,
+  tokensPerSecond,
+  currencySymbol,
+  nestedExecutions,
+  liveOutputs,
+  liveOutputFor,
+  stateKey,
+  onBranch,
+  onFork,
+  forkingEntryId,
+}: {
+  group: RoundProcessGroup;
+  live: boolean;
+  finalStarted: boolean;
+  tokensPerSecond?: number;
+  currencySymbol: string;
+  nestedExecutions?: Record<string, NestedExecutionView>;
+  liveOutputs?: Record<string, string>;
+  liveOutputFor?: (toolName: string) => string | undefined;
+  stateKey?: string;
+  onBranch?: (entryId: string) => void | Promise<void>;
+  onFork?: (entryId: string) => void;
+  forkingEntryId?: string | null;
+}) {
+  const running = live && !finalStarted;
+
+  // 没有前置思考：保持原来的「工具」一栏（一行摘要 `已执行 N 个操作 (bash x2)`）。
+  if (!group.thinking) {
+    return (
+      <ToolsSection
+        items={group.tools}
+        nestedExecutions={nestedExecutions}
+        live={live}
+        finalStarted={finalStarted}
+        tokensPerSecond={tokensPerSecond}
+        currencySymbol={currencySymbol}
+        liveOutputs={liveOutputs}
+        liveOutputFor={liveOutputFor}
+        stateKey={stateKey ? `${stateKey}:tools` : undefined}
+      />
+    );
+  }
+
+  const toolStack =
+    group.tools.length > 0 ? (
+      <div className="mt-0.5 divide-y divide-[#F3F5F9] border-l-2 border-[#EDEBE4] pl-3">
+        <ToolCardStack
+          items={group.tools}
+          nestedExecutions={nestedExecutions}
+          running={running}
+          tokensPerSecond={tokensPerSecond}
+          currencySymbol={currencySymbol}
+          liveOutputs={liveOutputs}
+          liveOutputFor={liveOutputFor}
+          stateKey={stateKey ? `${stateKey}:tools` : undefined}
+        />
+      </div>
+    ) : null;
+
+  return (
+    <>
+      <ThinkingSection
+        items={[group.thinking]}
+        live={live && !finalStarted}
+        tokensPerSecond={tokensPerSecond}
+        currencySymbol={currencySymbol}
+        stateKey={stateKey ? `${stateKey}:think` : undefined}
+        onBranch={onBranch}
+        onFork={onFork}
+        forkingEntryId={forkingEntryId}
+      />
+      {toolStack}
+    </>
   );
 }
 
@@ -1810,17 +2006,18 @@ function AssistantBlocks({
     if (!hasProcessBefore) finalTextIndex = -1;
   }
 
-  const thinking: RoundProcess["thinking"] = roundProcess
-    ? roundProcess.thinking
-    : blocks
-        .filter((block): block is Extract<TurnBlock, { kind: "thinking" }> => block.kind === "thinking")
-        .map((block) => ({ text: block.text, usage: messageUsage }));
-  const tools: RoundProcess["tools"] = roundProcess
-    ? roundProcess.tools
-    : blocks
-        .filter((block): block is Extract<TurnBlock, { kind: "tool" }> => block.kind === "tool")
-        .map((block) => ({ block, usage: messageUsage }));
-  const hasProcess = thinking.length > 0 || tools.length > 0;
+  const groups: RoundProcessGroup[] = roundProcess
+    ? roundProcess.groups
+    : groupProcessBlocks(
+        blocks.flatMap((block): ProcessBlock[] => {
+          if (block.kind === "thinking") {
+            return [{ kind: "thinking", thinking: { text: block.text, usage: messageUsage } }];
+          }
+          if (block.kind === "tool") return [{ kind: "tool", tool: { block, usage: messageUsage } }];
+          return [];
+        }),
+      );
+  const hasProcess = groups.length > 0;
 
   // 纯文字/图片（没有思考也没有工具）：不套折叠框，直接渲染
   if (!hasProcess) {
@@ -1865,31 +2062,24 @@ function AssistantBlocks({
 
   return (
     <>
-      {showProcess && thinking.length > 0 && (
-        <ThinkingSection
-          items={thinking}
-          live={live && !finalStarted}
-          tokensPerSecond={tokensPerSecond}
-          currencySymbol={currencySymbol}
-          stateKey={roundKey !== undefined ? `round:${roundKey}:thinking` : undefined}
-          onBranch={onBranch}
-          onFork={onFork}
-          forkingEntryId={forkingEntryId}
-        />
-      )}
-      {showProcess && tools.length > 0 && (
-        <ToolsSection
-          items={tools}
-          nestedExecutions={nestedExecutions}
-          live={live}
-          finalStarted={finalStarted}
-          tokensPerSecond={tokensPerSecond}
-          currencySymbol={currencySymbol}
-          liveOutputs={liveToolOutputs}
-          liveOutputFor={liveOutputFor}
-          stateKey={roundKey !== undefined ? `round:${roundKey}:tools` : undefined}
-        />
-      )}
+      {showProcess &&
+        groups.map((group, index) => (
+          <ProcessGroupRow
+            key={`process-${index}`}
+            group={group}
+            live={live}
+            finalStarted={finalStarted}
+            tokensPerSecond={tokensPerSecond}
+            currencySymbol={currencySymbol}
+            nestedExecutions={nestedExecutions}
+            liveOutputs={liveToolOutputs}
+            liveOutputFor={liveOutputFor}
+            stateKey={roundKey !== undefined ? `round:${roundKey}:item:${index}` : undefined}
+            onBranch={onBranch}
+            onFork={onFork}
+            forkingEntryId={forkingEntryId}
+          />
+        ))}
 
       {interimText.map((block, index) =>
         block.kind === "text" ? (
@@ -1924,8 +2114,14 @@ function AssistantBlocks({
 /* 惰性渲染：离屏轮次的复杂内容（Markdown / 代码高亮 / 工具卡）换成等高空壳 */
 /* -------------------------------------------------------------------------- */
 
-/** 视口外多远就换成空壳（px）。留足缓冲，避免快速滚动时来回水合。 */
-const LAZY_UNMOUNT_MARGIN_PX = 1200;
+/** 进入这个距离就水合（px）。 */
+const LAZY_HYDRATE_MARGIN_PX = 1200;
+/**
+ * 离开这个距离才卸载（px），**必须大于**水合距离。
+ * 单档阈值等于一个没有滞回的开关：卡在边界上的那一轮会「水合 → 撑高越界 →
+ * 卸载 → 缩回界内 → 再水合」来回抖，整页跟着上下跳。
+ */
+const LAZY_UNMOUNT_MARGIN_PX = 2000;
 /** 重新进入安全区后，等滚动稍停再水合，避免拖拽期间逐帧渲染。 */
 const LAZY_HYDRATE_DELAY_MS = 80;
 
@@ -1953,39 +2149,48 @@ function LazyTurnBody({ pin = false, children }: { pin?: boolean; children: Reac
     if (!el) return;
 
     let timer: number | null = null;
-    const observer = new IntersectionObserver(
+    const hydrate = () => {
+      if (activeRef.current || timer !== null) return;
+      timer = window.setTimeout(() => {
+        timer = null;
+        activeRef.current = true;
+        setActive(true);
+      }, LAZY_HYDRATE_DELAY_MS);
+    };
+    const unmount = () => {
+      if (timer !== null) {
+        window.clearTimeout(timer);
+        timer = null;
+      }
+      if (!activeRef.current || pinnedRef.current) return;
+      // 切到后台标签时容器是 display:none，这一帧高度为 0，IO 也会报
+      // not-intersecting。此时若照常卸载，heightRef 会被记成 0，占位符
+      // 塔成 min-h-16，整页高度骤降、切回后 scrollTop 被 clamp（表现为
+      // “乱跳到中间”）。高度为 0 就当作“不可测量”，保留已渲染内容。
+      const measured = node.getBoundingClientRect().height;
+      if (measured <= 0) return;
+      heightRef.current = measured;
+      activeRef.current = false;
+      setActive(false);
+    };
+    // 水合与卸载必须用两档距离（`rootMargin` 一次只能给一档）。
+    const hydrateObserver = new IntersectionObserver(
       (entries) => {
-        const entry = entries[entries.length - 1];
-        if (!entry) return;
-        if (entry.isIntersecting) {
-          if (activeRef.current || timer !== null) return;
-          timer = window.setTimeout(() => {
-            timer = null;
-            activeRef.current = true;
-            setActive(true);
-          }, LAZY_HYDRATE_DELAY_MS);
-          return;
-        }
-        if (timer !== null) {
-          window.clearTimeout(timer);
-          timer = null;
-        }
-        if (!activeRef.current || pinnedRef.current) return;
-        // 切到后台标签时容器是 display:none，这一帧高度为 0，IO 也会报
-        // not-intersecting。此时若照常卸载，heightRef 会被记成 0，占位符
-        // 塔成 min-h-16，整页高度骤降、切回后 scrollTop 被 clamp（表现为
-        // “乱跳到中间”）。高度为 0 就当作“不可测量”，保留已渲染内容。
-        const measured = node.getBoundingClientRect().height;
-        if (measured <= 0) return;
-        heightRef.current = measured;
-        activeRef.current = false;
-        setActive(false);
+        if (entries.some((entry) => entry.isIntersecting)) hydrate();
+      },
+      { root: el, rootMargin: `${LAZY_HYDRATE_MARGIN_PX}px 0px` },
+    );
+    const unmountObserver = new IntersectionObserver(
+      (entries) => {
+        if (entries.every((entry) => !entry.isIntersecting)) unmount();
       },
       { root: el, rootMargin: `${LAZY_UNMOUNT_MARGIN_PX}px 0px` },
     );
-    observer.observe(node);
+    hydrateObserver.observe(node);
+    unmountObserver.observe(node);
     return () => {
-      observer.disconnect();
+      hydrateObserver.disconnect();
+      unmountObserver.disconnect();
       if (timer !== null) window.clearTimeout(timer);
     };
   }, []);
@@ -2128,6 +2333,8 @@ export interface TranscriptTurnView {
   images: string[];
   blocks: TurnBlock[];
   messageIndex: number;
+  /** 该条消息自己的时间戳（ms），左下角标签用；老数据可能没有。 */
+  timestamp?: number;
 }
 
 /**
@@ -2185,13 +2392,17 @@ function buildTranscriptTurn(
   if (message.role === "user") {
     const text = userText(message).trim();
     const images = contentImages((message as { content?: unknown }).content);
+    const timestamp = (message as { timestamp?: number }).timestamp;
     return text || images.length > 0
-      ? { role: "user", text, images, blocks: [], messageIndex }
+      ? { role: "user", text, images, blocks: [], messageIndex, timestamp }
       : null;
   }
   if (message.role === "assistant") {
     const blocks = assistantBlocks(message, results);
-    return blocks.length > 0 ? { role: "assistant", text: "", images: [], blocks, messageIndex } : null;
+    const timestamp = (message as { timestamp?: number }).timestamp;
+    return blocks.length > 0
+      ? { role: "assistant", text: "", images: [], blocks, messageIndex, timestamp }
+      : null;
   }
   if (message.role === "custom") {
     // 扩展注入的隐藏上下文（display:false）属于请求侧：只给模型看，不进对话记录。
@@ -2322,6 +2533,8 @@ function TurnRowImpl({
   const switcher = entryId && branchSwitch ? branchSwitch(entryId) : null;
   /** 后面已经有新的轮次 → 本条的思考 / 工具已经结束，过程块立刻收起。 */
   const laterTurnStarted = liveTurn && !live;
+  /** 左下角的时间：提问与回答各用自己那条消息的时间。 */
+  const time = timeLabel(turn.timestamp);
 
   return (
     <article
@@ -2474,6 +2687,9 @@ function TurnRowImpl({
       {/* 用量两行：灰色 = 本次输出真实消耗；蓝色 = 本轮叠加（小数位对齐灰行）。 */}
       {turn.role !== "user" && (
         <TurnUsagePair usage={usage} totals={usageTotals} currencySymbol={currencySymbol} locale={locale} />
+      )}
+      {time && (
+        <div className="mt-1 text-left text-[10.5px] tabular-nums text-ink-faint">{time}</div>
       )}
     </article>
   );
@@ -2779,8 +2995,11 @@ export function Transcript({
       if (root.clientHeight === 0) return;
       const rootTop = root.getBoundingClientRect().top;
       const sentinelTop = sentinel.getBoundingClientRect().top;
-      // 进入视口上方 600px 的预加载区就补历史
-      if (sentinelTop - rootTop <= 600) loadEarlier();
+      // 预加载区 = 视口上沿往上 600px 以内。**必须**写成 rootTop - sentinelTop：
+      // 反过来（sentinelTop - rootTop）在「已经往下读了几千 px」时也是负数、
+      // 恒 <= 600，于是滚动一次就每 140ms 补 20 轮，几秒内把整段历史全挂上来，
+      // 每批都要重锚定 scrollTop —— 表现就是阅读时页面一直上下跳。
+      if (rootTop - sentinelTop <= 600) loadEarlier();
     };
 
     const observer = new IntersectionObserver(
@@ -2925,15 +3144,30 @@ export function Transcript({
         nextProcessCache.set(key, cached);
         continue;
       }
-      const value: RoundProcess = { thinking: [], tools: [] };
-      for (const turn of group) {
-        const usage = (messages[turn.messageIndex] as AssistantMessage | undefined)?.usage;
-        const entryId = entryIds?.[turn.messageIndex];
-        for (const block of turn.blocks) {
-          if (block.kind === "thinking") value.thinking.push({ text: block.text, usage, entryId });
-          else if (block.kind === "tool") value.tools.push({ block, usage });
-        }
-      }
+      const value: RoundProcess = {
+        groups: groupProcessBlocks(
+          group.flatMap((turn) => {
+            const usage = (messages[turn.messageIndex] as AssistantMessage | undefined)?.usage;
+            const entryId = entryIds?.[turn.messageIndex];
+            const timestamp = (messages[turn.messageIndex] as { timestamp?: number } | undefined)
+              ?.timestamp;
+            return turn.blocks.flatMap((block): ProcessBlock[] => {
+              if (block.kind === "thinking") {
+                return [
+                  {
+                    kind: "thinking",
+                    thinking: { text: block.text, usage, entryId, timestamp },
+                  },
+                ];
+              }
+              if (block.kind === "tool") {
+                return [{ kind: "tool", tool: { block, usage } }];
+              }
+              return [];
+            });
+          }),
+        ),
+      };
       processes.set(key, value);
       nextProcessCache.set(key, { turns: group, value });
     }

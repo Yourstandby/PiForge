@@ -45,6 +45,9 @@ function startHost() {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
+      // stdio[0] 是 "ignore"：父进程若带 PIFORGE_HOST_STDIN_CONTROL=1（在 PiForge
+      // 自己的终端里跑回归就会继承），host 会把 stdin EOF 当成"父进程死了"直接退出。
+      PIFORGE_HOST_STDIN_CONTROL: "0",
       PIFORGE_AGENT_ENDPOINT: endpoint,
       PIFORGE_AGENT_TOKEN: token,
     },

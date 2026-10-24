@@ -430,12 +430,15 @@ export function Workbench() {
   // ------------------------------------------------------------------ files
   const handleOpenFile = useCallback(
     (filePath: string, fileName: string, line?: number) => {
+      // 文件优先：右栏收起时也要立刻展开，否则点了看不到任何东西。
+      setRightPanelOpen(true);
       setOpenFile({ filePath, fileName, line });
     },
     [],
   );
 
   const handleOpenDiff = useCallback((filePath: string, fileName: string) => {
+    setRightPanelOpen(true);
     setOpenFile({ filePath, fileName, diff: true });
   }, []);
 
@@ -741,7 +744,6 @@ ${fenced}`
   /** File links in any transcript always land in the right panel. */
   const handleOpenChatFile = useCallback(
     (filePath: string, fileName: string, line?: number) => {
-      setRightPanelOpen(true);
       handleOpenFile(filePath, fileName, line);
     },
     [handleOpenFile],
@@ -981,7 +983,7 @@ ${fenced}`
   );
 
   return (
-    <div className="flex h-screen w-full flex-col overflow-hidden bg-white">
+    <div className="app-shell-height flex w-full flex-col overflow-hidden bg-white">
       <TitleBar />
 
       <div className="relative flex min-h-0 flex-1">

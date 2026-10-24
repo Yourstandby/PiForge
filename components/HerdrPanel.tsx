@@ -125,7 +125,7 @@ export function HerdrPanel() {
         agents.map((agent) => (
           <div key={agent.id} className="rounded-lg border border-[#E7E9EE] bg-white px-2.5 py-2">
             <div className="flex items-center gap-1.5">
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: STATUS_COLOR[agent.status] ?? "#9CA3AF" }} />
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: STATUS_COLOR[agent.status] ?? "var(--text-dim)" }} />
               <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-ink" title={agent.task}>{agent.name}</span>
               {(agent.status === "stopped" || agent.status === "crashed" || agent.activity === "idle") && (
                 agent.verification.verified ? (

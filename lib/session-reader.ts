@@ -1,6 +1,6 @@
-import { buildSessionProjection, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, sessionEntryToContextMessages } from "@earendil-works/pi-coding-agent";
 import { getAgentHostClient } from "./agent-host-client.ts";
-import type { SessionEntry, SessionInfo, SessionContext, SessionTreeNode, AssistantMessage, SessionHeader } from "./types.ts";
+import type { SessionEntry, SessionInfo, SessionContext, SessionTreeNode, AgentMessage, SessionHeader } from "./types.ts";
 import type { SessionEntry as PiSessionEntry } from "@earendil-works/pi-coding-agent";
 import { normalizeToolCalls } from "./normalize.ts";
 import { JSONL_WORKER_THRESHOLD_BYTES, parseJsonlFileInWorker } from "./jsonl-worker.ts";
@@ -551,34 +551,164 @@ export function buildTree(entries: SessionEntry[]): SessionTreeNode[] {
   return roots;
 }
 
+/**
+ * 沿 leaf 的 parentId 链回到根。
+ *
+ * 与上游 `buildSessionPath()` 等价，唯一区别是**上游不导出**这个函数，而我们需要
+ * 它在 compaction 之前的完整链路（`buildContextEntries()` 会把 firstKeptEntryId
+ * 之前的所有条目丢掉）。
+ */
+function buildEntryPath(
+  entries: PiSessionEntry[],
+  leafId: string | null | undefined,
+  byId: Map<string, PiSessionEntry>,
+): PiSessionEntry[] {
+  if (leafId === null) return [];
+  const leaf = (leafId ? byId.get(leafId) : undefined) ?? entries[entries.length - 1];
+  if (!leaf) return [];
+  const path: PiSessionEntry[] = [];
+  let current: PiSessionEntry | undefined = leaf;
+  while (current) {
+    path.push(current);
+    current = current.parentId ? byId.get(current.parentId) : undefined;
+  }
+  return path.reverse();
+}
+
+/**
+ * 会话 → 界面可浏览的完整对话记录（**不折叠 compaction**）。
+ *
+ * 之前这里走 `buildSessionProjection()`，那是**给模型看的**投影：它只保留最新一个
+ * compaction 之后的条目，更早的消息全部替换成一条摘要。后果是长会话重新打开后，
+ * 压缩之前的历史在界面里彻底消失（对话导航的 items 也来自这份数据，所以刻度只剩
+ * 压缩后的几轮）。
+ *
+ * 现在改为沿 parentId 链取全量，compaction 只留一条 `custom` 标记消息：
+ * - 早期消息照常渲染、照常进导航；
+ * - 标记是 `custom` 而不是 `user`，不会占掉一个「用户提问」刻度；
+ * - `entryIds` 与 `messages` 依旧一一对应（Fork / 回溯依赖这条对齐）。
+ *
+ * context_edit（Pi 0.87+）语义保持不变：`replacement: null` 仍然移除该条贡献。
+ */
 export function buildSessionContext(entries: SessionEntry[], leafId?: string | null): SessionContext {
   const piEntries = entries as unknown as PiSessionEntry[];
   const byId = new Map(piEntries.map((entry) => [entry.id, entry]));
-  const piCtx = buildSessionProjection(piEntries, leafId, byId);
-  // Pi 0.87+ context edits can omit or replace messages. Use upstream
-  // provenance so entryIds stay aligned with the finalized messages.
-  const entryIds = piCtx.entries.flatMap((entry) => entry.messages.map(() => entry.sourceEntry.id));
+  const path = buildEntryPath(piEntries, leafId, byId);
 
-  // pi injects compaction summary as {role:"compactionSummary", summary, tokensBefore}.
-  // Convert to {role:"user"} so MessageView can render it the same as before.
-  const messages = (piCtx.messages as AssistantMessage[]).map((msg) => {
-    const raw = msg as unknown as Record<string, unknown>;
-    if (raw.role === "compactionSummary") {
-      return {
-        role: "user" as const,
-        content: `*The conversation history before this point was compacted into the following summary:*\n\n${raw.summary ?? ""}`,
-        timestamp: raw.timestamp as number | undefined,
-      };
+  const edits = new Map<string, PiSessionEntry>();
+  for (const entry of path) {
+    if (entry.type === "context_edit") {
+      edits.set((entry as unknown as { targetId: string }).targetId, entry);
     }
-    return normalizeToolCalls(msg);
-  });
+  }
 
-  return {
-    messages,
-    entryIds,
-    thinkingLevel: piCtx.thinkingLevel,
-    model: piCtx.model,
-  };
+  let thinkingLevel = "off";
+  let model: SessionContext["model"] = null;
+  for (const entry of path) {
+    if (entry.type === "thinking_level_change") {
+      thinkingLevel = (entry as unknown as { thinkingLevel: string }).thinkingLevel;
+    } else if (entry.type === "model_change") {
+      const change = entry as unknown as { provider: string; modelId: string };
+      model = { provider: change.provider, modelId: change.modelId };
+    }
+  }
+
+  const messages: AgentMessage[] = [];
+  const entryIds: string[] = [];
+  /* 最新一个压缩点之前的消息是本次新增的展示内容。它们的工具输出/思考往往占掉了
+     整个会话体积的 90%（实测同一会话从 1.1MB 到 25MB），不截会直接拖垮打开速度；
+     截断的只是**压缩前**那一段，压缩后的部分与以前一模一样。 */
+  const newestCompactionAt = path.reduce((last, entry, index) => (entry.type === "compaction" ? index : last), -1);
+
+  for (const [index, entry] of path.entries()) {
+    if (entry.type === "compaction") {
+      const compaction = entry as unknown as { summary?: string; tokensBefore?: number };
+      // 显示成 custom 而不是 user：模型侧才是真压缩，界面里历史仍然完整。
+      const marker = {
+        role: "custom" as const,
+        customType: "piforge/compaction",
+        display: true,
+        content: [
+          {
+            type: "text" as const,
+            text: `> 上下文压缩点：此前的对话已折叠为下面这段摘要（只影响模型请求，上方历史仍按原样保留）。\n\n${compaction.summary ?? ""}`,
+          },
+        ],
+        details: { tokensBefore: compaction.tokensBefore },
+        timestamp: entry.timestamp ? new Date(entry.timestamp).getTime() : undefined,
+      };
+      messages.push(marker as unknown as AgentMessage);
+      entryIds.push(entry.id);
+      continue;
+    }
+
+    const edit = edits.get(entry.id);
+    const projected = projectDisplayEntry(entry, edit);
+    const beforeCompaction = newestCompactionAt >= 0 && index < newestCompactionAt;
+    for (const message of projected) {
+      const normalized = normalizeToolCalls(message);
+      messages.push(beforeCompaction ? elideHeavyHistory(normalized) : normalized);
+      entryIds.push(entry.id);
+    }
+  }
+
+  return { messages, entryIds, thinkingLevel, model };
+}
+
+/** 压缩前历史单块文本的保留长度；超出部分只留预览。 */
+const HISTORY_BLOCK_PREVIEW = 1200;
+
+/**
+ * 压缩前历史的瘦身：把超长的文本 / 思考块截成预览、图片块换成占位。
+ *
+ * 只动「模型侧已经不再引用」的那一段：用户提问、回答正文都保留，长工具输出只留头部
+ * 预览 + 省略说明（和置顶的 toolHistory 机制语义一致，都是“历史里不重复塞大段输出”）。
+ * 图片必须单独处理 —— 实测一个 25MB 的会话里 23MB 是 29 张粘贴截图的 base64。
+ */
+function elideHeavyHistory(message: AgentMessage): AgentMessage {
+  const content = (message as { content?: unknown }).content;
+  if (!Array.isArray(content)) return message;
+  let changed = false;
+  const next: unknown[] = [];
+  for (const block of content) {
+    const record = block as { type?: string; text?: unknown; thinking?: unknown };
+    if (record?.type === "image") {
+      changed = true;
+      next.push({ type: "text", text: "〔压缩前历史中的图片已省略〕" });
+      continue;
+    }
+    const field = record?.type === "text" ? "text" : record?.type === "thinking" ? "thinking" : null;
+    const value = field ? record[field] : undefined;
+    if (!field || typeof value !== "string" || value.length <= HISTORY_BLOCK_PREVIEW) {
+      next.push(block);
+      continue;
+    }
+    changed = true;
+    next.push({
+      ...record,
+      [field]: `${value.slice(0, HISTORY_BLOCK_PREVIEW)}\n\n…（压缩前的历史已省略剩余 ${value.length - HISTORY_BLOCK_PREVIEW} 字符）`,
+    });
+  }
+  return changed ? ({ ...message, content: next } as AgentMessage) : message;
+}
+
+/** 单条 entry → 消息数组，并套用 context_edit（与上游 projectContextEntry 同语义）。 */
+function projectDisplayEntry(entry: PiSessionEntry, edit: PiSessionEntry | undefined): AgentMessage[] {
+  const messages = sessionEntryToContextMessages(entry) as unknown as AgentMessage[];
+  if (!edit) return messages;
+  const replacement = (edit as unknown as { replacement: { content: unknown } | null }).replacement;
+  if (replacement === null) return [];
+  return messages.map((message) => {
+    const raw = message as unknown as { role?: string };
+    if (raw.role !== "user" && raw.role !== "assistant" && raw.role !== "toolResult" && raw.role !== "custom") {
+      return message;
+    }
+    const content =
+      (raw.role === "assistant" || raw.role === "toolResult") && typeof replacement.content === "string"
+        ? [{ type: "text", text: replacement.content }]
+        : replacement.content;
+    return { ...message, content } as AgentMessage;
+  });
 }
 
 export function getLeafId(entries: SessionEntry[]): string | null {

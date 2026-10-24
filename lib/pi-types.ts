@@ -11,14 +11,16 @@ export interface ContextUsage {
   tokens: number | null;
 }
 
-/** agent-host/context-budget.ts 的返回值：前端只按 level 上色。 */
+/**
+ * agent-host/context-budget.ts 的返回值：前端只按 level 上色。
+ * `ceiling` 就是模型真实上下文窗口，`ratioToCeiling` 就是「窗口装了多少」。
+ */
 export interface ContextBudget {
   tokens: number | null;
   ceiling: number;
   ratioToCeiling: number;
-  ratioToWindow: number;
   level: "ok" | "warn" | "critical";
-  /** 已越过硬顶（ratioToCeiling ≥ 1）：压缩马上会动手，UI 只需要一个红环 + 脉冲。 */
+  /** 已越过真实窗口（ratioToCeiling ≥ 1）：UI 用红环 + 脉冲。 */
   overshoot: boolean;
   hint: string;
 }

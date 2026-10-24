@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bot,
   ChevronLeft,
@@ -27,23 +27,6 @@ import { PluginPanel } from "./PluginPanel";
 import { OrchestratorPanel } from "./OrchestratorPanel";
 import { WatchdogPanel, WatchdogTabBadge } from "./watchdog/WatchdogPanel";
 
-/**
- * FileExplorer renders its rows with inline styles that read the legacy theme
- * variables. Those tokens were removed from globals.css during the rebuild, so
- * we expose the handful it needs on this panel's subtree only (no global CSS,
- * same neutral light palette).
- */
-const explorerTokens = {
-  "--bg-hover": "#E7E7EB",
-  "--bg-elevated": "#ffffff",
-  "--border": "#e5e5e5",
-  "--text": "#1f2937",
-  "--text-dim": "#9ca3af",
-  "--accent": "#2563eb",
-  "--danger": "#dc2626",
-  "--radius-control": "6px",
-  "--font-mono": "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-} as CSSProperties;
 
 type PanelTab =
   | "files"
@@ -114,6 +97,9 @@ export function FilePanel({
   /** setTab 的最新值（事件回调里读，避免闭包里的旧 tab）。 */
   const tabRef = useRef<PanelTab>("files");
   tabRef.current = tab;
+  /** 用户正在看的文件：它比 Agent 的自动揭示（浏览器/插件）优先。 */
+  const openFileRef = useRef<FloatingFileTarget | null>(openFile);
+  openFileRef.current = openFile;
   /**
    * Agent 调浏览器会把面板顶到 browser 视图：这里记住「用户原来的视图」，
    * 等这轮任务结束（piforge:agent-idle）再还回去，别让文件树/已打开文件凭空消失。
@@ -152,9 +138,12 @@ export function FilePanel({
   }, [tab, hiddenView]);
 
   // Chat file links and tree clicks must always surface in the Files tab,
-  // without touching the chat surface.
+  // without touching the chat surface. 打开文件同时清掉「Agent 揭示」记录，
+  // 否则任务结束时 restoreAfterAgent 可能把用户刚打开的视图又还回去。
   useEffect(() => {
-    if (openFile) setTab("files");
+    if (!openFile) return;
+    agentRevealRef.current = null;
+    setTab("files");
   }, [openFile]);
 
   // The chat status bar's "Git Diff" button focuses the dedicated Git tab.
@@ -166,6 +155,8 @@ export function FilePanel({
   // behind whichever tab the user is currently on.
   useEffect(() => {
     const revealBrowser = () => {
+      // 用户已经点开了文件：文件优先，别在对话过程中把视图抢走。
+      if (openFileRef.current) return;
       if (tabRef.current === "browser") return;
       agentRevealRef.current = { previous: tabRef.current, userTookOver: false };
       setTab("browser");
@@ -369,7 +360,7 @@ export function FilePanel({
             卸载就会丢掉已打开的文件、树的滚动位置等状态。 */}
         <div className={tab === "files" ? "relative h-full" : "hidden"}>
           <>
-            <div className="h-full overflow-y-auto py-1" style={explorerTokens}>
+            <div className="h-full overflow-y-auto py-1">
               {cwd ? (
                 <FileExplorer
                   key={cwd}

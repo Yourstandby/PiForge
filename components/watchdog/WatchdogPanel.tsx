@@ -76,7 +76,7 @@ export function WatchdogPanel({ sessionId }: { sessionId: string | null }) {
   /** 介入刚发出时记住的活动时间；观察到更新的活动 = 模型真的继续跑了。 */
   const sentAtActivity = useRef<number | null>(null);
   /** 介入后最多锁这么久：模型真没动也能再试一次（否则按钮会永久置灰）。 */
-  const RECOVERY_LOCK_MS = 30_000;
+  const RECOVERY_LOCK_MS = 8_000;
 
   useEffect(() => {
     if (!awaitingRecovery) return;
@@ -172,7 +172,8 @@ export function WatchdogPanel({ sessionId }: { sessionId: string | null }) {
 
   const light = useMemo(() => panelLight(sessionId, task), [sessionId, task]);
 
-  const disabled = pending !== null || awaitingRecovery || !stalled;
+  // 不再要求 `stalled`：任务还在跑也要能人工介入，否则得先等 25s 判卡顿。
+  const disabled = pending !== null || awaitingRecovery || !task;
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
@@ -311,7 +312,7 @@ export function WatchdogPanel({ sessionId }: { sessionId: string | null }) {
         ) : (
           <p className="mt-1 text-[11px] leading-relaxed text-ink-faint">
             {task
-              ? "任务有进展时这里保持静默；出现长时间无进展才会亮红灯并解锁下面的介入按钮。"
+              ? "任务有进展时这里保持静默；长时间无进展会亮红灯，介入按钮随时可用。"
               : "选择一个会话后即可查看它的执行心跳。"}
           </p>
         )}
@@ -346,7 +347,7 @@ export function WatchdogPanel({ sessionId }: { sessionId: string | null }) {
         </div>
         {!stalled && (
           <p className="mt-1 text-[10px] text-ink-faint">
-            介入按钮只在任务被标记「无有效进展」时可用（防止误触发）。
+            任务进行中也可随时介入（同任务 3s 冷却、最多 5 次）。
           </p>
         )}
 

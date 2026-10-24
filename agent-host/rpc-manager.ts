@@ -28,6 +28,8 @@ import { desktopLtmInlineExtension } from "./desktop-ltm-extension.ts";
 import { readDesktopSettings } from "../lib/desktop-settings.ts";
 import { desktopRuntimeTools } from "./desktop-runtime-tools.ts";
 import { desktopDedupeInlineExtension } from "./desktop-dedupe-extension.ts";
+import { desktopFileOriginInlineExtension } from "./desktop-file-origin-extension.ts";
+import { desktopCollabGuidanceInlineExtension } from "./desktop-collab-guidance-extension.ts";
 import { desktopToolSearchAlignmentInlineExtension } from "./desktop-tool-search-alignment.ts";
 import {
   applyCacheWarmingPolicy,
@@ -1205,6 +1207,7 @@ export async function startRpcSession(
       promptAddons: {
         outputStyle: desktop.outputStyleGuidelines !== false,
         responseLanguage: desktop.responseLanguageGuideline !== false,
+        collab: desktop.collabGuidelines !== false,
       },
     };
     /**
@@ -1224,22 +1227,37 @@ export async function startRpcSession(
         desktopToolSearchAlignmentInlineExtension(),
         // 每轮增量去重：重复 read / 重复命令只回一句或尾部差异（错误永远完整返回）。
         desktopDedupeInlineExtension(),
-        desktopCompactionInlineExtension({
-          getEntries: () => (sessionForCompaction?.sessionManager.getBranch() ?? []) as never,
-          getTarget: () => ({
-            model: sessionForCompaction?.model,
-            modelRuntime: sessionForCompaction?.modelRuntime as never,
-          }),
-          log:
-            process.env.PIFORGE_DEBUG_COMPACT === "1"
-              ? (message, detail) => console.log(message, detail ?? "")
-              : undefined,
-        }),
+        // 跨会话改动署名：别的会话改过的文件，read 时尾部多一行"谁改的"。
+        // 必须排在去重之后（去重先判等，署名再追加文本，顺序反了会污染去重哈希）。
+        desktopFileOriginInlineExtension(),
+        // 上下文压缩**默认交给 pi 自己的策略**（`shouldCompact` +
+        // `DEFAULT_COMPACTION_SETTINGS`，按模型窗口算，不掺任何绝对 token 硬顶）。
+        // PiForge 自研的窗口 / 预算 / 硬顶触发只在显式打开时接管，用于 A/B：
+        // 代码与单测都保留，但不进默认路径。
+        ...(process.env.PIFORGE_DESKTOP_COMPACTION === "1"
+          ? [
+              desktopCompactionInlineExtension({
+                getEntries: () => (sessionForCompaction?.sessionManager.getBranch() ?? []) as never,
+                getTarget: () => ({
+                  model: sessionForCompaction?.model,
+                  modelRuntime: sessionForCompaction?.modelRuntime as never,
+                }),
+                log:
+                  process.env.PIFORGE_DEBUG_COMPACT === "1"
+                    ? (message, detail) => console.log(message, detail ?? "")
+                    : undefined,
+              }),
+            ]
+          : []),
         desktopLtmInlineExtension({ getCwd: () => cwd }),
         desktopProcessInlineExtension({ getCwd: () => cwd }),
         desktopPowerShellInlineExtension(() => cwd),
         desktopOutputStyleInlineExtension({
           enabled: () => modeRef.promptAddons?.outputStyle !== false,
+        }),
+        // 多会话协作协议：先看 git / 每步提交 / 见到署名先 diff / 独立活走 worktree。
+        desktopCollabGuidanceInlineExtension({
+          enabled: () => modeRef.promptAddons?.collab !== false,
         }),
         desktopBrowserInlineExtension(),
         desktopTerminalInlineExtension({ getCwd: () => cwd }),

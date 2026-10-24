@@ -9,6 +9,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { applyUiScale, readStoredUiScale } from "@/lib/ui-scale";
 import {
   DEFAULT_LOCALE,
   LOCALE_STORAGE_KEY,
@@ -74,15 +75,9 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }, [hydrated, preference, systemRevision]);
 
   useEffect(() => {
-    // 恢复上次选择的界面缩放（字号设置）。
-    try {
-      const raw = Number(window.localStorage.getItem("pi-ui-scale"));
-      if (Number.isFinite(raw) && raw > 0 && raw !== 1) {
-        document.documentElement.style.zoom = String(raw);
-      }
-    } catch {
-      // ignore restricted storage
-    }
+    // 恢复上次选择的界面缩放（字号设置）。走 applyUiScale：它同时写 `--ui-zoom`，
+    // 外壳高度靠那个变量抵掉 zoom 对视口单位的偏差（否则文档会多出可滚动溢出）。
+    applyUiScale(readStoredUiScale());
   }, []);
 
   useEffect(() => {

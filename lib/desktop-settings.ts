@@ -53,6 +53,11 @@ export interface DesktopSettings {
   /** 回复语言跟随用户语言（默认开）。 */
   responseLanguageGuideline?: boolean;
   /**
+   * 多会话协作协议（先看 git / 每步提交 / 见到署名先 diff / 独立活走 worktree）
+   * 默认开。关掉只是不再把这几个 bullets 放进 system prompt。
+   */
+  collabGuidelines?: boolean;
+  /**
    * 哪些多态工具域走「按需激活」（默认只有 shell）。
    * 环境变量 `PIFORGE_ON_DEMAND_DOMAINS` 优先于这里（CI / 调试用）。
    */
@@ -118,6 +123,9 @@ export function mergeDesktopSettings(raw: unknown): DesktopSettings {
   if (typeof obj.responseLanguageGuideline === "boolean") {
     result.responseLanguageGuideline = obj.responseLanguageGuideline;
   }
+  if (typeof obj.collabGuidelines === "boolean") {
+    result.collabGuidelines = obj.collabGuidelines;
+  }
   if (Array.isArray(obj.onDemandDomains)) {
     const allowed = new Set(["browser", "shell", "fleet", "memory", "orchestrator", "plugin"]);
     result.onDemandDomains = [...new Set(obj.onDemandDomains.filter(
@@ -168,6 +176,7 @@ export function validateDesktopSettingsBody(body: unknown): string | null {
     "browserInteractEnabled",
     "outputStyleGuidelines",
     "responseLanguageGuideline",
+    "collabGuidelines",
   ] as const) {
     if (obj[key] !== undefined && typeof obj[key] !== "boolean") {
       return `${key} must be a boolean`;

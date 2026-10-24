@@ -14,7 +14,6 @@ import type { ExtensionAPI, ExtensionFactory, InlineExtension } from "./sdk-adap
 import { contentToText } from "./ltm/observe-hooks.ts";
 import {
   CONTEXT_BUDGET_RATIO,
-  MAX_CONTEXT_TOKENS,
   KEEP_RECENT_ROUNDS,
   MIN_DROPPABLE_TOKENS,
   MIN_ROUNDS_TO_DROP,
@@ -25,6 +24,7 @@ import {
   extractFilePaths,
   planCompactionCut,
   readRoundWindow,
+  resolveContextCeiling,
   serializeMessagesForSummary,
   type MessageLike,
   type SessionEntryLike,
@@ -45,7 +45,7 @@ export interface HistoryCompactionOptions {
   keepRounds?: number;
   minDropRounds?: number;
   budgetRatio?: number;
-  /** 上下文硬顶（默认 MAX_CONTEXT_TOKENS）：超过就压，不看会话年龄。 */
+  /** 上下文硬顶（不传则按 `min(120k, 窗口 × 0.8)` 现算）。 */
   maxContextTokens?: number;
   minDroppableTokens?: number;
   /** 测试注入：直接产出摘要正文（不传则真调模型）。 */
@@ -152,17 +152,36 @@ export function createDesktopCompactionFactory(options: HistoryCompactionOptions
 
     pi.on("session_before_compact", async (event) => {
       const entries = (event.branchEntries ?? options.getEntries?.() ?? []) as readonly SessionEntryLike[];
-      const cut = planCompactionCut(entries, keepRounds);
-      if (!cut) {
+      // 切点优先用 pi 算好的 preparation：它按 `keepRecentTokens` 在条目边界上取切点，
+      // 还能处理「一轮超预算被切开」的 turnPrefix（PiForge 的轮对齐逻辑没这能力）。
+      // 只有拿不到 preparation 时才回退到自己的轮回切点。
+      const preparation = event.preparation;
+      /** 只有当 pi 真的给了切点与消息时才用它（测试/老版本可能只带 tokensBefore）。 */
+      const usablePreparation =
+        preparation &&
+        Array.isArray(preparation.messagesToSummarize) &&
+        typeof preparation.firstKeptEntryId === "string" &&
+        preparation.firstKeptEntryId.length > 0
+          ? preparation
+          : undefined;
+      const planned = usablePreparation ? null : planCompactionCut(entries, keepRounds);
+      if (!usablePreparation && !planned) {
         log("[compaction] no round-aligned cut, falling back to pi", { keepRounds });
         return;
       }
-      // 规划阶段拿到的是 branch 下标；实际发出去的消息用同一区间重建，
-      // 保证「摘要覆盖的」与「被丢弃的」完全一致。
-      const messages = entriesToMessages(entries, cut);
+      const messages: readonly MessageLike[] = usablePreparation
+        ? [
+            ...(usablePreparation.messagesToSummarize as readonly MessageLike[]),
+            ...((usablePreparation.turnPrefixMessages ?? []) as readonly MessageLike[]),
+          ]
+        : entriesToMessages(entries, planned!);
+      const firstKeptEntryId = usablePreparation?.firstKeptEntryId ?? planned!.firstKeptEntryId;
+      const previousSummary = usablePreparation
+        ? (usablePreparation.previousSummary ?? null)
+        : planned!.previousSummary;
       const raw = await summarize({
         messages,
-        previousSummary: cut.previousSummary,
+        previousSummary,
         instructions: compactionSummaryInstructions(),
         signal: event.signal,
       });
@@ -170,12 +189,11 @@ export function createDesktopCompactionFactory(options: HistoryCompactionOptions
       const assembled = assembleCompactionSummary(raw, {
         modifiedFiles: filePaths.modifiedFiles,
         readFiles: filePaths.readFiles,
-        previousSummary: cut.previousSummary,
+        previousSummary,
       });
       log("[compaction] structured summary", {
         reason: event.reason,
-        roundsDropped: cut.roundsDropped,
-        roundsKept: cut.roundsKept,
+        source: usablePreparation ? "pi-cut" : "round-cut",
         messages: messages.length,
         chars: assembled.summary.length,
         fallback: assembled.fallback,
@@ -183,7 +201,7 @@ export function createDesktopCompactionFactory(options: HistoryCompactionOptions
       return {
         compaction: {
           summary: assembled.summary,
-          firstKeptEntryId: cut.firstKeptEntryId,
+          firstKeptEntryId,
           tokensBefore: event.preparation?.tokensBefore ?? 0,
           details: {
             readFiles: filePaths.readFiles,
@@ -215,7 +233,7 @@ export function createDesktopCompactionFactory(options: HistoryCompactionOptions
         keepRounds,
         minDropRounds: options.minDropRounds ?? MIN_ROUNDS_TO_DROP,
         budgetRatio: options.budgetRatio ?? CONTEXT_BUDGET_RATIO,
-        maxContextTokens: options.maxContextTokens ?? MAX_CONTEXT_TOKENS,
+        maxContextTokens: options.maxContextTokens ?? resolveContextCeiling(usage?.contextWindow ?? 0),
         minDroppableTokens: options.minDroppableTokens ?? MIN_DROPPABLE_TOKENS,
       });
       if (!decision.trigger) return;

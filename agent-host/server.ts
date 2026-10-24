@@ -21,6 +21,7 @@ import {
 } from "../contract/events.ts";
 import { parseClientFrame } from "../contract/guards.ts";
 import { buildApiRequest, dispatchApiRequest } from "./api-router.ts";
+import { hostPhase } from "./host-phases.ts";
 import { getAgentDir } from "./sdk-adapter.ts";
 import type { HostHealth } from "../contract/methods.ts";
 import type { McpConnectionConfig } from "../contract/domains/mcp.ts";
@@ -2308,6 +2309,7 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       log(`custom provider sync failed: ${errorText(error)}`);
     }
     prepareEndpoint(options.endpoint);
+    hostPhase("config.sync");
     server = createServer(handleConnection);
     await new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => {
@@ -2323,6 +2325,7 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       server!.listen(options.endpoint);
     });
 
+    hostPhase("pipe.listen");
     server.on("error", (error) => {
       log(`server error: ${error.message}`);
       options.onFatal?.(error);
@@ -2349,6 +2352,7 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       log(`websocket bus failed to start: ${errorText(error)}`);
       throw error;
     }
+    hostPhase("ws.bus");
 
     try {
       await initPlugins({
@@ -2359,6 +2363,7 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
     } catch (error) {
       log(`plugin manager failed to initialize: ${errorText(error)}`);
     }
+    hostPhase("plugins.init");
 
     options.onReady?.(options.endpoint);
 

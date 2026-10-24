@@ -52,7 +52,7 @@ export type AgentModeRef = {
    * 可关的提示词附加项（设置项控制，默认都开）。关掉只影响 system prompt 的
    * 静态段落，不改工具、不改上下文长度。
    */
-  promptAddons?: { outputStyle?: boolean; responseLanguage?: boolean };
+  promptAddons?: { outputStyle?: boolean; responseLanguage?: boolean; collab?: boolean };
   /** 前缀棘轮审计（每轮 before_agent_start 更新，get_state 上报）。 */
   prefixAudit?: PrefixAudit;
 };

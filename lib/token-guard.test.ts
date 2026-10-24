@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  RESUME_IDLE_MS,
   RESUME_TOKENS_THRESHOLD,
   SPLIT_TOKENS_THRESHOLD,
   estimateContextTokens,
@@ -8,6 +9,11 @@ import {
   resolveSessionSplitHint,
   resolveTokenGuards,
 } from "./token-guard.ts";
+
+/** 固定“现在”，避免测试随真实时钟漂移。 */
+const NOW = Date.parse("2026-10-22T12:00:00.000Z");
+
+assert.equal(RESUME_IDLE_MS, 10 * 60_000);
 
 test("没有前缀审计、上下文很小 → 不提示（默认零噪音）", () => {
   assert.deepEqual(resolveTokenGuards({}), []);
@@ -59,35 +65,84 @@ test("只有 tools 段变化但没移除工具 → 不提示（避免噪音）",
   );
 });
 
-test("P2-3a：恢复大上下文会话 → 提示重发成本", () => {
-  const hints = resolveTokenGuards({ contextTokens: 142_976, hasMessages: true });
+test("P2-3a：闲置过的大上下文会话 → 提示重发成本", () => {
+  const hints = resolveTokenGuards({
+    contextTokens: 142_976,
+    hasMessages: true,
+    lastActivityAt: new Date(NOW - 42 * 60_000).toISOString(),
+    now: NOW,
+  });
   const hint = hints.find((item) => item.kind === "resume-cost");
   assert.ok(hint);
-  assert.match(hint.text, /恢复这个会话将重发 ≈143k tok/);
+  assert.match(hint.text, /闲置 42 分钟后恢复，将重发 ≈143k tok/);
+});
+
+test("P2-3a 不误报：新会话 / 刚活动 / 无活动时间都不提示", () => {
+  const base = { contextTokens: 43_000, hasMessages: true, now: NOW };
+  // 新会话：modified 就是此刻 → 不是恢复
+  assert.deepEqual(resolveTokenGuards({ ...base, lastActivityAt: new Date(NOW - 30_000).toISOString() }), []);
+  // 闲置 9 分钟：不到阈值
+  assert.deepEqual(
+    resolveTokenGuards({ ...base, lastActivityAt: new Date(NOW - 9 * 60_000).toISOString() }),
+    [],
+  );
+  // 没有活动时间：无从判断，宁可不说话
+  assert.deepEqual(resolveTokenGuards(base), []);
+  assert.deepEqual(resolveTokenGuards({ ...base, lastActivityAt: "not-a-date" }), []);
+  // 刚过阈值：出现，且能接受 ms 时间戳
+  const hints = resolveTokenGuards({ ...base, lastActivityAt: NOW - 10 * 60_000 });
+  assert.deepEqual(hints.map((hint) => hint.kind), ["resume-cost"]);
 });
 
 test("P2-3a 阈值：低于 20k 或全新会话不提示", () => {
-  assert.deepEqual(resolveTokenGuards({ contextTokens: RESUME_TOKENS_THRESHOLD - 1, hasMessages: true }), []);
-  assert.deepEqual(resolveTokenGuards({ contextTokens: RESUME_TOKENS_THRESHOLD, hasMessages: false }), []);
+  const idle = new Date(NOW - 30 * 60_000).toISOString();
+  assert.deepEqual(
+    resolveTokenGuards({ contextTokens: RESUME_TOKENS_THRESHOLD - 1, hasMessages: true, lastActivityAt: idle, now: NOW }),
+    [],
+  );
+  assert.deepEqual(
+    resolveTokenGuards({ contextTokens: RESUME_TOKENS_THRESHOLD, hasMessages: false, lastActivityAt: idle, now: NOW }),
+    [],
+  );
   assert.equal(
-    resolveTokenGuards({ contextTokens: RESUME_TOKENS_THRESHOLD, hasMessages: true }).length,
+    resolveTokenGuards({ contextTokens: RESUME_TOKENS_THRESHOLD, hasMessages: true, lastActivityAt: idle, now: NOW })
+      .length,
     1,
   );
 });
 
 test("会话过长提示：≥200k 时出现，且与恢复提示可共存", () => {
-  const hints = resolveTokenGuards({ contextTokens: SPLIT_TOKENS_THRESHOLD, hasMessages: true });
+  const idle = new Date(NOW - 30 * 60_000).toISOString();
+  const hints = resolveTokenGuards({
+    contextTokens: SPLIT_TOKENS_THRESHOLD,
+    hasMessages: true,
+    lastActivityAt: idle,
+    now: NOW,
+  });
   assert.deepEqual(
     hints.map((hint) => hint.kind).sort(),
     ["resume-cost", "session-too-long"],
   );
-  assert.deepEqual(resolveTokenGuards({ contextTokens: SPLIT_TOKENS_THRESHOLD - 1, hasMessages: true }).map((h) => h.kind), [
-    "resume-cost",
-  ]);
+  // 会话过长只看上下文大小，与是否恢复无关：刚活动的会话只出这一条
+  assert.deepEqual(
+    resolveTokenGuards({ contextTokens: SPLIT_TOKENS_THRESHOLD - 1, hasMessages: true, now: NOW }).map((h) => h.kind),
+    [],
+  );
+  assert.deepEqual(
+    resolveTokenGuards({ contextTokens: SPLIT_TOKENS_THRESHOLD - 1, hasMessages: true, lastActivityAt: idle, now: NOW }).map(
+      (h) => h.kind,
+    ),
+    ["resume-cost"],
+  );
 });
 
 test("用户关掉过的提示类型不再出现（本会话内）", () => {
-  const base = { contextTokens: 300_000, hasMessages: true };
+  const base = {
+    contextTokens: 300_000,
+    hasMessages: true,
+    lastActivityAt: new Date(NOW - 30 * 60_000).toISOString(),
+    now: NOW,
+  };
   assert.equal(resolveTokenGuards(base).length, 2);
   assert.deepEqual(
     resolveTokenGuards({ ...base, dismissed: ["resume-cost", "session-too-long"] }),

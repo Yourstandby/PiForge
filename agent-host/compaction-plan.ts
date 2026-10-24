@@ -26,9 +26,9 @@ export const CONTEXT_BUDGET_RATIO = 0.45;
 /**
  * 已越过硬顶时的「值不值得压」下限。
  *
- * 常态下 3k 以下不压（省一次摘要调用）；但一旦越过硬顶，每一轮都要把 48k+
+ * 常态下 3k 以下不压（省一次摘要调用）；但一旦越过硬顶，每一轮都要把几十 k
  * 重新回放一遍，这时压掉 1k 也是纯赚——否则会出现「读数一路涨到 100k 却永远
- * 不压缩」的假死状态。
+ * 不压缩」的假死状态。只在 `PIFORGE_DESKTOP_COMPACTION=1` 时生效。
  */
 export const MIN_CEILING_DROPPABLE_TOKENS = 1_000;
 /**
@@ -106,7 +106,7 @@ export function readRoundWindow(entries: readonly SessionEntryLike[]): RoundWind
 
 export interface CompactionDecision {
   trigger: boolean;
-  /** 触发原因：窗口满 / Token 预算超限 / 上下文硬顶。 */
+  /** 触发原因：窗口满 / Token 预算超限 / 上下文硬顶（仅开关打开时可能出现）。 */
   reason: "window" | "budget" | "ceiling" | null;
   /** 窗口外可压缩的轮数。 */
   droppableRounds: number;
@@ -132,18 +132,25 @@ export interface CompactionDecision {
 export const MIN_SESSION_AGE_FOR_WINDOW_COMPACTION_MS = 2 * 60 * 60 * 1000;
 
 /**
- * 上下文硬顶（与模型声明的窗口无关）。
+ * 上下文硬顶（保险丝）。
  *
- * 坑：年轻会话刻意不按"窗口满"压缩（保 prompt cache），而预算分支用的是
- * `tokens / contextWindow` —— 模型窗口一旦声明成 1M，`45%` 就是 450k，
- * 于是 12 万 token 的上下文永远不触发压缩。结果每轮每个工具轮次都要把
- * 12 万 token 的上下文重读一遍（cacheRead 12 万 × 单轮 30 次调用），
- * 这就是"突然吃掉上万 token"的真实来源。
- *
- * 硬顶取一个**工作区舒适值**：压完只留 4 轮 + 四段式摘要（800–1500 token），
- * 该有的技术细节都在，模型不会变傻，但每轮回放量直接砍掉一大截。
+ * 这是决定「何时压缩」的策略层，只在 `PIFORGE_DESKTOP_COMPACTION=1` 时生效；
+ * 默认压缩全部交给 pi 自己（`shouldCompact` / `DEFAULT_COMPACTION_SETTINGS`）。
  */
-export const MAX_CONTEXT_TOKENS = 48_000;
+export const MAX_CONTEXT_TOKENS = 120_000;
+/** 硬顶随模型窗口缩放的比例：窗口都快被填满才算「快撑不住」。 */
+export const CONTEXT_CEILING_RATIO = 0.8;
+
+/**
+ * 有效硬顶 = `min(绝对上限, 窗口 × 0.8)`；窗口未知（0 / 非法）时退回绝对上限。
+ */
+export function resolveContextCeiling(
+  contextWindow: number,
+  absoluteCap: number = MAX_CONTEXT_TOKENS,
+): number {
+  if (!Number.isFinite(contextWindow) || contextWindow <= 0) return absoluteCap;
+  return Math.min(absoluteCap, Math.round(contextWindow * CONTEXT_CEILING_RATIO));
+}
 
 export function decideCompaction(input: {
   rounds: number;
@@ -157,7 +164,7 @@ export function decideCompaction(input: {
   /** 会话已存活时长；未知则视为足够长（保持旧行为）。 */
   sessionAgeMs?: number;
   minSessionAgeMs?: number;
-  /** 上下文硬顶：超过就压，不看会话年龄、不看模型窗口。 */
+  /** 上下文硬顶：不传则按 `min(120k, 窗口 × 0.8)` 现算。 */
   maxContextTokens?: number;
 }): CompactionDecision {
   const keepRounds = input.keepRounds ?? KEEP_RECENT_ROUNDS;
@@ -174,7 +181,7 @@ export function decideCompaction(input: {
   };
   const minAgeMs = input.minSessionAgeMs ?? MIN_SESSION_AGE_FOR_WINDOW_COMPACTION_MS;
   const youngSession = typeof input.sessionAgeMs === "number" && input.sessionAgeMs < minAgeMs;
-  const maxContextTokens = input.maxContextTokens ?? MAX_CONTEXT_TOKENS;
+  const maxContextTokens = input.maxContextTokens ?? resolveContextCeiling(input.contextWindow);
   const tokens = input.tokens ?? null;
   /** 已越过硬顶：阈值下调，避免「区间略小」把压缩永久锁死。 */
   const overCeiling = tokens !== null && tokens >= maxContextTokens;
@@ -271,12 +278,18 @@ export function planCompactionCut(
  */
 export function compactionSummaryInstructions(): string {
   return [
-    "把上面的较早对话压缩成一份上下文检查点，**必须用下面四个二级标题**，顺序不变：",
+    "把上面的较早对话压缩成一份上下文检查点，**必须用下面六个二级标题**，顺序不变：",
     "",
     "## 核心任务目标",
     "- 用户要达成的最终结果 + 验收标准；意图变过就只写当前有效的那一版。",
+    "## 进度",
+    "- 已完成：`- [x] 事项`（只列真的有产出的）",
+    "- 进行中：`- [ ] 事项`（当前正在做的那一件）",
+    "- 阻塞：仍然卡住的问题；没有就写「- （无）」",
     "## 已确定的技术架构 / 方案",
     "- 已拍板的方案、关键文件路径、函数/接口签名、数据流走向、依赖版本与命令。",
+    "## 下一步",
+    "- 按顺序编号写出承接工作最该做的 1–4 件事，写清落到哪个文件/命令。",
     "## 当前报错或卡点",
     "- 仍然有效的报错原文（最多 3 条）+ 复现命令；已修掉的中间报错不要留。",
     "- 未决事项单独一行以 `TODO:` 开头。",
