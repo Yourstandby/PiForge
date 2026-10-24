@@ -455,6 +455,13 @@ function ChatSession({
     [chat],
   );
 
+  /**
+   * 会话还在跑（流式回复 / 工具执行）时，宿主会直接拒绝 fork 和切分支：
+   * fork 要读一份可能正被追加写的 .jsonl，切分支要移活会话的叶子。
+   * 与其点了毫无反应，不如按钮先禁用并说明原因。
+   */
+  const actionsBlocked = Boolean(chat.agentRunning || chat.streamState.isStreaming);
+
   /** GitBranch button: fork at this message, prefilling the composer when pi returns text. */
   const handleBranchAt = useCallback(
     async (entryId: string) => {
@@ -1696,8 +1703,9 @@ function ChatSession({
         messages={chat.messages}
         messageKeys={messageKeys}
         entryIds={chat.entryIds}
-        onFork={chat.agentRunning ? undefined : chat.handleFork}
+        onFork={chat.handleFork}
         forkingEntryId={chat.forkingEntryId}
+        busy={actionsBlocked}
         cwd={session?.cwd ?? newSessionCwd}
         onOpenFile={onOpenFile}
         onInsertCode={onInsertCode}
@@ -1713,6 +1721,7 @@ function ChatSession({
       messageKeys,
       chat.entryIds,
       chat.agentRunning,
+      actionsBlocked,
       chat.handleFork,
       chat.forkingEntryId,
       chat.nestedToolExecutions,
