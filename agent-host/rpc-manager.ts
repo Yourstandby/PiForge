@@ -29,6 +29,7 @@ import { readDesktopSettings, type CodemodeMode } from "../lib/desktop-settings.
 import { desktopRuntimeTools } from "./desktop-runtime-tools.ts";
 import { desktopDedupeInlineExtension } from "./desktop-dedupe-extension.ts";
 import { desktopToolGuardInlineExtension } from "./desktop-tool-guard-extension.ts";
+import { desktopToolSchedulerInlineExtension } from "./desktop-tool-scheduler-extension.ts";
 import { desktopFileOriginInlineExtension } from "./desktop-file-origin-extension.ts";
 import { desktopCollabGuidanceInlineExtension } from "./desktop-collab-guidance-extension.ts";
 import { desktopToolSearchAlignmentInlineExtension } from "./desktop-tool-search-alignment.ts";
@@ -1262,6 +1263,9 @@ export async function startRpcSession(
         // 工具护栏：shell 类工具补默认超时 + 封顶（防单条长驻调用把整批挂死），
         // 单批并行过多时追加一次提醒。只补参数 / 只在超时错误后追加一句改法，不改正常结果。
         desktopToolGuardInlineExtension(),
+        // 会话隔离：跨会话共享配额（全局 + 单会话），超额调用在 tool_call 里排队而不是同时开跑。
+        // 必须排在审批扩展之后——被审批拦下的调用不能先占槽位。
+        desktopToolSchedulerInlineExtension({ getSessionKey: () => sessionId }),
         // 跨会话改动署名：别的会话改过的文件，read 时尾部多一行"谁改的"。
         // 必须排在去重之后（去重先判等，署名再追加文本，顺序反了会污染去重哈希）。
         desktopFileOriginInlineExtension(),
