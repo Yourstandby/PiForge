@@ -83,7 +83,19 @@ if (process.env.SMOKE_BROWSER === "1") {
  */
 const userDataOverride = process.env.PIFORGE_USER_DATA?.trim();
 if (userDataOverride) {
-  app.setPath("userData", path.resolve(userDataOverride));
+  const resolvedUserData = path.resolve(userDataOverride);
+  mkdirSync(resolvedUserData, { recursive: true });
+  app.setPath("userData", resolvedUserData);
+  /**
+   * macOS 的 `app.getPath("logs")` 是 `~/Library/Logs/<app>`，**不跟 userData 走**
+   * （Windows/Linux 才是从 userData 推出来的）。打包冒烟是按
+   * `<userData>/logs/main.log` 读渲染进程结果的，不管这一步就会出现
+   * “主进程明明活了、冒烟却说 main.log 不存在”——v0.9.1 的 macOS 就是这么红的。
+   * 同时也能防止隔离实例把日志写进真实用户目录。
+   */
+  const isolatedLogDir = path.join(resolvedUserData, "logs");
+  mkdirSync(isolatedLogDir, { recursive: true });
+  app.setPath("logs", isolatedLogDir);
 }
 
 /**
