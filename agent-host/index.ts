@@ -10,8 +10,10 @@ import { PerformanceObserver } from "node:perf_hooks";
 import v8 from "node:v8";
 import process from "node:process";
 import { PROTOCOL_VERSION, type ParentMessage } from "../contract/protocol.ts";
-import { createAgentHostServer } from "./server.ts";
+// server.ts 只在 main() 里动态 import：它牵出 Pi SDK 整张模块图（2 万文件），
+// 静态 import 会让下面所有打点都落在"图加载完之后"，量不到真正的启动段。
 import { parseHostStdinLine } from "../contract/host-stdin.ts";
+import { hostPhase } from "./host-phases.ts";
 
 interface ParentPort {
   postMessage(message: unknown): void;
@@ -150,6 +152,9 @@ function getParentPort(): ParentPort | undefined {
 }
 
 async function main(): Promise<void> {
+  // 阶段打点：ms 均相对进程启动，delta 是阶段净耗时（见 host-phases.ts）。
+  hostPhase("node.bootstrap");
+
   const endpoint = process.env.PIFORGE_AGENT_ENDPOINT?.trim();
   const token = process.env.PIFORGE_AGENT_TOKEN?.trim();
   if (!endpoint || !token) {
@@ -179,6 +184,9 @@ async function main(): Promise<void> {
    */
   if (process.env.PIFORGE_DEBUG_HOST_CPU === "1") startCpuDiagnostics();
 
+  const { createAgentHostServer } = await import("./server.ts");
+  hostPhase("server.module");
+
   const parentPort = getParentPort();
   let shuttingDown = false;
   const server = createAgentHostServer({
@@ -186,6 +194,7 @@ async function main(): Promise<void> {
     token,
     log,
     onReady: (readyEndpoint) => {
+      hostPhase("ready");
       log(`ready protocol=${PROTOCOL_VERSION} endpoint=${readyEndpoint}`);
       parentPort?.postMessage({
         type: "host_ready",

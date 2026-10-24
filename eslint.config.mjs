@@ -10,6 +10,8 @@ const eslintConfig = [
       ".next-static/**",
       "electron/dist/**",
       "agent-host/dist/**",
+      // esbuild 单文件 host 产物（~15MB 单行），解析会让 eslint 直接 OOM。
+      "agent-host/bundle/**",
       "release/**",
       "out/**",
       "coverage/**",

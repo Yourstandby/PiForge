@@ -46,9 +46,35 @@ writeFileSync(
   "utf8",
 );
 
-// Stable entry point. The nested tree keeps the original relative imports
-// (../contract, ../lib) valid.
-writeFileSync(join(targetDir, "index.js"), 'import "./agent-host/index.js";\n', "utf8");
+// Stable entry point.
+//
+// 优先用单文件 bundle（冷启动证据见 bench/startup_stats.py：ESM 图 3.1–3.5 s →
+// 单文件 0.70–0.74 s）。wrapper 只做一件事：把 bundle 里丢掉的包目录信息补回去
+// （Pi SDK 的 `getPackageDir()` 从 `import.meta.url` 往上找 `package.json`）。
+const bundleDir = join(projectRoot, "agent-host", "bundle");
+const hasBundle = existsSync(join(bundleDir, "host.mjs"));
+if (hasBundle) {
+  cpSync(bundleDir, targetDir, { recursive: true, force: true });
+}
+
+const bundleWrapper = `import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const sdkDir = join(dirname(fileURLToPath(import.meta.url)), "..", "node_modules", "@earendil-works", "pi-coding-agent");
+if (!process.env.PI_PACKAGE_DIR && existsSync(join(sdkDir, "package.json"))) {
+  process.env.PI_PACKAGE_DIR = sdkDir;
+}
+
+await import("./host.mjs");
+`;
+
+// Fallback: nested tree keeps the original relative imports (../contract, ../lib) valid.
+writeFileSync(
+  join(targetDir, "index.js"),
+  hasBundle ? bundleWrapper : 'import "./agent-host/index.js";\n',
+  "utf8",
+);
 
 const requiredHostFiles = [
   "index.js",
