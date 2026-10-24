@@ -893,8 +893,28 @@ function writeStickyOpen(key: string | undefined, value: boolean): void {
 
 /** 一轮对话（用户提问 → 若干条 assistant 消息）里的过程数据。 */
 export interface RoundProcess {
-  thinking: Array<{ text: string; usage?: AssistantMessage["usage"]; entryId?: string }>;
+  thinking: Array<{
+    text: string;
+    usage?: AssistantMessage["usage"];
+    entryId?: string;
+    timestamp?: number;
+  }>;
   tools: Array<{ block: Extract<TurnBlock, { kind: "tool" }>; usage?: AssistantMessage["usage"] }>;
+}
+
+/** 消息时间（ms）→ 内容左下角的小标签：当天只给 `HH:MM`，跨天补上 `M/D`。 */
+function timeLabel(timestamp: number | undefined): string | null {
+  if (!timestamp || !Number.isFinite(timestamp)) return null;
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return null;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const clock = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  const now = new Date();
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  return sameDay ? clock : `${date.getMonth() + 1}/${date.getDate()} ${clock}`;
 }
 
 /** Token 数量：超过 1 万就缩写（zh: 123.4万 / en: 1.2M），避免一长串数字吓人。 */
@@ -1398,7 +1418,12 @@ function ThinkingSection({
   onFork,
   forkingEntryId,
 }: {
-  items: Array<{ text: string; usage?: AssistantMessage["usage"]; entryId?: string }>;
+  items: Array<{
+    text: string;
+    usage?: AssistantMessage["usage"];
+    entryId?: string;
+    timestamp?: number;
+  }>;
   live: boolean;
   tokensPerSecond?: number;
   currencySymbol: string;
@@ -1481,12 +1506,16 @@ function ThinkingSection({
             const usage = blockUsage(item.text, item.usage);
             const money = usage ? formatMoney(usage.cost, currencySymbol) : null;
             const entryId = item.entryId;
+            const itemTime = timeLabel(item.timestamp);
             return (
               <div key={`thinking-${index}`} className="group/think">
                 <div className="whitespace-pre-wrap break-words text-[12px] leading-6 text-ink-faint">
                   {item.text}
                 </div>
                 <div className="mt-0.5 flex items-center justify-end gap-1 text-[10px]">
+                  {itemTime && (
+                    <span className="mr-auto tabular-nums text-ink-faint">{itemTime}</span>
+                  )}
                   {usage && (
                     <span className="tabular-nums text-ink-faint">
                       {usage.tokens.toLocaleString()} tokens{money ? ` · ${money}` : ""}
@@ -2143,6 +2172,8 @@ export interface TranscriptTurnView {
   images: string[];
   blocks: TurnBlock[];
   messageIndex: number;
+  /** 该条消息自己的时间戳（ms），左下角标签用；老数据可能没有。 */
+  timestamp?: number;
 }
 
 /**
@@ -2200,13 +2231,17 @@ function buildTranscriptTurn(
   if (message.role === "user") {
     const text = userText(message).trim();
     const images = contentImages((message as { content?: unknown }).content);
+    const timestamp = (message as { timestamp?: number }).timestamp;
     return text || images.length > 0
-      ? { role: "user", text, images, blocks: [], messageIndex }
+      ? { role: "user", text, images, blocks: [], messageIndex, timestamp }
       : null;
   }
   if (message.role === "assistant") {
     const blocks = assistantBlocks(message, results);
-    return blocks.length > 0 ? { role: "assistant", text: "", images: [], blocks, messageIndex } : null;
+    const timestamp = (message as { timestamp?: number }).timestamp;
+    return blocks.length > 0
+      ? { role: "assistant", text: "", images: [], blocks, messageIndex, timestamp }
+      : null;
   }
   if (message.role === "custom") {
     // 扩展注入的隐藏上下文（display:false）属于请求侧：只给模型看，不进对话记录。
@@ -2337,6 +2372,8 @@ function TurnRowImpl({
   const switcher = entryId && branchSwitch ? branchSwitch(entryId) : null;
   /** 后面已经有新的轮次 → 本条的思考 / 工具已经结束，过程块立刻收起。 */
   const laterTurnStarted = liveTurn && !live;
+  /** 左下角的时间：提问与回答各用自己那条消息的时间。 */
+  const time = timeLabel(turn.timestamp);
 
   return (
     <article
@@ -2489,6 +2526,9 @@ function TurnRowImpl({
       {/* 用量两行：灰色 = 本次输出真实消耗；蓝色 = 本轮叠加（小数位对齐灰行）。 */}
       {turn.role !== "user" && (
         <TurnUsagePair usage={usage} totals={usageTotals} currencySymbol={currencySymbol} locale={locale} />
+      )}
+      {time && (
+        <div className="mt-1 text-left text-[10.5px] tabular-nums text-ink-faint">{time}</div>
       )}
     </article>
   );
@@ -2948,7 +2988,14 @@ export function Transcript({
         const usage = (messages[turn.messageIndex] as AssistantMessage | undefined)?.usage;
         const entryId = entryIds?.[turn.messageIndex];
         for (const block of turn.blocks) {
-          if (block.kind === "thinking") value.thinking.push({ text: block.text, usage, entryId });
+          if (block.kind === "thinking") {
+            value.thinking.push({
+              text: block.text,
+              usage,
+              entryId,
+              timestamp: (messages[turn.messageIndex] as { timestamp?: number } | undefined)?.timestamp,
+            });
+          }
           else if (block.kind === "tool") value.tools.push({ block, usage });
         }
       }
