@@ -42,8 +42,11 @@ test("packaging and release scripts call build:static + build:standalone", () =>
   // standalone（只为拿到裁剪后的 node_modules + agent-host 入口）。
   // 顺序不能反：export 构建会清掉 `.next/standalone`，所以静态导出必须**先**跑，
   // standalone（产出 node_modules + agent-host 入口）压在其后（见 scripts/next-build.mjs）。
-  for (const script of ["pack", "dist"]) {
+  for (const script of ["pack", "dist", "pack:mac", "dist:mac"]) {
+    // static 必须在 standalone 之前，而且 mac 也要跑（漏了 out/ 时 electron-builder
+    // 会直接报 `file source doesn't exist from=…/out`，v0.9.1 的 macOS 就是这么红的）。
     assert.match(pkg.scripts[script], /^npm run build:static && npm run build:standalone &&/);
+    assert.match(pkg.scripts[script], /scripts\/smoke-packaged-static\.mjs/);
   }
   assert.match(
     pkg.scripts.pack,
@@ -56,7 +59,6 @@ test("packaging and release scripts call build:static + build:standalone", () =>
   assert.match(pkg.scripts["pack:mac"], /electron-builder --mac --universal --dir/);
   assert.match(pkg.scripts["dist:mac"], /electron-builder --mac --universal --publish never/);
   for (const scriptName of ["pack:mac", "dist:mac"]) {
-    assert.match(pkg.scripts[scriptName], /^npm run build:standalone &&/);
     assert.match(pkg.scripts[scriptName], /&& node scripts\/smoke-packaged-standalone\.mjs$/);
   }
   for (const scriptName of ["pack", "pack:mac", "dist", "dist:mac"]) {

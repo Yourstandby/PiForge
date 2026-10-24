@@ -20,18 +20,13 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { checkPackagedStaticAssets } from "./lib/packaged-static-assets.mjs";
+import { defaultTarget, resourcesDirFor } from "./lib/smoke-target.mjs";
 
 const args = process.argv.slice(2);
 const exeIndex = args.indexOf("--exe");
-const exe = path.resolve(
-  exeIndex === -1
-    ? process.platform === "win32"
-      ? "release/win-unpacked/PiForge.exe"
-      : "release/linux-unpacked/piforge"
-    : args[exeIndex + 1],
-);
+const exe = path.resolve(exeIndex === -1 ? defaultTarget() : args[exeIndex + 1]);
 
-const resourcesDir = path.join(path.dirname(exe), "resources");
+const resourcesDir = resourcesDirFor(exe, path);
 const checks = [
   { label: "可执行文件", file: exe, mustExist: true },
   { label: "静态直出 index.html", file: path.join(resourcesDir, "static", "index.html"), mustExist: true },

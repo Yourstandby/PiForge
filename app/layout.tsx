@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "katex/dist/katex.min.css";
+import { HydrationMarker } from "@/components/HydrationMarker";
 import { I18nProvider } from "@/components/I18nProvider";
 
 export const metadata: Metadata = {
@@ -20,6 +21,7 @@ export default function RootLayout({
   return (
     <html lang="zh-CN" suppressHydrationWarning>
       <body className="min-h-dvh">
+        <HydrationMarker />
         <I18nProvider>{children}</I18nProvider>
       </body>
     </html>
