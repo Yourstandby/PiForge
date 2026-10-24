@@ -11,6 +11,7 @@
  * child's final answer to the `spawn_agent` tool.
  */
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 import {
   DefaultResourceLoader,
   SessionManager,
@@ -33,6 +34,19 @@ import {
   guardFailureText,
 } from "./agent-guards.ts";
 import { childToolSummary, resolveChildTools, type ResolvedChildTools } from "./tool-grants.ts";
+import {
+  buildSubagentSystemPrompt,
+  resolveSubagentPromptVariant,
+  type SubagentPromptVariant,
+} from "./subagent-prompt.ts";
+import {
+  advanceProgress,
+  checkProgressBudget,
+  initialProgressState,
+  isProgressTool,
+  type ProgressState,
+} from "./progress-guard.ts";
+import { resolveChildSessionDir } from "./session-isolation.ts";
 
 const MAX_RUNNING = 4;
 const MAX_FINISHED = 20;
@@ -62,7 +76,13 @@ interface SubagentRecord {
   /** 省钱阀门：最近一次观测到的上下文 token。 */
   contextTokens: number | null;
   /** 熔断原因（命中后立刻中断，并把原因回给主 Agent）。 */
-  guardTrip: "context" | null;
+  guardTrip: "context" | "progress" | null;
+  /** 累计用量（成本 / 输出 token 采集：面板与对照实验共用）。 */
+  usage: { input: number; cacheRead: number; output: number; cost: number };
+  /** 空转计数（按可观测事件推进，见 progress-guard.ts）。 */
+  progress: ProgressState;
+  /** 本轮是否已经出现过进展工具（在 assistant 回合结束时结算）。 */
+  progressThisTurn: boolean;
 }
 
 const records = new Map<string, SubagentRecord>();
@@ -184,14 +204,21 @@ function appendOutput(record: SubagentRecord, text: string): void {
     : combined;
 }
 
-function childSystemPrompt(cwd: string, grants: ResolvedChildTools): string {
-  return [
-    "You are a focused PiForge sub-agent. Work independently on the task you are given.",
-    childToolSummary(grants.tools, grants.denied),
-    "Investigate thoroughly but stay on task. When finished, answer with a concise, self-contained report",
-    "(findings, file paths with line numbers, and a recommendation) that the parent agent can use directly.",
-    `Working directory: ${cwd}`,
-  ].join("\n");
+/**
+ * 子 Agent 的 system prompt：文本本体在 `subagent-prompt.ts`（单一事实来源，
+ * 对照实验要逐字节复现旧文本）。`PIFORGE_SUBAGENT_PROMPT=legacy` 可回退旧口径。
+ */
+function childSystemPrompt(
+  cwd: string,
+  grants: ResolvedChildTools,
+  variant: SubagentPromptVariant = resolveSubagentPromptVariant().variant,
+): string {
+  return buildSubagentSystemPrompt({
+    cwd,
+    toolSummary: childToolSummary(grants.tools, grants.denied),
+    variant,
+    role: "subagent",
+  });
 }
 
 export interface SpawnSubagentInput {
@@ -265,6 +292,9 @@ export async function spawnSubagent(input: SpawnSubagentInput): Promise<SpawnSub
     assistantTurns: 0,
     contextTokens: null,
     guardTrip: null,
+    usage: { input: 0, cacheRead: 0, output: 0, cost: 0 },
+    progress: initialProgressState(),
+    progressThisTurn: false,
   };
   records.set(id, record);
   notify({ type: "subagent_started", agent: snapshotView(record), timestamp: Date.now() });
@@ -286,6 +316,15 @@ export async function spawnSubagent(input: SpawnSubagentInput): Promise<SpawnSub
   let finalText = "";
   try {
     const agentDir = getAgentDir();
+    /**
+     * 约束 3：子 Agent 的会话**必须是隔离的**。
+     * 现状是 `SessionManager.inMemory()`（不落盘）；`PIFORGE_SESSION_DIR` 一旦被设置，
+     * 只会用于需要落盘的实验/工具，并在这里被守卫一次 —— 指向共享 `sessions/` 就拒绝。
+     */
+    const isolation = resolveChildSessionDir(process.env, join(agentDir, "sessions"));
+    if (process.env.PIFORGE_DEBUG_SUBAGENT === "1") {
+      console.log(`[subagent] session isolation: ${isolation.reason}`);
+    }
     const resourceLoader = new DefaultResourceLoader({
       cwd: input.cwd,
       agentDir,
@@ -328,8 +367,38 @@ export async function spawnSubagent(input: SpawnSubagentInput): Promise<SpawnSub
           return;
         }
         record.assistantTurns = nextTurn;
-        /** 省钱阀门二：单轮上下文熔断。 */
+        /** 采集：累计用量（成本/输出 token 在面板与对照实验里都要用）。 */
         const usage = event.message.usage;
+        if (usage) {
+          record.usage = {
+            input: record.usage.input + (usage.input ?? 0),
+            cacheRead: record.usage.cacheRead + (usage.cacheRead ?? 0),
+            output: record.usage.output + (usage.output ?? 0),
+            cost: record.usage.cost + (usage.cost?.total ?? 0),
+          };
+        }
+        /**
+         * 约束 4：「无进展」按**可观测事件**判定（读了文件 / 跑了命令 / 改了代码），
+         * 不是"这一轮没给结论"。探索性任务前几轮只读代码不该被误杀。
+         */
+        record.progress = advanceProgress(record.progress, record.progressThisTurn);
+        record.progressThisTurn = false;
+        const progressBudget = checkProgressBudget(record.progress);
+        if (progressBudget.stop) {
+          record.guardTrip = "progress";
+          record.view.error = guardFailureText("progress", progressBudget.reason ?? "空转");
+          abort.abort();
+          void session.abort().catch(() => undefined);
+          notify({
+            type: "subagent_output",
+            id: record.view.id,
+            name: record.view.name,
+            text: record.view.error,
+            timestamp: Date.now(),
+          });
+          return;
+        }
+
         const contextTokens = usage
           ? (usage.input ?? 0) + (usage.cacheRead ?? 0) + (usage.output ?? 0)
           : record.contextTokens;
@@ -358,6 +427,7 @@ export async function spawnSubagent(input: SpawnSubagentInput): Promise<SpawnSub
         return;
       }
       if (event.type === "tool_execution_start") {
+        if (isProgressTool(event.toolName)) record.progressThisTurn = true;
         const detail = toolDetail(event.toolName, event.args);
         const call: SubagentToolCallView = {
           id: event.toolCallId,

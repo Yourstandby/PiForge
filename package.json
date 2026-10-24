@@ -48,6 +48,7 @@
     "measure:idle": "node scripts/measure-app-processes.mjs --seconds 8 --max-idle-cpu 10",
     "smoke:prefix-budget": "node scripts/smoke-prefix-budget.mjs",
     "ab:task": "node scripts/ab-run-task.mjs",
+    "ab:subagent-prompt": "node scripts/ab-subagent-prompt.mjs",
     "ab:context": "node scripts/ab-context-eval.mjs",
     "audit:subagent": "node scripts/audit-subagent-share.mjs",
     "audit:token": "node scripts/audit-token-usage.mjs",

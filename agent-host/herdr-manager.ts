@@ -35,6 +35,14 @@ import {
   guardFailureText,
 } from "./agent-guards.ts";
 import { childToolSummary, resolveChildTools } from "./tool-grants.ts";
+import { buildSubagentSystemPrompt, resolveSubagentPromptVariant } from "./subagent-prompt.ts";
+import {
+  advanceProgress,
+  checkProgressBudget,
+  initialProgressState,
+  isProgressTool,
+  type ProgressState,
+} from "./progress-guard.ts";
 
 const MAX_FLEET = 4;
 const MAX_RETAINED = 20;
@@ -75,6 +83,10 @@ interface HerdrRecord {
   /** 省钱阀门：单轮上下文熔断标记。 */
   contextBreakerTripped: boolean;
   contextTokens: number | null;
+  /** 空转计数（按可观测事件推进，见 progress-guard.ts）。 */
+  progress: ProgressState;
+  /** 本轮是否已经出现过进展工具。 */
+  progressThisTurn: boolean;
 }
 
 const listeners = new Set<(agents: HerdrAgentView[]) => void>();
@@ -173,14 +185,17 @@ function appendOutput(record: HerdrRecord, text: string): void {
     : combined;
 }
 
+/**
+ * 舰队 Agent 的 prompt：与一次性子 Agent 共用 `subagent-prompt.ts` 的规则
+ * （diff 必须可应用 / JSON 只管最终回复），只换开场白。
+ */
 function fleetSystemPrompt(cwd: string, tools: readonly string[]): string {
-  return [
-    "You are a persistent PiForge fleet agent. Work independently on the task you are given.",
-    childToolSummary(tools),
-    "You may receive follow-up messages from the main agent; keep context between them.",
-    "When finished, answer with a concise, self-contained report (findings, file paths with line numbers, recommendation).",
-    `Working directory: ${cwd}`,
-  ].join("\n");
+  return buildSubagentSystemPrompt({
+    cwd,
+    toolSummary: childToolSummary(tools),
+    variant: resolveSubagentPromptVariant().variant,
+    role: "fleet",
+  });
 }
 
 function refreshVerification(record: HerdrRecord): void {
@@ -293,6 +308,21 @@ async function initialize(record: HerdrRecord, initialTask: string | null): Prom
           notifyHerdr();
           return;
         }
+        /**
+         * 约束 4：「无进展」按可观测事件判定（读了文件 / 跑了命令 / 改了代码）。
+         * 舰队 Agent 常驻、没有轮数上限，所以这条是它**唯一**的空转刹车：
+         * 连续 5 轮什么都没做才停，探索性任务前几轮只读代码不会被误杀。
+         */
+        record.progress = advanceProgress(record.progress, record.progressThisTurn);
+        record.progressThisTurn = false;
+        const progressBudget = checkProgressBudget(record.progress);
+        if (progressBudget.stop) {
+          record.view.error = guardFailureText("progress", progressBudget.reason ?? "空转");
+          setActivity(record, "idle");
+          void session.abort().catch(() => undefined);
+          notifyHerdr();
+          return;
+        }
         const text = textOfContent(event.message.content).trim();
         record.lastTurnText = text || record.lastTurnText;
         appendOutput(record, text);
@@ -300,6 +330,7 @@ async function initialize(record: HerdrRecord, initialTask: string | null): Prom
         return;
       }
       if (event.type === "tool_execution_start") {
+        if (isProgressTool(event.toolName)) record.progressThisTurn = true;
         const args = (event.args ?? {}) as Record<string, unknown>;
         const raw = args.path ?? args.pattern ?? args.query;
         const call: SubagentToolCallView = {
@@ -424,6 +455,8 @@ export function spawnHerdrAgent(input: SpawnHerdrInput): HerdrAgentView {
     turnTimeoutMs: clampTimeout(input.timeoutMs),
     contextBreakerTripped: false,
     contextTokens: null,
+    progress: initialProgressState(),
+    progressThisTurn: false,
   };
   records.set(id, record);
   ensureIdleReaper();
