@@ -34,7 +34,7 @@ export const OUTPUT_STYLE_BLOCK = OUTPUT_STYLE_GUIDELINES.join("\n");
  * 硬护栏在 `desktop-tool-guard-extension.ts`，这里只是让模型别先去撞。
  */
 export const BATCHING_RULES: readonly string[] = [
-  "批量优先：读取、检查与并行调用放进一次 codemode 脚本一次拿全，禁止用一串单工具调用逐步试探。",
+  "批量优先：读取、检查与并行调用放进一次 codemode 脚本一次拿全；探索代码先 rg -l 拿文件名，再定向 read，禁止用一串单工具调用逐步试探。",
   "先引用后补测：本次会话已有的输出、历史结论、文档里的数字直接引用，不要重跑；只补真正的缺口。",
   "调用预算：同一批并行 ≤8 个工具调用，同一任务争取 ≤15 次模型调用、≤45 次工具调用；重型命令（编译/打包/measure）单独跑并显式传 timeout；接近上限先交付可验证的结论。",
   "报错先读完 traceback 再改，同一命令不要原样重试；一轮改动集中做完再统一验证。",
