@@ -1224,17 +1224,25 @@ export async function startRpcSession(
         desktopToolSearchAlignmentInlineExtension(),
         // 每轮增量去重：重复 read / 重复命令只回一句或尾部差异（错误永远完整返回）。
         desktopDedupeInlineExtension(),
-        desktopCompactionInlineExtension({
-          getEntries: () => (sessionForCompaction?.sessionManager.getBranch() ?? []) as never,
-          getTarget: () => ({
-            model: sessionForCompaction?.model,
-            modelRuntime: sessionForCompaction?.modelRuntime as never,
-          }),
-          log:
-            process.env.PIFORGE_DEBUG_COMPACT === "1"
-              ? (message, detail) => console.log(message, detail ?? "")
-              : undefined,
-        }),
+        // 上下文压缩**默认交给 pi 自己的策略**（`shouldCompact` +
+        // `DEFAULT_COMPACTION_SETTINGS`，按模型窗口算，不掺任何绝对 token 硬顶）。
+        // PiForge 自研的窗口 / 预算 / 硬顶触发只在显式打开时接管，用于 A/B：
+        // 代码与单测都保留，但不进默认路径。
+        ...(process.env.PIFORGE_DESKTOP_COMPACTION === "1"
+          ? [
+              desktopCompactionInlineExtension({
+                getEntries: () => (sessionForCompaction?.sessionManager.getBranch() ?? []) as never,
+                getTarget: () => ({
+                  model: sessionForCompaction?.model,
+                  modelRuntime: sessionForCompaction?.modelRuntime as never,
+                }),
+                log:
+                  process.env.PIFORGE_DEBUG_COMPACT === "1"
+                    ? (message, detail) => console.log(message, detail ?? "")
+                    : undefined,
+              }),
+            ]
+          : []),
         desktopLtmInlineExtension({ getCwd: () => cwd }),
         desktopProcessInlineExtension({ getCwd: () => cwd }),
         desktopPowerShellInlineExtension(() => cwd),

@@ -13,16 +13,19 @@
   5,917 个 ESM 模块（图加载 3.1–3.5 s → 0.70–0.74 s）。缺 bundle 时自动回退逐文件树。
 - 新增零依赖阶段打点（`agent-host/host-phases.ts`，`[agent-host] [phase] <name> ms=<n> delta=<n>`），
   `bench/startup_stats.py` 解析 `main.log` 出每次启动的 p50/p95 与阶段表。
-- 上下文硬顶 `MAX_CONTEXT_TOKENS` 48k → 120k（保险丝），正常触发改用
-  `min(120k, 窗口 × 0.8)`（`resolveContextCeiling`）；窗口未知时退回 120k。
-  预算提示从百分比改为 `已用 / 窗口 token`。
+- **压缩策略默认交回 pi**：不再注册 PiForge 自研的桌面压缩扩展，触发与摘要都走
+  pi 原生 `shouldCompact` + `DEFAULT_COMPACTION_SETTINGS`（reserve 16k / keepRecent 20k）。
+  自研的「窗口 / 预算 / 硬顶」触发只在 `PIFORGE_DESKTOP_COMPACTION=1` 时接管，
+  代码与单测保留，随时可 A/B。
+- 预算提示从百分比改为 `已用 / 窗口 token`，分母只有模型窗口，不掺任何压缩硬顶。
 - 消息区懒渲染改双阈值滞回（水合 1200px / 卸载 2000px，单阈值会在边界反复抖），
   上滚即锁住贴底接管，解除点是真正距底 < 40px。
 
 ### 默认行为变没变
 
 - 工具名、参数形状、UI 协议、session 文件格式、`Startup timing:` 字段名全部未变。
-- 默认压缩阈值仍是 `45% × 窗口`；120k 只在读数异常 / 窗口声明离谱时兜底。
+- 默认压缩**完全由 pi 决定**（窗口 − 16k reserve，保留最近 20k token）；PiForge 侧
+  不再有任何绝对 token 硬顶，也不再抢占 `session_before_compact` 改写摘要。
 - 打包产物多一个 `resources/standalone/agent-host/host.mjs`（约 15 MB）；
   `standalone/node_modules` 仍保留（Next standalone 与用户扩展还在用它）。
 
@@ -30,6 +33,8 @@
 
 - 回到逐文件入口：删掉 `agent-host/bundle/host.mjs` 后重跑 `npm run build:standalone`，自动回退。
 - 单独重打 bundle：`npm run bundle:agent-host`；只测启动：`python bench/startup_stats.py`。
+- `PIFORGE_DESKTOP_COMPACTION=1` → 回到自研压缩触发（窗口 3 轮 / 45% 预算 / 120k 硬顶 + 四段式摘要）；
+  不设 = 交给 pi 原生策略。
 
 ### 数字
 
