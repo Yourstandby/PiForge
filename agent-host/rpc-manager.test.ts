@@ -71,6 +71,19 @@ function makeStubInner(overrides: {
   } as never;
 }
 
+test("Codemode mode mutates the object the SDK reads lazily", () => {
+  const w = new AgentSessionWrapper(makeStubInner());
+  const options: { mode: "on" | "only" } = { mode: "only" };
+  w.attachCodemodeOptions(options);
+  assert.equal(w.codemodeMode, "only");
+  w.setCodemodeMode("on");
+  // 同一个引用：SDK 的 getMode 在构建下一条请求时才读，改这里即生效。
+  assert.equal(options.mode, "on");
+  assert.equal(w.codemodeMode, "on");
+  w.setCodemodeMode("on");
+  assert.equal(options.mode, "on");
+});
+
 test("Codemode changes wait until the running turn settles", async () => {
   let receive: (event: unknown) => void = () => {};
   const inner = makeStubInner({ isStreaming: true, subscribe: cb => { receive = cb; return () => {}; } });

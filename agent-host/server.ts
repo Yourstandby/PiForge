@@ -42,6 +42,7 @@ import {
   updateSessionCodemode,
 } from "./rpc-manager.ts";
 import { ensureRecommendedPiSettings } from "./settings-defaults.ts";
+import { isCodemodeMode } from "../lib/desktop-settings.ts";
 import {
   subscribeSessionStream,
   type SessionSubscription,
@@ -1354,7 +1355,12 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
           fail(state, frame.id, "E_INVALID_PARAMS", "enabled must be a boolean");
           return;
         }
-        updateSessionCodemode(params.enabled);
+        const mode = params.mode;
+        if (mode !== undefined && !isCodemodeMode(mode)) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "mode must be on | only");
+          return;
+        }
+        updateSessionCodemode(params.enabled, mode);
         result(state, frame.id, { updated: listRpcSessions().length });
         return;
       }
