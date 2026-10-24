@@ -50,3 +50,23 @@ test("fails closed when Sharp's macOS optional dependency set changes", () => {
     /expected Sharp optional dependencies/,
   );
 });
+
+test("esbuild is optional: a standalone bundle without it no longer throws ENOENT", async () => {
+  const { mkdtempSync, mkdirSync, rmSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { readOptionalEsbuildManifest } = await import("./ensure-standalone-macos-universal-runtimes.mjs");
+
+  const root = mkdtempSync(join(tmpdir(), "pi-esbuild-optional-"));
+  try {
+    // 1.4.0 之后 @earendil-works/chord 离开，standalone 里不再 trace 出 esbuild。
+    assert.equal(readOptionalEsbuildManifest(join(root, "esbuild")), null);
+
+    const present = join(root, "present");
+    mkdirSync(present, { recursive: true });
+    writeFileSync(join(present, "package.json"), JSON.stringify({ version: "0.28.2" }));
+    assert.deepEqual(readOptionalEsbuildManifest(present), { version: "0.28.2" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
