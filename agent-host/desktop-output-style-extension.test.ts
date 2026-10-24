@@ -19,6 +19,9 @@ test("batching rules are static, independent of the output-style switch", () => 
   }
   // 必须明确「先交付结论再问」，否则模型会把预算当硬顶中途停手。
   assert.match(BATCHING_RULES.join("\n"), /先交付可验证的结论/);
+  // 并行上限必须写死在提示里（硬护栏在 desktop-tool-guard-extension，这里是软约束）。
+  assert.match(BATCHING_RULES.join("\n"), /同一批并行 ≤8/);
+  assert.match(BATCHING_RULES.join("\n"), /显式传 timeout/);
 });
 
 function hookInto(options?: { enabled?: () => boolean }) {
