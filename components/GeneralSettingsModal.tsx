@@ -15,8 +15,9 @@ import { useI18n } from "./I18nProvider";
 import type { LocalePreference } from "@/lib/i18n";
 import type { UpstreamVersionStatus } from "@/lib/upstream-version";
 import { PiCoreVersionPicker } from "./PiCoreVersionPicker";
+import { UI_SCALE_STORAGE_KEY, applyUiScale, readStoredUiScale } from "@/lib/ui-scale";
 
-export const UI_SCALE_STORAGE_KEY = "pi-ui-scale";
+export { UI_SCALE_STORAGE_KEY, applyUiScale, readStoredUiScale };
 
 const UI_SCALE_OPTIONS: ReadonlyArray<{ label: string; value: number }> = [
   { label: "小", value: 0.9 },
@@ -67,21 +68,6 @@ export interface SettingsSnapshot {
   cacheWarming: string;
   showImages: boolean;
   enableSkillCommands: boolean;
-}
-
-export function applyUiScale(scale: number): void {
-  if (typeof document === "undefined") return;
-  document.documentElement.style.zoom = scale === 1 ? "" : String(scale);
-}
-
-export function readStoredUiScale(): number {
-  if (typeof window === "undefined") return 1;
-  try {
-    const raw = Number(window.localStorage.getItem(UI_SCALE_STORAGE_KEY));
-    return Number.isFinite(raw) && raw > 0 ? raw : 1;
-  } catch {
-    return 1;
-  }
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {

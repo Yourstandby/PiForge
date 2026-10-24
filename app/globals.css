@@ -83,18 +83,34 @@
   --radius-control: 6px;
   --radius-panel: 10px;
   --radius-overlay: 14px;
+
+  /* 界面缩放倍率（components/GeneralSettingsModal 写，lib/ui-scale.ts 维护）。
+     外壳高度用 `calc(100dvh / var(--ui-zoom))` 抵消：`zoom` 挂在 <html> 上时
+     视口单位不跟着缩放，不做除法就会多出（倍率-1）×视口高的可滚动溢出。 */
+  --ui-zoom: 1;
 }
 
 html {
   -webkit-text-size-adjust: 100%;
+  /* 桌面壳不该由文档滚动：任何残留溢出都不许把顶栏（标签栏 / 标题栏）顶出屏幕。
+     内部滚动一律交给 `[data-chat-scroll]` 这类显式滚动容器。 */
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 body {
+  overflow: hidden;
+  overscroll-behavior: none;
   background-color: #fcfcfa;
   color: var(--color-ink);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* 应用外壳高度：抵消界面缩放的倍率，见 --ui-zoom 的注释。 */
+.app-shell-height {
+  height: calc(100dvh / var(--ui-zoom, 1));
 }
 
 ::selection {

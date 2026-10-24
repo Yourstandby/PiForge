@@ -981,7 +981,7 @@ ${fenced}`
   );
 
   return (
-    <div className="flex h-screen w-full flex-col overflow-hidden bg-white">
+    <div className="app-shell-height flex w-full flex-col overflow-hidden bg-white">
       <TitleBar />
 
       <div className="relative flex min-h-0 flex-1">
