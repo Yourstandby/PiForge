@@ -1,6 +1,6 @@
-import { NextResponse } from "next/server";
-import { AgentHostError, getAgentHostClient } from "@/lib/agent-host-client";
-import { errorMessage, getRequestId, logApiError } from "@/lib/api-error";
+import { NextResponse } from "../../../lib/next-server-shim.ts";
+import { AgentHostError, getAgentHostClient } from "../../../lib/agent-host-client.ts";
+import { errorMessage, getRequestId, logApiError } from "../../../lib/api-error.ts";
 
 export const dynamic = "force-dynamic";
 

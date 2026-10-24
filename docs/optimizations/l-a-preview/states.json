@@ -1,0 +1,51 @@
+{
+  "generatedAt": "2026-10-24T01:13:05.783Z",
+  "sourceSession": "2026-10-21T13-22-26-783Z_01a15ea0-9d5f-7585-8a76-154e07cbda65.jsonl",
+  "sourceSizeMb": 26,
+  "sourceEntries": 1486,
+  "method": "按整轮（user 消息为界）从尾部保留，直到达到各状态的目标保留 token；被丢弃区间用**确定性四段式摘要**替代（比真实模型摘要更保守）。",
+  "states": [
+    {
+      "stateKey": "C1",
+      "label": "C1 现状（硬顶 48k）",
+      "ceiling": 48000,
+      "budgetRatio": 0.45,
+      "keptEntries": 152,
+      "droppedEntries": 1334,
+      "stressed": false,
+      "keptTokens": 33654,
+      "summaryTokens": 1226,
+      "estimatedContextTokens": 41520,
+      "stateFile": "C:\\Users\\LUOWEI~1\\AppData\\Local\\Temp\\piforge-la-preview-states\\C1.jsonl",
+      "sizeKb": 1233
+    },
+    {
+      "stateKey": "C2",
+      "label": "C2 前移 30%（硬顶 33.6k，目标）",
+      "ceiling": 33600,
+      "budgetRatio": 0.315,
+      "keptEntries": 102,
+      "droppedEntries": 1384,
+      "stressed": false,
+      "keptTokens": 22641,
+      "summaryTokens": 1234,
+      "estimatedContextTokens": 30515,
+      "stateFile": "C:\\Users\\LUOWEI~1\\AppData\\Local\\Temp\\piforge-la-preview-states\\C2.jsonl",
+      "sizeKb": 733.5
+    },
+    {
+      "stateKey": "C3",
+      "label": "C3 前移 50%（硬顶 24k，激进）",
+      "ceiling": 24000,
+      "budgetRatio": 0.225,
+      "keptEntries": 55,
+      "droppedEntries": 1384,
+      "stressed": true,
+      "keptTokens": 11950,
+      "summaryTokens": 1234,
+      "estimatedContextTokens": 19824,
+      "stateFile": "C:\\Users\\LUOWEI~1\\AppData\\Local\\Temp\\piforge-la-preview-states\\C3.jsonl",
+      "sizeKb": 639.1
+    }
+  ]
+}

@@ -1,8 +1,8 @@
-import { NextResponse } from "next/server";
+import { NextResponse } from "../../../lib/next-server-shim.ts";
 import { mkdirSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import { errorMessage, getRequestId, jsonError, logApiError } from "@/lib/api-error";
+import { errorMessage, getRequestId, jsonError, logApiError } from "../../../lib/api-error.ts";
 
 // POST /api/default-cwd
 // Creates ~/pi-cwd-<YYYYMMDD> if it doesn't exist and returns the path.

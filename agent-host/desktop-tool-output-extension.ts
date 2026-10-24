@@ -21,8 +21,8 @@ import {
   toolOutputFilePath,
 } from "./tool-outputs.ts";
 import {
-  READ_TOOL_OUTPUT_BUDGET,
   TRUNCATION_HINT,
+  toolOutputBudget,
   truncateToolOutput,
 } from "./tool-output-budget.ts";
 
@@ -90,7 +90,8 @@ export function createDesktopToolOutputFactory(): ExtensionFactory {
 
       /** 文件内容型（read）：只裁不落盘 —— 源文件本来就在磁盘上，用 offset 续读。 */
       if (event.toolName === READ_TOOL_NAME) {
-        const truncation = truncateToolOutput(text, READ_TOOL_OUTPUT_BUDGET);
+        // 预算走 toolOutputBudget()：开关关闭时返回的就是 READ_TOOL_OUTPUT_BUDGET 本身。
+        const truncation = truncateToolOutput(text, toolOutputBudget(event.toolName));
         if (!truncation.truncated) return;
         const nonText = event.content.filter((block) => block.type !== "text");
         const baseDetails = isRecord(event.details) ? event.details : {};
@@ -128,6 +129,7 @@ export function createDesktopToolOutputFactory(): ExtensionFactory {
         sessionDir,
         sessionId,
         toolCallId: event.toolCallId,
+        toolName: event.toolName,
         text,
         ...(fullOutputPath ? { fullOutputPath } : {}),
       });

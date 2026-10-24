@@ -1,11 +1,11 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "../../../../lib/next-server-shim.ts";
 import fs from "fs";
 import path from "path";
-import { errorMessage, getRequestId, jsonError, logApiError } from "@/lib/api-error";
-import { authorizeHostPath, isHostAccessDenied } from "@/lib/host-files";
-import { jsonAgentHostError } from "@/lib/agent-host-http";
-import { isWindowsAbsolutePath, normalizeSlashes } from "@/lib/path-text";
-import { validateWritablePath } from "@/lib/path-policy";
+import { errorMessage, getRequestId, jsonError, logApiError } from "../../../../lib/api-error.ts";
+import { authorizeHostPath, isHostAccessDenied } from "../../../../lib/host-files.ts";
+import { jsonAgentHostError } from "../../../../lib/agent-host-http.ts";
+import { isWindowsAbsolutePath, normalizeSlashes } from "../../../../lib/path-text.ts";
+import { validateWritablePath } from "../../../../lib/path-policy.ts";
 import {
   DEFAULT_DIR_LIST_LIMIT,
   filterDirEntryNames,
@@ -15,7 +15,7 @@ import {
   getLanguage,
   parseByteRange,
   type DirListEntry,
-} from "@/lib/file-browser";
+} from "../../../../lib/file-browser.ts";
 
 /**
  * The host owns the file policy: it canonicalizes the path (realpath) and

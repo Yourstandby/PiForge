@@ -1,11 +1,11 @@
-import { NextResponse } from "next/server";
+import { NextResponse } from "../../../../lib/next-server-shim.ts";
 import { existsSync } from "fs";
-import type { AgentCommandDto, AgentModeDto, ToolPresetDto } from "@contract/domains/agent";
-import { validateAgentCommand } from "@/lib/agent-commands";
-import { getAgentHostClient } from "@/lib/agent-host-client";
-import { jsonAgentHostError } from "@/lib/agent-host-http";
-import { jsonError } from "@/lib/api-error";
-import { validateAgentCwd } from "@/lib/path-policy";
+import type { AgentCommandDto, AgentModeDto, ToolPresetDto } from "../../../../contract/domains/agent.ts";
+import { validateAgentCommand } from "../../../../lib/agent-commands.ts";
+import { getAgentHostClient } from "../../../../lib/agent-host-client.ts";
+import { jsonAgentHostError } from "../../../../lib/agent-host-http.ts";
+import { jsonError } from "../../../../lib/api-error.ts";
+import { validateAgentCwd } from "../../../../lib/path-policy.ts";
 
 // POST /api/agent/new  body: { cwd: string; type: string; message: string; ... }
 // The Agent Host owns session creation and prompt dispatch; this route only

@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server.js";
+import { NextResponse } from "../../../../../lib/next-server-shim.ts";
 import { existsSync } from "fs";
 import { readFile, unlink } from "fs/promises";
 import { tmpdir } from "os";

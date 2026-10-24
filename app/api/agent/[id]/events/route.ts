@@ -1,8 +1,8 @@
-import { resolveSessionPath, getHeaderAsync } from "@/lib/session-reader";
-import type { HostSubscription } from "@contract/client";
-import { getAgentHostClient } from "@/lib/agent-host-client";
-import { jsonAgentHostError } from "@/lib/agent-host-http";
-import { getRequestId, jsonError, logApiError } from "@/lib/api-error";
+import { resolveSessionPath, getHeaderAsync } from "../../../../../lib/session-reader.ts";
+import type { HostSubscription } from "../../../../../contract/client.ts";
+import { getAgentHostClient } from "../../../../../lib/agent-host-client.ts";
+import { jsonAgentHostError } from "../../../../../lib/agent-host-http.ts";
+import { getRequestId, jsonError, logApiError } from "../../../../../lib/api-error.ts";
 
 export const dynamic = "force-dynamic";
 

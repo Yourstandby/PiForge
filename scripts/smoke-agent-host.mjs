@@ -206,7 +206,10 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     assert.equal(health.ok, true);
     assert.equal(health.result.ok, true);
     assert.equal(health.result.sessions, 0);
-    assert.equal(health.result.handshaked, 1);
+    // ≥1 而不是 =1：Host 会为自己预热一个内部 api 客户端（role=next-server），
+    // 它同样计入 handshaked。本脚本真正关心的是"我们这次 cli 握手成功了" —— 已由
+    // hello.hostPid 与后续 RPC 覆盖，所以这里只要求至少有一个客户端完成握手。
+    assert.ok(health.result.handshaked >= 1, `expected >=1 handshaked client, got ${health.result.handshaked}`);
 
     client.send({ kind: "req", id: 2, method: "does.not.exist", params: {} });
     const unknown = await client.waitFor((frame) => frame.kind === "res" && frame.id === 2);

@@ -14,6 +14,18 @@ export interface BrowserState {
   visible: boolean;
 }
 
+/**
+ * Agent Host 就绪状态（Main 广播）。
+ *
+ * `booting` / `degraded` 都是"还在启动"，不是错误——冷启动时 UI 应该显示
+ * "引擎启动中" 而不是"引擎离线，请检查进程状态"。
+ */
+export interface HostStateSnapshot {
+  state: "off" | "booting" | "ready" | "degraded";
+  label: string;
+  blocking: boolean;
+}
+
 /** 自动更新阶段（Main 主导，Renderer 只读快照）。 */
 export type UpdatePhase =
   | "idle"
@@ -78,8 +90,40 @@ export interface ElectronApi {
   onBrowserState?: (callback: (state: BrowserState) => void) => () => void;
   onBrowserAgentOpen?: (callback: () => void) => () => void;
   setTheme?: (theme: "light" | "dark" | "glacier") => void;
+  /**
+   * 流式期间关掉窗口背景节流（打字机按帧走），流结束传 false 恢复。
+   * 浏览器 / 旧版 preload 下不存在，调用方必须可空。
+   */
+  setStreamingThrottle?: (enabled: boolean) => void;
+  /** Agent Host 就绪状态快照（仅 Electron）。 */
+  getHostState?: () => Promise<HostStateSnapshot | null>;
+  onHostState?: (callback: (snapshot: HostStateSnapshot) => void) => () => void;
   /** 自动更新桥（打包版才有）。 */
   updater?: UpdaterApi;
+  /** pi 核心版本切换桥（需要 Electron Main 才能装包）。 */
+  piCore?: PiCoreApi;
+}
+
+/** 一次 pi 核心版本切换的结果。 */
+export interface PiCoreInstallResult {
+  ok: boolean;
+  version: string;
+  installed: string | null;
+  restartRequired: boolean;
+  /** 成功时走的通道：tarball（不依赖 npm）/ npm（兜底） */
+  via?: "tarball" | "npm";
+  /** 失败分类，UI 据此决定给「重试」还是「去下载安装包」 */
+  failure?: "version" | "readonly" | "npm-missing" | "network" | "extract" | "verify" | "timeout" | "unknown";
+  error?: string;
+  log?: string;
+  /** 完整安装包下载页（失败时直接给链接） */
+  releaseUrl?: string;
+}
+
+export interface PiCoreApi {
+  install: (version: string) => Promise<PiCoreInstallResult>;
+  relaunch: () => Promise<{ ok: boolean }>;
+  onProgress: (callback: (chunk: string) => void) => () => void;
 }
 
 export function getElectronApi(): ElectronApi | null {

@@ -33,6 +33,7 @@ import {
   upsertProcessRecord,
 } from "./process-instance-store.ts";
 import { buildPowerShellArgs, POWERSHELL_ENV, resolvePowerShell } from "./powershell.ts";
+import { managedProcessEnv } from "./child-env.ts";
 
 interface ManagedProcessEntry {
   id: string;
@@ -264,12 +265,12 @@ function spawnChild(entry: ManagedProcessEntry): void {
       // signal the whole tree (`kill(-pgid)`). Windows uses taskkill /T instead.
       detached: process.platform !== "win32",
       stdio: ["pipe", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        FORCE_COLOR: "0",
-        NO_COLOR: "1",
-        ...(usePowerShell ? POWERSHELL_ENV : {}),
-      },
+      /**
+       * L1：host 可能以 `ELECTRON_RUN_AS_NODE=1` 运行（PIFORGE_HOST_TRANSPORT=node），
+       * 受管进程绝不能继承它 —— 否则任何 electron.exe 命令都会静默变成 node。
+       * 清理逻辑见 agent-host/child-env.ts（同一条规则主进程侧也有一份）。
+       */
+      env: managedProcessEnv(process.env, usePowerShell ? POWERSHELL_ENV : {}) as NodeJS.ProcessEnv,
     },
   );
   entry.child = child;

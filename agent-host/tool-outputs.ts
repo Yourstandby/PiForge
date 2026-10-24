@@ -14,6 +14,7 @@ import {
   DEFAULT_TOOL_OUTPUT_BUDGET,
   TRUNCATION_HINT,
   countTextLines,
+  toolOutputBudget,
   truncationNotice,
 } from "./tool-output-budget.ts";
 
@@ -72,8 +73,16 @@ export function countLines(text: string): number {
   return countTextLines(text);
 }
 
-export function shouldPersistToolOutput(text: string): boolean {
-  return text.length > TOOL_OUTPUT_MAX_CHARS || countLines(text) > TOOL_OUTPUT_MAX_LINES;
+/**
+ * 是否值得落盘。阈值走 `toolOutputBudget()`（不是模块常量），这样
+ * `PIFORGE_TOOL_OUTPUT_CHARS` 开关关闭时行为与之前**完全一致**（同一个对象）。
+ */
+export function shouldPersistToolOutput(
+  text: string,
+  toolName?: string,
+  budget: ReturnType<typeof toolOutputBudget> = toolOutputBudget(toolName),
+): boolean {
+  return text.length > budget.maxChars || countLines(text) > budget.maxLines;
 }
 
 /** Tool call ids may contain `/` for nested calls; keep the name filesystem-safe. */
@@ -97,7 +106,8 @@ export function buildToolOutputPreview(fullText: string, toolCallId: string): Pr
   const lines = fullText.split(/\r?\n/);
   const totalLines = lines.length;
   const hint = toolHistoryHint(toolCallId);
-
+  // 预览是"历史回看"路径，用落盘当时的默认档；模型看到的预算在 toolOutputBudget() 里。
+  const budget = toolOutputBudget(undefined);
   if (totalLines > PREVIEW_HEAD_LINES + PREVIEW_TAIL_LINES) {
     const head = lines.slice(0, PREVIEW_HEAD_LINES).join("\n");
     const tail = lines.slice(-PREVIEW_TAIL_LINES).join("\n");
@@ -165,6 +175,8 @@ export interface PersistToolOutputInput {
   text: string;
   /** `details.fullOutputPath` of pi's bash tool, when present. */
   fullOutputPath?: string;
+  /** 工具名：决定预算档位（`read` 用文件内容档），也用于 A/B 开关的判定。 */
+  toolName?: string;
 }
 
 /**
@@ -174,7 +186,7 @@ export interface PersistToolOutputInput {
 export function persistToolOutput(input: PersistToolOutputInput): PersistResult | null {
   const fromFile = readFullOutputFile(input.fullOutputPath);
   const fullText = fromFile && fromFile.length > input.text.length ? fromFile : input.text;
-  if (!shouldPersistToolOutput(fullText) && !fromFile) return null;
+  if (!shouldPersistToolOutput(fullText, input.toolName) && !fromFile) return null;
 
   const preview = buildToolOutputPreview(fullText, input.toolCallId);
   const file = toolOutputFilePath(input.sessionDir, input.sessionId, input.toolCallId);

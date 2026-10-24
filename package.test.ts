@@ -7,7 +7,10 @@ const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), 
 };
 
 test("build scripts name the standalone Next.js build explicitly", () => {
-  assert.match(pkg.scripts["build:standalone"], /^next build\b/);
+  // P1-4：默认 `build:static`（静态导出）；`build:standalone` 是回退路径。
+  // 两者都通过 `scripts/next-build.mjs` 调 next build（后者带 --standalone）。
+  assert.match(pkg.scripts["build:standalone"], /^node scripts\/next-build\.mjs --standalone/);
+  assert.match(pkg.scripts["build:static"], /^node scripts\/next-build\.mjs$/);
   assert.match(
     pkg.scripts["build:standalone"],
     /ensure-standalone-next-runtimes\.mjs/
@@ -28,21 +31,28 @@ test("build scripts name the standalone Next.js build explicitly", () => {
     pkg.scripts["build:standalone"],
     /dereference-standalone-symlinks\.mjs/
   );
-  assert.equal(pkg.scripts.build, "npm run build:standalone");
+  // `npm run build` = 默认构建。P1-4 之后默认走静态直出（`out/`），
+  // standalone 只在回退/打包 node_modules 时需要（`npm run build:standalone`）。
+  assert.equal(pkg.scripts.build, "npm run build:static");
 });
 
-test("packaging and release scripts call build:standalone", () => {
+test("packaging and release scripts call build:static + build:standalone", () => {
   assert.match(pkg.scripts.release, /npm run build:standalone/);
-  assert.match(pkg.scripts.pack, /^npm run build:standalone &&/);
-  assert.match(pkg.scripts.dist, /^npm run build:standalone &&/);
+  // P1-4：打包需要两份产物 —— 静态直出（`out/`，装进 resources/static）与
+  // standalone（只为拿到裁剪后的 node_modules + agent-host 入口）。
+  // 顺序不能反：export 构建会清掉 `.next/standalone`，所以静态导出必须**先**跑，
+  // standalone（产出 node_modules + agent-host 入口）压在其后（见 scripts/next-build.mjs）。
+  for (const script of ["pack", "dist"]) {
+    assert.match(pkg.scripts[script], /^npm run build:static && npm run build:standalone &&/);
+  }
   assert.match(
     pkg.scripts.pack,
-    /electron-builder.+&& node scripts\/smoke-packaged-standalone\.mjs/
+    /electron-builder.+&& node scripts\/smoke-packaged-static\.mjs/
   );
   // dist uses the NSIS launcher (preloads the Windows Job Object workaround)
   // and still finishes with the packaged smoke.
   assert.match(pkg.scripts.dist, /node scripts\/build-installer\.mjs/);
-  assert.match(pkg.scripts.dist, /&& node scripts\/smoke-packaged-standalone\.mjs$/);
+  assert.match(pkg.scripts.dist, /&& node scripts\/smoke-packaged-static\.mjs$/);
   assert.match(pkg.scripts["pack:mac"], /electron-builder --mac --universal --dir/);
   assert.match(pkg.scripts["dist:mac"], /electron-builder --mac --universal --publish never/);
   for (const scriptName of ["pack:mac", "dist:mac"]) {

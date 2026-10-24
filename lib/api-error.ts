@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { NextResponse } from "next/server.js";
+import { NextResponse } from "./next-server-shim.ts";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const REQUEST_IDS = new WeakMap<Request, string>();
@@ -27,8 +27,11 @@ export function getRequestId(req: Request): string {
   return requestId;
 }
 
+/** 显式写出 Headers 的三种写法：Agent Host 的编译环境没有 DOM 的 `HeadersInit`。 */
+type HeadersInput = Headers | [string, string][] | Record<string, string>;
+
 export type JsonErrorInit = Omit<ResponseInit, "status" | "headers"> & {
-  headers?: HeadersInit;
+  headers?: HeadersInput;
   errorCode?: string;
 };
 

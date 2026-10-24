@@ -1,6 +1,6 @@
-import { NextResponse } from "next/server";
-import { errorMessage, getRequestId, jsonError, logApiError } from "@/lib/api-error";
-import { getUpstreamVersionStatus } from "@/lib/upstream-version";
+import { NextResponse } from "../../../lib/next-server-shim.ts";
+import { errorMessage, getRequestId, jsonError, logApiError } from "../../../lib/api-error.ts";
+import { getUpstreamVersionStatus } from "../../../lib/upstream-version.ts";
 
 export const dynamic = "force-dynamic";
 

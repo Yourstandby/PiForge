@@ -1,0 +1,99 @@
+# C3 前移 50%（硬顶 24k，激进）
+
+## 用户意图（被压缩区间）
+- 你好
+- 讲个笑话
+- 你好
+- 讲个笑话
+- 我的思考过程还没有实现消费和token的记录
+- 验证一下你改动成功了没，简单回答，省token
+- 让这个自动换行，省token方案
+- 简单验证，省token，我注意到思考过程旁边并没有出现token和消费
+- 继续上述未完成的验证，省token方案
+- 是的，还有就是执行的那个不要自动折叠，直接页面一直往下走，只改这一点，其他的逻辑之前已经确定过了，不要动，省token
+- 执行的工具默认展开没错，但最后跑完直接收起来，这才符合之前定下的规矩，省token方案运行
+- 右侧状态栏中的滚动条，都太丑了，所有的滚动条统一向对话导航的悬浮卡片中的学习
+
+## 涉及文件
+- AGENTS.md
+- CLAUDE.md
+- CONTRIBUTING.md
+- README.md
+- components.js
+- eslint.config.mjs
+- middleware.test.ts
+- middleware.ts
+- next-env.d.ts
+- next.config.ts
+- package-lock.js
+- package.js
+- package.test.ts
+- postcss.config.mjs
+- skills-lock.js
+- tailwind.config.ts
+- tsconfig.js
+- tsconfig.ts
+- webgpu.d.ts
+- /route.ts
+- app/api/fx/route.ts
+- app/api/health/route.test.ts
+- app/api/models-config/test/route.ts
+- /routes.test.ts
+- app/api/usage/upstream/route.test.ts
+- app/api/usage/upstream/route.ts
+- app/global-error.ts
+- agent-host/desktop-native-runtime.test.ts
+- agent-host/desktop-runtime-tools.ts
+- agent-host/index.ts
+- agent-host/ltm/jaccard.test.ts
+- agent-host/ltm/jaccard.ts
+- agent-host/ltm/service.ts
+- agent-host/ltm/sqlite-backend.test.ts
+- agent-host/ltm/sqlite-backend.ts
+- agent-host/managed-processes.ts
+- agent-host/mcp-service.test.ts
+- agent-host/mcp-service.ts
+- agent-host/mode-api.surface.test.ts
+- agent-host/orchestrator-worker.ts
+- agent-host/orchestrator.test.ts
+- agent-host/plugin-bus.ts
+- agent-host/plugin-manager.ts
+- agent-host/process-killer.ts
+- agent-host/rpc-manager.test.ts
+- agent-host/rpc-manager.ts
+- agent-host/sdk-adapter.ts
+- agent-host/server.ts
+- agent-host/session-branches.test.ts
+- agent-host/session-title.ts
+- agent-host/workspace-clone.test.ts
+- agent-host/workspace-clone.ts
+- agent-host/ws-server.test.ts
+- agent-host/ws-server.ts
+- lib/agent-host-client.ts
+- lib/file-links.ts
+- lib/git-status.ts
+- lib/git-worktree.test.ts
+- lib/git-worktree.ts
+- lib/i18n/dictionaries.ts
+
+## 关键报错
+- app/api/auth/login/[provider]/route.ts
+- }
+- 7: * Why a re-export facade instead of many wrapper functions:
+- export async function createHostAgentSession(
+- 1:import type { Api, AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream, ImageContent, JsonValue, Message, Model, SimpleStreamOptions, TextCon
+- 41:  sessionManager?: unknown;
+- ✔ returns null when there are no usage values (0.8574ms)
+- Error [ERR_PACKAGE_PATH_NOT_EXPORTED]: No "exports" main defined in D:\Pi\PiForge\node_modules\@earendil-works\pi-coding-agent\package.json
+- lib/types.ts:1
+- const failed = items.filter((item) => item.block.result?.isError).length;
+- {running ? `正在执行 ${items.length} 个操作` : `已执行 ${items.length} 个操作`}
+- })
+
+## 最终决策
+- {"content":"\"use client\";\n\n/**\n * 会话列表的共享客户端缓存。\n *\n * 首屏有两处会请求 `/api/sessions`（Workbench 决定打开哪个标签、\n * SessionSidebar 渲染列表），而该接口要扫描并统计磁盘上的每个会话文件。\n * 用一个模块级 promise 去重：并发的两处只发一次网络请求，3 秒内复用结果。\n
+- {"command":"cd /d/Pi/PiForge && python - <<'PY'\nimport io\np='components/Workbench.tsx'\ns=io.open(p,encoding='utf-8').read()\n\n# 常量\ns=s.replace('''function byModifiedDesc(a: SessionInfo, b: Sessio
+- {"path":"D:/Pi/PiForge/docs/HANDOFF-v0.8.0.md","content":"# 恢复口令：**恢复 v0.8.0**\n\n> 用户说「恢复 v0.8.0」= 读本文件，按此状态继续，不要重新调研。\n> 写于 2026-10-21，v0.8.0 发布收尾之后。\n\n---\n\n## 1. 当前状态（事实，不要重查）\n\n| 项 | 值 |\n| --
+- 先说我查到的三个事实，它们决定怎么改：
+- {"content":"/**\n * 技能自动分类 + 一句话概述。\n *\n * 纯前端、纯同步、零网络：只用 skill 的 name / description 做关键词匹配，\n * 不调用模型、不读磁盘。手动覆盖存在 localStorage（不污染 SKILL.md）。\n */\n\nexport type SkillCategoryId =\n  | \"design\"\n 
+- 简单结论三条：

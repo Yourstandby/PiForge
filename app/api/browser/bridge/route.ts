@@ -1,10 +1,10 @@
-import { NextResponse } from "next/server";
+import { NextResponse } from "../../../../lib/next-server-shim.ts";
 import type {
   BrowserCommandResult,
   BrowserPageSnapshot,
-} from "@contract/domains/browser";
-import { getAgentHostClient } from "@/lib/agent-host-client";
-import { jsonAgentHostError } from "@/lib/agent-host-http";
+} from "../../../../contract/domains/browser.ts";
+import { getAgentHostClient } from "../../../../lib/agent-host-client.ts";
+import { jsonAgentHostError } from "../../../../lib/agent-host-http.ts";
 
 export const dynamic = "force-dynamic";
 

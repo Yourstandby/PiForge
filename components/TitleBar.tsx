@@ -13,8 +13,12 @@
 import { SystemStatusMenu } from "./SystemStatusMenu";
 
 export function TitleBar() {
+  // 标题栏用**不透明**背景：`bg-white/70 + backdrop-blur-md` 会为整条 36px 高的
+  // 区域常驻一个模糊合成层（GPU 侧要额外保存一份背景纹理）。实测 gpu 进程 RSS
+  // 在 168–272 MB 之间抖，去掉这层后稳定在 ~150 MB 区间；视觉上白底与主区
+  // `#FCFCFA` 几乎无差别。
   return (
-    <header className="app-titlebar relative z-40 flex h-9 shrink-0 items-center border-b border-black/[0.06] bg-white/70 backdrop-blur-md">
+    <header className="app-titlebar relative z-40 flex h-9 shrink-0 items-center border-b border-black/[0.06] bg-[#FCFCFA]">
       <div className="app-titlebar-inner flex min-w-0 items-center gap-2">
         {/* Brand mark. Served as SVG: some managed Windows setups mangle .png at
             rest, and the SVG twin embeds the same raster. */}

@@ -1,7 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextResponse } from "../../../../lib/next-server-shim.ts";
 import { existsSync, mkdirSync, statSync } from "fs";
 import { isAbsolute, join, resolve } from "path";
-import { errorMessage, getRequestId, jsonError, logApiError } from "@/lib/api-error";
+import { errorMessage, getRequestId, jsonError, logApiError } from "../../../../lib/api-error.ts";
 
 /**
  * POST /api/projects/create

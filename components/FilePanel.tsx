@@ -286,7 +286,10 @@ export function FilePanel({
               {id === "terminal" && terminalRunning && (
                 <span
                   aria-hidden="true"
-                  className="absolute right-0.5 top-0.5 h-1.5 w-1.5 animate-pulse rounded-full bg-[#22c55e]"
+                  /* 静态绿点：`animate-pulse` 是无限循环动画，只要终端在跑，
+                     合成器就要一直重绘这个 tab（tab 栏常驻）。用静态点 + 颜色
+                     表达"有进程在跑"，零动画开销。 */
+                  className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-[#22c55e]"
                 />
               )}
               {id === "monitor" && <WatchdogTabBadge sessionId={sessionId ?? null} />}
@@ -392,7 +395,7 @@ export function FilePanel({
 
         {/* Git stays mounted so its list/diff state survives tab switches. */}
         <div className={tab === "git" ? "h-full" : "hidden"}>
-          <GitPanel cwd={cwd} active={tab === "git"} />
+          <GitPanel cwd={cwd} active={tab === "git"} refreshKey={explorerRefreshKey} />
         </div>
 
         {/*

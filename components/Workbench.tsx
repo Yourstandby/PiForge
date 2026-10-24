@@ -162,6 +162,12 @@ export function Workbench() {
   // Sidebar refetch trigger (fork / delete / new session).
   const [sessionsVersion, setSessionsVersion] = useState(0);
   const [settingsModal, setSettingsModal] = useState<SettingsModal>(null);
+  // 底栏徽章（SystemStatusMenu）只管展示，真正选版本在设置页：用事件请它开。
+  useEffect(() => {
+    const open = () => setSettingsModal("general");
+    window.addEventListener("piforge:open-settings", open);
+    return () => window.removeEventListener("piforge:open-settings", open);
+  }, []);
   const [helpOpen, setHelpOpen] = useState(false);
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
   const [rightPanelOpen, setRightPanelOpen] = useState(true);

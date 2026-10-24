@@ -1,0 +1,249 @@
+/**
+ * WIP 测试 —— 暂时不进 `npm test` 通道（文件名刻意不匹配 `*.test.ts`，用例一个没删）。
+ *
+ * 为什么跑不起来：被测的 `electron/auto-update-controller.ts`（本工作区未跟踪的 WIP 源）
+ * 用了 tsc 风格的免扩展名 import：from "./app-update"；`node --test` 的类型剥离不做扩展名补全，
+ * 直接 ERR_MODULE_NOT_FOUND。而把那行补成 "./app-update.ts" 会让
+ * `tsc -p electron/tsconfig.json` 报 TS5097，并 emit 出 require("./app-update.ts")（构建产物运行时找不到模块）
+ * —— 那是构建/产品代码改动，不属于「只修测试」的范围。
+ *
+ * 已在临时目录把 import 补成 .ts 验证过：本文件 8 个用例全部通过。
+ * 解除条件：自动更新接入 `main.ts` 时把源码 import 规格化（.ts + tsconfig 的
+ * rewriteRelativeImportExtensions，或改走构建产物），再把本文件改回 `*.test.ts`。
+ */
+
+import test from "node:test";
+import assert from "node:assert/strict";
+import { existsSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createUpdateController, type UpdaterLike } from "./auto-update-controller.ts";
+
+type Handler = (payload: unknown) => void;
+
+function createFakeUpdater(overrides: Partial<UpdaterLike> = {}) {
+  const handlers = new Map<string, Handler[]>();
+  const base: UpdaterLike & {
+    checks: number;
+    downloads: number;
+    emit: (event: string, payload: unknown) => void;
+  } = {
+    autoDownload: true,
+    autoInstallOnAppQuit: false,
+    checks: 0,
+    downloads: 0,
+    on(event: string, listener: Handler): void {
+      const list = handlers.get(event) ?? [];
+      list.push(listener);
+      handlers.set(event, list);
+    },
+    async checkForUpdates(): Promise<unknown> {
+      base.checks += 1;
+      return null;
+    },
+    async downloadUpdate(): Promise<unknown> {
+      base.downloads += 1;
+      return null;
+    },
+    quitAndInstall(): void {},
+    emit(event: string, payload: unknown): void {
+      for (const handler of handlers.get(event) ?? []) handler(payload);
+    },
+  };
+  return Object.assign(base, overrides);
+}
+
+function deferred<T = void>() {
+  let resolve: (value: T) => void = () => {};
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function createHarness(options: { supported?: boolean; updater?: ReturnType<typeof createFakeUpdater> } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), "piforge-update-"));
+  const snapshots: Array<{ phase: string; percent: number }> = [];
+  const downloaded: string[] = [];
+  const launched: string[] = [];
+  const logs: string[] = [];
+  let quit = 0;
+  const updater = options.updater ?? createFakeUpdater();
+  const controller = createUpdateController({
+    loadUpdater: async () => updater,
+    isSupported: () => options.supported ?? true,
+    broadcast: (snapshot) => snapshots.push({ phase: snapshot.phase, percent: snapshot.percent }),
+    markDownloaded: (version) => downloaded.push(version),
+    archiveDir: () => dir,
+    launchInstaller: (installerPath) => launched.push(installerPath),
+    quit: () => {
+      quit += 1;
+    },
+    log: (message) => logs.push(message),
+    logError: (message) => logs.push(`ERROR ${message}`),
+    checkTimeoutMs: 60,
+    stallTimeoutMs: 60,
+  });
+  return {
+    controller,
+    updater,
+    dir,
+    snapshots,
+    downloaded,
+    launched,
+    logs,
+    quitCount: () => quit,
+    cleanup: () => rmSync(dir, { recursive: true, force: true }),
+  };
+}
+
+test("init 关闭自动下载、开启退出时安装，并立刻广播 checking", async () => {
+  const harness = createHarness();
+  await harness.controller.init();
+  assert.equal(harness.updater.autoDownload, false);
+  assert.equal(harness.updater.autoInstallOnAppQuit, true);
+  assert.equal(harness.updater.checks, 1);
+  assert.equal(harness.controller.getSnapshot().phase, "checking");
+  harness.controller.dispose();
+  harness.cleanup();
+});
+
+test("update-available → 点升级立刻进 downloading(0%)，进度节流后仍到 100%", async () => {
+  const harness = createHarness();
+  await harness.controller.init();
+  harness.updater.emit("update-available", { version: "0.8.3" });
+  assert.equal(harness.controller.getSnapshot().phase, "available");
+
+  const download = deferred();
+  harness.updater.downloadUpdate = async () => {
+    harness.updater.downloads += 1;
+    return download.promise;
+  };
+  const pending = harness.controller.download();
+  // 点击瞬间就该有反馈，不等网络。
+  assert.equal(harness.controller.getSnapshot().phase, "downloading");
+  assert.equal(harness.controller.getSnapshot().percent, 0);
+
+  for (const percent of [1.2, 1.6, 2.4, 50, 99.6, 100]) {
+    harness.updater.emit("download-progress", {
+      percent,
+      bytesPerSecond: 3_000_000,
+      total: 20_000_000,
+    });
+  }
+  const snapshot = harness.controller.getSnapshot();
+  assert.equal(snapshot.percent, 100);
+  download.resolve();
+  await pending;
+  // 6 个进度事件被节流：6 个事件里至少被吞掉 1 个（起始 + 1.2 + 50 + 99.6 + 100 = 5 次广播）。
+  const downloadingBroadcasts = harness.snapshots.filter((entry) => entry.phase === "downloading").length;
+  assert.ok(downloadingBroadcasts <= 5, `downloadingBroadcasts=${downloadingBroadcasts}`);
+  harness.controller.dispose();
+  harness.cleanup();
+});
+
+test("update-downloaded 记账并留档安装包，超出保留数后淘汰最旧", async () => {
+  const harness = createHarness();
+  await harness.controller.init();
+  const source = join(harness.dir, "..", `piforge-src-${process.pid}.exe`);
+  writeFileSync(source, "binary");
+
+  harness.updater.emit("update-downloaded", { version: "0.8.3", downloadedFile: source });
+  await wait(30);
+  assert.deepEqual(harness.downloaded, ["0.8.3"]);
+  const archives = harness.controller.listArchives().map((entry) => entry.version);
+  assert.deepEqual(archives, ["0.8.3"]);
+  assert.ok(existsSync(join(harness.dir, "PiForge-0.8.3.exe")));
+
+  // 塞满 4 份（显式 mtime，避免同毫秒建文件导致淘汰顺序不确定）→ 只留 3 份
+  const mtimes: Array<[string, number]> = [
+    ["0.8.0", 1_000],
+    ["0.8.1", 2_000],
+    ["0.8.2", 3_000],
+  ];
+  for (const [version, seconds] of mtimes) {
+    const file = join(harness.dir, `PiForge-${version}.exe`);
+    writeFileSync(file, "old");
+    utimesSync(file, seconds, seconds);
+  }
+  harness.updater.emit("update-downloaded", { version: "0.8.4", downloadedFile: source });
+  await wait(30);
+  const remaining = readdirSync(harness.dir).sort();
+  assert.equal(remaining.length, 3, `remaining=${remaining.join(",")}`);
+  assert.equal(remaining.includes("PiForge-0.8.0.exe"), false, "最旧的被淘汰");
+  assert.equal(remaining.includes("PiForge-0.8.4.exe"), true);
+  rmSync(source, { force: true });
+  harness.controller.dispose();
+  harness.cleanup();
+});
+
+test("检查超时快速失败，不留无限 spinner", async () => {
+  const updater = createFakeUpdater({
+    checkForUpdates: () => new Promise<never>(() => {}),
+  });
+  const harness = createHarness({ updater });
+  await harness.controller.init();
+  const started = Date.now();
+  await harness.controller.check();
+  const elapsed = Date.now() - started;
+  const snapshot = harness.controller.getSnapshot();
+  assert.equal(snapshot.phase, "error");
+  assert.match(snapshot.error ?? "", /超时/);
+  assert.ok(elapsed < 1_000, `elapsed=${elapsed}ms`);
+  harness.controller.dispose();
+  harness.cleanup();
+});
+
+test("下载停滞 20 秒级超时后判 error", async () => {
+  const harness = createHarness();
+  await harness.controller.init();
+  harness.updater.emit("update-available", { version: "0.8.3" });
+  harness.updater.downloadUpdate = () => new Promise<never>(() => {});
+  void harness.controller.download();
+  assert.equal(harness.controller.getSnapshot().phase, "downloading");
+  await wait(150);
+  const snapshot = harness.controller.getSnapshot();
+  assert.equal(snapshot.phase, "error");
+  assert.match(snapshot.error ?? "", /停滞/);
+  harness.controller.dispose();
+  harness.cleanup();
+});
+
+test("updater error 事件落到 error 相位并保留信息", async () => {
+  const harness = createHarness();
+  await harness.controller.init();
+  harness.updater.emit("error", new Error("net::ERR_INTERNET_DISCONNECTED"));
+  assert.equal(harness.controller.getSnapshot().phase, "error");
+  assert.match(harness.controller.getSnapshot().error ?? "", /ERR_INTERNET_DISCONNECTED/);
+  harness.controller.dispose();
+  harness.cleanup();
+});
+
+test("rollback 拉起留档安装包并退出；缺失版本给出明确错误", async () => {
+  const harness = createHarness();
+  const archivePath = join(harness.dir, "PiForge-0.8.1.exe");
+  writeFileSync(archivePath, "binary");
+
+  const missing = await harness.controller.rollback("9.9.9");
+  assert.equal(missing.ok, false);
+  assert.match(missing.error ?? "", /未找到/);
+
+  const ok = await harness.controller.rollback("0.8.1");
+  assert.equal(ok.ok, true);
+  assert.deepEqual(harness.launched, [archivePath]);
+  await wait(600);
+  assert.equal(harness.quitCount(), 1);
+  harness.controller.dispose();
+  harness.cleanup();
+});
+
+test("未打包环境返回 unsupported，且不会去加载 updater", async () => {
+  const harness = createHarness({ supported: false });
+  await harness.controller.init();
+  assert.equal(harness.controller.getSnapshot().phase, "unsupported");
+  assert.equal(harness.updater.checks, 0);
+  harness.controller.dispose();
+  harness.cleanup();
+});

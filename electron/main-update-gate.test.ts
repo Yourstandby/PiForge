@@ -71,8 +71,12 @@ test("packaged macOS server uses a background utility process", () => {
 });
 
 test("main waits for app navigation before marking the server ready", () => {
+  // P1-4 之后有两条导航路径，两条都必须 `await`（ready 只能在加载完之后置位）：
+  //   - Next 回退路径（PIFORGE_USE_NEXT=1）：`showApp(port)`（启动 + 重启各一次）
+  //   - 默认静态直出路径：`showStaticApp()`
   const awaitedShowAppCalls = source.match(/await showApp\(port\)/g) ?? [];
-  assert.equal(awaitedShowAppCalls.length, 2, "initial startup and restart must both await navigation");
+  assert.equal(awaitedShowAppCalls.length, 1, "restart path must await Next navigation");
+  assert.match(source, /await showStaticApp\(\);/, "default startup must await static navigation");
 
   const showAppStart = source.indexOf("async function showApp(port: number): Promise<void>");
   const showAppEnd = source.indexOf("\nfunction isAllowedAppUrl", showAppStart);
@@ -98,7 +102,10 @@ test("main waits for app navigation before marking the server ready", () => {
 });
 
 test("main process CSP uses shared electron CSP builder", () => {
-  assert.match(source, /import \{ buildElectronCspHeader \} from "\.\/csp"/);
+  // P1-4：两条加载路径各用各的 CSP —— Next 回退按端口放行，静态直出只放行 piforge:。
+  assert.match(source, /import \{[^}]*buildElectronCspHeader[^}]*\} from "\.\/csp"/);
   assert.match(source, /buildElectronCspHeader\(port\)/);
+  assert.match(source, /import \{[^}]*buildStaticAppCspHeader[^}]*\} from "\.\/csp"/);
+  assert.match(source, /csp: buildStaticAppCspHeader\(\)/);
 });
 // The CSP header contents themselves are behaviorally covered in lib/csp.test.ts.

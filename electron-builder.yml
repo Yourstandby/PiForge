@@ -22,37 +22,41 @@ files:
   - electron/dist/**/*
   - "!electron/**/*.ts"
   - "!electron/tsconfig.json"
+  # P1-4：asar 里只放编译后的 Main/Preload 与图标。
+  # UI 依赖（radix-ui / lucide-react / shadcn / ws …）已被 Next 打进静态产物，
+  # 运行时不再需要它们的 node_modules —— 0.9.0 的 app.asar 有 80MB，其中约 77MB
+  # 是这些永远不会被 require 的包。真正需要的 electron-updater 及其依赖已经通过
+  # 下面的 extraResources 单独放进 resources/app/node_modules。
+  - "!node_modules/**"
 
 extraResources:
-  - from: .next/standalone
-    to: standalone
+  # ---- P1-4：静态直出（`piforge://app`），不再有 127.0.0.1:30141 的 Next 服务 ----
+  # `out/` 是 `next build`（output: "export"）的产物：HTML + `_next/static` + public。
+  - from: out
+    to: static
     filter:
       - "**/*"
-      - "!node_modules"
-      - "!agent-host/**"
-      - "!release"
-      - "!.git"
+      # 导出目录里的 RSC 预取文本与 sourcemap 不参与运行。
+      - "!**/*.map"
+      # 测试文件永远不该进安装包（体积 + 信息泄漏）；由 lib/electron-builder-config.test.mjs 守。
       - "!**/*.test.ts"
       - "!**/*.test.tsx"
       - "!**/*.test.mjs"
       - "!**/*.test.js"
-  # Agent Host: stable entry + compiled contract/lib. Its runtime dependencies
-  # (Pi SDK, pi-mcp, typebox, …) live in the shared standalone/node_modules
-  # copied below and are resolved by Node walking up from agent-host/.
+  # Agent Host：稳定入口 + 编译后的 contract/lib。
+  # 运行时依赖（Pi SDK、pi-mcp、typebox…）来自下面的 standalone/node_modules。
   - from: .next/standalone/agent-host
     to: standalone/agent-host
     filter:
       - "**/*"
+      - "!**/*.test.ts"
+      - "!**/*.test.tsx"
+      - "!**/*.test.mjs"
+      - "!**/*.test.js"
+  # 只留宿主进程真正需要的依赖树：standalone 里的 server.js / .next / public
+  # 已经不参与运行（静态直出取代了它们），不再打包。
   - from: .next/standalone/node_modules
     to: standalone/node_modules
-  - from: .next/static
-    to: standalone/.next/static
-    filter:
-      - "**/*"
-  - from: public
-    to: standalone/public
-    filter:
-      - "**/*"
   - from: node_modules/electron-updater
     to: app/node_modules/electron-updater
   - from: node_modules/builder-util-runtime

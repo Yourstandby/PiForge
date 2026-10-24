@@ -122,3 +122,30 @@ test("Main bridge executes Host browser commands and posts results", async () =>
   assert.equal(snapshot?.ownerId, "owner-1");
   bridge.stop();
 });
+
+test("Main bridge 回 pong：否则 Host 每 60s 断链重连（真实日志里的心跳超时循环）", async () => {
+  const socket = new FakeSocket();
+  const bridge = new BrowserHostBridge({
+    endpoint: "\.\pipe\test",
+    token: "t",
+    connect: () => socket as unknown as BridgeSocket,
+    getManager: () => managerStub(),
+    pollMs: 60_000,
+    snapshotMs: 60_000,
+  });
+  bridge.start();
+  await waitFor(() => socket.frames.some((frame) => frame.kind === "hello"));
+
+  // Host 的 ping 帧（HEARTBEAT_INTERVAL_MS = 15s，HEARTBEAT_TIMEOUT_MS = 60s）。
+  socket.emit("data", Buffer.from(`${JSON.stringify({ kind: "ping", nonce: 7 })}\n`));
+  await waitFor(() => socket.frames.some((frame) => frame.kind === "pong"));
+
+  const pong = socket.frames.find((frame) => frame.kind === "pong");
+  assert.equal(pong?.nonce, 7);
+
+  // 非数字 nonce / 未知帧不得让桥崩掉或误回 pong。
+  socket.emit("data", Buffer.from(`${JSON.stringify({ kind: "ping", nonce: "x" })}\n`));
+  socket.emit("data", Buffer.from(`${JSON.stringify({ kind: "unknown" })}\n`));
+  assert.equal(socket.frames.filter((frame) => frame.kind === "pong").length, 1);
+  bridge.stop();
+});

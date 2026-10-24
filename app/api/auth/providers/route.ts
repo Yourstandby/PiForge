@@ -1,4 +1,4 @@
-import { createPiRuntime, listOAuthProviders } from "@/lib/pi-runtime";
+import { createPiRuntime, listOAuthProviders } from "../../../../lib/pi-runtime.ts";
 
 export const dynamic = "force-dynamic";
 

@@ -25,7 +25,6 @@ export function UpstreamVersionBadge({ compact }: { compact?: boolean }) {
       setChecking(false);
     }
   }, []);
-
   useEffect(() => {
     // 不抢首屏：等浏览器空闲再查 registry（结果也有 30 分钟缓存）。
     const idle = window.requestIdleCallback;
@@ -41,13 +40,17 @@ export function UpstreamVersionBadge({ compact }: { compact?: boolean }) {
 
   const hasUpdate = status.hasUpdate && status.latest;
   const title = hasUpdate
-    ? `pi 核心 ${status.local} → ${status.latest} 可升级（升级 SDK 后需重新打包）· 点击重新检测`
-    : `pi 核心 ${status.local}${status.latest ? "（已是最新）" : "（无法连接 registry）"} · 点击重新检测`;
+    ? `pi 核心 ${status.local} → ${status.latest} 可切换（打开设置选版本，升级/降级都行）`
+    : `pi 核心 ${status.local}${status.latest ? "（已是最新，也可回退旧版本）" : "（无法连接 registry）"} · 点击选择版本`;
 
   return (
     <button
       type="button"
-      onClick={() => void load(true)}
+      onClick={() => {
+        // 版本选择在设置页（需要选具体版本，徽章只能跳转），顺手刷新一次缓存
+        window.dispatchEvent(new CustomEvent("piforge:open-settings", { detail: { tab: "general" } }));
+        void load(true);
+      }}
       title={title}
       aria-label={title}
       className={`flex shrink-0 items-center gap-1 rounded-md py-0.5 text-[10px] transition-colors duration-150 ${

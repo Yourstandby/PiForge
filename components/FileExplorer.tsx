@@ -308,12 +308,13 @@ export function FileExplorer({ cwd, onOpenFile, onOpenDiff, refreshKey, onAtMent
   const [gitStatus, setGitStatus] = useState<GitStatusMap>({});
   const prevCwdRef = useRef<string | null>(null);
 
-  // Git status poll: cheap (one `git status`), keeps markers live while the
-  // agent edits files in the background. Failures (non-repo, git missing)
-  // silently clear the markers.
+  // Git status poll：每次都要起一个 `git status` 子进程，0.9.0 的 5s 一轮在空闲时
+  // 就是持续的后台开销（日志里 /api/git/status 一直在跑）。改成 20s，且只在
+  // 窗口可见时跑；切回前台会立即拉一次（见 visibilitychange）。
   useEffect(() => {
     let cancelled = false;
     const load = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
       fetch(`/api/git/status?cwd=${encodeURIComponent(cwd)}`)
         .then((res) => res.json())
         .then((data: { files?: Array<{ path: string; status: string; index: string; worktree: string }> }) => {
@@ -326,11 +327,27 @@ export function FileExplorer({ cwd, onOpenFile, onOpenDiff, refreshKey, onAtMent
           if (!cancelled) setGitStatus({});
         });
     };
+    // 聚焦/切回前台会触发一次刷新，但**必须节流**：alt-tab 风暴会让每次聚焦都
+    // 起一趟 `git status`（worker + 两个 git 进程，实测 300–400 ms）。
+    let lastRefreshAt = 0;
+    const onVisible = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      if (Date.now() - lastRefreshAt < 30_000) return;
+      lastRefreshAt = Date.now();
+      load();
+    };
+    lastRefreshAt = Date.now();
     load();
-    const timer = setInterval(load, 5000);
+    // **不挂定时器**：`git status` 每次要新建 worker + 两个 git 进程，实测并发时
+    // 单次从 250ms 涨到 2.5–4s，全部记在 Agent Host 的 CPU 上。刷新时机改为
+    // 「窗口重新可见 / 重新聚焦 / refreshKey 变化（agent 写完文件后 UI 主动 bump）」，
+    // 这已经覆盖了用户真正能感知的场景。
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
     };
   }, [cwd, refreshKey]);
 

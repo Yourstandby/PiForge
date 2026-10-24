@@ -1,6 +1,6 @@
-import { NextResponse } from "next/server";
-import { runNpx } from "@/lib/npx";
-import { errorMessage, getRequestId, jsonError, logApiError } from "@/lib/api-error";
+import { NextResponse } from "../../../../lib/next-server-shim.ts";
+import { runNpx } from "../../../../lib/npx.ts";
+import { errorMessage, getRequestId, jsonError, logApiError } from "../../../../lib/api-error.ts";
 import { buildSkillUrl, buildSkillsSearchUrl, getAllowedSkillsApiBase } from "./skills-api-url";
 
 export const dynamic = "force-dynamic";

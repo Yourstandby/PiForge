@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server.js";
+import { NextResponse } from "../../../../../lib/next-server-shim.ts";
 import { existsSync } from "fs";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { resolveSessionPath, cacheSessionPath, invalidateSessionIndex } from "../../../../../lib/session-reader.ts";

@@ -1,7 +1,7 @@
-import { NextResponse } from "next/server";
-import { errorMessage, getRequestId, jsonError, logApiError } from "@/lib/api-error";
-import { authorizeHostPath, hostFileAccessError } from "@/lib/host-files";
-import { buildFileIndex, searchFileIndex } from "@/lib/file-index";
+import { NextResponse } from "../../../lib/next-server-shim.ts";
+import { errorMessage, getRequestId, jsonError, logApiError } from "../../../lib/api-error.ts";
+import { authorizeHostPath, hostFileAccessError } from "../../../lib/host-files.ts";
+import { buildFileIndex, searchFileIndex } from "../../../lib/file-index.ts";
 
 export const dynamic = "force-dynamic";
 

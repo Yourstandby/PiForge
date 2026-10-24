@@ -1,7 +1,7 @@
-import { NextResponse } from "next/server";
-import type { CustomProviderInput } from "@/contract/domains/providers";
-import { AgentHostError, getAgentHostClient } from "@/lib/agent-host-client";
-import { errorMessage, getRequestId, jsonError, logApiError } from "@/lib/api-error";
+import { NextResponse } from "../../../lib/next-server-shim.ts";
+import type { CustomProviderInput } from "../../../contract/domains/providers.ts";
+import { AgentHostError, getAgentHostClient } from "../../../lib/agent-host-client.ts";
+import { errorMessage, getRequestId, jsonError, logApiError } from "../../../lib/api-error.ts";
 
 export const dynamic = "force-dynamic";
 

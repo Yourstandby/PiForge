@@ -20,6 +20,7 @@ import {
   type HostEventTopic,
 } from "../contract/events.ts";
 import { parseClientFrame } from "../contract/guards.ts";
+import { buildApiRequest, dispatchApiRequest } from "./api-router.ts";
 import { getAgentDir } from "./sdk-adapter.ts";
 import type { HostHealth } from "../contract/methods.ts";
 import type { McpConnectionConfig } from "../contract/domains/mcp.ts";
@@ -290,6 +291,11 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
   const startedAt = Date.now();
   const sockets = new Set<ConnectionState>();
   const subscriptions = new Map<string, Subscription>();
+  /**
+   * 流式 `/api/**` 响应（SSE）的句柄：streamId → 取消函数 + 所属连接。
+   * 连接断开时一并取消，避免 renderer 关窗后 Host 还在往死管道里泵数据。
+   */
+  const apiStreams = new Map<string, { close: () => void; state: ConnectionState }>();
   const agentSubscriptions = new Map<string, AgentSubscription>();
   const broadcastTimers = new Map<GlobalTopic, NodeJS.Timeout>();
   const lastBroadcastAt = new Map<GlobalTopic, number>();
@@ -573,6 +579,12 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
     for (const [id, subscription] of agentSubscriptions) {
       if (subscription.connection === state) removeAgentSubscription(id);
     }
+    for (const [streamId, stream] of apiStreams) {
+      if (stream.state === state) {
+        stream.close();
+        apiStreams.delete(streamId);
+      }
+    }
     try {
       state.socket.end();
     } catch {
@@ -695,6 +707,130 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       return;
     }
     sendEvent(subscription, topic, { blocks: listTerminalBlocks() });
+  }
+
+  /**
+   * 跑一条外壳层 `/api/**` 请求（P1-4）。
+   *
+   * 普通响应整体读进内存（JSON/图片，最大 32MB 上传、10MB 预览）；
+   * `text/event-stream` 走流式：先回 `res` 给出 `streamId`，随后用
+   * `api.stream.chunk` / `api.stream.end` 事件推（客户端按 subscriptionId 归位）。
+   */
+  async function handleApiRequest(
+    state: ConnectionState,
+    id: number,
+    params: Record<string, unknown>,
+  ): Promise<void> {
+    const method = readString(params, "method");
+    const url = readString(params, "url");
+    if (!method || !url) {
+      fail(state, id, "E_INVALID_PARAMS", "method and url are required");
+      return;
+    }
+
+    const rawHeaders = isRecord(params.headers) ? params.headers : undefined;
+    const headers: Record<string, string> = {};
+    for (const [key, value] of Object.entries(rawHeaders ?? {})) {
+      if (typeof value === "string") headers[key] = value;
+    }
+
+    const bodyBase64 = typeof params.bodyBase64 === "string" ? params.bodyBase64 : null;
+    const body =
+      bodyBase64 !== null ? Buffer.from(bodyBase64, "base64") : method === "GET" || method === "HEAD" ? undefined : null;
+
+    const startedAt = Date.now();
+    let response: Response;
+    try {
+      response = await dispatchApiRequest(buildApiRequest({ method, url, headers, body }));
+      if (process.env.PIFORGE_DEBUG_API === "1") {
+        const cost = Date.now() - startedAt;
+        if (cost >= 5) log(`[api] ${method} ${new URL(url).pathname} ${cost}ms`);
+      }
+    } catch (error) {
+      fail(state, id, "INTERNAL", error instanceof Error ? error.message : String(error));
+      return;
+    }
+
+    const responseHeaders: Record<string, string> = {};
+    response.headers.forEach((value, key) => {
+      responseHeaders[key] = value;
+    });
+
+    const streaming = response.body !== null && (responseHeaders["content-type"] ?? "").includes("text/event-stream");
+    if (!streaming) {
+      const buffer = response.body ? Buffer.from(await response.arrayBuffer()) : Buffer.alloc(0);
+      result(state, id, {
+        status: response.status,
+        headers: responseHeaders,
+        bodyBase64: buffer.toString("base64"),
+        // `PIFORGE_HEAP_PROBE=1`：把 Host 当前 heap 一起回报，
+        // 供 scripts/audit-route-heap.mjs 归档"每条路由首载把多少字节变成常驻"。
+        ...(process.env.PIFORGE_HEAP_PROBE === "1"
+          ? {
+              // 先强制 GC 再读：这样 heapUsed 是"被保留下来的常驻字节"，
+              // 不含本次请求的临时分配（否则每条路由都 +几 MB 假增量）。
+              // 需要宿主以 `node --expose-gc` 启动（audit-route-heap.mjs 会这么起）。
+              hostHeapUsed: (() => {
+                // @types/node 已声明 `gc?: GCFunction`（--expose-gc 才存在）。
+                const gc = globalThis.gc;
+                if (typeof gc === "function") {
+                  try {
+                    gc();
+                  } catch {
+                    // 忽略：没有 --expose-gc 时退化为普通读取
+                  }
+                }
+                return process.memoryUsage().heapUsed;
+              })(),
+            }
+          : {}),
+      });
+      return;
+    }
+
+    const streamId = `api-stream-${randomUUID()}`;
+    const reader = response.body!.getReader();
+    let seq = 0;
+    apiStreams.set(streamId, {
+      state,
+      close: () => {
+        void reader.cancel().catch(() => {});
+      },
+    });
+
+    // 先回 res：客户端拿到 streamId 后才能把后续块归位。
+    result(state, id, { status: response.status, headers: responseHeaders, streamId });
+
+    void (async () => {
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (!value || value.length === 0) continue;
+          seq += 1;
+          const ok = writeFrame(state, {
+            kind: "evt",
+            subscriptionId: streamId,
+            seq,
+            topic: "api.stream.chunk",
+            payload: { chunkBase64: Buffer.from(value).toString("base64") },
+          });
+          if (!ok) break;
+        }
+      } catch {
+        // 上游流中断（Host 关停 / 路由抛错）：结束帧仍然要发，让客户端释句柄。
+      } finally {
+        seq += 1;
+        writeFrame(state, {
+          kind: "evt",
+          subscriptionId: streamId,
+          seq,
+          topic: "api.stream.end",
+          payload: {},
+        });
+        apiStreams.delete(streamId);
+      }
+    })();
   }
 
   function handleRequest(state: ConnectionState, frame: Extract<ClientFrame, { kind: "req" }>): void {
@@ -1455,6 +1591,22 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
         result(state, frame.id, { agents: listSubagents() });
         return;
       }
+      // ---- 外壳层 HTTP 路由（P1-4：拆掉 Next server 后唯一的数据通道）----
+      case "api.request": {
+        void handleApiRequest(state, frame.id, params);
+        return;
+      }
+      case "api.stream.close": {
+        const streamId = readString(params, "streamId");
+        if (!streamId) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "streamId is required");
+          return;
+        }
+        apiStreams.get(streamId)?.close();
+        apiStreams.delete(streamId);
+        result(state, frame.id, { ok: true });
+        return;
+      }
       case "subagents.stop": {
         const id = readString(params, "id");
         if (!id) {
@@ -2209,6 +2361,30 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
     }
 
     options.onReady?.(options.endpoint);
+
+    /**
+     * 预热"进程内 API 客户端"（路由 → Host 的环回管道）。
+     *
+     * 实测：`files.authorize` 的**首**调用要 418 ms（建连 + 握手 + 读 allowed-roots），
+     * 之后的调用只要 1 ms。而渲染进程第一批请求（files.list / git.status / sessions）
+     * 几乎同时到达，撞上冷启动会一起排队 —— 实测这一段把 Host 的 CPU 顶到 64%，
+     * 10 s 平均下来就是 8–10%。
+     *
+     * 放在 onReady **之后**、fire-and-forget：不拖慢 `host_ready`，但等渲染进程
+     * 开始请求时连接已经热了。
+     */
+    void (async () => {
+      try {
+        const { getAgentHostClient } = await import("../lib/agent-host-client.ts");
+        const client = getAgentHostClient();
+        await client.call("host.health", {}, { timeoutMs: 5_000 });
+        // 顺手把文件授权链路的 allowed-roots 也读一遍（同一次冷启动的成本）。
+        await client.call("files.allowedRoots", {}).catch(() => {});
+        log("api client prewarmed");
+      } catch (error) {
+        log(`api client prewarm failed: ${errorText(error)}`);
+      }
+    })();
   }
 
   return {

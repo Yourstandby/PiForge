@@ -48,10 +48,20 @@ export function addAllowedRoot(cwd: string): void {
   cachedRoots = null;
 }
 
+/** 在飞的扫描：并发调用共用一次（预热与真实请求撞车时不再各扫一遍）。 */
+let inflightRoots: Promise<Set<string>> | null = null;
+
 export async function getAllowedRoots(): Promise<Set<string>> {
   const now = Date.now();
   if (cachedRoots && cachedRoots.expiresAt > now) return cachedRoots.roots;
+  if (inflightRoots) return inflightRoots;
+  inflightRoots = computeAllowedRoots().finally(() => {
+    inflightRoots = null;
+  });
+  return inflightRoots;
+}
 
+async function computeAllowedRoots(): Promise<Set<string>> {
   const rawRoots = new Set<string>();
   try {
     const sessions = await SessionManager.listAll();
@@ -85,7 +95,7 @@ export async function getAllowedRoots(): Promise<Set<string>> {
   const roots = new Set<string>();
   for (const root of rawRoots) roots.add(await canonicalRoot(root));
 
-  cachedRoots = { roots, expiresAt: now + ALLOWED_ROOTS_TTL_MS };
+  cachedRoots = { roots, expiresAt: Date.now() + ALLOWED_ROOTS_TTL_MS };
   return roots;
 }
 

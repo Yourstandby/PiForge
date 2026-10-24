@@ -8,6 +8,9 @@ import { useAgentSession } from "@/hooks/useAgentSession";
 import { useSmoothTypewriter } from "@/hooks/useSmoothTypewriter";
 import { useAudio } from "@/hooks/useAudio";
 import { useHostHealth } from "@/hooks/useHostHealth";
+import { estimateContextTokens, resolveTokenGuards, type TokenGuardKind } from "@/lib/token-guard";
+import { TokenGuardBanner } from "./TokenGuardBanner";
+import { useSessionSplitHint } from "@/hooks/useSessionSplitHint";
 import { useSessionScope } from "@/hooks/useSessionScope";
 import { conversationToMarkdown } from "@/lib/conversation-markdown";
 import { buildBranchSwitchMap } from "@/lib/session-branches-view";
@@ -342,6 +345,20 @@ function ChatSession({
     }
   }, [hostHealth.state, hostHealth.message]);
 
+  /**
+   * 流式期间才关掉背景节流。
+   *
+   * 0.9.0 为了"后台不降帧"在 BrowserWindow 里全局 `backgroundThrottling: false`，
+   * 代价是空闲窗口也按 60fps 跑装饰动画（实测空闲渲染进程 105% CPU）。
+   * 现在默认节流开启，只有 agent 真的在跑时才临时关掉（打字机的 rAF 需要按帧走）。
+   */
+  useEffect(() => {
+    const api = (window as { electronAPI?: { setStreamingThrottle?: (enabled: boolean) => void } })
+      .electronAPI;
+    api?.setStreamingThrottle?.(Boolean(chat.agentRunning));
+    return () => api?.setStreamingThrottle?.(false);
+  }, [chat.agentRunning]);
+
   useEffect(() => {
     if (!compactToast) return;
     const timer = setTimeout(() => setCompactToast(null), 4200);
@@ -590,12 +607,15 @@ function ChatSession({
       return;
     }
     const retryable = /(HTTP 5\d\d|timed out|Failed to fetch|network|socket|ENOENT|ECONN)/i.test(chat.error);
-    if (!retryable || autoRetryRef.current >= 2) return;
+    // 重试预算从 2 次（≈4.5s）提到 6 次（≈28s）：冷启动时 Host 要 5–20s
+    // 才就绪，旧预算在引擎刚起来时就先用完了，用户看到的是"加载失败"而不是
+    // "引擎启动中"。首次成功后计数器归零，不影响真正的持续故障。
+    if (!retryable || autoRetryRef.current >= 6) return;
     const attempt = autoRetryRef.current + 1;
     const timer = window.setTimeout(() => {
       autoRetryRef.current = attempt;
       void loadSessionRef.current(session.id, false, true);
-    }, attempt * 1500);
+    }, Math.min(attempt * 2_000, 6_000));
     return () => window.clearTimeout(timer);
   }, [chat.error, session]);
 
@@ -605,6 +625,30 @@ function ChatSession({
 
   /** 会话作用域：切会话时把上一个会话残留的定时器/观察者一次性清掉。 */
   const scoped = useSessionScope(session?.id ?? null);
+
+  /**
+   * Token 护栏（P2-2 / P2-3a）——纯提示，只读 `contextUsage.tokens` 与 `prefixAudit`。
+   * 关掉的类型记在本组件里（按会话重置），不写任何持久化状态。
+   */
+  const [dismissedGuards, setDismissedGuards] = useState<TokenGuardKind[]>([]);
+  useEffect(() => {
+    setDismissedGuards([]);
+  }, [session?.id]);
+  // L-B 实验开关：默认 false（与引入前一致），`PIFORGE_SESSION_SPLIT_HINT=1` 才给动作按钮。
+  const sessionSplitHint = useSessionSplitHint();
+  const tokenGuardHints = useMemo(
+    () =>
+      resolveTokenGuards({
+        flags: { sessionSplitHint },
+        // 未运行的会话没有 contextUsage（Host 侧还没有 wrapper）→ 用 transcript 估算。
+        contextTokens: chat.contextUsage?.tokens ?? (estimateContextTokens(messages) || null),
+        hasMessages: messages.length > 0,
+        prefixAudit: chat.prefixAudit,
+        dismissed: dismissedGuards,
+      }),
+    // messages 用于估算上下文（未运行会话没有 contextUsage）；依赖整数组才能跟上内容变化。
+    [chat.contextUsage?.tokens, chat.prefixAudit, messages, dismissedGuards, sessionSplitHint],
+  );
 
   // Reconcile with the server when the run ends without us seeing agent_end.
   useEffect(() => {
@@ -1797,6 +1841,12 @@ function ChatSession({
               {trustCard}
               {/* 看门狗的可视化已全部收拢到右侧「系统监控」面板；
                   主聊天界面不订阅任何看门狗状态，也不会因此重渲染。 */}
+              {/* Token 护栏：前缀失效（P2-2）/ 恢复成本（P2-3a），纯提示可关闭 */}
+              <TokenGuardBanner
+                hints={tokenGuardHints}
+                onDismiss={(kind) => setDismissedGuards((prev) => (prev.includes(kind) ? prev : [...prev, kind]))}
+                onNewSession={onNewSession}
+              />
               {/* 输入面板 + 浮在它右上角外侧的「回到最新对话」按钮 */}
               <div className="relative" ref={composerContainerRef} onFocusCapture={stickToBottomIfNear}>
                 {composer}

@@ -1,7 +1,7 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { NextResponse } from "next/server";
-import { errorMessage, getRequestId, jsonError, logApiError } from "@/lib/api-error";
+import { NextResponse } from "../../../lib/next-server-shim.ts";
+import { errorMessage, getRequestId, jsonError, logApiError } from "../../../lib/api-error.ts";
 
 const execFileAsync = promisify(execFile);
 

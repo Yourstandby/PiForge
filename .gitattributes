@@ -1,0 +1,2 @@
+# 生成物：不要做换行符转换（否则每次 build 都显示 dirty）
+agent-host/api-routes.generated.ts -text

@@ -1,9 +1,9 @@
-import { NextResponse } from "next/server";
-import { resolveSessionPath, getHeaderAsync } from "@/lib/session-reader";
-import { getAgentHostClient, AgentHostError } from "@/lib/agent-host-client";
-import { jsonAgentHostError } from "@/lib/agent-host-http";
-import { jsonError } from "@/lib/api-error";
-import { validateAgentCommand } from "@/lib/agent-commands";
+import { NextResponse } from "../../../../lib/next-server-shim.ts";
+import { resolveSessionPath, getHeaderAsync } from "../../../../lib/session-reader.ts";
+import { getAgentHostClient, AgentHostError } from "../../../../lib/agent-host-client.ts";
+import { jsonAgentHostError } from "../../../../lib/agent-host-http.ts";
+import { jsonError } from "../../../../lib/api-error.ts";
+import { validateAgentCommand } from "../../../../lib/agent-commands.ts";
 
 // POST /api/agent/[id] - Send a command to an existing session
 export async function POST(

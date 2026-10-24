@@ -10,6 +10,7 @@ import {
 } from "react";
 import type { SessionInfo, SessionTreeNode, UserMessage } from "@/lib/types";
 import type { FollowUpQueueSnapshot } from "@/lib/follow-up-queue";
+import type { PrefixAuditView } from "@/lib/token-guard";
 import {
   calculateSessionActivity,
   calculateSessionStats,
@@ -168,6 +169,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [agentRunning, setAgentRunning] = useState(false);
   const [retryInfo, setRetryInfo] = useState<RetryInfo | null>(null);
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
+  /**
+   * 前缀审计的只读视图（P2-2 护栏用）：来自 `agent.state.prefixAudit`。
+   * 只用于提示"前缀已失效"，不参与任何前缀生成逻辑。
+   */
+  const [prefixAudit, setPrefixAudit] = useState<PrefixAuditView | null>(null);
   const [contextBudget, setContextBudget] = useState<ContextBudget | null>(null);
   const [authoritativeSessionStats, setAuthoritativeSessionStats] =
     useState<SessionStats | null>(null);
@@ -605,6 +611,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
                       systemPrompt?: string;
                       agentMode?: AgentMode;
                       followUpQueue?: FollowUpQueueSnapshot;
+                      prefixAudit?: PrefixAuditView | null;
                     };
                   }) => {
                     if (d.state?.contextUsage !== undefined) {
@@ -619,6 +626,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
                     if (d.state?.agentMode) setAgentMode(d.state.agentMode);
                     if (d.state?.followUpQueue)
                       acceptFollowUpQueue(d.state.followUpQueue);
+                    if (d.state?.prefixAudit !== undefined) setPrefixAudit(d.state.prefixAudit ?? null);
                   },
                 )
                 .catch((err) => {
@@ -792,6 +800,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     dispatch({ type: "reset" });
     setRetryInfo(reset.retryInfo);
     setContextUsage(reset.contextUsage);
+    setPrefixAudit(null);
     setAuthoritativeSessionStats(null);
     setSystemPrompt(reset.systemPrompt);
     setForkingEntryId(reset.forkingEntryId);
@@ -919,6 +928,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     thinkingLevel,
     retryInfo,
     contextUsage,
+    prefixAudit,
     contextBudget,
     systemPrompt,
     forkingEntryId,

@@ -1,6 +1,6 @@
-import { NextResponse } from "next/server";
+import { NextResponse } from "../../../lib/next-server-shim.ts";
 import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { errorMessage, getRequestId, jsonError, logApiError } from "@/lib/api-error";
+import { errorMessage, getRequestId, jsonError, logApiError } from "../../../lib/api-error.ts";
 
 export const dynamic = "force-dynamic";
 

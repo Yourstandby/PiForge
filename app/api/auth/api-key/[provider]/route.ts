@@ -1,12 +1,12 @@
-import { NextResponse } from "next/server";
-import { errorMessage, getRequestId, jsonError, logApiError } from "@/lib/api-error";
-import { validateProviderName } from "@/lib/auth-policy";
+import { NextResponse } from "../../../../../lib/next-server-shim.ts";
+import { errorMessage, getRequestId, jsonError, logApiError } from "../../../../../lib/api-error.ts";
+import { validateProviderName } from "../../../../../lib/auth-policy.ts";
 import {
   createPiRuntime,
   removeProviderApiKey,
   setProviderApiKey,
-} from "@/lib/pi-runtime";
-import { notifyAgentHostModelsChanged } from "@/lib/agent-host-client";
+} from "../../../../../lib/pi-runtime.ts";
+import { notifyAgentHostModelsChanged } from "../../../../../lib/agent-host-client.ts";
 
 export const dynamic = "force-dynamic";
 

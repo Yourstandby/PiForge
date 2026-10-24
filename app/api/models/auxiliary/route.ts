@@ -1,8 +1,8 @@
-import { NextResponse } from "next/server";
-import { getRequestId } from "@/lib/api-error";
-import { getAgentHostClient } from "@/lib/agent-host-client";
-import { jsonAgentHostError } from "@/lib/agent-host-http";
-import type { AuxModelSelection } from "@contract/domains/aux-models";
+import { NextResponse } from "../../../../lib/next-server-shim.ts";
+import { getRequestId } from "../../../../lib/api-error.ts";
+import { getAgentHostClient } from "../../../../lib/agent-host-client.ts";
+import { jsonAgentHostError } from "../../../../lib/agent-host-http.ts";
+import type { AuxModelSelection } from "../../../../contract/domains/aux-models.ts";
 
 export const dynamic = "force-dynamic";
 

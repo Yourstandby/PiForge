@@ -1,8 +1,8 @@
-import { NextResponse } from "next/server";
+import { NextResponse } from "../../../lib/next-server-shim.ts";
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { authorizeHostPath } from "@/lib/host-files";
-import { jsonError } from "@/lib/api-error";
+import { authorizeHostPath } from "../../../lib/host-files.ts";
+import { jsonError } from "../../../lib/api-error.ts";
 
 export const dynamic = "force-dynamic";
 

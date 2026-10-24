@@ -34,9 +34,11 @@ export interface ToolOutputBudget {
  * 默认预算：4000 字符（≈1000 tokens）+ 60 行兜底。
  * 超出后只留**前 1500 + 后 1500 字符**，中间用明确的截断说明代替。
  */
+export const DEFAULT_MAX_CHARS = 4_000;
+
 export const DEFAULT_TOOL_OUTPUT_BUDGET: ToolOutputBudget = {
   maxLines: 60,
-  maxChars: 4_000,
+  maxChars: DEFAULT_MAX_CHARS,
   headChars: 1_500,
   tailChars: 1_500,
   maxBytes: 4_000,
@@ -65,10 +67,71 @@ export const READ_TOOL_OUTPUT_BUDGET: ToolOutputBudget = {
 /** 文件内容型工具：按 `read` 的预算裁剪。 */
 const FILE_CONTENT_TOOLS = new Set(["read"]);
 
-export function toolOutputBudget(toolName: string | undefined): ToolOutputBudget {
-  return toolName && FILE_CONTENT_TOOLS.has(toolName)
-    ? READ_TOOL_OUTPUT_BUDGET
-    : DEFAULT_TOOL_OUTPUT_BUDGET;
+/**
+ * A/B 实验开关：`PIFORGE_TOOL_OUTPUT_CHARS`（L-D 的独立臂）。
+ *
+ *   - 不设        → 4 000（**默认行为一字不变**：返回的是同一个常量对象，按标识相等）
+ *   - 设了合法值  → 用它做字符主预算（行数预算按同比例缩放）
+ *   - 设了非法值  → 保留默认并在 reason 里写明（与 `PIFORGE_HOST_HEAP` 同样的宽松策略）
+ *
+ * 只影响"模型看到的工具输出长度"这一条路径，不动前缀 / 工具定义 / 系统提示词。
+ */
+export interface ToolOutputCharsSetting {
+  maxChars: number;
+  source: "default" | "env" | "env_invalid";
+  reason: string;
+}
+
+/** 允许范围：太小会把正常输出切碎，太大等于没开；超出即视为非法值。 */
+const MIN_CHARS = 500;
+const MAX_CHARS = 200_000;
+
+export function resolveToolOutputChars(env: Record<string, string | undefined> = process.env): ToolOutputCharsSetting {
+  const raw = env.PIFORGE_TOOL_OUTPUT_CHARS?.trim();
+  if (!raw) return { maxChars: DEFAULT_MAX_CHARS, source: "default", reason: `默认 ${DEFAULT_MAX_CHARS} 字符` };
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < MIN_CHARS || parsed > MAX_CHARS) {
+    return {
+      maxChars: DEFAULT_MAX_CHARS,
+      source: "env_invalid",
+      reason: `PIFORGE_TOOL_OUTPUT_CHARS="${raw}" 不是 ${MIN_CHARS}–${MAX_CHARS} 的数字，保留默认 ${DEFAULT_MAX_CHARS}`,
+    };
+  }
+  const maxChars = Math.floor(parsed);
+  return { maxChars, source: "env", reason: `PIFORGE_TOOL_OUTPUT_CHARS=${maxChars}` };
+}
+
+/**
+ * 把新的字符上限套到一份预算上：头/尾配额按比例缩放（保留 head-tail 的语义）。
+ * `maxChars` 与预算一致时**原样返回同一个对象**（默认路径零开销、零差异）。
+ */
+export function withCharsLimit(budget: ToolOutputBudget, maxChars: number): ToolOutputBudget {
+  if (maxChars === budget.maxChars) return budget;
+  const ratio = maxChars / budget.maxChars;
+  const scale = (value: number, min: number) => Math.max(min, Math.floor(value * ratio));
+  const headChars = scale(budget.headChars, 100);
+  const tailChars = budget.tailChars > 0 ? scale(budget.tailChars, 100) : 0;
+  return {
+    ...budget,
+    maxChars,
+    maxBytes: Math.min(budget.maxBytes, maxChars),
+    headChars,
+    tailChars,
+    // 行数也跟着缩放：只改字符不改行数时，长行日志会先撞行数上限。
+    maxLines: Math.max(10, Math.floor(budget.maxLines * ratio)),
+    headLines: Math.max(5, Math.floor(budget.headLines * ratio)),
+    tailLines: budget.tailLines > 0 ? Math.max(5, Math.floor(budget.tailLines * ratio)) : 0,
+  };
+}
+
+/** 当前生效的预算（工具名 + 环境变量）；开关关闭时与常量**同一个对象**。 */
+export function toolOutputBudget(
+  toolName: string | undefined,
+  env: Record<string, string | undefined> = process.env,
+): ToolOutputBudget {
+  const base = toolName && FILE_CONTENT_TOOLS.has(toolName) ? READ_TOOL_OUTPUT_BUDGET : DEFAULT_TOOL_OUTPUT_BUDGET;
+  const setting = resolveToolOutputChars(env);
+  return withCharsLimit(base, setting.maxChars);
 }
 
 /** pi 自己给的分页提示，截断时必须原样保留在末尾。 */

@@ -1,8 +1,8 @@
-import { NextResponse } from "next/server";
+import { NextResponse } from "../../../../lib/next-server-shim.ts";
 import { homedir } from "os";
-import { runNpx } from "@/lib/npx";
-import { errorMessage, getRequestId, jsonError, logApiError } from "@/lib/api-error";
-import { validateSkillsPackage } from "@/lib/skills-policy";
+import { runNpx } from "../../../../lib/npx.ts";
+import { errorMessage, getRequestId, jsonError, logApiError } from "../../../../lib/api-error.ts";
+import { validateSkillsPackage } from "../../../../lib/skills-policy.ts";
 
 export const dynamic = "force-dynamic";
 

@@ -384,6 +384,36 @@ export interface AgentHostMethods {
     params: { taskId: string };
     result: { task: WatchdogTaskView | null };
   };
+
+  // ---- 外壳层的 HTTP 路由（P1-4：拆掉 Next server 之后唯一的传输层）----
+  /**
+   * 把一条 `/api/...` 请求交给 Host 内已加载的路由（`app/api/**\/route.ts`）。
+   *
+   * 返回两种形态：
+   *   - `bodyBase64`：普通响应，已整体读好；
+   *   - `streamId`：流式响应（SSE），后续内容以 `api.stream` 事件推过来。
+   * 走到这里的原因：桌面端没有 HTTP 监听（零内部端口），renderer 的
+   * `fetch("/api/…")` 由 Electron `protocol.handle` 接住再转发到这里。
+   */
+  "api.request": {
+    params: {
+      method: string;
+      url: string;
+      headers?: Record<string, string>;
+      bodyBase64?: string | null;
+    };
+    result: {
+      status: number;
+      headers: Record<string, string>;
+      bodyBase64?: string;
+      streamId?: string;
+    };
+  };
+  /** 关闭一条流式响应（renderer 取消订阅 / 窗口关闭）。幂等。 */
+  "api.stream.close": {
+    params: { streamId: string };
+    result: { ok: boolean };
+  };
   /**
    * 人工介入：向该会话的待处理队列注入一条指令，并立刻重置看门狗告警。
    * 复用既有 steer / prompt / follow-up 队列，不新增任何模型直连。
@@ -672,4 +702,6 @@ export const IMPLEMENTED_HOST_METHODS = [
   "watchdog.configure",
   "watchdog.task",
   "agent.intervene",
+  "api.request",
+  "api.stream.close",
 ] as const satisfies readonly MethodName[];
