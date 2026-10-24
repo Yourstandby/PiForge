@@ -621,6 +621,27 @@ export function buildSessionContext(entries: SessionEntry[], leafId?: string | n
   const newestCompactionAt = path.reduce((last, entry, index) => (entry.type === "compaction" ? index : last), -1);
 
   for (const [index, entry] of path.entries()) {
+    if (entry.type === "branch_summary") {
+      const branchSummary = entry as unknown as { summary?: string; fromId?: string };
+      // 蒸馏出来的分支摘要：只存在于这条路径上，模型侧当上下文，界面里当一张提示卡。
+      const marker = {
+        role: "custom" as const,
+        customType: "piforge/branch-summary",
+        display: true,
+        content: [
+          {
+            type: "text" as const,
+            text: `> 分支蒸馏：下面这段是把被放弃的分支合并进来的结论（原始消息仍在分支树上，可随时切回去看）。\n\n${branchSummary.summary ?? ""}`,
+          },
+        ],
+        details: { fromId: branchSummary.fromId },
+        timestamp: entry.timestamp ? new Date(entry.timestamp).getTime() : undefined,
+      };
+      messages.push(marker as unknown as AgentMessage);
+      entryIds.push(entry.id);
+      continue;
+    }
+
     if (entry.type === "compaction") {
       const compaction = entry as unknown as { summary?: string; tokensBefore?: number };
       // 显示成 custom 而不是 user：模型侧才是真压缩，界面里历史仍然完整。

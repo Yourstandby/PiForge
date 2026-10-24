@@ -451,9 +451,8 @@ function ChatSession({
   }, [chat.branches, branchTree]);
 
   const handleSwitchBranch = useCallback(
-    (leafId: string | null) => {
-      void chat.handleLeafChange(leafId);
-    },
+    (leafId: string | null, options?: { summarize?: boolean }) =>
+      chat.handleLeafChange(leafId, options),
     [chat],
   );
 

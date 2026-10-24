@@ -40,15 +40,29 @@ export async function POST(
   try {
     const { id } = await params;
     if (!id) return jsonError(req, 400, "sessionId is required");
-    const body = (await req.json()) as { leafId?: string | null; filePath?: string };
+    const body = (await req.json()) as {
+      leafId?: string | null;
+      filePath?: string;
+      summarize?: boolean;
+    };
     if (body?.leafId !== null && (typeof body?.leafId !== "string" || !body.leafId.trim())) {
       return jsonError(req, 400, "leafId must be a non-empty string or null");
     }
-    const switched = await getAgentHostClient().call("sessions.switchBranch", {
-      sessionId: id,
-      leafId: body.leafId,
-      ...(body.filePath ? { filePath: body.filePath } : {}),
-    });
+    if (body?.summarize !== undefined && typeof body.summarize !== "boolean") {
+      return jsonError(req, 400, "summarize must be a boolean");
+    }
+    // 蒸馏要跑一次模型调用，默认 15s 的 RPC 超时会把长分支切断。
+    const summarize = body.summarize === true;
+    const switched = await getAgentHostClient().call(
+      "sessions.switchBranch",
+      {
+        sessionId: id,
+        leafId: body.leafId,
+        ...(body.filePath ? { filePath: body.filePath } : {}),
+        ...(summarize ? { summarize: true } : {}),
+      },
+      { timeoutMs: summarize ? 300_000 : 15_000 },
+    );
     return NextResponse.json(switched, { headers: { "x-request-id": requestId } });
   } catch (error) {
     return jsonAgentHostError(req, error, { route: "/api/sessions/[id]/branches", method: "POST" });

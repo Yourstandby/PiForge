@@ -116,11 +116,16 @@ export async function switchBranchApi(
   sid: string,
   leafId: string | null,
   filePath?: string | null,
+  options: { summarize?: boolean } = {},
 ): Promise<SessionBranchSwitchResult> {
   const res = await fetch(`/api/sessions/${encodeURIComponent(sid)}/branches`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ leafId, ...(filePath ? { filePath } : {}) }),
+    body: JSON.stringify({
+      leafId,
+      ...(filePath ? { filePath } : {}),
+      ...(options.summarize ? { summarize: true } : {}),
+    }),
   });
   const body = (await res.json()) as SessionBranchSwitchResult & { error?: string };
   if (!res.ok || body.error) throw new Error(body.error ?? `HTTP ${res.status}`);

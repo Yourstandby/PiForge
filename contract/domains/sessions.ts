@@ -34,4 +34,12 @@ export interface SessionBranchSwitchResult {
   leafId: string | null;
   /** Text to put back into the composer (pi's re-edit semantics for user messages). */
   editorText?: string;
+  /** True when the abandoned branch was distilled into a `branch_summary` entry. */
+  summarized?: boolean;
+  /** Id of the appended `branch_summary` entry (transcript reload anchor). */
+  summaryEntryId?: string;
+  /** Summary text, echoed back so the renderer can confirm without re-reading the JSONL. */
+  summaryText?: string;
+  /** Set when distilling was requested but nothing could be summarized. */
+  summarizeSkipped?: "not-live" | "nothing-to-summarize";
 }

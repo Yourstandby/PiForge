@@ -528,15 +528,26 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
    * start. Only the transcript is reloaded — drafts and streaming state stay.
    */
   const navigateToLeaf = useCallback(
-    async (leafId: string | null): Promise<{ editorText?: string } | null> => {
+    async (
+      leafId: string | null,
+      options: { summarize?: boolean } = {},
+    ): Promise<{
+      editorText?: string;
+      summarized?: boolean;
+      summarySkipped?: "not-live" | "nothing-to-summarize";
+    } | null> => {
       const sid = sessionIdRef.current;
       if (!sid) return null;
       try {
-        const result = await switchBranchApi(sid, leafId, sessionFilePath);
+        const result = await switchBranchApi(sid, leafId, sessionFilePath, options);
         if (result.cancelled) return null;
         setActiveLeafId(result.leafId);
         await loadContext(sid, result.leafId);
-        return result.editorText ? { editorText: result.editorText } : {};
+        return {
+          ...(result.editorText ? { editorText: result.editorText } : {}),
+          ...(result.summarized !== undefined ? { summarized: result.summarized } : {}),
+          ...(result.summarizeSkipped ? { summarySkipped: result.summarizeSkipped } : {}),
+        };
       } catch (e) {
         console.error("switch branch failed:", e);
         onPromptError?.(branchActionErrorMessage(e, "branch"));
@@ -553,10 +564,10 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
     [navigateToLeaf]
   );
 
+  /** 蒸馏开关打开时，切走的分支会先被摘要成 `branch_summary` 再落回目标位置。 */
   const handleLeafChange = useCallback(
-    (leafId: string | null) => {
-      void navigateToLeaf(leafId);
-    },
+    (leafId: string | null, options: { summarize?: boolean } = {}) =>
+      navigateToLeaf(leafId, options),
     [navigateToLeaf]
   );
 

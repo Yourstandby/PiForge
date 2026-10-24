@@ -1821,6 +1821,7 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
           sessionId,
           leafId,
           ...(filePath ? { filePath } : {}),
+          ...(params.summarize === true ? { summarize: true } : {}),
         })
           .then((switched) => result(state, frame.id, switched))
           .catch((error: unknown) => failBranch(state, frame.id, error));

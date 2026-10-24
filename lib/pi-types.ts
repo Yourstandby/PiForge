@@ -40,6 +40,8 @@ export interface NavigateTreeResult {
   editorText?: string;
   cancelled: boolean;
   aborted?: boolean;
+  /** 开启 `summarize` 时，被放弃分支的摘要条目（SDK `BranchSummaryEntry`）。 */
+  summaryEntry?: { id: string; summary: string; fromId?: string };
 }
 
 export interface AgentSessionLike {

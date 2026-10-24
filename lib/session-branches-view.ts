@@ -12,6 +12,15 @@ export interface BranchSwitchTarget {
   leafId: string;
 }
 
+/** 切分支的结果里 UI 真正用到的部分（Host DTO 的子集）。 */
+export interface BranchSwitchOutcome {
+  editorText?: string;
+  /** 被放弃的分支已蒸馏成 `branch_summary` 条目。 */
+  summarized?: boolean;
+  /** 请求了蒸馏但没做成（会话未激活 / 没有可蒸馏的内容）。 */
+  summarySkipped?: "not-live" | "nothing-to-summarize";
+}
+
 export interface BranchSwitchInfo {
   /** 0-based index of this message among its siblings. */
   index: number;
