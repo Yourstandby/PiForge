@@ -28,12 +28,18 @@ jobs:
           - pack_id: windows
             runner: windows-latest
             dist_script: dist
+            dist_prefix: ""
           - pack_id: linux
             runner: ubuntu-latest
             dist_script: dist
+            # Electron 需要一个显示服务器才能建窗口；GitHub 的 ubuntu runner 没有
+            # X server，打包末尾的 smoke-packaged-static 会直接起不来（表现就是
+            # “渲染进程没有回报冒烟结果”）。用 xvfb 提供一个虚拟屏幕。
+            dist_prefix: xvfb-run -a --server-args="-screen 0 1600x1000x24"
           - pack_id: macos
             runner: macos-latest
             dist_script: dist:mac
+            dist_prefix: ""
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,13 +64,14 @@ jobs:
 
       - name: Install Linux packaging tools
         if: matrix.pack_id == 'linux'
-        run: sudo apt-get update && sudo apt-get install -y fakeroot dpkg
+        run: sudo apt-get update && sudo apt-get install -y fakeroot dpkg xvfb
 
       - name: Install dependencies
         run: npm ci
 
       - name: Build installer
-        run: npm run ${{ matrix.dist_script }}
+        shell: bash
+        run: ${{ matrix.dist_prefix }} npm run ${{ matrix.dist_script }}
 
       - name: Verify Windows artifacts and write SHA-256
         if: matrix.pack_id == 'windows'
