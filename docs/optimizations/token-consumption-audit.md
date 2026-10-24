@@ -123,6 +123,11 @@ node scripts/audit-token-usage.mjs --days 14 --json
 
 ## 已排除项（先量过再排除，避免反复立项）
 
+> **收口结论见 `docs/optimizations/token-line-closure.md`**：token 线已关闭，
+> 三条候选的处置（L-D 证伪 / L-A 证伪 / L-B 待真实用户数据且不占预算）、
+> 结构性原因与**重启条件**都写在那份文档里；本节只保留当时的实测数据。
+> 实验工具踩过的坑见 `docs/optimizations/preview-harness-pitfalls.md`。
+
 ### subagent 上下文（L-C）：上界 0.004%，且隔离机制本来就在
 
 `npm run audit:subagent -- --days 365`（本机 60 会话 / 10 390 请求 / cacheRead 2.15B tok / $23.10）：
@@ -163,3 +168,20 @@ node scripts/audit-token-usage.mjs --days 14 --json
 
 > 与 L-D 的区别：L-D 是"没东西可省"，L-A 是"省得到的那一档会掉质量"。
 > 两条都做过实测，token 线到此关闭。
+
+---
+
+## 收口状态（2026-10-24）
+
+| 项 | 状态 |
+|---|---|
+| 空闲恢复重发 | 1%（$0.22 / $22.36）→ 只保留可见性提示 |
+| 跨 app 前缀失效 | 5%（$1.12 / $22.36）→ 只保留提示，前缀机制未改 |
+| subagent 上下文（L-C） | 上界 0.004% 且已隔离 → 不立项 |
+| 工具输出 4 000→2 000（L-D） | 80 次 A/B：cacheRead −0.4%、成本 +1.4%、耗时 +17.8% → 证伪 |
+| 压缩触发点前移（L-A） | 预演三轮：C2 掉 2 题且 cacheRead −0.6% → 证伪 |
+| 会话拆分提示（L-B） | 代码保留、默认关闭、待真实用户数据、不占工程预算 |
+
+**token 线关闭**；默认值（4 000 字符输出预算、压缩硬顶 48 000 / 预算比 0.45）一律未改，
+`npm run smoke:prefix-budget` 仍是 **6 640 tok / 99.6%**。
+完整结论、结构性原因与重启条件：`docs/optimizations/token-line-closure.md`。
