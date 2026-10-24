@@ -3,6 +3,33 @@
 迁移条目按「改了什么 / 默认行为变没变 / 开关怎么用」组织。详细数据见 `docs/measurements/`
 （三个口径：记录型 provider、真实 deepseek 会话、重复场景 A/B，三者不要混读）。
 
+## v0.9.1 — 子 Agent 轮数阀门修复 · 输出契约 · Pi 核心 1.4.0
+
+主题：**子 Agent 不再两轮被判死**。只改阀门、结算顺序与失败回包，不动并行架构与提示词契约。
+
+### 改了什么
+
+- 子 Agent 轮数上限 **3 → 6**（`PIFORGE_SUBAGENT_MAX_TURNS` 可覆盖），判据修成 `used <= maxTurns`，
+  第 `maxTurns+1` 轮才拦；结算顺序改为「空转 → 上下文 → 轮数」，让 progress-guard 有机会生效。
+- `ok:false` 回包改为结构化 `need_help`（turns / last_action / reason / next_steps），不再只剩 `Cancelled`。
+- 子 Agent 输出契约固化：`patch` 必须是可 `git apply` 的 diff；JSON 只约束最终回复；
+  `PIFORGE_SUBAGENT_PROMPT=legacy|contract`（默认 `contract`）可回退。
+- Pi 核心 `@earendil-works/pi-*` 1.1.0 → 1.4.0（精确锁定）；接口适配只落在 `agent-host/sdk-adapter.ts`。
+- 新增每周自动升级雷达 `.github/workflows/pi-auto-upgrade.yml`（只提 PR，不发版）。
+
+### 默认行为变没变
+
+- 前缀 6 640 tok（干净基线 6 240，本机带 `~/.agents/skills`）、11 个工具、核心四件套 710 tok 均未变。
+- 子 Agent 默认契约从「散文 + 3 轮」变为「可应用补丁 + 6 轮」，这是本版唯一有感的默认变化。
+
+### 开关怎么用
+
+- `PIFORGE_SUBAGENT_MAX_TURNS=3` → 回到旧上限；不设 = 6。
+- `PIFORGE_SUBAGENT_PROMPT=legacy` → 回到旧提示词；不设 = contract。
+- 常驻舰队（`herdr_*`）不受上限约束（`maxTurns = null`）。
+
+详细说明与验证数据见 `docs/releases/v0.9.1.md`。
+
 ## v0.9.0 — Watchdog 零 Token 监控 · 人工介入 · 用量条
 
 主题：**卡住看得见，介入点一下**。监控与介入全部在程序层，不产生任何 LLM 请求；

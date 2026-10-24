@@ -1,0 +1,127 @@
+name: Pi auto-upgrade
+
+# Pi 核心升级雷达：定时用既有的 scripts/check-pi-updates.mjs 探测
+# @earendil-works/* 是否落后于 npm latest，有则精确升级、跑与 ci.yml 同口径的
+# 校验，全绿后自动开 PR。
+#
+# 边界（不要越过）：
+#   - 只提 PR，不发版。打包 / Release / latest*.yml 一律由 desktop-packages.yml 负责。
+#   - 检测逻辑只有一份（scripts/check-pi-updates.mjs --json），这里不重复实现。
+#   - 接口收敛仍然只允许改 agent-host/sdk-adapter.ts 与相关测试。
+
+on:
+  schedule:
+    # 每周一 02:00 UTC
+    - cron: "0 2 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  upgrade:
+    name: detect · upgrade · verify · open PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Detect Pi core updates
+        id: detect
+        run: |
+          node scripts/check-pi-updates.mjs --json > "$RUNNER_TEMP/pi-updates.json"
+          cat "$RUNNER_TEMP/pi-updates.json"
+          count="$(node -p 'require(process.argv[1]).updates' "$RUNNER_TEMP/pi-updates.json")"
+          if [ "$count" -gt 0 ]; then update=true; else update=false; fi
+          echo "update=$update" >> "$GITHUB_OUTPUT"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+      - name: Report up-to-date
+        if: steps.detect.outputs.update != 'true'
+        run: echo "::notice::已锁定 @earendil-works/* 均为 latest，无需升级（未开 PR）。"
+
+      - name: Upgrade Pi core (exact pins)
+        if: steps.detect.outputs.update == 'true'
+        run: >-
+          npm i -D -E
+          @earendil-works/pi-ai@latest
+          @earendil-works/pi-coding-agent@latest
+          @earendil-works/pi-mcp@latest
+
+      - name: Resolve upgraded version
+        id: version
+        if: steps.detect.outputs.update == 'true'
+        run: |
+          version="$(node -p "require('./package.json').devDependencies['@earendil-works/pi-coding-agent']")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Pi core 现已锁定 $version"
+
+      - name: Build agent host
+        if: steps.detect.outputs.update == 'true'
+        run: npm run build:agent-host
+
+      - name: Typecheck
+        if: steps.detect.outputs.update == 'true'
+        run: npx tsc --noEmit
+
+      - name: Lint
+        if: steps.detect.outputs.update == 'true'
+        run: npm run lint
+
+      - name: SDK adapter boundary
+        if: steps.detect.outputs.update == 'true'
+        run: npm run check:sdk-imports
+
+      # 只跑受升级影响的三个用例（全量单测由 ci.yml 在 PR 上跑）。
+      - name: Affected tests
+        if: steps.detect.outputs.update == 'true'
+        timeout-minutes: 10
+        run: |
+          node --test --test-force-exit agent-host/desktop-subagent-extension.test.ts
+          node --test --test-force-exit agent-host/desktop-native-runtime.test.ts
+          node --test --test-force-exit agent-host/subagents.test.ts
+
+      # 任一验证步骤失败 → job 失败 → 本步骤不执行（不会提半成品 PR）。
+      # 注：GITHUB_TOKEN 推送的分支不会触发 ci.yml，需要 PR 上跑 CI 时
+      # 配置 AUTO_UPGRADE_TOKEN（PAT / GitHub App token）。
+      - name: Open pull request
+        if: steps.detect.outputs.update == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.AUTO_UPGRADE_TOKEN || github.token }}
+          branch: chore/auto-upgrade-pi
+          delete-branch: true
+          title: "chore: auto-upgrade pi core to ${{ steps.version.outputs.version }}"
+          commit-message: "chore: auto-upgrade pi core to ${{ steps.version.outputs.version }}"
+          add-paths: |
+            package.json
+            package-lock.json
+            agent-host/sdk-adapter.ts
+            agent-host/*.test.ts
+          labels: dependencies
+          body: |
+            Pi 核心自动升级：`@earendil-works/pi-*` → `${{ steps.version.outputs.version }}`（检测到 ${{ steps.detect.outputs.count }} 个包落后于 latest）。
+
+            本工作流已通过的校验：
+            - `npm run build:agent-host`
+            - `npx tsc --noEmit`
+            - `npm run lint`
+            - `npm run check:sdk-imports`
+            - `node --test agent-host/{desktop-subagent-extension,desktop-native-runtime,subagents}.test.ts`
+
+            合并注意：
+            - 接口适配只允许落在 `agent-host/sdk-adapter.ts` 与相关测试；业务代码不得直接 import `@earendil-works/*`。
+            - 合并本 PR **不会**自动发版；安装包与 `latest*.yml` 仍由 `desktop-packages.yml` 在打 `v*` tag 时产出。

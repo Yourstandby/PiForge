@@ -2,6 +2,8 @@
 
 本文档是 Pi Agent Desktop 的现役发布流程。GitHub 桌面安装包与 npm CLI 包是两条不同通道。
 
+> 客户端自动更新走已有的 electron-updater 链（checkForUpdates -> downloadUpdate -> quitAndInstall），Pi 核心升级通过 PR 合并后触发常规打包流程。
+
 ## GitHub Desktop Release
 
 1. 在功能分支更新 `package.json` / `package-lock.json` 版本与 `docs/releases/vX.Y.Z.md`。
