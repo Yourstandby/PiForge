@@ -108,7 +108,7 @@ function TreeNodeView({ node, activePathIds, depth, isLast, parentLines, onSelec
           height: 24,
           cursor: "pointer",
         }}
-        onClick={() => onSelect(rep.entry.id)}
+        onClick={() => onSelect(rep.leafId ?? rep.entry.id)}
       >
         {/* Indent guide lines */}
         {parentLines.map((hasLine, i) => (

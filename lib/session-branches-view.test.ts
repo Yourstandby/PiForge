@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { SessionBranchNode } from "@contract/domains/sessions";
-import { buildBranchSwitchMap } from "./session-branches-view.ts";
+import { branchNodesToTree, buildBranchSwitchMap } from "./session-branches-view.ts";
 
 function node(
   id: string,
@@ -54,6 +54,36 @@ test("sibling user prompts share one 1/2 switcher pointing at each subtree leaf"
   // Assistant replies under each prompt are not themselves branch points.
   assert.equal(map.has("a2"), false);
   assert.equal(map.has("a3"), false);
+});
+
+test("the navigator tree keeps sibling branches that data.tree drops", () => {
+  const nodes = [
+    node("u1", null, "user", "a3"),
+    node("a1", "u1", "assistant", "a3"),
+    node("u2", "a1", "user", "a2"),
+    node("a2", "u2", "assistant", "a2"),
+    node("u3", "a1", "user", "a3"),
+    node("a3", "u3", "assistant", "a3"),
+  ];
+  const roots = branchNodesToTree(nodes);
+
+  assert.equal(roots.length, 1);
+  assert.equal(roots[0].entry.id, "u1");
+  const branchPoint = roots[0].children[0];
+  assert.equal(branchPoint.entry.id, "a1");
+  // 两个 user 兄弟都在树里 —— 这正是「当前会话没有分支」误报的根源。
+  assert.equal(branchPoint.children.length, 2);
+  assert.deepEqual(branchPoint.children.map((child) => child.entry.id), ["u2", "u3"]);
+  assert.deepEqual(branchPoint.children.map((child) => child.label), ["u2", "u3"]);
+  // 点中一行要切到该节点子树的最深叶，而不是节点本身。
+  assert.deepEqual(branchPoint.children.map((child) => child.leafId), ["a2", "a3"]);
+});
+
+test("orphan nodes (parent outside the window) still render as roots", () => {
+  const roots = branchNodesToTree([node("u1", "missing-parent", "user", "a1")]);
+  assert.equal(roots.length, 1);
+  assert.equal(roots[0].entry.parentId, "missing-parent");
+  assert.equal(branchNodesToTree([]).length, 0);
 });
 
 test("tool entries never produce switchers", () => {

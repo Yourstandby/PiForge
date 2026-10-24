@@ -198,6 +198,11 @@ export interface SessionTreeNode {
   entry: SessionEntry;
   children: SessionTreeNode[];
   label?: string;
+  /**
+   * 选择该行时要切到的叶子。Host 的分支图给的是扁平节点 + 最深叶，
+   * 树行本身可能不是叶子；缺省时退回 entry.id。
+   */
+  leafId?: string;
 }
 
 export interface SessionInfo {

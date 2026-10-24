@@ -13,7 +13,7 @@ import { TokenGuardBanner } from "./TokenGuardBanner";
 import { useSessionSplitHint } from "@/hooks/useSessionSplitHint";
 import { useSessionScope } from "@/hooks/useSessionScope";
 import { conversationToMarkdown } from "@/lib/conversation-markdown";
-import { buildBranchSwitchMap } from "@/lib/session-branches-view";
+import { branchNodesToTree, buildBranchSwitchMap } from "@/lib/session-branches-view";
 import { buildImagineMessage } from "@/lib/imagine-command";
 import { BranchCloneModal, type BranchCloneMode } from "./BranchCloneModal";
 import { BranchNavigator } from "./BranchNavigator";
@@ -232,10 +232,6 @@ function ChatSession({
     [],
   );
 
-  const handleBranchLeafChange = useCallback((leafId: string | null) => {
-    branchLeafChangeRef.current?.(leafId);
-  }, []);
-
   // 会话加载失败时的优雅重试：手动点「重试」+ 可重试错误自动退避重试。
   const [retrying, setRetrying] = useState(false);
   const autoRetryRef = useRef(0);
@@ -447,6 +443,12 @@ function ChatSession({
     (entryId: string) => branchSwitchMap.get(entryId) ?? null,
     [branchSwitchMap],
   );
+
+  /** 分支图优先：它含兄弟分叉，data.tree 只有当前路径。 */
+  const navigatorTree = useMemo(() => {
+    const nodes = chat.branches?.nodes;
+    return nodes && nodes.length > 0 ? branchNodesToTree(nodes) : branchTree;
+  }, [chat.branches, branchTree]);
 
   const handleSwitchBranch = useCallback(
     (leafId: string | null) => {
@@ -1763,9 +1765,9 @@ function ChatSession({
 
       {showTranscript && session && (
         <BranchNavigator
-          tree={branchTree}
-          activeLeafId={branchLeafId}
-          onLeafChange={handleBranchLeafChange}
+          tree={navigatorTree}
+          activeLeafId={chat.branches?.leafId ?? branchLeafId}
+          onLeafChange={handleSwitchBranch}
           onBranch={() =>
             setBranchModal({ isOpen: true, mode: "branch", targetEntryId: branchLeafId ?? undefined })
           }
