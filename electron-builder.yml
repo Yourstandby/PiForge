@@ -38,12 +38,21 @@ extraResources:
       - "**/*"
       # 导出目录里的 RSC 预取文本与 sourcemap 不参与运行。
       - "!**/*.map"
+      # 测试文件永远不该进安装包（体积 + 信息泄漏）；由 lib/electron-builder-config.test.mjs 守。
+      - "!**/*.test.ts"
+      - "!**/*.test.tsx"
+      - "!**/*.test.mjs"
+      - "!**/*.test.js"
   # Agent Host：稳定入口 + 编译后的 contract/lib。
   # 运行时依赖（Pi SDK、pi-mcp、typebox…）来自下面的 standalone/node_modules。
   - from: .next/standalone/agent-host
     to: standalone/agent-host
     filter:
       - "**/*"
+      - "!**/*.test.ts"
+      - "!**/*.test.tsx"
+      - "!**/*.test.mjs"
+      - "!**/*.test.js"
   # 只留宿主进程真正需要的依赖树：standalone 里的 server.js / .next / public
   # 已经不参与运行（静态直出取代了它们），不再打包。
   - from: .next/standalone/node_modules
