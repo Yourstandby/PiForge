@@ -19,6 +19,7 @@
  *   node scripts/measure-prefix.mjs --json > tmp/prefix.json
  *   node scripts/measure-prefix.mjs --baseline tmp/prefix.json   # 与旧快照比
  *   node scripts/measure-prefix.mjs --max-prefix 6000            # 预算护栏（超了退出码 2）
+ *   node scripts/measure-prefix.mjs --mode host --summary       # 只打几行决策数字（省上下文）
  *
  * 退出码：0 正常；1 环境/运行问题；2 超出 --max-prefix 预算。
  */
@@ -33,11 +34,13 @@ import {
   analyzeRequest,
   buildReport,
   compareReports,
+  formatSummaryLines,
   hasTools,
   declaredTools,
   printReport,
   readProbeResult,
   startRecorder,
+  summarizeCache,
 } from "./lib/prefix-measure.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -47,6 +50,8 @@ const hostEntry = process.env.PIFORGE_HOST_ENTRY
 
 const args = process.argv.slice(2);
 const asJson = args.includes("--json");
+/** --summary：只打决策要用的几行数字（完整报告走 --json / --dump）。 */
+const summaryOnly = args.includes("--summary");
 const mode = valueOf("--mode") ?? "both";
 const baselinePath = valueOf("--baseline");
 const maxPrefixArg = valueOf("--max-prefix");
@@ -581,6 +586,13 @@ async function main() {
 
   if (asJson) {
     process.stdout.write(`${JSON.stringify(reports, null, 2)}\n`);
+  } else if (summaryOnly) {
+    for (const line of formatSummaryLines(reports, {
+      ...(cacheStats ? { cache: summarizeCache(recorder.requests) } : {}),
+      ...(hostState?.prefixAudit ? { audit: hostState.prefixAudit } : {}),
+    })) {
+      console.log(line);
+    }
   } else {
     for (const key of keys) {
       if (reports[key].turns.length === 0) continue;

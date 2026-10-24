@@ -610,3 +610,82 @@ export function compareReports(base, next) {
     extraSections: sections,
   };
 }
+
+/**
+ * 摘要模式（`--summary`）：只给决策要用的数字。
+ *
+ * 为什么要有：报告完整版一次几万字符，进上下文就是几千 token，而判断「这次优化有没有把前缀做小」
+ * 只需要 5 个数。完整报告仍然可通过 `--json` / `--dump` 拿到，只是不再默认糊一整屏。
+ */
+export function summarizeReport(report) {
+  const first = report.turns[0] ?? {};
+  return {
+    label: report.label,
+    turns: report.turns.length,
+    systemTokens: first.systemTokens ?? 0,
+    toolsTokens: first.toolsTokens ?? 0,
+    toolsCount: first.toolsCount ?? 0,
+    prefixTokens: first.prefixTokens ?? 0,
+    bodyTokens: first.bodyTokens ?? 0,
+    prefixChangedBetweenTurns: Boolean(report.prefixChangedBetweenTurns),
+  };
+}
+
+/** 缓存账本聚合：命中率 = cacheRead / (input + cacheRead + cacheCreate)。 */
+export function summarizeCache(requests) {
+  let input = 0;
+  let read = 0;
+  let create = 0;
+  let counted = 0;
+  for (const entry of requests ?? []) {
+    const cache = entry?.cache;
+    if (!cache) continue;
+    counted += 1;
+    input += cache.totalTokens - cache.cacheReadTokens - cache.cacheCreationTokens;
+    read += cache.cacheReadTokens;
+    create += cache.cacheCreationTokens;
+  }
+  const total = input + read + create;
+  return { requests: counted, input, read, create, hitRate: total > 0 ? read / total : 0 };
+}
+
+export function formatSummaryLines(reports, extras = {}) {
+  const summaries = Object.values(reports ?? {}).map(summarizeReport);
+  const labelWidth = Math.max(4, ...summaries.map((item) => item.label.length));
+  const lines = ["== 摘要 =="];
+  for (const item of summaries) {
+    lines.push(
+      `${item.label.padEnd(labelWidth)}  turns=${item.turns} sys=${item.systemTokens}t ` +
+        `tools=${item.toolsTokens}t(${item.toolsCount}) prefix=${item.prefixTokens}t body=${item.bodyTokens}t ` +
+        (item.prefixChangedBetweenTurns ? "前缀有变化" : "前缀稳定")
+    );
+  }
+
+  const forge = reports?.PiForge;
+  const cli = reports?.["pi CLI"];
+  if (forge && cli) {
+    const a = summarizeReport(forge);
+    const b = summarizeReport(cli);
+    const delta = (value) => (value >= 0 ? `+${value}` : `${value}`);
+    lines.push(
+      `差值(PiForge-piCLI): sys ${delta(a.systemTokens - b.systemTokens)}t ` +
+        `tools ${delta(a.toolsTokens - b.toolsTokens)}t prefix ${delta(a.prefixTokens - b.prefixTokens)}t`
+    );
+  }
+
+  if (extras.cache) {
+    const cache = extras.cache;
+    lines.push(
+      `缓存: ${cache.requests} 条 input=${cache.input} read=${cache.read} create=${cache.create} ` +
+        `命中率=${(cache.hitRate * 100).toFixed(1)}%`
+    );
+  }
+  if (extras.audit) {
+    const audit = extras.audit;
+    lines.push(
+      `审计: turns=${audit.turns} stable=${audit.stableTurns} unexpected=${audit.unexpectedChanges}` +
+        (audit.unexpectedChanges > 0 ? " ✗" : "")
+    );
+  }
+  return lines;
+}
