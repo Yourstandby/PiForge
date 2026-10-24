@@ -34,7 +34,8 @@ test("ChatSurface never subscribes to watchdog state", () => {
 
 test("tool rows keep only the red tint + icon, no banner or diagnostics popup", () => {
   const src = read("components/Transcript.tsx");
-  assert.match(src, /const stalledRow = stall\?\.level === "stalled"/);
+  // 允许 prettier 把这一句折成多行（源码格式化不该让结构护栏误报）。
+  assert.match(src, /const stalledRow =\s*stall\?\.level === "stalled"/);
   assert.match(src, /bg-\[#FDF2F2\]/, "整行微红底色仍然保留");
   assert.match(src, /TriangleAlert/, "卡死行仍然有图标提示");
   assert.equal(src.includes("StallDiagnosticsButton"), false, "诊断弹窗已移到右侧面板");
