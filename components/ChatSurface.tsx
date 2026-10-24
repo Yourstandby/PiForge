@@ -18,6 +18,7 @@ import { buildImagineMessage } from "@/lib/imagine-command";
 import { BranchCloneModal, type BranchCloneMode } from "./BranchCloneModal";
 import { BranchNavigator } from "./BranchNavigator";
 import { visibleErrorMessage } from "@/lib/ui-error";
+import { messageText } from "@/lib/message-content";
 import { collectRunningTools } from "@/lib/running-tools";
 import { useStickyRunningTools } from "@/hooks/useStickyRunningTools";
 import { estimateTokens, setLiveUsage } from "@/lib/live-usage";
@@ -40,19 +41,7 @@ function lastAssistantText(messages: AgentMessage[]): string | undefined {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const message = messages[i];
     if (message.role !== "assistant") continue;
-    const content = message.content as unknown;
-    const text =
-      typeof content === "string"
-        ? content
-        : Array.isArray(content)
-          ? content
-              .filter((block): block is { type: "text"; text: string } =>
-                Boolean(block) && (block as { type?: string }).type === "text",
-              )
-              .map((block) => block.text)
-              .join("")
-          : "";
-    const trimmed = text.trim();
+    const trimmed = messageText(message).trim();
     if (!trimmed) continue;
     return trimmed.length > DONE_SUMMARY_LIMIT
       ? `${trimmed.slice(0, DONE_SUMMARY_LIMIT)}…`
@@ -106,18 +95,7 @@ interface Props {
  */
 /** 对话导航用：只取用户消息的纯文本（折叠空白，前 20 字 + 省略号）。 */
 function navPreview(message: AgentMessage): string {
-  const content = (message as { content?: unknown }).content;
-  const raw =
-    typeof content === "string"
-      ? content
-      : Array.isArray(content)
-        ? content
-            .map((block) => {
-              const typed = block as { type?: string; text?: string };
-              return typed?.type === "text" ? typed.text ?? "" : "";
-            })
-            .join(" ")
-        : "";
+  const raw = messageText(message, { separator: " " });
   // 兜底清洗：即使文本源里混入了角色标签或操作按钮文字，也一律剔除
   const text = raw
     .replace(/\s+/g, " ")
@@ -504,16 +482,7 @@ function ChatSession({
   const lastChunkLenRef = useRef(0);
   useEffect(() => {
     if (process.env.NODE_ENV === "production") return;
-    const content = (rawStreaming as { content?: unknown } | null)?.content;
-    const text = typeof content === "string"
-      ? content
-      : Array.isArray(content)
-        ? content
-            .map((block) => (block as { type?: string; text?: string })?.type === "text"
-              ? (block as { text?: string }).text ?? ""
-              : "")
-            .join("")
-        : "";
+    const text = messageText(rawStreaming);
     const delta = text.length - lastChunkLenRef.current;
     lastChunkLenRef.current = text.length;
     if (delta > 0) console.log("[SSE Chunk]", delta, text.slice(-80));
@@ -1310,15 +1279,13 @@ function ChatSession({
   /** 流式期间的文字长度（用于估算 token / 费用），同时广播给状态栏。 */
   const liveTokens = useMemo(() => {
     const partial = chat.streamState.streamingMessage as
-      | { content?: Array<{ type?: string; text?: string }>; usage?: { output?: number } }
+      | { content?: unknown; usage?: { output?: number } }
       | null;
     if (!partial) return 0;
     const usage = partial.usage;
     if (usage && typeof usage.output === "number" && usage.output > 0) return usage.output;
-    const text = (partial.content ?? [])
-      .map((block) => (block?.type === "text" ? block.text ?? "" : ""))
-      .join("");
-    return estimateTokens(text);
+    // content 可能是 string（CustomMessage / 流式分片），必须走 messageText 归一化。
+    return estimateTokens(messageText(partial));
   }, [chat.streamState.streamingMessage]);
 
   /**
@@ -1901,7 +1868,7 @@ function ChatSession({
           </div>
         </>
       ) : (
-        <div className="scrollbar-ghost flex min-h-0 flex-1 flex-col items-center overflow-y-auto bg-[radial-gradient(ellipse_at_center,_#ffffff_0%,_#f8fafd_55%,_#eef3fb_100%)] px-8 py-6">
+        <div className="scrollbar-ghost chat-empty-canvas flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-8 py-6">
           <div className="my-auto flex w-full max-w-3xl flex-col items-center">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img

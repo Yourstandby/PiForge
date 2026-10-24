@@ -15,6 +15,7 @@ import {
   setWatchdogStallMs,
   watchdogTimerActiveForTest,
 } from "./watchdog.ts";
+import { BRIEF_ASK_INSTRUCTION, SKIP_INSTRUCTION } from "./intervention.ts";
 
 const SESSION = "session-a";
 
@@ -279,7 +280,7 @@ test("task completes on agent_end and stops being scanned", () => {
 test("config resolves env flags, defaulting to enabled", () => {
   assert.equal(resolveWatchdogConfig({}).enabled, true);
   assert.equal(resolveWatchdogConfig({}).stallMs, 20_000);
-  assert.equal(resolveWatchdogConfig({}).tickMs, 10_000);
+  assert.equal(resolveWatchdogConfig({}).tickMs, 5_000);
   assert.equal(resolveWatchdogConfig({ PIFORGE_WATCHDOG: "0" }).enabled, false);
   assert.equal(resolveWatchdogConfig({ PIFORGE_WATCHDOG: "off" }).enabled, false);
   assert.equal(resolveWatchdogConfig({ PIFORGE_WATCHDOG: "on" }).enabled, true);
@@ -350,10 +351,8 @@ test("intervening on a stalled task injects the skip instruction and resets to r
   assert.equal(outcome.ok, true);
   assert.equal(outcome.delivered, "steer");
   assert.equal(outcome.actionType, "skip");
-  // 「队列收到了提示词」：原文一字不差
-  assert.deepEqual(session.delivered, [
-    "[系统提示] 当前工具执行因无进展被系统强制跳过。请反思刚才为什么卡住，并立刻尝试其他替代方案继续完成任务。",
-  ]);
+  // 「队列收到了提示词」：就是 SKIP_INSTRUCTION 本身
+  assert.deepEqual(session.delivered, [SKIP_INSTRUCTION]);
   // 状态被重置：红灯 → 绿灯，计数清零
   assert.equal(outcome.task?.status, "running");
   assert.equal(outcome.task?.interventionCount, 1);
@@ -405,9 +404,7 @@ test("brief ask injects the minimal no-tool prompt and resets to running", async
   assert.equal(outcome.ok, true);
   assert.equal(outcome.actionType, "ask_brief");
   // 队列里收到的就是精简后的那一句：不含 lastSuccessAction 拼接，也不含「给出新的执行方案」。
-  assert.deepEqual(session.delivered, [
-    "[系统提示] 看门狗发现当前工具已超时无输出，请勿执行任何新工具核实。请直接用一句话（20字以内）告诉我：你卡在哪个工具了，是否需要我帮你跳过？",
-  ]);
+  assert.deepEqual(session.delivered, [BRIEF_ASK_INSTRUCTION]);
   assert.equal(outcome.message.includes("新的执行方案"), false);
   assert.equal(outcome.message.includes("分析原因"), false);
   assert.equal(outcome.task?.status, "running");
