@@ -85,3 +85,24 @@ test("isHeapExhaustion 认得 V8 OOM 的两种表现，不把普通崩溃误判�
   assert.equal(isHeapExhaustion({ exitCode: 1 }), false);
   assert.equal(isHeapExhaustion({}), false);
 });
+
+test("堆默认档随传输层：node = 4/192（soak 通过），utility = 8/256（不动）", () => {
+  const node = resolveHostHeapFlags({ env: {}, transport: "node" });
+  assert.equal(node.semiSpaceMb, 4);
+  assert.equal(node.oldSpaceMb, 192);
+  assert.deepEqual(node.execArgv, ["--js-flags=--max-old-space-size=192"]);
+
+  const utility = resolveHostHeapFlags({ env: {}, transport: "utility" });
+  assert.equal(utility.semiSpaceMb, 8);
+  assert.equal(utility.oldSpaceMb, 256);
+});
+
+test("显式 PIFORGE_HOST_HEAP 覆盖传输层默认档；default 仍然回退到不干预", () => {
+  const custom = resolveHostHeapFlags({ env: { PIFORGE_HOST_HEAP: "semi=8,old=256" }, transport: "node" });
+  assert.equal(custom.semiSpaceMb, 8);
+  assert.equal(custom.oldSpaceMb, 256);
+  const off = resolveHostHeapFlags({ env: { PIFORGE_HOST_HEAP: "default" }, transport: "node" });
+  assert.equal(off.semiSpaceMb, null);
+  assert.equal(off.oldSpaceMb, null);
+  assert.deepEqual(off.execArgv, []);
+});

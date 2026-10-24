@@ -24,6 +24,44 @@
 
 **铁律**：业务逻辑全部下沉到 Agent Host。Next 只做代理和 UI 渲染。Electron Main 只管窗口/托盘/更新。
 
+## 1.5 环境变量隔离（Host 启动方式）
+
+Host 有两种可切换的传输层实现（`electron/host-launcher.ts`）：
+
+| 传输层 | 启动方式 | V8 堆参数 | 默认 |
+|---|---|---|---|
+| `node` | `process.execPath` + `ELECTRON_RUN_AS_NODE=1`（普通子进程） | `NODE_OPTIONS`：新生代 + 老生代**都生效**（limit 280 MB） | ✅ 默认 |
+| `utility` | `utilityProcess.fork()` | `execArgv: --js-flags=--max-old-space-size=N`（**只能一个 flag**，新生代设不了） | `PIFORGE_HOST_TRANSPORT=utility` 回退 |
+
+切换：`PIFORGE_HOST_TRANSPORT=node|utility`（默认 node），堆参数：`PIFORGE_HOST_HEAP=default` 或 `semi=4,old=192`。
+
+### 三条不能破的规则
+
+1. **`ELECTRON_RUN_AS_NODE` 只进 host 自己的 env**
+   它让 Electron 二进制以 Node 模式运行。若写进 `process.env`，主进程之后拉起的**所有**子进程
+   都会变成 node 模式 —— 典型症状是"双击应用没反应、没有任何窗口"。所以：
+   `buildHostSpawnSpec()` 在返回的 env 副本里加，`process.env` 一行不动（有单测断言）。
+
+2. **受管进程的环境必须清理**
+   Host 拉起的受管进程（dev server、`pwsh`、用户命令）走 `agent-host/child-env.ts` 的
+   `managedProcessEnv()`：剔除 `ELECTRON_RUN_AS_NODE` / `ELECTRON_RUN_AS_NODE_ENABLED`，
+   保留其余全部（不做白名单 —— 早期白名单曾把 `SystemRoot` 过滤掉，导致 host 里
+   `listen(0, "127.0.0.1")` 直接 `UNKNOWN` 错误）。主进程侧 `electron/env-filter.ts`
+   有同样一份黑名单，双保险。
+
+3. **stdin 控制通道必须显式开启**
+   `utility` 用 `parentPort.postMessage({type:"shutdown"})`；`node` 模式没有 parentPort，
+   改走 stdin 的一帧 JSON（协议在 `contract/host-stdin.ts`，两侧共用）。
+   ⚠️ **不能用"stdin 不是 TTY"去猜**：探针/冒烟脚本用 `stdio: ["ignore"]` 启动时，stdin 是
+   一个**立刻 end** 的管道，host 会把它当"父进程已死"而秒退。所以启动方显式设
+   `PIFORGE_HOST_STDIN_CONTROL=1`，host 才接管 stdin。
+
+### 退出语义
+
+两个 exit 处理器不能靠全局 `agentHostReady` 判断"是不是启动失败"（先注册的那个会把它置 false，
+导致每次正常退出都误报 `Agent Host exited before becoming ready`）。判定统一走
+`describeHostExit({ settled, code, transport })`：只有**本次等待未 settled** 才算启动失败。
+
 ## 2. 通信契约
 
 - **Renderer ↔ Main**：`preload.ts` 通过 `contextBridge` 暴露类型化 API，禁止 `nodeIntegration`，禁止 `remote`。

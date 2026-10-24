@@ -23,13 +23,27 @@
  * 纯函数：不 import Electron，便于单测。
  */
 
-/** 默认值。步骤：先 256 起步 → 30 轮 soak 通过后再试 192。 */
+/**
+ * 默认值**按传输层分档**：
+ *   - utility：只能设老生代 → 8 / 256（新生代的 8 不生效，只用于日志与 OOM 取证）；
+ *   - node：新生代 + 老生代都生效 → 4 / 192（30 轮 soak 验证：RSS 中位 216.9 MB、
+ *     峰值 252.9 MB、空闲 CPU 中位 0.35%、0 OOM，见 docs/optimizations/l1-transport-implementation.md）。
+ *
+ * 为什么 node 敢用更小的新生代：新生代只影响 scavenge 频率，4 MB 时实测 CPU 仍是 0.35%；
+ * 而 utility 想设也设不了，所以那边保持 8/256 不动。
+ */
 export const DEFAULT_HOST_HEAP = {
   maxSemiSpaceSizeMb: 8,
   maxOldSpaceSizeMb: 256,
 } as const;
 
-/** soak 通过后的激进档（文档里记录切换条件）。 */
+/** node 传输层的默认档（soak 已通过）。 */
+export const NODE_HOST_HEAP = {
+  maxSemiSpaceSizeMb: 4,
+  maxOldSpaceSizeMb: 192,
+} as const;
+
+/** soak 通过后的激进档（老生代 192 + 新生代 8；保留给手工对比用）。 */
 export const TIGHT_HOST_HEAP = {
   maxSemiSpaceSizeMb: 8,
   maxOldSpaceSizeMb: 192,
@@ -62,6 +76,11 @@ interface HostHeapInput {
   env?: Record<string, string | undefined>;
   /** 额外参数（例如 `--cpu-prof`）；会拼在堆参数之后。 */
   extraFlags?: string[];
+  /**
+   * 传输层：决定"默认档"（`PIFORGE_HOST_HEAP` 显式给了就一律以它为准）。
+   * 不传 = utility（保持历史行为）。
+   */
+  transport?: "utility" | "node";
 }
 
 function readPositive(value: string | undefined): number | null {
@@ -81,9 +100,10 @@ export function resolveHostHeapFlags(input: HostHeapInput = {}): HostHeapFlags {
   const env = input.env ?? {};
   const raw = env.PIFORGE_HOST_HEAP?.trim();
 
-  let semi: number | null = DEFAULT_HOST_HEAP.maxSemiSpaceSizeMb;
-  let old: number | null = DEFAULT_HOST_HEAP.maxOldSpaceSizeMb;
-  let reason = `default(${DEFAULT_HOST_HEAP.maxSemiSpaceSizeMb}/${DEFAULT_HOST_HEAP.maxOldSpaceSizeMb}MB)`;
+  const baseline = input.transport === "node" ? NODE_HOST_HEAP : DEFAULT_HOST_HEAP;
+  let semi: number | null = baseline.maxSemiSpaceSizeMb;
+  let old: number | null = baseline.maxOldSpaceSizeMb;
+  let reason = `default-${input.transport ?? "utility"}(${baseline.maxSemiSpaceSizeMb}/${baseline.maxOldSpaceSizeMb}MB)`;
 
   if (raw !== undefined && raw !== "") {
     if (raw === "default" || raw === "0") {

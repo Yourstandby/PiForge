@@ -106,8 +106,8 @@ export function buildToolOutputPreview(fullText: string, toolCallId: string): Pr
   const lines = fullText.split(/\r?\n/);
   const totalLines = lines.length;
   const hint = toolHistoryHint(toolCallId);
+  // 预览是"历史回看"路径，用落盘当时的默认档；模型看到的预算在 toolOutputBudget() 里。
   const budget = toolOutputBudget(undefined);
-
   if (totalLines > PREVIEW_HEAD_LINES + PREVIEW_TAIL_LINES) {
     const head = lines.slice(0, PREVIEW_HEAD_LINES).join("\n");
     const tail = lines.slice(-PREVIEW_TAIL_LINES).join("\n");

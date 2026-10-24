@@ -29,7 +29,7 @@ import {
   STATIC_APP_SCHEME,
 } from "./static-app";
 import { isHeapExhaustion, resolveHostHeapFlags } from "./host-heap";
-import { buildHostSpawnSpec, hostShutdownFrame, resolveHostTransport } from "./host-launcher";
+import { buildHostSpawnSpec, describeHostExit, hostShutdownFrame, resolveHostTransport } from "./host-launcher";
 import {
   describeReEvaluation,
   GPU_EVIDENCE_FILE,
@@ -225,7 +225,7 @@ let agentHostProcess: HostProcessHandle | null = null;
  */
 let notifyHostReadyFromStdout: ((detail: unknown) => void) | null = null;
 /** 本轮实际生效的传输层（日志 / 诊断用）。 */
-let activeHostTransport: "utility" | "node" = "utility";
+let activeHostTransport: "utility" | "node" = "node";
 let agentHostEndpoint: string | null = null;
 let agentHostToken: string | null = null;
 let agentHostReady = false;
@@ -453,7 +453,9 @@ async function startAgentHost(): Promise<void> {
    * L1：只给 **host** 收紧 V8 堆，不动 main / 渲染进程。
    * `PIFORGE_HOST_HEAP=default` 回退到不干预。
    */
-  const hostHeap = resolveHostHeapFlags({ env: process.env });
+  // 传输层先定下来：堆默认档跟着它走（node 4/192 已 soak 通过；utility 8/256 不动）。
+  const transportDecision = resolveHostTransport({ env: process.env });
+  const hostHeap = resolveHostHeapFlags({ env: process.env, transport: transportDecision.transport });
   activeHostHeapLimits = { semiSpaceMb: hostHeap.semiSpaceMb, oldSpaceMb: hostHeap.oldSpaceMb };
   const extraFlags = (process.env.PIFORGE_HOST_EXEC_ARGV ?? "")
     .split(",")
@@ -466,7 +468,6 @@ async function startAgentHost(): Promise<void> {
    *   - node：`ELECTRON_RUN_AS_NODE=1` 普通子进程 + `NODE_OPTIONS`（两个 flag 都生效，
    *     实测 heap limit 280MB / 空闲 RSS 115–116MB，见 docs/optimizations/l1-run-as-node-probe.md）。
    */
-  const transportDecision = resolveHostTransport({ env: process.env });
   const hostCwd = app.isPackaged ? path.join(process.resourcesPath, "standalone") : app.getAppPath();
   const spawnSpec = buildHostSpawnSpec({
     decision: transportDecision,
@@ -601,9 +602,11 @@ async function startAgentHost(): Promise<void> {
     child.once("exit", (code) => {
       // 崩溃型失败（0.9.0 实测的 197 次 code=1 就是这条路径）：必须留下可 grep
       // 的审计行，否则 UI 只说"启动中"，日志里查不到为什么起不来。
-      // 用本 Promise 自己的 settled 判定，而不是全局 agentHostReady —— 后者会被
-      // startAgentHost 的 exit 处理器先置 false，导致**每次正常退出都误报一次**。
-      if (!settled) logError("Agent Host exited before becoming ready", { code });
+      // 判定见 describeHostExit()：只看本次等待是否 settled，不看全局 agentHostReady
+      // （后者会被 startAgentHost 的 exit 处理器先置 false → 正常退出也误报）。
+      const report = describeHostExit({ settled, code, transport: activeHostTransport });
+      if (report.error) logError(report.message, report.detail);
+      else logInfo(report.message, report.detail);
       finish();
     });
     child.once("error", (type, location) => {

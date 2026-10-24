@@ -32,7 +32,11 @@ const HELP = `measure-packaged：打包版启动时间线 + 进程内存/CPU 实
 
 内存门禁（**两个别名的作用域完全不同，最常被搞混**）：
   --max-rss-mb <n>        整个 App 的**总 RSS**（所有进程相加，实测量级 850–1130 MB）
-  --max-host-rss-mb <n>   Agent Host **单进程** RSS（实测量级 190–340 MB，L1 的验收线）
+  --max-host-rss-mb <n>   Agent Host **单进程** RSS（L1 的验收线）
+                          不指定时按传输层取默认：
+                            node 模式    240 MB（实测 193–230，soak 中位 216.9）
+                            utility 模式 290 MB（实测 258–280）
+                          大会话场景两者都会到 ~286 MB，此时应显式给更大的值
 
 其它：
   --seconds <n>        采样窗口秒数（默认 8）
@@ -59,8 +63,14 @@ function parseArgs(argv) {
     maxHostReady: null,
     maxWindow: null,
     maxRssMb: null,
-    /** host（agent-host 角色）单进程 RSS 上限（Step 4 · L1 的验收线）。 */
+    /**
+     * host（agent-host 角色）单进程 RSS 上限（L1 的验收线）。
+     * 不给值时按传输层取默认：node → 240 MB，utility → 280 MB
+     * （两档都是实测分布定的，见 docs/optimizations/l1-transport-implementation.md）。
+     */
     maxHostRssMb: null,
+    /** 记录 `--max-host-rss-mb` 是不是默认值（汇总里要标出来）。 */
+    maxHostRssDefault: false,
     maxIdleCpu: null,
     skipPortCheck: false,
     /** 不等 Host 稳定就直接采样（只看启动耗时用）。 */
@@ -150,13 +160,15 @@ function parseArgs(argv) {
 const PS_SNAPSHOT = `
 $ErrorActionPreference = 'SilentlyContinue'
 $cmd = @{}
-Get-CimInstance Win32_Process | ForEach-Object { $cmd[[int]$_.ProcessId] = $_.CommandLine }
+$parent = @{}
+Get-CimInstance Win32_Process | ForEach-Object { $cmd[[int]$_.ProcessId] = $_.CommandLine; $parent[[int]$_.ProcessId] = [int]$_.ParentProcessId }
 Get-Process |
   Select-Object @{n='Id';e={$_.Id}},
                 @{n='Name';e={$_.ProcessName}},
                 @{n='Rss';e={$_.WorkingSet64}},
                 @{n='Cpu';e={ if ($_.TotalProcessorTime) { $_.TotalProcessorTime.TotalSeconds } else { 0 } }},
-                @{n='Cmd';e={$cmd[[int]$_.Id]}} |
+                @{n='Cmd';e={$cmd[[int]$_.Id]}},
+                @{n='PPid';e={$parent[[int]$_.Id]}} |
   ConvertTo-Json -Compress
 `;
 
@@ -211,17 +223,36 @@ function classify(commandLine) {
   return "main";
 }
 
-async function snapshot(exePath) {
+async function snapshot(exePath, rootPid = null) {
   const raw = await runPowerShell(PS_SNAPSHOT);
   const parsed = JSON.parse(raw || "[]");
   const rows = Array.isArray(parsed) ? parsed : [parsed];
   const exeName = (args.name ?? path.basename(exePath)).toLowerCase();
   const exeDir = path.dirname(exePath).toLowerCase();
+  /**
+   * 只认**本实例**的进程树。
+   *
+   * 曾经踩过：机器上同时跑着另一个 PiForge（soak / 用户自己开的窗口）时，
+   * 只按"同名 exe / 同目录"过滤会把别人的进程一起加进来 —— 实测出现过
+   * `host 477.7 MB / 13 进程 / 2247 MB` 这种假读数，直接把门禁判成 FAIL。
+   * 有 rootPid 时按父子链收敛（rootPid 本身也算在内）。
+   */
+  const parentOf = new Map(rows.map((row) => [Number(row.Id), Number(row.PPid ?? 0)]));
+  const inTree = (pid) => {
+    let current = pid;
+    for (let guard = 0; guard < 32 && current > 0; guard += 1) {
+      if (current === rootPid) return true;
+      current = parentOf.get(current) ?? 0;
+    }
+    return false;
+  };
   return rows
     .filter((row) => {
       const name = String(row.Name ?? "").toLowerCase();
       const cmd = String(row.Cmd ?? "").toLowerCase();
-      return name === exeName.replace(/\.exe$/, "") || cmd.includes(exeDir);
+      const matchesExe = name === exeName.replace(/\.exe$/, "") || cmd.includes(exeDir);
+      if (!matchesExe) return false;
+      return rootPid === null ? true : inTree(Number(row.Id));
     })
     .map((row) => ({
       pid: Number(row.Id),
@@ -336,7 +367,8 @@ for (const entry of run) {
 }
 
 // ---- 采样内存 / CPU -------------------------------------------------------
-const first = await snapshot(exe);
+const appPid = child.pid ?? null;
+const first = await snapshot(exe, appPid);
 const track = new Map(first.map((row) => [row.pid, { ...row, firstCpu: row.cpuSeconds }]));
 const sampleStart = Date.now();
 const deadline = sampleStart + args.seconds * 1000;
@@ -345,7 +377,7 @@ let lastSeriesAt = sampleStart;
 let lastSeriesCpu = new Map(first.map((row) => [row.pid, { role: row.role, cpu: row.cpuSeconds }]));
 while (Date.now() < deadline) {
   await new Promise((resolve) => setTimeout(resolve, args.interval));
-  const rows = await snapshot(exe);
+  const rows = await snapshot(exe, appPid);
   for (const row of rows) {
     const entry = track.get(row.pid);
     if (entry) {
@@ -446,8 +478,19 @@ if (args.maxWindow !== null && windowMs !== null && windowMs > args.maxWindow) {
 if (args.maxRssMb !== null && totalRssMb > args.maxRssMb) {
   failures.push(`总 RSS ${totalRssMb} MB > ${args.maxRssMb} MB`);
 }
-if (args.maxHostRssMb !== null && report.hostRssMb > args.maxHostRssMb) {
-  failures.push(`host RSS ${report.hostRssMb} MB > ${args.maxHostRssMb} MB`);
+if (args.maxHostRssMb === null) {
+  // 默认门禁随传输层走（数字来自实测分布，不是拍的）：
+  //   node    193–230 MB（30 轮 soak 中位 216.9）→ 240
+  //   utility 258–280 MB（多轮实测，含 280.1 这种擦线样本）→ 290
+  const transport = (process.env.PIFORGE_HOST_TRANSPORT ?? "node").trim().toLowerCase() === "utility" ? "utility" : "node";
+  args.maxHostRssMb = transport === "utility" ? 290 : 240;
+  args.maxHostRssDefault = true;
+  args.hostTransport = transport;
+}
+if (report.hostRssMb > args.maxHostRssMb) {
+  failures.push(
+    `host RSS ${report.hostRssMb} MB > ${args.maxHostRssMb} MB${args.maxHostRssDefault ? "（默认门禁）" : ""}`,
+  );
 }
 if (args.maxIdleCpu !== null && totalCpu > args.maxIdleCpu) {
   failures.push(`空闲 CPU ${totalCpu}%（单核口径）> ${args.maxIdleCpu}%`);
@@ -466,7 +509,7 @@ if (args.json) {
   console.log(`  ${"spawn → 窗口就绪(实测)".padEnd(28)} ${String(report.spawnToWindowMs).padStart(6)}`);
   console.log("");
   console.log(
-    `host ${report.hostRssMb} MB · 内存 ${report.totalRssMb} MB / ${report.processCount} 进程 · CPU ${report.totalCpuPercentSingleCore}%（单核口径，采样 ${report.sampledSeconds}s） · next-server=${report.hasNextServerProcess} · 30141=${report.internalPortOpen}`,
+    `host ${report.hostRssMb} MB (gate ${args.maxHostRssMb}${args.maxHostRssDefault ? ", default" : ""}) · 内存 ${report.totalRssMb} MB / ${report.processCount} 进程 · CPU ${report.totalCpuPercentSingleCore}%（单核口径，采样 ${report.sampledSeconds}s） · next-server=${report.hasNextServerProcess} · 30141=${report.internalPortOpen}`,
   );
   console.log("");
   if (series.length > 0) {

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildHostSpawnSpec,
+  describeHostExit,
   hostRuntimePlan,
   hostShutdownFrame,
   parseHostStdinLine,
@@ -12,10 +13,16 @@ import * as shared from "../contract/host-stdin.ts";
 const EMPTY_HEAP = { semiSpaceMb: null, oldSpaceMb: null };
 const DEFAULT_HEAP = { semiSpaceMb: 8, oldSpaceMb: 256 };
 
-test("resolveHostTransport: 未设置 → utility（默认行为不变）", () => {
+test("resolveHostTransport: 未设置 → node（soak 通过后的默认）", () => {
   const decision = resolveHostTransport({ env: {} });
+  assert.equal(decision.transport, "node");
+  assert.equal(decision.code, "default_node");
+});
+
+test("resolveHostTransport: PIFORGE_HOST_TRANSPORT=utility 是干净的官方回退路径", () => {
+  const decision = resolveHostTransport({ env: { PIFORGE_HOST_TRANSPORT: "utility" } });
   assert.equal(decision.transport, "utility");
-  assert.equal(decision.code, "default_utility");
+  assert.equal(decision.code, "env_utility");
 });
 
 test("resolveHostTransport: PIFORGE_HOST_TRANSPORT=node / utility 生效", () => {
@@ -23,9 +30,9 @@ test("resolveHostTransport: PIFORGE_HOST_TRANSPORT=node / utility 生效", () =>
   assert.equal(resolveHostTransport({ env: { PIFORGE_HOST_TRANSPORT: " UTILITY " } }).transport, "utility");
 });
 
-test("resolveHostTransport: 非法值回落 utility，并写明原因（不静默）", () => {
+test("resolveHostTransport: 非法值回落 node，并写明原因（不静默）", () => {
   const decision = resolveHostTransport({ env: { PIFORGE_HOST_TRANSPORT: "subprocess" } });
-  assert.equal(decision.transport, "utility");
+  assert.equal(decision.transport, "node");
   assert.equal(decision.code, "invalid_env");
   assert.match(decision.reason, /subprocess/);
 });
@@ -77,7 +84,7 @@ test("hostRuntimePlan: --cpu-prof 之类运行时参数在 node 模式走 argv�
 
 test("buildHostSpawnSpec: utility 模式命令为 null、env 里不含 ELECTRON_RUN_AS_NODE", () => {
   const spec = buildHostSpawnSpec({
-    decision: { transport: "utility", code: "default_utility", reason: "默认 utilityProcess" },
+    decision: { transport: "utility", code: "env_utility", reason: "PIFORGE_HOST_TRANSPORT=utility" },
     entry: "C:\\app\\agent-host\\index.js",
     env: { PATH: "C:\\Windows", ELECTRON_RUN_AS_NODE: "1" },
     binaryPath: "C:\\app\\PiForge.exe",
@@ -144,4 +151,24 @@ test("stdin 关闭协议：electron 侧实现与 contract/host-stdin.ts 逐字�
   for (const line of ["", "{}", "not json", '{"type":"shutdown","reason":1}', '{"type":"ping"}']) {
     assert.deepEqual(parseHostStdinLine(line), shared.parseHostStdinLine(line));
   }
+});
+
+test("describeHostExit: 正常退出（已就绪）不报 'exited before becoming ready'", () => {
+  const report = describeHostExit({ settled: true, code: 0, transport: "node" });
+  assert.equal(report.error, false);
+  assert.doesNotMatch(report.message, /before becoming ready/);
+  assert.match(report.message, /after ready/);
+  assert.equal(report.detail.transport, "node");
+});
+
+test("describeHostExit: 没就绪就退出才算启动失败（带 code 与 transport）", () => {
+  const report = describeHostExit({ settled: false, code: 1, transport: "utility" });
+  assert.equal(report.error, true);
+  assert.equal(report.message, "Agent Host exited before becoming ready");
+  assert.deepEqual(report.detail, { code: 1, transport: "utility" });
+});
+
+test("describeHostExit: 非零退出码但已就绪 → 不误判成启动失败（走重启）", () => {
+  const report = describeHostExit({ settled: true, code: 134, transport: "node" });
+  assert.equal(report.error, false);
 });

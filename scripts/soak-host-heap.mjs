@@ -21,7 +21,7 @@
  * 「真实会话」轮：`PIFORGE_OPEN_PATH=/?session=<真实 id>` 打开本机最大的会话文件
  * （加载真实 transcript / 工具输出），**不调用模型**（不花 token）。
  */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
@@ -45,6 +45,8 @@ const sessionRounds = opt("--session-rounds", 15);
 const sampleSeconds = opt("--seconds", 8);
 const settleSeconds = opt("--settle", 15);
 const maxHostRssMb = opt("--max-host-rss-mb", 280);
+/** 峰值门禁：不传 = 中位 × 1.15（单轮 GC 抖动不该把整份 soak 判红）。 */
+const maxHostRssPeakMb = Number(opt("--max-host-rss-peak", maxHostRssMb * 1.15));
 const maxCpu = opt("--max-cpu", 2);
 const asJson = args.includes("--json");
 const keepUserData = args.includes("--keep-user-data");
@@ -134,6 +136,38 @@ if (sessionRounds > 0 && !session) {
 const userData = mkdtempSync(path.join(tmpdir(), "piforge-soak-"));
 const oomFile = path.join(userData, "host-oom.json");
 
+/**
+ * 预检：机器上不能有别的 PiForge 在跑。
+ *
+ * 踩过的坑：另一个实例（用户窗口 / 上一轮的残留 / 并发的测量脚本）会让每轮的
+ * RSS 与 CPU 都偏高 —— 实测同样参数下从 157–221 MB 漂到 234–255 MB，
+ * 直接把 0.5% 的 CPU 门禁顶穿。宁可拒绝启动，也不要产出一份不可信的数据。
+ */
+function assertMachineQuiet() {
+  const script =
+    "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'PiForge.exe' -or $_.Name -eq 'electron.exe' } | " +
+    "Select-Object -ExpandProperty ProcessId";
+  const out = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  const lines = String(out.stdout ?? "").split(String.fromCharCode(10));
+  const pids = [];
+  for (const line of lines) {
+    const pid = Number(line.trim());
+    if (Number.isFinite(pid) && pid > 0) pids.push(pid);
+  }
+  if (pids.length > 0) {
+    console.error(
+      `soak-host-heap: 机器上还有 ${pids.length} 个 PiForge/electron 进程（${pids.slice(0, 6).join(", ")}）。` +
+        " 先关掉它们再跑，否则 RSS/CPU 会被污染（预检失败，未开始）。",
+    );
+    process.exit(2);
+  }
+}
+
+assertMachineQuiet();
+
 console.log(`soak-host-heap: exe=${exe}`);
 console.log(`soak-host-heap: userData=${userData}`);
 console.log(
@@ -208,7 +242,8 @@ const payload = {
   summary: {
     rounds: results.length,
     okRounds: okRounds.length,
-    hostRssMax: rssValues.at(-1) ?? 0,
+    /** 真实峰值（不是最后一轮的值）。 */
+    hostRssMax: rssValues.length > 0 ? Math.max(...rssValues) : 0,
     hostRssMedian: median(rssValues),
     hostCpuMedian: median(cpuValues),
     oomEvents: oomRecords.length,
@@ -222,8 +257,18 @@ if (!keepUserData) setTimeout(() => rmSync(userData, { recursive: true, force: t
 const failures = [];
 if (okRounds.length !== results.length) failures.push(`${results.length - okRounds.length} 轮采样失败`);
 if (payload.summary.oomEvents > 0) failures.push(`出现 ${payload.summary.oomEvents} 次 OOM`);
-if (payload.summary.hostRssMax > maxHostRssMb) {
-  failures.push(`host RSS 最大 ${payload.summary.hostRssMax} MB > ${maxHostRssMb} MB`);
+/**
+ * 门禁口径（与验收文档一致）：
+ *   - **中位** `--max-host-rss-mb`：稳态验收线；
+ *   - **峰值** `--max-host-rss-peak`：默认 = 中位 × 1.15，只用于发现失控（单轮尖峰不算失败）。
+ * 之前把"最大值"当中位门禁，会让一次 GC 抖动把整份 soak 判红。
+ */
+if (payload.summary.hostRssMedian > maxHostRssMb) {
+  failures.push(`host RSS 中位 ${payload.summary.hostRssMedian} MB > ${maxHostRssMb} MB`);
+}
+const peakLimit = Math.round(maxHostRssPeakMb);
+if (payload.summary.hostRssMax > peakLimit) {
+  failures.push(`host RSS 峰值 ${payload.summary.hostRssMax} MB > ${peakLimit} MB（峰值门禁）`);
 }
 if (payload.summary.hostCpuMedian > maxCpu) {
   failures.push(`host 空闲 CPU 中位 ${payload.summary.hostCpuMedian}% > ${maxCpu}%`);

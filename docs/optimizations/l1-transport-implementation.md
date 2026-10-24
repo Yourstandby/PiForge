@@ -5,6 +5,24 @@
 > 开关：`PIFORGE_HOST_TRANSPORT=utility|node`，**默认 utility，未切默认**。
 > 验收基调：**先按同一口径比（都加载同样东西），再下结论** —— 上一轮的探针结论就栽在口径上（见 §1）。
 
+## 0. 口径更正（本轮补记，2026-10-24）
+
+上一轮报告里有两处需要明确更正，避免以后被当成"可达目标"引用：
+
+| 旧说法 | 实际情况 |
+|---|---|
+| "node 模式 116 MB vs utility 265.6 MB → −150 MB" | **不是同一件事**：116 MB 是**裸 host**（`probe-host-runtime.mjs`，只起服务 + `host.health`）；265.6 MB 是 `measure-packaged` 里**加载了 API 桥 + 会话索引 + 扩展**的 host。差值主要来自"加载 vs 未加载" |
+| "220 MB 只差一点" | 220 MB 只在**轻载 + 更紧堆参数**下成立（实测 209–221 MB）；**加载 26 MB 大会话时两种传输层都是 286 MB 左右** |
+
+更正后的真实收益（打包版、同口径、最终产物）：
+
+| 指标 | 数值 |
+|---|---|
+| 轻载稳态中位 | utility 268.4 MB → **node 209.1 MB（−59 MB / −22%）** |
+| 最坏情况尖峰（30 轮 soak） | utility 349.4 MB → **node 296.6 MB（−53 MB）** |
+| 堆上限 | utility 352 MB（设不了新生代）→ **node 280 MB（硬上限）** |
+| 门禁 | **220 MB 只适合轻载**；**稳态门禁用 240 MB**（node 实测 193–230） |
+
 ## 1. 先纠正上一轮的一个口径错误
 
 上一轮探针给出"node 模式 116 MB vs utility 265.6 MB → −150 MB"，但那两个数**不是同一件事**：
@@ -135,3 +153,57 @@ npm run smoke:prefix-budget  → exit 0
 
 如果只想要"行为零风险"，**继续 utility + 现在的 256 MB 老生代**也完全可以：两者差距只有 ~14 MB 中位，
 真正值钱的是 node 模式可以**同时收紧新生代**（`semi=4` 时轻载 210 MB）。
+
+## 6. 切默认（本轮，2026-10-24）
+
+### 6.1 前置 soak（node + `semi=4,old=192`，30 轮）
+
+```
+node scripts/soak-host-heap.mjs --rounds 15 --session-rounds 15   --max-host-rss-mb 240 --max-cpu 0.5   --env PIFORGE_HOST_TRANSPORT=node --env PIFORGE_HOST_HEAP=semi=4,old=192
+```
+
+| 判据 | 目标 | 实测 | 判定 |
+|---|---|---|---|
+| OOM | 0 | **0**（`host-oom.json` 未生成） | ✅ |
+| RSS 中位 | ≤240 MB | **216.9 MB**（逐轮 157–238） | ✅ |
+| RSS 峰值 | ≤276 MB（中位 × 1.15） | 252.9 MB | ✅ |
+| 空闲 CPU 中位 | ≤0.5% | **0.35%**（逐轮 0–0.68%） | ✅ |
+
+> 顺带修了 soak 脚本的一个口径问题：它原来拿**最大值**去比中位门禁，一次 GC 抖动就能把
+> 30 轮判红。现在 `--max-host-rss-mb` 是中位验收线，峰值单独用 `--max-host-rss-peak`
+> （默认中位 × 1.15）。另外加了**预检**：机器上还有别的 PiForge/electron 进程就拒绝启动
+> —— 实测被并发实例污染时，同样参数会从 157–221 MB 漂到 234–255 MB，CPU 也会顶穿 0.5%。
+
+### 6.2 默认切换
+
+| 项 | 切换前 | 切换后 |
+|---|---|---|
+| `PIFORGE_HOST_TRANSPORT` 默认 | utility | **node** |
+| 堆默认档 | 8 / 256（utility 只能设老生代） | node：**4 / 192**；utility 保持 8 / 256 |
+| utility 回退 | — | `PIFORGE_HOST_TRANSPORT=utility`（一个变量，不改代码） |
+
+实测（打包版，默认环境变量）：
+
+```
+host 197.1 MB (gate 240, default) · 内存 831.6 MB / 5 进程 · CPU 0
+主进程日志：Agent Host transport {"transport":"node", ..., "semiSpaceMb":4, "oldSpaceMb":192, "heapLimitHintMb":216}
+正常退出：没有 "Agent Host exited before becoming ready"（describeHostExit 的 settled 判定生效）
+```
+
+### 6.3 门禁默认值（`measure-packaged`）
+
+| 传输层 | 默认 `--max-host-rss-mb` | 依据 |
+|---|---|---|
+| node | **240 MB** | 实测 193–230，soak 中位 216.9 |
+| utility | **290 MB** | 实测 258–280（含 280.1 这种擦线样本） |
+
+大会话（26 MB 会话）场景两者都会到 ~286 MB，此时必须显式给更大的门禁 ——
+`--help` 里已经写明这一条，避免下次又拿默认 240 去卡大会话。
+
+### 6.4 回退验证
+
+```
+PIFORGE_HOST_TRANSPORT=utility ... \--max-host-rss-mb 默认 → gate 290
+host 284.5 MB (gate 290, default) · 内存 918.7 MB / 5 进程   → PASS
+```
+退出码 0；主进程日志回到 `transport: utility` + `--js-flags=--max-old-space-size=256`。

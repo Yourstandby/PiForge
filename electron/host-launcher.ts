@@ -22,7 +22,7 @@
 
 export type HostTransport = "utility" | "node";
 
-export type HostTransportCode = "default_utility" | "env_utility" | "env_node" | "invalid_env";
+export type HostTransportCode = "default_node" | "env_utility" | "env_node" | "invalid_env";
 
 export interface HostTransportDecision {
   transport: HostTransport;
@@ -32,20 +32,22 @@ export interface HostTransportDecision {
 
 /**
  * 解析 `PIFORGE_HOST_TRANSPORT`：
- *   - 未设置 / 空 → **utility（默认，行为与切默认前完全一致）**
- *   - `utility`   → utility
- *   - `node`      → ELECTRON_RUN_AS_NODE 子进程
- *   - 其它值      → 回落 utility，并在 `reason` 里写明（不静默改行为）
+ *   - 未设置 / 空 → **node（默认；30 轮 soak 通过后切的，见 docs/optimizations/l1-transport-implementation.md）**
+ *   - `node`      → node（ELECTRON_RUN_AS_NODE 子进程）
+ *   - `utility`   → utilityProcess（回退路径，行为与切默认前一致）
+ *   - 其它值      → 回落 node，并在 `reason` 里写明（不静默改行为）
+ *
+ * 回退：`PIFORGE_HOST_TRANSPORT=utility` 一个变量即可，不需要改代码。
  */
 export function resolveHostTransport(input: { env?: Record<string, string | undefined> } = {}): HostTransportDecision {
   const raw = input.env?.PIFORGE_HOST_TRANSPORT?.trim().toLowerCase();
-  if (!raw) return { transport: "utility", code: "default_utility", reason: "默认 utilityProcess" };
+  if (!raw) return { transport: "node", code: "default_node", reason: "默认 node（ELECTRON_RUN_AS_NODE 子进程）" };
   if (raw === "utility") return { transport: "utility", code: "env_utility", reason: "PIFORGE_HOST_TRANSPORT=utility" };
   if (raw === "node") return { transport: "node", code: "env_node", reason: "PIFORGE_HOST_TRANSPORT=node" };
   return {
-    transport: "utility",
+    transport: "node",
     code: "invalid_env",
-    reason: `PIFORGE_HOST_TRANSPORT="${raw}" 无法识别（只认 utility|node），回落 utilityProcess`,
+    reason: `PIFORGE_HOST_TRANSPORT="${raw}" 无法识别（只认 utility|node），回落默认 node`,
   };
 }
 
@@ -233,4 +235,37 @@ export function parseHostStdinLine(line: string): { type: "shutdown"; reason?: s
   const record = parsed as { type?: unknown; reason?: unknown };
   if (record.type !== "shutdown") return null;
   return { type: "shutdown", ...(typeof record.reason === "string" ? { reason: record.reason } : {}) };
+}
+
+/**
+ * Host 退出时该写哪条日志（纯函数，便于单测）。
+ *
+ * 为什么单独抽出来：这里踩过一个"每次正常退出都误报"的坑 —— 两个 exit 处理器
+ * 竞争，先注册的那个把全局 `agentHostReady` 置 false，后注册的就以为"从没就绪"，
+ * 于是日志里出现 `Agent Host exited before becoming ready`，把正常关闭伪装成启动失败。
+ *
+ * 判定依据必须是**本次启动等待是否已经 settled**（本 Promise 的私有状态），
+ * 而不是任何全局标志。
+ */
+export interface HostExitReport {
+  /** 是否记成错误（只有"还没就绪就退出"才是启动失败）。 */
+  error: boolean;
+  message: string;
+  detail: { code: number | null; transport: HostTransport };
+}
+
+export function describeHostExit(input: {
+  settled: boolean;
+  code: number | null;
+  transport: HostTransport;
+}): HostExitReport {
+  if (input.settled) {
+    // 已就绪后退出：正常关闭 / 崩溃重启都走全局 exit 处理器，这里只留一行 info。
+    return { error: false, message: "Agent Host exited after ready", detail: { code: input.code, transport: input.transport } };
+  }
+  return {
+    error: true,
+    message: "Agent Host exited before becoming ready",
+    detail: { code: input.code, transport: input.transport },
+  };
 }
