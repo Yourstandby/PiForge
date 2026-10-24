@@ -157,9 +157,9 @@ const CONTEXT_RING_CIRCUMFERENCE = 2 * Math.PI * CONTEXT_RING_RADIUS;
 /**
  * 上下文占用指示器：只画一个 14px 的环，不写任何文字。
  *
- * 分母 = 模型真实窗口（Host 侧 `describeContextBudget` 算好），所以环走满就是
- * 真的快装满窗口：60% 以上变黄、85% 以上变红并配脉冲，同时单独弹一条
- * “建议手动压缩”的提醒（不再有任何自动压缩）。
+ * 分母 = 模型真实上下文窗口（Host 侧 `describeContextBudget` 算好），与输入框
+ * 下方那行「上下文 x% / 窗口」同源：环走满就是真的装满窗口。60% 变黄、
+ * 85% 变红并配脉冲，同时单独弹一条“建议手动压缩”的提醒。
  */
 function ContextRing({ budget, compacting }: { budget: ContextBudget; compacting?: boolean }) {
   const filled = Math.max(0, Math.min(1, budget.ratioToCeiling));
@@ -643,12 +643,23 @@ function ChatSession({
         // 未运行的会话没有 contextUsage（Host 侧还没有 wrapper）→ 用 transcript 估算。
         contextTokens: chat.contextUsage?.tokens ?? (estimateContextTokens(messages) || null),
         hasMessages: messages.length > 0,
+        // 只有真正闲置过的会话才算“恢复”：新会话的 modified 就是刚刚，不会触发。
+        lastActivityAt: session?.modified ?? null,
         prefixAudit: chat.prefixAudit,
         dismissed: dismissedGuards,
       }),
     // messages 用于估算上下文（未运行会话没有 contextUsage）；依赖整数组才能跟上内容变化。
-    [chat.contextUsage?.tokens, chat.prefixAudit, messages, dismissedGuards, sessionSplitHint],
+    [chat.contextUsage?.tokens, chat.prefixAudit, messages, dismissedGuards, sessionSplitHint, session?.modified],
   );
+
+  /**
+   * 恢复费提示只在“刚打开、还没发过消息”那一刻成立：一旦开始跑就收起，
+   * 否则它会与“上下文 x% / 窗口”那行一起悬在正在聊的会话里继续误导。
+   */
+  useEffect(() => {
+    if (!chat.agentRunning) return;
+    setDismissedGuards((prev) => (prev.includes("resume-cost") ? prev : [...prev, "resume-cost"]));
+  }, [chat.agentRunning]);
 
   // Reconcile with the server when the run ends without us seeing agent_end.
   useEffect(() => {
@@ -701,9 +712,15 @@ function ChatSession({
    * true 时跳过一切自动贴底，直到用户自己滚回底部或点「回到最新」。
    */
   const userPausedRef = useRef(false);
+  /**
+   * 用户刚上滚过一次（还没真正回到底部）。
+   * 哨兵带 120px 容差，若不锁住，上滚一点点就会被判 intersecting 而拽回底部。
+   * 解除点只有一个：measure 里真正距底 < 40px。
+   */
+  const wheelUpRef = useRef(false);
   /** 输入时保持贴底：仅当用户当前在底部附近（手动上翻后不打扰）。 */
   const stickToBottomIfNear = useCallback(() => {
-    if (userPausedRef.current || !isNearBottomRef.current) return;
+    if (userPausedRef.current || wheelUpRef.current || !isNearBottomRef.current) return;
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, []);
@@ -733,10 +750,14 @@ function ChatSession({
     if (!el) return;
     const onWheel = (event: WheelEvent) => {
       if (event.deltaY < 0) {
+        wheelUpRef.current = true;
         userPausedRef.current = true;
         followOutputRef.current = false;
         isNearBottomRef.current = false;
         needsInitialBottomRef.current = false;
+        // 作废「首屏/切会话贴底窗口」：否则开长会话后 1.5s 内每长高一次
+        // 都把人拽回底部，手一动就被拉回去，看起来就是上下颠。
+        pinBottomUntilRef.current = 0;
         // 取消进行中的平滑滚动，避免惯性把用户拽回底部。
         el.scrollTop = el.scrollTop;
       }
@@ -777,6 +798,8 @@ function ChatSession({
         const atBottom = entry.isIntersecting;
         isNearBottomRef.current = atBottom;
         followOutputRef.current = atBottom;
+        // 上滚未回底期间不解除接管、不补写底部（否则一推滚轮就被拽回）。
+        if (wheelUpRef.current) return;
         userPausedRef.current = !atBottom;
         if (atBottom) {
           needsInitialBottomRef.current = false;
@@ -1221,9 +1244,14 @@ function ChatSession({
       // 距底 <150px 视为贴底；只有此时才允许自动跟随
       const near = distance < 150;
       isNearBottomRef.current = near;
-      if (near) followOutputRef.current = true;
+      // 已经上翻（wheelUp）就不要在这里重新武装跟随：哨兵只有 120px 容差，
+      // 这个 150px 的判定会把刚上翻的用户重新按回底部，滚一下被按回一次。
+      if (near && !wheelUpRef.current) followOutputRef.current = true;
       // 真正滚回底部才解除「用户接管」，点击/微滚动不会误恢复。
-      if (distance < 40) userPausedRef.current = false;
+      if (distance < 40) {
+        userPausedRef.current = false;
+        wheelUpRef.current = false;
+      }
       const away = distance > 120;
       if (away !== lastAway) {
         lastAway = away;
@@ -1525,10 +1553,12 @@ function ChatSession({
           <AlertCircle size={13} strokeWidth={2} className="shrink-0 text-[#D97706]" aria-hidden="true" />
           <span className="min-w-0 truncate">
             {ctxReminder.overshoot
-              ? "上下文已装满窗口，下一轮可能被拒收"
+              ? `上下文已写满窗口（${formatContextTokens(
+                  ctxReminder.tokens ?? 0,
+                )} / ${formatContextCeiling(ctxReminder.ceiling)} token），下一轮可能被拒收`
               : `上下文已用 ${Math.round(ctxReminder.ratioToCeiling * 100)}%（${formatContextTokens(
                   ctxReminder.tokens ?? 0,
-                )} / ${formatContextCeiling(ctxReminder.ceiling)}）`}
+                )} / ${formatContextCeiling(ctxReminder.ceiling)} token）`}
             ，建议手动压缩
           </span>
           <button
@@ -1644,6 +1674,7 @@ function ChatSession({
       <UsageStrip
         sessionStats={chat.sessionStats}
         contextUsage={chat.contextUsage}
+        contextBudget={chat.contextBudget}
         activity={chat.sessionActivity}
         upstreamUsage={upstreamUsage.currentUsage}
         allUsages={upstreamUsage.usages}

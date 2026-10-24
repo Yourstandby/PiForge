@@ -8,11 +8,14 @@ import { UsagePopover } from "./UsagePopover";
 import { subscribeLiveUsage } from "@/lib/live-usage";
 
 import type { ContextUsage, SessionActivity, SessionStats } from "./usage-types";
+import type { ContextBudget } from "@/lib/pi-types";
 import type { UpstreamProviderUsage } from "@/lib/upstream-usage/types";
 
 export interface UsageStripProps {
   sessionStats?: SessionStats | null;
   contextUsage?: ContextUsage | null;
+  /** Host 算好的上下文预算：与对话区那个圆环同源，颜色只看 level。 */
+  contextBudget?: ContextBudget | null;
   activity?: SessionActivity | null;
   upstreamUsage?: UpstreamProviderUsage | null;
   allUsages?: UpstreamProviderUsage[];
@@ -38,6 +41,7 @@ function compactTokens(value: number): string {
 export const UsageStrip = React.memo(function UsageStrip({
   sessionStats = null,
   contextUsage = null,
+  contextBudget = null,
   activity = null,
   upstreamUsage = null,
   allUsages = [],
@@ -85,7 +89,8 @@ export const UsageStrip = React.memo(function UsageStrip({
   useDismissOnOutsideClick(containerRef, open, close);
 
   const hasSessionData = Boolean(tks && tks.input + tks.output + tks.cacheRead + tks.cacheWrite > 0);
-  const hasContext = Boolean(contextUsage?.contextWindow);
+  const ctxWindowTokens = contextBudget?.ceiling || contextUsage?.contextWindow || 0;
+  const hasContext = ctxWindowTokens > 0;
   const hasUpstream = Boolean(upstreamUsage) || allUsages.length > 0;
   if (!hasSessionData && !hasContext && !hasUpstream) return null;
 
@@ -96,11 +101,18 @@ export const UsageStrip = React.memo(function UsageStrip({
         ? (tks.cacheRead / (tks.input + tks.cacheRead + tks.cacheWrite)) * 100
         : null;
 
-  const ctxPercent = contextUsage?.percent ?? null;
+  /**
+   * 上下文占比只有一个分母：模型真实窗口（`contextBudget` 由 Host 算）。
+   * 老路径（只有 contextUsage）只在预算缺字段时兑底，避免两套数字打架。
+   */
+  const ctxPercent =
+    contextBudget && contextBudget.ceiling > 0 && contextBudget.tokens !== null
+      ? contextBudget.ratioToCeiling * 100
+      : (contextUsage?.percent ?? null);
   const ctxColor =
-    ctxPercent !== null && ctxPercent > 90
+    contextBudget?.level === "critical"
       ? "var(--danger)"
-      : ctxPercent !== null && ctxPercent > 70
+      : contextBudget?.level === "warn"
         ? "var(--warning)"
         : undefined;
 
@@ -148,7 +160,7 @@ export const UsageStrip = React.memo(function UsageStrip({
             <span className={`font-medium ${ctxColor ? "" : "text-ink"}`}>
               {ctxPercent !== null ? `${ctxPercent.toFixed(1)}%` : "?"}
               <span className="text-ink-faint">
-                {contextUsage?.contextWindow ? `/${compactTokens(contextUsage.contextWindow)}` : ""}
+                {ctxWindowTokens ? `/${compactTokens(ctxWindowTokens)}` : ""}
               </span>
             </span>
           </span>

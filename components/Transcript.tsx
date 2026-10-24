@@ -1924,8 +1924,14 @@ function AssistantBlocks({
 /* 惰性渲染：离屏轮次的复杂内容（Markdown / 代码高亮 / 工具卡）换成等高空壳 */
 /* -------------------------------------------------------------------------- */
 
-/** 视口外多远就换成空壳（px）。留足缓冲，避免快速滚动时来回水合。 */
-const LAZY_UNMOUNT_MARGIN_PX = 1200;
+/** 进入这个距离就水合（px）。 */
+const LAZY_HYDRATE_MARGIN_PX = 1200;
+/**
+ * 离开这个距离才卸载（px），**必须大于**水合距离。
+ * 单档阈值等于一个没有滞回的开关：卡在边界上的那一轮会「水合 → 撑高越界 →
+ * 卸载 → 缩回界内 → 再水合」来回抖，整页跟着上下跳。
+ */
+const LAZY_UNMOUNT_MARGIN_PX = 2000;
 /** 重新进入安全区后，等滚动稍停再水合，避免拖拽期间逐帧渲染。 */
 const LAZY_HYDRATE_DELAY_MS = 80;
 
@@ -1953,39 +1959,48 @@ function LazyTurnBody({ pin = false, children }: { pin?: boolean; children: Reac
     if (!el) return;
 
     let timer: number | null = null;
-    const observer = new IntersectionObserver(
+    const hydrate = () => {
+      if (activeRef.current || timer !== null) return;
+      timer = window.setTimeout(() => {
+        timer = null;
+        activeRef.current = true;
+        setActive(true);
+      }, LAZY_HYDRATE_DELAY_MS);
+    };
+    const unmount = () => {
+      if (timer !== null) {
+        window.clearTimeout(timer);
+        timer = null;
+      }
+      if (!activeRef.current || pinnedRef.current) return;
+      // 切到后台标签时容器是 display:none，这一帧高度为 0，IO 也会报
+      // not-intersecting。此时若照常卸载，heightRef 会被记成 0，占位符
+      // 塔成 min-h-16，整页高度骤降、切回后 scrollTop 被 clamp（表现为
+      // “乱跳到中间”）。高度为 0 就当作“不可测量”，保留已渲染内容。
+      const measured = node.getBoundingClientRect().height;
+      if (measured <= 0) return;
+      heightRef.current = measured;
+      activeRef.current = false;
+      setActive(false);
+    };
+    // 水合与卸载必须用两档距离（`rootMargin` 一次只能给一档）。
+    const hydrateObserver = new IntersectionObserver(
       (entries) => {
-        const entry = entries[entries.length - 1];
-        if (!entry) return;
-        if (entry.isIntersecting) {
-          if (activeRef.current || timer !== null) return;
-          timer = window.setTimeout(() => {
-            timer = null;
-            activeRef.current = true;
-            setActive(true);
-          }, LAZY_HYDRATE_DELAY_MS);
-          return;
-        }
-        if (timer !== null) {
-          window.clearTimeout(timer);
-          timer = null;
-        }
-        if (!activeRef.current || pinnedRef.current) return;
-        // 切到后台标签时容器是 display:none，这一帧高度为 0，IO 也会报
-        // not-intersecting。此时若照常卸载，heightRef 会被记成 0，占位符
-        // 塔成 min-h-16，整页高度骤降、切回后 scrollTop 被 clamp（表现为
-        // “乱跳到中间”）。高度为 0 就当作“不可测量”，保留已渲染内容。
-        const measured = node.getBoundingClientRect().height;
-        if (measured <= 0) return;
-        heightRef.current = measured;
-        activeRef.current = false;
-        setActive(false);
+        if (entries.some((entry) => entry.isIntersecting)) hydrate();
+      },
+      { root: el, rootMargin: `${LAZY_HYDRATE_MARGIN_PX}px 0px` },
+    );
+    const unmountObserver = new IntersectionObserver(
+      (entries) => {
+        if (entries.every((entry) => !entry.isIntersecting)) unmount();
       },
       { root: el, rootMargin: `${LAZY_UNMOUNT_MARGIN_PX}px 0px` },
     );
-    observer.observe(node);
+    hydrateObserver.observe(node);
+    unmountObserver.observe(node);
     return () => {
-      observer.disconnect();
+      hydrateObserver.disconnect();
+      unmountObserver.disconnect();
       if (timer !== null) window.clearTimeout(timer);
     };
   }, []);
@@ -2779,8 +2794,11 @@ export function Transcript({
       if (root.clientHeight === 0) return;
       const rootTop = root.getBoundingClientRect().top;
       const sentinelTop = sentinel.getBoundingClientRect().top;
-      // 进入视口上方 600px 的预加载区就补历史
-      if (sentinelTop - rootTop <= 600) loadEarlier();
+      // 预加载区 = 视口上沿往上 600px 以内。**必须**写成 rootTop - sentinelTop：
+      // 反过来（sentinelTop - rootTop）在「已经往下读了几千 px」时也是负数、
+      // 恒 <= 600，于是滚动一次就每 140ms 补 20 轮，几秒内把整段历史全挂上来，
+      // 每批都要重锚定 scrollTop —— 表现就是阅读时页面一直上下跳。
+      if (rootTop - sentinelTop <= 600) loadEarlier();
     };
 
     const observer = new IntersectionObserver(

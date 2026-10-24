@@ -177,6 +177,46 @@ test("a failed model summary still produces a usable checkpoint", async () => {
   assert.match(result.compaction.summary, /src\/file-0\.ts/);
 });
 
+test("pi 算好的 preparation 优先：切点与 turnPrefix 都交给 pi", async () => {
+  const entries = branch(1);
+  let captured: readonly unknown[] = [];
+  const { handlers, ctx } = setup({
+    entries,
+    summarize: async (input) => {
+      captured = (input as { messages: readonly unknown[] }).messages;
+      return "## 1. 用户核心意图\nok" + "y".repeat(80);
+    },
+  });
+  const preparation = {
+    firstKeptEntryId: "pi-kept-entry",
+    tokensBefore: 55_555,
+    previousSummary: "old checkpoint",
+    isSplitTurn: true,
+    messagesToSummarize: [
+      { role: "user", content: [{ type: "text", text: "历史任务" }] },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "改文件" }],
+        toolCalls: [{ name: "edit", arguments: { path: "src/pi-cut.ts" } }],
+      },
+    ],
+    turnPrefixMessages: [{ role: "user", content: [{ type: "text", text: "切分轮前半段" }] }],
+  };
+  const result = (await handlers.get("session_before_compact")?.(
+    { type: "session_before_compact", preparation, branchEntries: entries, reason: "threshold", willRetry: false },
+    ctx,
+  )) as { compaction?: { summary: string; firstKeptEntryId: string; tokensBefore: number } };
+
+  assert.ok(result?.compaction);
+  // 切点必须用 pi 的，不是 PiForge 自己的轮对齐结果。
+  assert.equal(result.compaction.firstKeptEntryId, "pi-kept-entry");
+  assert.equal(result.compaction.tokensBefore, 55_555);
+  // 摘要输入 = messagesToSummarize + turnPrefixMessages（切分轮前半段不能漏）。
+  assert.equal(captured.length, 3);
+  // 文件清单仍由代码兜底。
+  assert.match(result.compaction.summary, /src\/pi-cut\.ts/);
+});
+
 test("falls back to pi's own summarizer when no round-aligned cut exists", async () => {
   const entries = branch(2);
   const { handlers, ctx } = setup({ entries });

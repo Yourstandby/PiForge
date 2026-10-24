@@ -5,7 +5,9 @@
  *   - P2-2：同一会话里工具集/系统提示词变了（`agent.state.prefixAudit` 的
  *     `unexpectedChanges > 0` 且工具被**移除**）→ 前缀整段失效，下一轮要把历史
  *     全部按未命中重发。跨 app 切换（两家共用 `~/.pi/agent`）最常触发这条。
- *   - P2-3a：恢复一个上下文很大的会话时，缓存可能已凉 → 第一次请求要重发 ≈N tok。
+ *   - P2-3a：恢复一个**真正闲置过**（`session.modified` 超过 10 分钟）且上下文很大的
+ *     会话时，缓存可能已凉 → 第一次请求要重发 ≈N tok。刚开的活跃会话不提示：
+ *     那种情况的数字只是当前上下文本身，说“恢复”就是误导。
  *
  * 硬约束：**只读**。这里不 import 前缀机制、不写任何状态、不发请求；
  * `agent-host/prompt-prefix.ts` 与工具域一行未动。文案只做提示，不阻断。
@@ -17,6 +19,17 @@
 
 /** 恢复提示的上下文阈值：低于这个量级重发成本可以忽略（约 $0.006/次）。 */
 export const RESUME_TOKENS_THRESHOLD = 20_000;
+/**
+ * 恢复提示的空闲阈值：只有“真的闲置过”才算恢复。
+ *
+ * 之前只看“有消息 + 上下文 ≥20k”，于是**任何**活跃会话（包括刚开的、上下文
+ * 43k 的）都会挂着“恢复这个会话将重发 ≈43k tok”，而那一刻并没有任何恢复动作，
+ * 数字只是把底部“上下文 x% / 窗口”换个说法。
+ *
+ * 省 token 视角：提示本身不进上下文，但误导性提示会推着用户去“开新会话 /
+ * 重发探路”，反而制造真实开销；所以宁可只在一分钟内真正值得说的那一次出现。
+ */
+export const RESUME_IDLE_MS = 10 * 60_000;
 /** 会话拆分建议的上下文阈值（≈ 本机 cacheRead 中位的 1.4 倍）。 */
 export const SPLIT_TOKENS_THRESHOLD = 200_000;
 
@@ -130,6 +143,13 @@ export interface TokenGuardInput {
   hasMessages?: boolean;
   /** `agent.state.prefixAudit` */
   prefixAudit?: PrefixAuditView | null;
+  /**
+   * 会话文件最后活动时间（`session.modified`，ISO 字符串或 ms）。
+   * 缺失 = 无从判断是否恢复 → `resume-cost` 不出现（宁可不说，也不误说）。
+   */
+  lastActivityAt?: string | number | null;
+  /** 当前时间（ms），只给单测注入，运行时不传。 */
+  now?: number;
   /** 用户手动关掉的 hint 类型集合（本会话内）。 */
   dismissed?: readonly TokenGuardKind[];
   /** 实验开关（L-B）。不传 = 全部关闭 = 与引入前逐字节一致。 */
@@ -143,6 +163,23 @@ function positive(value: unknown): number {
 function formatTokens(tokens: number): string {
   if (tokens >= 1000) return `${Math.round(tokens / 1000)}k`;
   return String(tokens);
+}
+
+/** 把 `session.modified` 归一成 ms；无效值返回 null（无法判断空闲时长）。 */
+function toMillis(value: string | number | null | undefined): number | null {
+  if (typeof value === "number") return Number.isFinite(value) && value > 0 ? value : null;
+  if (typeof value !== "string" || value.length === 0) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/** 空闲了多久（分钟，取下整）；无法判断时返回 null。 */
+function idleMinutes(lastActivityAt: string | number | null | undefined, now: number): number | null {
+  const last = toMillis(lastActivityAt);
+  if (last === null) return null;
+  const delta = now - last;
+  if (!Number.isFinite(delta) || delta < RESUME_IDLE_MS) return null;
+  return Math.floor(delta / 60_000);
 }
 
 /**
@@ -171,6 +208,8 @@ export function isPrefixInvalidated(audit: PrefixAuditView | null | undefined): 
 export function resolveTokenGuards(input: TokenGuardInput): TokenGuardHint[] {
   const dismissed = new Set(input.dismissed ?? []);
   const contextTokens = positive(input.contextTokens);
+  const now = typeof input.now === "number" && Number.isFinite(input.now) ? input.now : Date.now();
+  const idle = idleMinutes(input.lastActivityAt, now);
   const hints: TokenGuardHint[] = [];
 
   if (!dismissed.has("prefix-invalidated") && isPrefixInvalidated(input.prefixAudit)) {
@@ -193,12 +232,15 @@ export function resolveTokenGuards(input: TokenGuardInput): TokenGuardHint[] {
   if (
     !dismissed.has("resume-cost") &&
     input.hasMessages === true &&
-    contextTokens >= RESUME_TOKENS_THRESHOLD
+    contextTokens >= RESUME_TOKENS_THRESHOLD &&
+    idle !== null
   ) {
     hints.push({
       kind: "resume-cost",
-      text: `恢复这个会话将重发 ≈${formatTokens(contextTokens)} tok（缓存可能已过期）`,
-      detail: "间隔较久时缓存会失效，这次恢复按未命中计费。介意的话可以开新会话，或先发一条短消息探路。",
+      text: `这个会话闲置 ${idle} 分钟后恢复，将重发 ≈${formatTokens(contextTokens)} tok`,
+      detail:
+        "闲置超过 10 分钟缓存通常已凉，这次恢复按未命中计费。" +
+        "想省 token 就先发一句短问题探路（让它接着聊），或直接开新会话。",
       estimatedTokens: contextTokens,
     });
   }
