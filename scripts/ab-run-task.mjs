@@ -122,10 +122,13 @@ export function evaluateCheck(check, workdir) {
 // ---------------------------------------------------------------------------
 // 会话 JSONL → 用量指标
 // ---------------------------------------------------------------------------
-export function readUsage(sessionFile) {
+export function readUsage(sessionFile, { skipLines = 0 } = {}) {
   const usage = { calls: 0, cacheRead: [], input: [], output: [], cost: 0, reasoning: 0 };
   if (!sessionFile || !existsSync(sessionFile)) return finalize(usage);
-  for (const line of readFileSync(sessionFile, "utf8").split("\n")) {
+  const allLines = readFileSync(sessionFile, "utf8").split(String.fromCharCode(10));
+  // 续跑（L-A 预演）时会话文件里已有历史：只统计**本次 run 新增**的行，
+  // 否则历史里几万 token 的 cacheRead 会被算进"这一题的成本"。
+  for (const line of allLines.slice(skipLines)) {
     if (!line.trim()) continue;
     let entry;
     try {
@@ -167,6 +170,10 @@ function finalize(usage) {
       return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.9))];
     })(),
     cacheReadTotal: cacheTotal,
+    /** 本次 run 实际为上下文付的 token 总量（cacheRead + 未命中 input），跨状态可比。 */
+    contextTokensTotal: cacheTotal + inputTotal,
+    /** 第一次任务调用的上下文规模（最能代表"压缩后还剩多少"）。 */
+    contextTokensFirst: usage.cacheRead.length > 0 ? usage.cacheRead[0] + usage.input[0] : 0,
     /** 未命中占比：input / (input + cacheRead)。越高说明"每次都在付全价"。 */
     inputMissRatio: inputTotal + cacheTotal > 0 ? Number((inputTotal / (inputTotal + cacheTotal)).toFixed(4)) : 0,
     outputTotal: usage.output.reduce((sum, value) => sum + value, 0),
@@ -290,47 +297,167 @@ function connectClient(endpoint, token) {
  * 跑一道题。返回一行结果（也会被 `--run` 汇总）。
  * `timeoutMs`：整题墙钟上限；超时先 `agent.abort` 再 destroy，结果标记 `timedOut`。
  */
-export async function runTask({ task, arm, round, timeoutMs = 8 * 60_000, outDir, verbose = false }) {
-  const env = ARMS[arm];
-  if (!env) throw new Error(`unknown arm: ${arm}`);
+export async function runTask({
+  task,
+  arm,
+  round,
+  timeoutMs = 8 * 60_000,
+  outDir,
+  verbose = false,
+  /** 额外环境变量（例如 `PI_CODING_AGENT_DIR`，L-A 预演用独立 agent 目录）。 */
+  extraEnv = {},
+  /**
+   * 从一份**已准备好的会话文件**续跑（L-A 预演的「压缩后状态」）：
+   * 传了就走 `agent.ensure(filePath)` + `agent.command(prompt)`，而不是 `agent.create`。
+   */
+  resumeSessionFile = null,
+  /** 结果里额外打标的键值（例如 `state: "C2"`）。 */
+  labels = {},
+  /**
+   * 续跑状态下把历史里的绝对仓库路径改写到本次工作树。
+   *
+   * 为什么必须做：真实 transcript 里到处是 `D:\Pi\PiForge\...`，模型会**照着历史里的
+   * 绝对路径**去改文件 —— 实测第一版预演就是这样把改动写进了真实仓库（`electron/host-heap.ts`
+   * 被改、根目录多出 `ab-answer.json`），而工作树里的 check 自然全红。
+   */
+  rewriteRepoPaths = false,
+}) {
+  const env = { ...(ARMS[arm] ?? {}), ...extraEnv };
+  if (arm !== "control" && !(arm in ARMS)) throw new Error(`unknown arm: ${arm}`);
   const log = { text: "" };
   const collect = (chunk) => {
     log.text = (log.text + chunk).slice(-20_000);
     if (verbose) process.stderr.write(chunk);
   };
 
+  /** 续跑时先把准备好的状态复制一份（run 会往会话文件里追加，不能污染素材）。 */
+  let sessionFileForRun = resumeSessionFile;
+  /** 续跑时的"历史行数"：只有这之后新增的 assistant 消息才算本次 run 的用量。 */
+  let usageSkipLines = 0;
   const workdir = createWorktree(`${arm}-${task.id}`.replace(/[^A-Za-z0-9-]+/g, "").slice(0, 40));
+  if (resumeSessionFile && rewriteRepoPaths) {
+    /**
+     * 把历史里的**绝对仓库路径**改写到本次工作树。
+     *
+     * 为什么必须做：真实 transcript 里到处是 `D:\Pi\PiForge\...`，模型会照着历史里的
+     * 绝对路径改文件 —— 实测会把改动写进真实仓库（`electron/host-heap.ts`、
+     * `components/ChatSurface.tsx` 被改，工作树里的 check 全红）。
+     *
+     * 为什么用"解析后遍历字符串"而不是文本替换：会话文件是 JSONL，路径在文本里是
+     * `D:\Pi\PiForge`（转义形态），按单反斜杠做文本替换会漏掉绝大多数位置（踩过）。
+     * 在 JSON 层面替换字符串值，两种形态一次覆盖。
+     */
+    const raw = readFileSync(resumeSessionFile, "utf8");
+    const fromVariants = [repoRoot, repoRoot.split(String.fromCharCode(92)).join("/")];
+    const replaceDeep = (value) => {
+      if (typeof value === "string") {
+        let next = value;
+        for (const from of fromVariants) next = next.split(from).join(workdir);
+        return next;
+      }
+      if (Array.isArray(value)) return value.map(replaceDeep);
+      if (value && typeof value === "object") {
+        const out = {};
+        for (const [key, entry] of Object.entries(value)) out[key] = replaceDeep(entry);
+        return out;
+      }
+      return value;
+    };
+    const rewrittenLines = [];
+    for (const line of raw.split(String.fromCharCode(10))) {
+      if (!line.trim()) continue;
+      try {
+        rewrittenLines.push(JSON.stringify(replaceDeep(JSON.parse(line))));
+      } catch {
+        rewrittenLines.push(line);
+      }
+    }
+    // 每次 run 必须用**独立文件**：共用一份会让上一轮的历史（含改了哪些文件）累积到下一轮，
+    // 后面的 run 会看到"已经做完了"，结果不可比（实测过）。
+    const target = `${resumeSessionFile.replace(/\.jsonl$/, "")}-rw-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}.jsonl`;
+    writeFileSync(target, `${rewrittenLines.join(String.fromCharCode(10))}
+`);
+    resumeSessionFile = target;
+    sessionFileForRun = target;
+  }
   const startedAt = Date.now();
   const { child, endpoint, token } = startHost({ env, log: collect });
   let sessionId = null;
   let client = null;
-  const result = { task: task.id, arm, round, passed: false, timedOut: false, durationMs: 0, error: null };
+  const result = { task: task.id, arm, round, ...labels, passed: false, timedOut: false, durationMs: 0, error: null };
+  /** 续跑时先把准备好的状态复制一份（run 会往会话文件里追加，不能污染素材）。 */
+  /** 续跑时的"历史行数"：只有这之后新增的 assistant 消息才算本次 run 的用量。 */
 
   try {
     await waitForReady(child, log);
     client = await connectClient(endpoint, token);
     await client.hello();
 
-    const created = await client.call("agent.create", {
-      cwd: workdir,
-      agentMode: "full",
-      toolPreset: "default",
-      command: { type: "prompt", message: task.prompt },
-    });
-    if (!created.ok) throw new Error(`agent.create failed: ${JSON.stringify(created.error ?? created)}`);
-    sessionId = created.result.sessionId;
+    if (sessionFileForRun) {
+      // 续跑压缩后的状态：ensure 会从文件装载（含 compaction 摘要），再发任务 prompt。
+      const sessionIdForState = path.basename(sessionFileForRun, ".jsonl").split("_").pop();
+      const ensured = await client.call("agent.ensure", {
+        sessionId: sessionIdForState,
+        filePath: sessionFileForRun,
+        cwd: workdir,
+        agentMode: "full",
+        toolPreset: "default",
+      });
+      if (!ensured.ok) throw new Error(`agent.ensure failed: ${JSON.stringify(ensured.error ?? ensured)}`);
+      sessionId = ensured.result.sessionId;
+      usageSkipLines = readFileSync(sessionFileForRun, "utf8").split(String.fromCharCode(10)).filter((entry) => entry.trim()).length;
 
-    // 等收尾：isStreaming=false 且连续两次 stats 不再变化（工具循环收尾有抖动）。
+      const sent = await client.call("agent.command", {
+        sessionId,
+        command: { type: "prompt", message: task.prompt },
+      });
+      if (sent.ok === false) throw new Error(`agent.command failed: ${JSON.stringify(sent.error ?? sent)}`);
+    } else {
+      const created = await client.call("agent.create", {
+        cwd: workdir,
+        agentMode: "full",
+        toolPreset: "default",
+        command: { type: "prompt", message: task.prompt },
+      });
+      if (!created.ok) throw new Error(`agent.create failed: ${JSON.stringify(created.error ?? created)}`);
+      sessionId = created.result.sessionId;
+    }
+
+    /**
+     * 等收尾。**不能只看 isStreaming**：刚发出 prompt 时它还是 false（还没开始流），
+     * 于是循环会立刻退出 → 记成 "0 次调用"（L-A 预演的 C3 就是这么假死的）。
+     * 现在的判定：本次 run 必须**至少新增一条 assistant 消息**，再连续两次 stats 不变才算收尾。
+     */
+    const sessionPath = sessionFileForRun ?? null;
+    const countAssistant = () => {
+      if (!sessionPath || !existsSync(sessionPath)) return 0;
+      let count = 0;
+      for (const line of readFileSync(sessionPath, "utf8").split(String.fromCharCode(10))) {
+        if (!line.trim()) continue;
+        try {
+          const entry = JSON.parse(line);
+          if (entry?.type === "message" && entry?.message?.role === "assistant") count += 1;
+        } catch {
+          // 半行忽略
+        }
+      }
+      return count;
+    };
+    const baselineAssistant = countAssistant();
     const deadline = startedAt + timeoutMs;
     let stable = 0;
     let lastSignature = "";
+    let sawAssistant = false;
     while (Date.now() < deadline) {
       await sleep(1_500);
       const state = await client.call("agent.state", { sessionId }, 60_000);
       const value = state?.result?.state ?? {};
       const signature = `${value.sessionStats?.tokens?.output ?? 0}:${value.sessionStats?.tokens?.cacheRead ?? 0}`;
-      if (value.isStreaming === true) {
+      const assistantCount = countAssistant();
+      if (assistantCount > baselineAssistant) sawAssistant = true;
+      if (value.isStreaming === true || !sawAssistant) {
         stable = 0;
+        lastSignature = signature;
         continue;
       }
       stable = signature === lastSignature ? stable + 1 : 0;
@@ -344,7 +471,11 @@ export async function runTask({ task, arm, round, timeoutMs = 8 * 60_000, outDir
 
     const finalState = await client.call("agent.state", { sessionId }, 60_000);
     const sessionFile = finalState?.result?.state?.sessionFile ?? null;
-    Object.assign(result, readUsage(sessionFile));
+    if (process.env.PIFORGE_AB_DEBUG === "1") {
+      const total = sessionFile ? readFileSync(sessionFile, "utf8").split(String.fromCharCode(10)).filter((line) => line.trim()).length : 0;
+      console.error(`[ab-debug] sessionFile=${sessionFile} totalLines=${total} skipLines=${usageSkipLines}`);
+    }
+    Object.assign(result, readUsage(sessionFile, { skipLines: usageSkipLines }));
     result.sessionFile = sessionFile ? path.relative(repoRoot, sessionFile) : null;
     result.passed = evaluateCheck(task.check, workdir);
   } catch (error) {
