@@ -36,6 +36,14 @@ const TEXT_EXTENSIONS = new Set([
   "changelog", "procfile",
 ]);
 
+/**
+ * Prism 高亮是同步 tokenize：几百 KB 文件会占住主线程数秒，正在流式的回复、
+ * 输入框全卡住（看起来就像“对话被中断”）。超过阈值直接降级为纯文本行渲染，
+ * 行号 / 目标行高亮都保留；极端行数再截断。
+ */
+const HIGHLIGHT_MAX_CHARS = 80_000;
+const PLAIN_MAX_LINES = 4_000;
+
 type FileKind = "image" | "html" | "markdown" | "text" | "unsupported";
 
 function fileExtension(fileName: string): string {
@@ -55,6 +63,62 @@ function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * 纯文本代码渲染：不做任何 tokenize，保留行号与目标行高亮。
+ * 用于超过高亮阈值的文件，保证点开文件不会阻塞对话流式渲染。
+ */
+function PlainCode({
+  lines,
+  wrap,
+  targetLine,
+}: {
+  lines: string[];
+  wrap: boolean;
+  targetLine?: number;
+}) {
+  const truncated = lines.length > PLAIN_MAX_LINES;
+  const visible = truncated ? lines.slice(0, PLAIN_MAX_LINES) : lines;
+  return (
+    <div
+      className="min-h-full bg-[#FBFCFE] py-2 font-mono text-[12px] leading-[1.6]"
+      style={{ fontFamily: "var(--font-mono)" }}
+    >
+      {visible.map((line, index) => {
+        const lineNumber = index + 1;
+        return (
+          <div
+            key={lineNumber}
+            data-line={lineNumber}
+            className="flex"
+            style={lineNumber === targetLine ? { background: "#FFF6D8" } : undefined}
+          >
+            <span
+              className="shrink-0 select-none pr-3 pl-3 text-right text-ink-faint"
+              style={{ minWidth: "3em", color: "var(--text-dim)" }}
+            >
+              {lineNumber}
+            </span>
+            <span
+              className={
+                wrap
+                  ? "min-w-0 flex-1 whitespace-pre-wrap break-words pr-3"
+                  : "min-w-0 flex-1 whitespace-pre pr-3"
+              }
+            >
+              {line || " "}
+            </span>
+          </div>
+        );
+      })}
+      {truncated && (
+        <p className="px-3 py-2 text-[11px] text-ink-faint">
+          文件过大，仅显示前 {PLAIN_MAX_LINES} 行（共 {lines.length} 行）。
+        </p>
+      )}
+    </div>
+  );
 }
 
 export function FloatingFileViewer({
@@ -143,6 +207,8 @@ export function FloatingFileViewer({
   }, [target.filePath, target.diff, cwd, refreshKey]);
 
   const lines = useMemo(() => (data?.content ?? "").split("\n"), [data?.content]);
+  /** 过大文件不走 Prism，避免点开瞬间卡住正在流式的对话。 */
+  const heavy = !target.diff && (data?.content.length ?? 0) > HIGHLIGHT_MAX_CHARS;
 
   useEffect(() => {
     if (!target.line || !data || editing || preview || target.diff) return;
@@ -366,35 +432,39 @@ export function FloatingFileViewer({
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{data.content}</ReactMarkdown>
           </div>
         ) : data ? (
-          <SyntaxHighlighter
-            language={data.language === "text" ? "plaintext" : data.language}
-            style={syntaxThemeFor("light")}
-            showLineNumbers
-            wrapLines
-            lineProps={(lineNumber: number) => ({
-              "data-line": lineNumber,
-              style: lineNumber === target.line ? { background: "#FFF6D8" } : undefined,
-            })}
-            lineNumberStyle={{
-              color: "var(--text-dim)",
-              fontStyle: "normal",
-              minWidth: "3em",
-              paddingRight: "1em",
-            }}
-            customStyle={{
-              margin: 0,
-              padding: "10px 0",
-              background: "#FBFCFE",
-              fontSize: 12,
-              lineHeight: 1.6,
-              fontFamily: "var(--font-mono)",
-              minHeight: "100%",
-            }}
-            codeTagProps={{ style: { fontFamily: "var(--font-mono)" } }}
-            wrapLongLines={wrap}
-          >
-            {data.content}
-          </SyntaxHighlighter>
+          heavy ? (
+            <PlainCode lines={lines} wrap={wrap} targetLine={target.line} />
+          ) : (
+            <SyntaxHighlighter
+              language={data.language === "text" ? "plaintext" : data.language}
+              style={syntaxThemeFor("light")}
+              showLineNumbers
+              wrapLines
+              lineProps={(lineNumber: number) => ({
+                "data-line": lineNumber,
+                style: lineNumber === target.line ? { background: "#FFF6D8" } : undefined,
+              })}
+              lineNumberStyle={{
+                color: "var(--text-dim)",
+                fontStyle: "normal",
+                minWidth: "3em",
+                paddingRight: "1em",
+              }}
+              customStyle={{
+                margin: 0,
+                padding: "10px 0",
+                background: "#FBFCFE",
+                fontSize: 12,
+                lineHeight: 1.6,
+                fontFamily: "var(--font-mono)",
+                minHeight: "100%",
+              }}
+              codeTagProps={{ style: { fontFamily: "var(--font-mono)" } }}
+              wrapLongLines={wrap}
+            >
+              {data.content}
+            </SyntaxHighlighter>
+          )
         ) : null}
       </div>
     </div>
