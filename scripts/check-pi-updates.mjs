@@ -5,8 +5,14 @@
  * Reads the exact @earendil-works versions pinned in package.json, asks the
  * npm registry for the latest release, and prints an actionable report.
  * Exits 0 even when updates exist: this is a report, not a release gate.
+ *
+ * `--json` prints the same report as one JSON object (used by
+ * `.github/workflows/pi-auto-upgrade.yml` so CI reuses this logic instead of
+ * re-implementing it). Exit code stays 0 in both modes.
  */
 import { readFileSync } from "node:fs";
+
+const asJson = process.argv.includes("--json");
 
 const PI_SCOPE = "@earendil-works/";
 const registry = process.env.NPM_REGISTRY_URL?.replace(/\/+$/, "") || "https://registry.npmjs.org";
@@ -74,12 +80,16 @@ for (const [name, spec] of entries) {
   }
 }
 
-console.log(`Pi dependency report (${new Date().toISOString()})`);
-console.log(`Registry: ${registry}`);
-for (const row of rows) {
-  console.log(`  ${row.status === "UPDATE" ? "↑" : row.status === "current" ? "✓" : "!"} ${row.name}`);
-  console.log(`      pinned ${row.current} · latest ${row.latest} · ${row.status}`);
+if (asJson) {
+  console.log(JSON.stringify({ checkedAt: new Date().toISOString(), registry, updates, packages: rows }, null, 2));
+} else {
+  console.log(`Pi dependency report (${new Date().toISOString()})`);
+  console.log(`Registry: ${registry}`);
+  for (const row of rows) {
+    console.log(`  ${row.status === "UPDATE" ? "↑" : row.status === "current" ? "✓" : "!"} ${row.name}`);
+    console.log(`      pinned ${row.current} · latest ${row.latest} · ${row.status}`);
+  }
+  console.log(updates > 0
+    ? `\n${updates} update(s) available. Review the SDK adapter boundary before bumping.`
+    : "\nAll pinned Pi packages are current.");
 }
-console.log(updates > 0
-  ? `\n${updates} update(s) available. Review the SDK adapter boundary before bumping.`
-  : "\nAll pinned Pi packages are current.");
