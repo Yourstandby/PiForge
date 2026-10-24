@@ -31,6 +31,13 @@ const outfile = path.join(outDir, "host.mjs");
 /** SDK 里通过 `new URL(..., import.meta.url)` 定位的资源文件（打包后必须并排放）。 */
 const runtimeAssets = [
   ["node_modules/@earendil-works/pi-coding-agent/dist/utils/image-resize-worker.js", "image-resize-worker.js"],
+  /**
+   * Photon（图片缩小/重编码）的 wasm。SDK 的 photon.js 内联进 bundle 后会用
+   * `join(__dirname, "photon_rs_bg.wasm")` 去读它；bundle 是 ESM，原生没有
+   * __dirname（见下方 banner）。缺任何一个 → loadPhoton() 返回 null →
+   * 所有超限图片被 "[Image omitted: could not be resized…]" 吃掉。
+   */
+  ["node_modules/@earendil-works/pi-coding-agent/node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm", "photon_rs_bg.wasm"],
 ];
 
 if (!existsSync(entry)) {
@@ -62,7 +69,15 @@ const result = await build({
    * `__require` 一旦看到作用域里有 `require` 就用它，所以 banner 里补一个。
    */
   banner: {
-    js: 'import { createRequire as __piforgeCreateRequire } from "node:module"; const require = __piforgeCreateRequire(import.meta.url);',
+    js: [
+      'import { createRequire as __piforgeCreateRequire } from "node:module"; const require = __piforgeCreateRequire(import.meta.url);',
+      /**
+       * ESM 没有 __dirname，而内联的 CJS 依赖（photon_rs.js 读 wasm）直接用她。
+       * 指向 bundle 自身目录：复制到 resources/standalone/agent-host/ 依然能找到
+       * 并排的 photon_rs_bg.wasm。
+       */
+      'import { fileURLToPath as __piforgeFileURLToPath } from "node:url"; const __dirname = __piforgeFileURLToPath(new URL(".", import.meta.url));',
+    ].join("\n"),
   },
 });
 
