@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, ChevronDown, ChevronUp, File, Folder, GripVertical, ImagePlus, Paperclip, Square } from "lucide-react";
+import { ArrowUp, ChevronDown, ChevronUp, File, Folder, GripVertical, ImagePlus, Paperclip, Square, X } from "lucide-react";
 import type { AttachedImage } from "./chat-input/types";
 import { processImageFile } from "@/lib/image-attachment";
 import { AttachmentPreview } from "./chat-input/AttachmentPreview";
@@ -629,6 +629,18 @@ export function Composer({
                     <ChevronDown size={11} strokeWidth={2} />
                   </button>
                 </span>
+              )}
+              {onRemoveFollowUp && (
+                <button
+                  type="button"
+                  onClick={() => onRemoveFollowUp(item.id)}
+                  disabled={queueBusy}
+                  aria-label={`删除队列消息 ${index + 1}`}
+                  title="删除队列消息"
+                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-ink-faint hover:bg-[#ECECEF] hover:text-ink disabled:opacity-30"
+                >
+                  <X size={11} strokeWidth={2} />
+                </button>
               )}
             </div>
           ))}

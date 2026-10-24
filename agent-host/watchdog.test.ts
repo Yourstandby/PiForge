@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { ProgressTracker, describeSuspectedBlocker } from "./progress-tracker.ts";
 import {
+  acceptIntervention,
   getTaskStatus,
   getWatchdogSnapshot,
   performIntervention,
@@ -436,6 +437,31 @@ test("duplicate clicks are rejected host-side and never reach the queue twice", 
   assert.equal(second.ok, false);
   assert.equal(second.rejected, "duplicate");
   assert.equal(session.delivered.length, 1, "重复点击不得再注入一条");
+});
+
+test("accepting an intervention returns without waiting for delivery", () => {
+  const clock = fixedClock();
+  resetWatchdogForTest({ stallMs: 90_000, stallScans: 1 });
+  setWatchdogClockForTest(clock.now);
+  observeAgentEvent(SESSION, { type: "agent_start" });
+  clock.advance(1_000);
+
+  // 模拟「投递要等当前工具跑完」：这个 Promise 永不 settle。
+  let deliverCalls = 0;
+  const slowSession = {
+    deliverIntervention() {
+      deliverCalls += 1;
+      return new Promise<{ delivered: "steer" }>(() => {});
+    },
+  };
+
+  // 同步返回是关键：UI 的「发送中…」不能被投递延迟绑住。
+  const accepted = acceptIntervention({ sessionId: SESSION, actionType: "skip", now: clock.now() });
+  assert.equal(accepted.ok, true);
+  assert.equal(accepted.accepted, true);
+  assert.equal(deliverCalls, 0, "受理阶段不得自己投递");
+  assert.equal(accepted.task?.status, "running", "红灯要立刻变绿，不等送达");
+  assert.equal(accepted.task?.interventionCount, 1);
 });
 
 test("intervention is refused when nothing is running or the watchdog is off", async () => {

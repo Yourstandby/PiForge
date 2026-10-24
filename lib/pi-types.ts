@@ -87,6 +87,8 @@ export interface AgentSessionLike {
   subscribe(listener: (event: AgentSessionEvent) => void): () => void;
   prompt(text: string, options?: { images?: Array<{ type: "image"; data: string; mimeType: string }> }): Promise<void>;
   abort(): Promise<void>;
+  /** 打断当前正在执行的 bash（SDK `abortBash`），用于「强制跳过」长命令。 */
+  abortBash?(): void;
   dispose?(): void;
   reload?(): Promise<void>;
   extensionRunner?: { emit(event: { type: "session_shutdown"; reason: "quit" }): Promise<unknown> };

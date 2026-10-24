@@ -453,9 +453,11 @@ export function taskStatusLabel(status: WatchdogTaskStatus): string {
   }
 }
 
-/** `agent.intervene` 只需要会话具备这一个能力（便于单测注入假会话）。 */
+/** `agent.intervene` 只需要会话具备这两个能力（便于单测注入假会话）。 */
 export interface InterventionTarget {
   deliverIntervention(message: string): Promise<{ delivered: InterventionDelivery }>;
+  /** 打断当前正在跑的工具；缺省时「强制跳过」只投递不打断。 */
+  abortCurrentTool?(): void;
 }
 
 /**
@@ -471,7 +473,26 @@ export async function performIntervention(input: {
   session: InterventionTarget;
   now?: number;
 }): Promise<InterventionResult> {
-  const { sessionId, actionType, session } = input;
+  const accepted = acceptIntervention(input);
+  if (!accepted.ok) return accepted;
+  // 投递可能要等当前工具跑完（steer 在 turn 边界才落地），这一步不进 UI 的等待链。
+  const { delivered } = await input.session.deliverIntervention(accepted.message);
+  return { ...accepted, delivered };
+}
+
+/**
+ * 受理阶段（同步）：守卫 → 拼文案 → 重置看门狗，**不等投递**。
+ *
+ * 为什么要拆：真实投递延迟由正在跑的工具决定（可能三分钟），
+ * UI 的「发送中…」不该被它绑住。`agent.intervene` 用这个拿回执，
+ * 再把 `deliverIntervention` 丢到后台。
+ */
+export function acceptIntervention(input: {
+  sessionId: string;
+  actionType: InterventionAction;
+  now?: number;
+}): InterventionResult {
+  const { sessionId, actionType } = input;
   const at = input.now ?? clock();
 
   if (!config.enabled) {
@@ -501,18 +522,19 @@ export async function performIntervention(input: {
   }
 
   const message = interventionMessage(sessionId, actionType);
-  const { delivered } = await session.deliverIntervention(message);
-  // 注入成功 → 立刻把告警状态重置（红灯变绿、心跳重新计）。
+  // 受理即重置（红灯立刻变绿）；投递在后台继续。
   const task = resetWatchdogAfterIntervention(sessionId, actionType, at);
   return {
     ok: true,
+    accepted: true,
     actionType,
-    delivered,
+    // 真实通路由 performIntervention 覆盖；单独受理时按最保守的「排队」回报。
+    delivered: "queue",
     message,
     task,
     detail:
       actionType === "skip"
-        ? "已向 Agent 发送跳过指令，看门狗计时已重置"
-        : "已向 Agent 发送询问，看门狗计时已重置",
+        ? "已受理跳过指令（工具执行到一半时会先打断再投递）"
+        : "已受理询问，本轮工具结束后立刻生效",
   };
 }

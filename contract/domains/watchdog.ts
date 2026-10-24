@@ -94,6 +94,11 @@ export interface InterventionResult {
   task: WatchdogTaskView | null;
   /** 被拒绝时的原因；`ok: false` 时必有。 */
   rejected?: InterventionRejectionReason;
+  /**
+   * 只是「已受理」，投递还在后台推进（steer 要等当前工具跑完才落地）。
+   * UI 看到它就该退出 pending，不必等真正送达。
+   */
+  accepted?: boolean;
   /** 面向用户的一句话（拒绝原因 / 成功回显）。 */
   detail?: string;
 }

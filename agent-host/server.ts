@@ -179,13 +179,13 @@ import {
   stopPlugins,
 } from "./plugin-manager.ts";
 import {
+  acceptIntervention,
   getTaskStatus,
   getWatchdogSnapshot,
-  performIntervention,
   setWatchdogStallMs,
   stopWatchdogTimer,
 } from "./watchdog.ts";
-import { isInterventionAction } from "./intervention.ts";
+import { isInterventionAction, shouldInterruptTool } from "./intervention.ts";
 
 import {
   listOrchestratorTasks,
@@ -1211,19 +1211,23 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
           fail(state, frame.id, "SESSION_NOT_FOUND", "Session not running");
           return;
         }
-        void (async () => {
+        // 只做「同步受理 + 立刻回执」：守卫 / 拼文案 / 重置看门狗都是纯逻辑，
+        // 投递本身可能等到当前工具跑完才落地，UI 不该陪着等（否则按钮会「转很久」）。
+        const accepted = acceptIntervention({ sessionId, actionType });
+        if (accepted.ok && shouldInterruptTool(actionType, accepted.task?.tools)) {
+          // 「强制跳过」+ 工具已跑过阈值才真打断；短命令打断只会白丢结果。
           try {
-            // 守卫 / 拼文案 / 注入 / 重置看门狗都在 performIntervention 里（纯逻辑，可单测）。
-            const payload = await performIntervention({
-              sessionId,
-              actionType,
-              session,
-            });
-            result(state, frame.id, payload);
-          } catch (error) {
-            fail(state, frame.id, "INTERNAL", errorText(error));
+            session.abortCurrentTool?.();
+          } catch {
+            /* 打断失败不影响后面的投递 */
           }
-        })();
+        }
+        result(state, frame.id, accepted);
+        if (accepted.ok) {
+          void session.deliverIntervention(accepted.message).catch((error: unknown) => {
+            console.error("intervention delivery failed:", errorText(error));
+          });
+        }
         return;
       }
       case "agent.command": {

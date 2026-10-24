@@ -560,6 +560,20 @@ export class AgentSessionWrapper {
    * 三条都是**既有通路**：这里不新增任何模型调用入口，也不拼 system prompt。
    * 指令内容由调用方（`agent.intervene`）用纯函数生成，本方法只负责投递。
    */
+  /**
+   * 打断当前正在跑的工具（只给「强制跳过 + 工具已跑过阈值」用）。
+   *
+   * bash 会被 abort；不可中断的工具静默失败，不影响后续 steer 投递。
+   */
+  abortCurrentTool(): void {
+    if (!this._alive) return;
+    try {
+      this.inner.abortBash?.();
+    } catch (error) {
+      this.emitAgentError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   async deliverIntervention(message: string): Promise<{ delivered: InterventionDelivery }> {
     if (!this._alive) throw new Error("Session is not running");
     let streaming = false;
@@ -950,6 +964,14 @@ export class AgentSessionWrapper {
       case "reorder_follow_ups": {
         const snapshot = this.followUpQueue.reorder(
           command.orderedIds as string[],
+          command.expectedRevision as number,
+        );
+        return this.emitFollowUpQueue(snapshot);
+      }
+
+      case "remove_follow_up": {
+        const snapshot = this.followUpQueue.remove(
+          command.id as string,
           command.expectedRevision as number,
         );
         return this.emitFollowUpQueue(snapshot);

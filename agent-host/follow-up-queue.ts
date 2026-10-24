@@ -73,6 +73,22 @@ export class FollowUpQueue {
     return this.snapshot();
   }
 
+  /**
+   * 删除单条排队消息。
+   * 与 `reorder` 共用 revision 语义：客户端带来的 revision 过期说明队列已被别的操作改过，
+   * 直接拒绝，避免删掉用户刚插进来的新消息。
+   */
+  remove(id: string, expectedRevision: number): FollowUpQueueSnapshot {
+    if (expectedRevision !== this.revision) {
+      throw new Error("Follow-up queue changed; refresh and try again");
+    }
+    const index = this.items.findIndex((item) => item.id === id);
+    if (index === -1) throw new Error("Queued follow-up not found");
+    this.items.splice(index, 1);
+    this.revision += 1;
+    return this.snapshot();
+  }
+
   shift(): { item: QueuedFollowUp; snapshot: FollowUpQueueSnapshot } | null {
     const item = this.items.shift();
     if (!item) return null;
