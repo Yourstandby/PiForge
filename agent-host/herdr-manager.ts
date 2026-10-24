@@ -517,10 +517,11 @@ export async function sendHerdrMessage(
   const trimmed = message?.trim();
   if (!trimmed) throw new Error("message is required");
   /**
-   * 省钱阀门：主 Agent ↔ 子 Agent 只能「单次请求-响应」，最多 3 轮。
-   * 第 4 轮直接被拒（不是软提醒），避免在同一段上下文里反复加价。
+   * 省钱阀门：**常驻舰队 Agent 无硬轮数上限**（沿用现状）—— 它本来就是"接着聊"的形态，
+   * 砍轮数等于砍掉它的存在意义。刹车只留 progress-guard（连续多轮无进展）。
+   * 同一份阀门代码（checkTurnBudget）共用，只是上限传 `null`。
    */
-  const postTurn = checkTurnBudget(record.view.turns);
+  const postTurn = checkTurnBudget(record.view.turns + 1, null);
   if (!postTurn.allowed) {
     throw new Error(guardFailureText("turns", postTurn.reason ?? "超过轮数上限"));
   }

@@ -28,10 +28,13 @@ import type {
 import { getSharedAuxRuntime } from "./aux-models.ts";
 import { checkSubagentVerification } from "./subagent-verification.ts";
 import {
+  buildSubagentFailureReport,
   checkContextBreaker,
   checkTurnBudget,
   condenseReport,
   guardFailureText,
+  resolveSubagentMaxTurns,
+  type GuardTrip,
 } from "./agent-guards.ts";
 import { childToolSummary, resolveChildTools, type ResolvedChildTools } from "./tool-grants.ts";
 import {
@@ -75,8 +78,10 @@ interface SubagentRecord {
   assistantTurns: number;
   /** 省钱阀门：最近一次观测到的上下文 token。 */
   contextTokens: number | null;
+  /** 省钱阀门：轮数上限（`PIFORGE_SUBAGENT_MAX_TURNS`，默认 6）。 */
+  maxTurns: number;
   /** 熔断原因（命中后立刻中断，并把原因回给主 Agent）。 */
-  guardTrip: "context" | "progress" | null;
+  guardTrip: GuardTrip | null;
   /** 累计用量（成本 / 输出 token 采集：面板与对照实验共用）。 */
   usage: { input: number; cacheRead: number; output: number; cost: number };
   /** 空转计数（按可观测事件推进，见 progress-guard.ts）。 */
@@ -195,6 +200,23 @@ function toolDetail(name: string, args: unknown): string | undefined {
   return clean ? clean.slice(0, 500) : undefined;
 }
 
+/**
+ * 「最后一次有效动作」：回给主 Agent 的诊断锚点。
+ *
+ * 只看**算作进展**的工具（read / grep / bash / edit…）—— 元动作（tool_search、
+ * spawn_agent 之类）不改变对任务的理解，拿它当"最后动作"会误导主 Agent。
+ */
+function lastEffectiveAction(calls: SubagentToolCallView[]): string | null {
+  for (let index = calls.length - 1; index >= 0; index -= 1) {
+    const call = calls[index];
+    if (!isProgressTool(call.name)) continue;
+    const detail = call.detail ? ` ${call.detail}` : "";
+    const state = call.status === "ok" ? "ok" : call.status === "error" ? "error" : "running";
+    return `${call.name}${detail}（${state}）`;
+  }
+  return null;
+}
+
 function appendOutput(record: SubagentRecord, text: string): void {
   const trimmed = text.trim();
   if (!trimmed) return;
@@ -271,6 +293,8 @@ export async function spawnSubagent(input: SpawnSubagentInput): Promise<SpawnSub
 
   const id = `subagent-${randomUUID().slice(0, 12)}`;
   const abort = new AbortController();
+  /** 轮数上限：可配置（默认 6）+ 空转阀（连续 5 轮无进展）优先。 */
+  const turnLimit = resolveSubagentMaxTurns(process.env);
   const record: SubagentRecord = {
     view: {
       id,
@@ -291,6 +315,7 @@ export async function spawnSubagent(input: SpawnSubagentInput): Promise<SpawnSub
     lastAssistantText: "",
     assistantTurns: 0,
     contextTokens: null,
+    maxTurns: turnLimit.maxTurns,
     guardTrip: null,
     usage: { input: 0, cacheRead: 0, output: 0, cost: 0 },
     progress: initialProgressState(),
@@ -352,20 +377,8 @@ export async function spawnSubagent(input: SpawnSubagentInput): Promise<SpawnSub
 
     unsubscribe = session.subscribe((event) => {
       if (event.type === "message_end" && event.message.role === "assistant") {
+        /** 即将收尾的第几轮（1 起）；判据见 agent-guards.checkTurnBudget。 */
         const nextTurn = record.assistantTurns + 1;
-        /**
-         * 省钱阀门一：单次请求-响应制。子 Agent 超过 3 轮还没收口，直接中断 ——
-         * 主 Agent 想要更多，就新建一个子 Agent，别在同一个上下文里反复加价。
-         */
-        const budget = checkTurnBudget(nextTurn);
-        if (!budget.allowed) {
-          record.guardTrip = record.guardTrip ?? "context";
-          record.view.error = guardFailureText("turns", budget.reason ?? "超过轮数上限");
-          abort.abort();
-          void session.abort().catch(() => undefined);
-          notify({ type: "subagent_output", id: record.view.id, name: record.view.name, text: record.view.error, timestamp: Date.now() });
-          return;
-        }
         record.assistantTurns = nextTurn;
         /** 采集：累计用量（成本/输出 token 在面板与对照实验里都要用）。 */
         const usage = event.message.usage;
@@ -380,12 +393,15 @@ export async function spawnSubagent(input: SpawnSubagentInput): Promise<SpawnSub
         /**
          * 约束 4：「无进展」按**可观测事件**判定（读了文件 / 跑了命令 / 改了代码），
          * 不是"这一轮没给结论"。探索性任务前几轮只读代码不该被误杀。
+         *
+         * 顺序：空转阀 **先**于轮数上限检查 —— 轮数上限（默认 6）刻意高于空转阈值（5），
+         * 否则轮数先触发，空转保护永远轮不到生效（实测过的旧 bug）。
          */
         record.progress = advanceProgress(record.progress, record.progressThisTurn);
         record.progressThisTurn = false;
         const progressBudget = checkProgressBudget(record.progress);
         if (progressBudget.stop) {
-          record.guardTrip = "progress";
+          record.guardTrip = record.guardTrip ?? "progress";
           record.view.error = guardFailureText("progress", progressBudget.reason ?? "空转");
           abort.abort();
           void session.abort().catch(() => undefined);
@@ -407,6 +423,20 @@ export async function spawnSubagent(input: SpawnSubagentInput): Promise<SpawnSub
         if (breach.breached) {
           record.guardTrip = "context";
           record.view.error = guardFailureText("context", breach.reason ?? "上下文超限");
+          abort.abort();
+          void session.abort().catch(() => undefined);
+          notify({ type: "subagent_output", id: record.view.id, name: record.view.name, text: record.view.error, timestamp: Date.now() });
+          return;
+        }
+
+        /**
+         * 省钱阀门一：轮数上限（默认 6，可配），**最后**检查。
+         * 触达后也先中断（不把上下文无限拉长），但回包走 need_help 报告，不静默 abort。
+         */
+        const budget = checkTurnBudget(nextTurn, record.maxTurns);
+        if (!budget.allowed) {
+          record.guardTrip = "turns";
+          record.view.error = guardFailureText("turns", budget.reason ?? "超过轮数上限");
           abort.abort();
           void session.abort().catch(() => undefined);
           notify({ type: "subagent_output", id: record.view.id, name: record.view.name, text: record.view.error, timestamp: Date.now() });
@@ -471,9 +501,11 @@ export async function spawnSubagent(input: SpawnSubagentInput): Promise<SpawnSub
     record.view.status = cancelled ? "cancelled" : "completed";
     finalText = lastAssistantText(session.sessionManager.getBranch()) || record.lastAssistantText;
     if (cancelled) {
+      /** 阀门原文不能被 "Cancelled" 盖掉 —— 主 Agent 靠它区分缺上下文与死循环。 */
+      const guardText = record.guardTrip ? record.view.error : undefined;
       record.view.error = record.timedOut
         ? `Timed out after ${Math.round(SUBAGENT_TIMEOUT_MS / 60_000)} minutes`
-        : "Cancelled";
+        : guardText ?? "Cancelled";
     } else {
       ok = true;
     }
@@ -528,7 +560,17 @@ ${verificationLine}`,
   return {
     agent,
     ok: false,
-    text: `Sub-agent "${name}" ${record.view.status === "cancelled" ? (record.timedOut ? "timed out" : "was cancelled") : `failed: ${reason}`}.`,
+    text: buildSubagentFailureReport({
+      id: record.view.id,
+      name,
+      status: record.view.status,
+      trip: record.guardTrip,
+      turns: record.assistantTurns,
+      maxTurns: record.maxTurns,
+      lastAction: lastEffectiveAction(record.view.toolCalls),
+      reason,
+      timedOut: record.timedOut,
+    }),
     error: reason,
   };
 }

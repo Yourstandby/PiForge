@@ -174,12 +174,12 @@ test("Herdr enforces the fleet limit", { timeout: 30000 }, async () => {
   }
 });
 
-test("a fleet agent refuses the 4th message (3-round money valve)", { timeout: 30000 }, async () => {
+test("a fleet agent has no hard turn cap (only progress-guard brakes it)", { timeout: 30000 }, async () => {
   const env = setupEnv();
   try {
-    const faux = await registerFaux("herdr-turns-fixture", ["r1", "r2", "r3"]);
+    const faux = await registerFaux("herdr-turns-fixture", ["r1", "r2", "r3", "r4"]);
     const agent = spawnHerdrAgent({
-      name: "turn-capped",
+      name: "turn-uncapped",
       task: "first task",
       cwd: env.dir,
       parentSessionId: "parent",
@@ -193,11 +193,17 @@ test("a fleet agent refuses the 4th message (3-round money valve)", { timeout: 3
     assert.match(second.text, /r2/);
     const third = await sendHerdrMessage(agent.id, "third");
     assert.match(third.text, /r3/);
-    await assert.rejects(
-      () => sendHerdrMessage(agent.id, "fourth"),
-      (error: unknown) => error instanceof Error && /轮数上限|3 轮/.test(error.message),
-    );
-    assert.equal(getHerdrAgent(agent.id)?.turns, 3);
+    const fourth = await sendHerdrMessage(agent.id, "fourth");
+    assert.match(fourth.text, /r4/);
+    /**
+     * 一次性子 Agent 的轮数上限（默认 6）**不适用于**常驻舰队：
+     * 它本来就是"接着聊"的形态，刹车只剩 progress-guard。
+     */
+    for (const label of ["fifth", "sixth"]) {
+      const res = await sendHerdrMessage(agent.id, label);
+      assert.doesNotMatch(res.text, /轮数上限/);
+    }
+    assert.ok((getHerdrAgent(agent.id)?.turns ?? 0) >= 6, "超过 5 轮也必须能继续派话");
   } finally {
     await env.cleanup();
   }

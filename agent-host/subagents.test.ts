@@ -229,3 +229,93 @@ test("a spawned sub-agent is listed as running before it finishes (panel gets a 
     await env.cleanup();
   }
 });
+
+/**
+ * 三条退出路径的文案必须各不相同（主 Agent 靠它区分「缺上下文」和「死循环」）：
+ *   1. 轮数上限 → need_help + 已用轮数 + 最后一次有效动作 + 换/拆建议；
+ *   2. progress-guard → need_help + 空转话术（不能和轮数上限长一样）；
+ *   3. 正常完成 → 摘要 + 验证行，不能出现 need_help。
+ */
+test("turn cap returns a need_help report naming turns and the last effective action", { timeout: 30000 }, async () => {
+  const env = setupEnv();
+  try {
+    const { writeFileSync } = await import("node:fs");
+    const target = join(env.dir, "note.txt");
+    writeFileSync(target, "hello");
+    const { fauxToolCall } = await import("@earendil-works/pi-ai");
+    const faux = await registerFaux("subagent-turn-cap", []);
+    faux.setResponses(
+      Array.from({ length: 8 }, () => fauxAssistantMessage([fauxToolCall("read", { path: target })])),
+    );
+    const result = await spawnSubagent({
+      name: "turn-capped",
+      task: "Keep reading the same file until the valve stops you.",
+      cwd: env.dir,
+      parentSessionId: "parent-session",
+      model: faux.getModel(),
+      tools: ["read"],
+      availableTools: ["read"],
+    });
+    assert.equal(result.ok, false, "轮数上限必须走 ok:false");
+    assert.match(result.text, /status: need_help/);
+    // off-by-one 已修：旧行为第 3 轮就被杀，新行为至少跑满 7 轮才拦（上限 6）。
+    const used = Number(/turns: (\d+)\/6/.exec(result.text)?.[1] ?? "0");
+    assert.ok(used >= 7, `应至少跑 7 轮才触发上限，实际 ${used} 轮（旧行为是 3）`);
+    assert.match(result.text, /last_action: read/);
+    assert.match(result.text, /herdr_spawn/);
+    assert.match(result.text, /拆成 2–3 个更小的子任务/);
+    assert.doesNotMatch(result.text, /was cancelled\./, "禁止再出现静默取消的空话");
+  } finally {
+    await env.cleanup();
+  }
+});
+
+test("progress-guard report is distinguishable from the turn-cap report", { timeout: 30000 }, async () => {
+  const env = setupEnv();
+  try {
+    const { fauxToolCall } = await import("@earendil-works/pi-ai");
+    const faux = await registerFaux("subagent-progress", []);
+    // tool_search 是「元动作」：不算进展，所以连续几轮就会被 progress-guard 停掉。
+    faux.setResponses(
+      Array.from({ length: 8 }, () => fauxAssistantMessage([fauxToolCall("tool_search", { query: "x" })])),
+    );
+    const result = await spawnSubagent({
+      name: "spinner",
+      task: "Spin on meta actions without touching any file.",
+      cwd: env.dir,
+      parentSessionId: "parent-session",
+      model: faux.getModel(),
+      tools: ["read"],
+      availableTools: ["read"],
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.text, /status: need_help/);
+    assert.match(result.text, /空转中断|无进展/);
+    assert.match(result.text, /last_action: 无（从未调用过任何工具）/, "元动作不能被当成有效动作");
+    assert.doesNotMatch(result.text, /轮数上限/, "空转必须先于轮数上限结算");
+    assert.doesNotMatch(result.text, /拆成 2–3 个更小的子任务/, "文案不能和轮数上限路径相同");
+  } finally {
+    await env.cleanup();
+  }
+});
+
+test("a completed sub-agent never reports need_help", { timeout: 30000 }, async () => {
+  const env = setupEnv();
+  try {
+    const faux = await registerFaux("subagent-completed", ["all good: nothing to change"]);
+    const result = await spawnSubagent({
+      name: "finisher",
+      task: "Answer with a short conclusion.",
+      cwd: env.dir,
+      parentSessionId: "parent-session",
+      model: faux.getModel(),
+    });
+    assert.equal(result.ok, true);
+    assert.match(result.text, /Sub-agent "finisher" completed\./);
+    assert.match(result.text, /Verification: /);
+    assert.doesNotMatch(result.text, /status: need_help/);
+    assert.doesNotMatch(result.text, /轮数上限|空转中断/);
+  } finally {
+    await env.cleanup();
+  }
+});
