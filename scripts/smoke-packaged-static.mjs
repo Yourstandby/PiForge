@@ -131,6 +131,15 @@ if (!args.includes("--keep-user-data")) {
 if (failures.length > 0) {
   console.error("");
   for (const failure of failures) console.error(`FAIL ${failure}`);
+  // 白屏诊断：把渲染进程里采到的证据直接写到 CI 日志，
+  // 免得只能从被删掉的 userData 里找（这一轮就是这么丢线索的）。
+  if (Array.isArray(result.assets) && result.assets.length > 0) {
+    console.error("  入口脚本加载情况：");
+    for (const asset of result.assets) console.error(`    ${asset}`);
+  }
+  if (result.bodyHtmlHead) {
+    console.error(`  body 片段（${result.bodyHtmlLength} 字节）：${String(result.bodyHtmlHead).slice(0, 400)}`);
+  }
   process.exit(1);
 }
 console.log(`  exit=${exitCode}（PIFORGE_SMOKE_EXIT=1 会主动退出）`);
