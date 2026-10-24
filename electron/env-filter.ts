@@ -20,6 +20,10 @@ const ENV_DENYLIST = new Set([
   // 由主进程按实例注入（endpoint/token 必须配对，继承旧值会连错管道）
   "PIFORGE_AGENT_ENDPOINT",
   "PIFORGE_AGENT_TOKEN",
+  // 只在「没有 parentPort、用 stdin 当控制通道」的探针/host 里成立。
+  // 泄漏给用户 shell 或冒烟脚本后，`stdio: ["ignore"]` 的 host 会把 stdin EOF
+  // 当成「父进程死了」直接退出（表现为冒烟 `timed out waiting for a frame`）。
+  "PIFORGE_HOST_STDIN_CONTROL",
 ]);
 
 export function childProcessEnv(

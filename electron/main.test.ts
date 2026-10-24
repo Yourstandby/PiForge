@@ -36,6 +36,7 @@ test("childProcessEnv drops Electron-as-Node and stale host control vars", () =>
     ELECTRON_RUN_AS_NODE_ENABLED: "1",
     PIFORGE_AGENT_ENDPOINT: "\\.\pipe\stale",
     PIFORGE_AGENT_TOKEN: "stale",
+    PIFORGE_HOST_STDIN_CONTROL: "1",
     PATH: "/usr/bin",
   };
 
