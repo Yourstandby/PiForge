@@ -252,3 +252,21 @@ for(const f of walk(root)){
 | P0-4 | `agent-host/tool-output-budget.ts` | 文案常量 | 仅在截断时生效 |
 | P1-1 | `lib/domain-tools.ts` | 注释 | 零运行时影响 |
 | P1-2 | `agent-host/rpc-manager.ts` | 只发 UI notice | 不进上下文 |
+
+## 附录 D：实施记录（2026-10-25，与上面方案的偏差）
+
+方案按 P0-1 / P0-2 / P0-3 / P0-4 / P1-1 落地，但**有四处修正**，都是有实测/源码依据的：
+
+| 方案原文 | 实际做法 | 原因 |
+|---|---|---|
+| 往 `~/.pi/agent/settings.json` 写 `"codemode.mode": "only"` | 改为 `createCodemodeExtension({ mode })` 进程内覆盖（`agent-host/rpc-manager.ts`） | ①扁平键写不进 pi 的设置结构（pi 读的是 `codemode: { mode }` 嵌套对象）；②写全局文件会连带改 CLI 行为，且无法热切换。SDK 的 `getMode` 是惰性读取，改可变 options 即下一条消息生效 |
+| 写 `"thinkingBudgets": { "low": 2048 }` | **不写** | pi 的 `DEFAULT_THINKING_BUDGETS.low` 本来就是 2048（`pi-ai/dist/api/simple-options.js`），显式写一遍是零收益的全局副作用 |
+| 写 `"defaultTools": ["+codemode"]` | **不写** | PiForge 已用 `desktopRuntimeTools()` 把 `codemode` 放进会话工具列表，再写 settings 只会把桌面行为泄漏给 CLI |
+| 在 `agent-host/server.ts` 里按 `desktopSettings.thinkingLevel` 下发默认思考等级 | 改为 Host 启动时**一次性**补写 pi 的 `defaultThinkingLevel: "low"`（`agent-host/settings-defaults.ts`，只在键缺失时写） | 「常规设置 · 默认思考等级」读写的就是 pi 这个键；再造一个 desktop-settings 副本会出现「面板显示 medium、实际按 low 跑」的双源问题。pi 在 `createAgentSession` 里本来就会用该值，不需要 host 再发一次 `set_thinking_level` |
+
+新增（方案没写但落地需要）：
+
+- `CodemodeConfig` 设置页加「工具呈现方式」两档（`on` / `only`），中英文案进 `lib/i18n/dictionaries.ts`；
+  `agent.updateCodemode` 契约加可选 `mode`，`/api/desktop-settings` PUT 一并下发。
+- `BATCHING_RULES` 与 `OUTPUT_STYLE_GUIDELINES` **开关分离**：关掉「输出风格」不应把效率契约也关掉。
+- P1-2（超预算 UI notice）未做：它只用于验证，不是压缩手段，留到有真实 A/B 数据后再加。

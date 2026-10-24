@@ -35,6 +35,10 @@ export const ALWAYS_DECLARED_DOMAINS: readonly DomainToolName[] = ["browser", "s
  * 激活那两轮多出 ~21k 未缓存 token，而 29 轮稳态只省回 ~18k（且缓存读单价通常只有
  * 输入价的 10%，换算成钱更不划算）。所以默认恢复成常驻声明；
  * `PIFORGE_ON_DEMAND_DOMAINS=1` 可显式打开（长会话 >100 轮或不支持前缀缓存的模型）。
+ *
+ * 2026-10-24 复核：memory / orchestrator 仍保持常驻声明。按需化在 30 轮 deepseek
+ * 会话上是净负收益（+21k 未缓存 vs −18k 稳态节省）。**不要再把这两个域改成默认按需** ——
+ * 那是 20k 级的缓存惩罚，节省的只是 617 tok/轮的表面积。
  */
 export const ON_DEMAND_DOMAINS: readonly DomainToolName[] = ["memory", "orchestrator"];
 

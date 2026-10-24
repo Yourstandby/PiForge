@@ -3,6 +3,36 @@
 迁移条目按「改了什么 / 默认行为变没变 / 开关怎么用」组织。详细数据见 `docs/measurements/`
 （三个口径：记录型 provider、真实 deepseek 会话、重复场景 A/B，三者不要混读）。
 
+## 未发布 — 调用压缩（工具调用次数 / 思考预算）
+
+主题：**同样的任务少问几轮**。不删工具、不降能力，只压缩「模型往返次数」和「thinking 占 output」。
+
+### 改了什么
+
+- **codemode 默认开启，且默认 `only`**（`lib/desktop-settings.ts`）：普通工具不再声明给模型，
+  改由一次脚本批量调用（`createCodemodeExtension({ mode })` 下发，**不写** `~/.pi/agent/settings.json`）。
+  `agent.updateCodemode` 契约新增可选 `mode`，设置页切换后下一条消息生效（SDK 的 `getMode` 惰性读取）。
+- **提示词新增四条批量/预算约束**（`agent-host/prompts/output-style.ts` 的 `BATCHING_RULES`）：
+  批量优先、先引用后补测、调用预算（≤15 次模型调用 / ≤45 次工具调用，接近上限先交付结论再问）、
+  报错先读完 traceback 再改。纯静态常量，只进一次前缀。
+- **截断续读引导改写**（`agent-host/tool-output-budget.ts`）：从「grep/sed 逐段读」改成
+  「一次 codemode 脚本批量读，或用 `tool_history_get` 翻页」。只在被截断时出现，稳态零成本。
+- **Host 首次启动补写 `defaultThinkingLevel: "low"`**（`agent-host/settings-defaults.ts`）：
+  只在该键缺失时写一次，原子写，解析失败即放弃；之后在常规设置里改回来即可。
+  不写 `thinkingBudgets`——pi 的 low 预算本来就是 2048。
+
+### 默认行为变没变
+
+变了，三处：新会话默认走 codemode（可在「扩展与 MCP → Codemode」关掉或切回「照常声明工具」）；
+新会话默认思考等级 low（常规设置可改）；首次启动会写一行 `defaultThinkingLevel`。
+工具集、审批策略、工具输出预算、`onDemandDomains` 均未改动。
+
+### 开关怎么用
+
+- 关掉批量层：「扩展与 MCP → Codemode」开关置为关闭（工具恢复直呼，脚本仍可用）。
+- 只想让工具照常声明、不要 `only`：同页「工具呈现方式」选「照常声明工具」（`codemodeMode: "on"`）。
+- 思考预算：常规设置 → 默认思考等级（写回 `~/.pi/agent/settings.json`）。
+
 ## 未发布 — 夜晚模式
 
 ### 改了什么
