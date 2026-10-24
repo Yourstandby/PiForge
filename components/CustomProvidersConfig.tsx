@@ -148,28 +148,28 @@ export function CustomProvidersConfig({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="ui-dialog-backdrop" style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.42)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <div className="ui-dialog-surface" style={{ width: "min(920px, 94vw)", maxHeight: "84vh", overflow: "auto", background: "var(--material-popover, #fff)", border: "1px solid var(--border, #e5e7eb)", borderRadius: 14, boxShadow: "0 18px 60px rgba(15,23,42,0.18)" }}>
-        <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderBottom: "1px solid var(--border, #e5e7eb)" }}>
+      <div className="ui-dialog-surface" style={{ width: "min(920px, 94vw)", maxHeight: "84vh", overflow: "auto", background: "var(--material-popover, var(--bg-elevated))", border: "1px solid var(--border, var(--border))", borderRadius: 14, boxShadow: "0 18px 60px rgba(15,23,42,0.18)" }}>
+        <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderBottom: "1px solid var(--border, var(--border))" }}>
           <div>
             <div style={{ fontSize: 15, fontWeight: 700 }}>自定义 Provider</div>
-            <div style={{ fontSize: 11, color: "var(--text-muted, #6b7280)", marginTop: 3 }}>
+            <div style={{ fontSize: 11, color: "var(--text-muted, var(--text-muted))", marginTop: 3 }}>
               Ollama / LM Studio / 自建网关。密钥只保存在 Host 的 agent 目录，界面永远只显示掩码。
             </div>
           </div>
-          <button onClick={onClose} aria-label="关闭" style={{ border: 0, background: "none", fontSize: 22, cursor: "pointer", color: "var(--text-muted, #6b7280)" }}>×</button>
+          <button onClick={onClose} aria-label="关闭" style={{ border: 0, background: "none", fontSize: 22, cursor: "pointer", color: "var(--text-muted, var(--text-muted))" }}>×</button>
         </header>
 
         <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: 0 }}>
-          <aside style={{ borderRight: "1px solid var(--border, #e5e7eb)", padding: 14, minHeight: 360 }}>
+          <aside style={{ borderRight: "1px solid var(--border, var(--border))", padding: 14, minHeight: 360 }}>
             <button
               onClick={() => { setEditing(true); setDraft(EMPTY_DRAFT); setError(null); setNotice(null); }}
-              style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #bfdbfe", background: "#eff6ff", color: "#1d4ed8", fontWeight: 600, cursor: "pointer" }}
+              style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #bfdbfe", background: "var(--bg-selected)", color: "#1d4ed8", fontWeight: 600, cursor: "pointer" }}
             >
               + 新建 Provider
             </button>
             <div style={{ marginTop: 12, display: "grid", gap: 6 }}>
-              {loading && <div style={{ fontSize: 12, color: "#6b7280" }}>加载中…</div>}
-              {!loading && providers.length === 0 && <div style={{ fontSize: 12, color: "#6b7280" }}>还没有自定义 Provider。</div>}
+              {loading && <div style={{ fontSize: 12, color: "var(--text-muted)" }}>加载中…</div>}
+              {!loading && providers.length === 0 && <div style={{ fontSize: 12, color: "var(--text-muted)" }}>还没有自定义 Provider。</div>}
               {providers.map((provider) => (
                 <button
                   key={provider.id}
@@ -177,18 +177,18 @@ export function CustomProvidersConfig({ onClose }: { onClose: () => void }) {
                   style={{
                     textAlign: "left", padding: "9px 10px", borderRadius: 8, cursor: "pointer",
                     border: draft.id === provider.id && editing ? "1px solid #93c5fd" : "1px solid transparent",
-                    background: draft.id === provider.id && editing ? "#eff6ff" : "transparent",
+                    background: draft.id === provider.id && editing ? "var(--bg-selected)" : "transparent",
                   }}
                 >
-                  <div style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}>{provider.name}</div>
-                  <div style={{ fontSize: 11, color: "#6b7280", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{provider.baseUrl}</div>
-                  <div style={{ fontSize: 10, color: "#9ca3af" }}>{provider.models.length} 个模型 · {provider.hasApiKey ? "已配置密钥" : "无密钥"}</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{provider.name}</div>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{provider.baseUrl}</div>
+                  <div style={{ fontSize: 10, color: "var(--text-dim)" }}>{provider.models.length} 个模型 · {provider.hasApiKey ? "已配置密钥" : "无密钥"}</div>
                 </button>
               ))}
             </div>
             {transport && (
-              <div style={{ marginTop: 18, paddingTop: 12, borderTop: "1px solid #eef2f7", fontSize: 10, color: "#6b7280", lineHeight: 1.6 }}>
-                <div style={{ fontWeight: 700, color: "#374151" }}>Host WebSocket 总线</div>
+              <div style={{ marginTop: 18, paddingTop: 12, borderTop: "1px solid #eef2f7", fontSize: 10, color: "var(--text-muted)", lineHeight: 1.6 }}>
+                <div style={{ fontWeight: 700, color: "var(--text)" }}>Host WebSocket 总线</div>
                 <div>{transport.wsUrl ?? "未启动"}</div>
                 <div>{transport.wsClients} 个已认证客户端</div>
               </div>
@@ -197,7 +197,7 @@ export function CustomProvidersConfig({ onClose }: { onClose: () => void }) {
 
           <section style={{ padding: 18 }}>
             {!editing && (
-              <div style={{ color: "#6b7280", fontSize: 13, lineHeight: 1.8 }}>
+              <div style={{ color: "var(--text-muted)", fontSize: 13, lineHeight: 1.8 }}>
                 选择左侧 Provider 进行编辑，或新建一个。保存后 Host 会写入 models.json 并让运行中的会话在下一轮重新加载模型。
               </div>
             )}
@@ -227,7 +227,7 @@ export function CustomProvidersConfig({ onClose }: { onClose: () => void }) {
                 <label style={labelStyle}>模型列表（每行一个，ID|显示名；共 {modelCount} 个）
                   <textarea value={draft.models} onChange={(e) => setDraft({ ...draft, models: e.target.value })} placeholder={"qwen2.5-coder:7b\nllama3.3:70b|Llama 3.3"} rows={8} style={{ ...inputStyle, fontFamily: "var(--font-mono, monospace)", resize: "vertical" }} />
                 </label>
-                <div style={{ fontSize: 11, color: "#6b7280", lineHeight: 1.6 }}>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>
                   本地 Ollama 通常需要任意非空密钥（例如 ollama）才会被 Pi 识别为可用模型；自建网关请填写真实密钥。
                 </div>
                 {error && (
@@ -242,7 +242,7 @@ export function CustomProvidersConfig({ onClose }: { onClose: () => void }) {
                     <button onClick={() => { const found = providers.find((provider) => provider.id === draft.id); if (found) void remove(found); }} style={{ ...buttonStyle, color: "#b91c1c", borderColor: "#fecaca" }}>删除</button>
                   )}
                   <button onClick={() => { setEditing(false); setDraft(EMPTY_DRAFT); setError(null); }} style={buttonStyle}>取消</button>
-                  <button onClick={() => void save()} disabled={saving || !draft.id.trim() || !draft.baseUrl.trim()} style={{ ...buttonStyle, background: "#2563eb", color: "#fff", borderColor: "#2563eb", opacity: saving ? 0.7 : 1 }}>
+                  <button onClick={() => void save()} disabled={saving || !draft.id.trim() || !draft.baseUrl.trim()} style={{ ...buttonStyle, background: "var(--accent)", color: "var(--accent-contrast, #fff)", borderColor: "var(--accent)", opacity: saving ? 0.7 : 1 }}>
                     {saving ? "保存中…" : "保存并生效"}
                   </button>
                 </div>
@@ -262,6 +262,6 @@ export function CustomProvidersConfig({ onClose }: { onClose: () => void }) {
   );
 }
 
-const labelStyle: React.CSSProperties = { display: "grid", gap: 5, fontSize: 11, fontWeight: 600, color: "#4b5563" };
-const inputStyle: React.CSSProperties = { width: "100%", padding: "8px 9px", border: "1px solid #d1d5db", borderRadius: 7, background: "#fff", color: "#111827", fontSize: 12, fontWeight: 400, outline: "none" };
-const buttonStyle: React.CSSProperties = { padding: "7px 12px", borderRadius: 7, border: "1px solid #d1d5db", background: "#fff", color: "#374151", fontSize: 12, cursor: "pointer" };
+const labelStyle: React.CSSProperties = { display: "grid", gap: 5, fontSize: 11, fontWeight: 600, color: "var(--text-muted)" };
+const inputStyle: React.CSSProperties = { width: "100%", padding: "8px 9px", border: "1px solid var(--border)", borderRadius: 7, background: "var(--bg-elevated)", color: "var(--text-strong)", fontSize: 12, fontWeight: 400, outline: "none" };
+const buttonStyle: React.CSSProperties = { padding: "7px 12px", borderRadius: 7, border: "1px solid var(--border)", background: "var(--bg-elevated)", color: "var(--text)", fontSize: 12, cursor: "pointer" };

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bot,
   ChevronLeft,
@@ -27,23 +27,6 @@ import { PluginPanel } from "./PluginPanel";
 import { OrchestratorPanel } from "./OrchestratorPanel";
 import { WatchdogPanel, WatchdogTabBadge } from "./watchdog/WatchdogPanel";
 
-/**
- * FileExplorer renders its rows with inline styles that read the legacy theme
- * variables. Those tokens were removed from globals.css during the rebuild, so
- * we expose the handful it needs on this panel's subtree only (no global CSS,
- * same neutral light palette).
- */
-const explorerTokens = {
-  "--bg-hover": "#E7E7EB",
-  "--bg-elevated": "#ffffff",
-  "--border": "#e5e5e5",
-  "--text": "#1f2937",
-  "--text-dim": "#9ca3af",
-  "--accent": "#2563eb",
-  "--danger": "#dc2626",
-  "--radius-control": "6px",
-  "--font-mono": "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-} as CSSProperties;
 
 type PanelTab =
   | "files"
@@ -369,7 +352,7 @@ export function FilePanel({
             卸载就会丢掉已打开的文件、树的滚动位置等状态。 */}
         <div className={tab === "files" ? "relative h-full" : "hidden"}>
           <>
-            <div className="h-full overflow-y-auto py-1" style={explorerTokens}>
+            <div className="h-full overflow-y-auto py-1">
               {cwd ? (
                 <FileExplorer
                   key={cwd}

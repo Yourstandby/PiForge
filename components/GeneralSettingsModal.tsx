@@ -15,7 +15,18 @@ import { useI18n } from "./I18nProvider";
 import type { LocalePreference } from "@/lib/i18n";
 import type { UpstreamVersionStatus } from "@/lib/upstream-version";
 import { PiCoreVersionPicker } from "./PiCoreVersionPicker";
-import { UI_SCALE_STORAGE_KEY, applyUiScale, readStoredUiScale } from "@/lib/ui-scale";
+import {
+  UI_SCALE_STORAGE_KEY,
+  applyUiScale,
+  readStoredUiScale,
+} from "@/lib/ui-scale";
+import {
+  THEME_OPTIONS,
+  applyTheme,
+  readStoredTheme,
+  saveThemePreference,
+  type ThemePreference,
+} from "@/lib/theme";
 
 export { UI_SCALE_STORAGE_KEY, applyUiScale, readStoredUiScale };
 
@@ -25,7 +36,10 @@ const UI_SCALE_OPTIONS: ReadonlyArray<{ label: string; value: number }> = [
   { label: "大", value: 1.1 },
 ];
 
-const LOCALE_OPTIONS: ReadonlyArray<{ label: string; value: LocalePreference }> = [
+const LOCALE_OPTIONS: ReadonlyArray<{
+  label: string;
+  value: LocalePreference;
+}> = [
   { label: "跟随系统", value: "system" },
   { label: "简体中文", value: "zh-CN" },
   { label: "English", value: "en" },
@@ -74,12 +88,22 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   return <div className="text-[12px] font-semibold text-ink">{children}</div>;
 }
 
-function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function Row({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="flex items-start justify-between gap-4 py-1.5">
       <div className="min-w-0">
         <div className="text-[12.5px] text-ink">{label}</div>
-        {hint && <div className="mt-0.5 text-[11px] text-ink-faint">{hint}</div>}
+        {hint && (
+          <div className="mt-0.5 text-[11px] text-ink-faint">{hint}</div>
+        )}
       </div>
       <div className="shrink-0">{children}</div>
     </div>
@@ -118,7 +142,13 @@ function Segmented<T extends string>({
   );
 }
 
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (next: boolean) => void }) {
+function Toggle({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+}) {
   return (
     <button
       type="button"
@@ -144,11 +174,17 @@ interface GeneralSettingsModalProps {
   onClose: () => void;
 }
 
-export function GeneralSettingsModal({ sessionId, cwd, onClose }: GeneralSettingsModalProps) {
+export function GeneralSettingsModal({
+  sessionId,
+  cwd,
+  onClose,
+}: GeneralSettingsModalProps) {
   const { preference, setPreference } = useI18n();
   const [scale, setScale] = useState(1);
+  const [theme, setTheme] = useState<ThemePreference>("system");
   const [settings, setSettings] = useState<SettingsSnapshot | null>(null);
-  const [cacheWarming, setCacheWarming] = useState<CacheWarmingStatusView | null>(null);
+  const [cacheWarming, setCacheWarming] =
+    useState<CacheWarmingStatusView | null>(null);
   /** 实际生效的按需域（环境变量 > 设置项 > 默认）与来源。 */
   const [onDemand, setOnDemand] = useState<{
     domains: string[];
@@ -163,6 +199,7 @@ export function GeneralSettingsModal({ sessionId, cwd, onClose }: GeneralSetting
 
   useEffect(() => {
     setScale(readStoredUiScale());
+    setTheme(readStoredTheme());
     fetch("/api/settings")
       .then((response) => (response.ok ? response.json() : null))
       .then((data: SettingsSnapshot | null) => {
@@ -175,7 +212,8 @@ export function GeneralSettingsModal({ sessionId, cwd, onClose }: GeneralSetting
     setCheckingUpstream(true);
     try {
       const response = await fetch(`/api/upstream${force ? "?force=1" : ""}`);
-      if (response.ok) setUpstream((await response.json()) as UpstreamVersionStatus);
+      if (response.ok)
+        setUpstream((await response.json()) as UpstreamVersionStatus);
     } catch {
       // offline: keep last known
     } finally {
@@ -190,23 +228,29 @@ export function GeneralSettingsModal({ sessionId, cwd, onClose }: GeneralSetting
   useEffect(() => {
     fetch("/api/desktop-settings")
       .then((response) => (response.ok ? response.json() : null))
-      .then((data: {
-        onDemandDomains?: string[] | null;
-        onDemandEffective?: { domains: string[]; source: OnDemandSource };
-      } | null) => {
-        if (!data?.onDemandEffective) return;
-        setOnDemand({
-          domains: data.onDemandEffective.domains,
-          source: data.onDemandEffective.source,
-          saved: data.onDemandDomains ?? [],
-        });
-      })
+      .then(
+        (
+          data: {
+            onDemandDomains?: string[] | null;
+            onDemandEffective?: { domains: string[]; source: OnDemandSource };
+          } | null,
+        ) => {
+          if (!data?.onDemandEffective) return;
+          setOnDemand({
+            domains: data.onDemandEffective.domains,
+            source: data.onDemandEffective.source,
+            saved: data.onDemandDomains ?? [],
+          });
+        },
+      )
       .catch(() => {});
   }, []);
 
   const saveOnDemand = useCallback(async (next: string[]) => {
     const normalized = normalizeOnDemandSelection(next);
-    setOnDemand((prev) => (prev ? { ...prev, saved: normalized, domains: normalized } : prev));
+    setOnDemand((prev) =>
+      prev ? { ...prev, saved: normalized, domains: normalized } : prev,
+    );
     try {
       const response = await fetch("/api/desktop-settings", {
         method: "PUT",
@@ -240,9 +284,13 @@ export function GeneralSettingsModal({ sessionId, cwd, onClose }: GeneralSetting
     let alive = true;
     fetch(`/api/agent/${encodeURIComponent(sessionId)}`)
       .then((response) => (response.ok ? response.json() : null))
-      .then((data: { state?: { cacheWarming?: CacheWarmingStatusView } } | null) => {
-        if (alive) setCacheWarming(data?.state?.cacheWarming ?? null);
-      })
+      .then(
+        (
+          data: { state?: { cacheWarming?: CacheWarmingStatusView } } | null,
+        ) => {
+          if (alive) setCacheWarming(data?.state?.cacheWarming ?? null);
+        },
+      )
       .catch(() => {});
     return () => {
       alive = false;
@@ -276,6 +324,12 @@ export function GeneralSettingsModal({ sessionId, cwd, onClose }: GeneralSetting
     }
   }
 
+  function changeTheme(value: ThemePreference) {
+    setTheme(value);
+    saveThemePreference(value);
+    applyTheme(value);
+  }
+
   async function reloadResources() {
     setReloading(true);
     setNotice(null);
@@ -293,17 +347,28 @@ export function GeneralSettingsModal({ sessionId, cwd, onClose }: GeneralSetting
         );
       }
       if (cwd) {
-        jobs.push(fetch(`/api/skills?cwd=${encodeURIComponent(cwd)}`).then((response) => {
-          if (!response.ok) throw new Error(`skills ${response.status}`);
-        }));
-        jobs.push(fetch(`/api/extensions?cwd=${encodeURIComponent(cwd)}`).then((response) => {
-          if (!response.ok) throw new Error(`extensions ${response.status}`);
-        }));
+        jobs.push(
+          fetch(`/api/skills?cwd=${encodeURIComponent(cwd)}`).then(
+            (response) => {
+              if (!response.ok) throw new Error(`skills ${response.status}`);
+            },
+          ),
+        );
+        jobs.push(
+          fetch(`/api/extensions?cwd=${encodeURIComponent(cwd)}`).then(
+            (response) => {
+              if (!response.ok)
+                throw new Error(`extensions ${response.status}`);
+            },
+          ),
+        );
       }
       await Promise.all(jobs);
       setNotice("已重新加载扩展与技能");
     } catch (error) {
-      setNotice(`重新加载失败：${error instanceof Error ? error.message : String(error)}`);
+      setNotice(
+        `重新加载失败：${error instanceof Error ? error.message : String(error)}`,
+      );
     } finally {
       setReloading(false);
     }
@@ -315,12 +380,22 @@ export function GeneralSettingsModal({ sessionId, cwd, onClose }: GeneralSetting
       ariaLabelledBy="general-settings-title"
     >
       <div className="flex items-center justify-between border-b border-divider px-4 py-3">
-        <h3 id="general-settings-title" className="flex items-center gap-1.5 text-[14px] font-semibold text-ink">
-          <Settings2 size={14} strokeWidth={1.8} className="text-accent" aria-hidden="true" />
+        <h3
+          id="general-settings-title"
+          className="flex items-center gap-1.5 text-[14px] font-semibold text-ink"
+        >
+          <Settings2
+            size={14}
+            strokeWidth={1.8}
+            className="text-accent"
+            aria-hidden="true"
+          />
           常规
         </h3>
         <div className="flex items-center gap-2">
-          {saving && <span className="text-[11px] text-ink-faint">保存中…</span>}
+          {saving && (
+            <span className="text-[11px] text-ink-faint">保存中…</span>
+          )}
           <button
             type="button"
             onClick={onClose}
@@ -334,14 +409,21 @@ export function GeneralSettingsModal({ sessionId, cwd, onClose }: GeneralSetting
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 py-4">
         <section className="flex flex-col gap-2">
           <SectionTitle>语言</SectionTitle>
-          <Segmented value={preference} options={LOCALE_OPTIONS} onChange={setPreference} />
+          <Segmented
+            value={preference}
+            options={LOCALE_OPTIONS}
+            onChange={setPreference}
+          />
         </section>
 
         <section className="flex flex-col gap-2">
           <SectionTitle>界面字号</SectionTitle>
           <Segmented
             value={String(scale)}
-            options={UI_SCALE_OPTIONS.map((option) => ({ label: option.label, value: String(option.value) }))}
+            options={UI_SCALE_OPTIONS.map((option) => ({
+              label: option.label,
+              value: String(option.value),
+            }))}
             onChange={(value) => changeScale(Number(value))}
           />
           <p className="text-[11px] text-ink-faint">即时生效，重启后保持。</p>
@@ -369,6 +451,16 @@ export function GeneralSettingsModal({ sessionId, cwd, onClose }: GeneralSetting
 
         <section className="flex flex-col gap-1">
           <SectionTitle>显示</SectionTitle>
+          <Row
+            label="夜晚模式"
+            hint="跟随系统，或强制浅色 / 深色（即时生效，重启后保持）"
+          >
+            <Segmented
+              value={theme}
+              options={THEME_OPTIONS}
+              onChange={changeTheme}
+            />
+          </Row>
           <Row label="隐藏思考过程" hint="折叠块不再展示模型推理内容">
             <Toggle
               checked={settings?.hideThinkingBlock ?? false}
@@ -435,7 +527,9 @@ export function GeneralSettingsModal({ sessionId, cwd, onClose }: GeneralSetting
             <div className="flex flex-wrap gap-1.5">
               {ON_DEMAND_DOMAIN_OPTIONS.map((option) => {
                 const checked = (onDemand?.saved ?? []).includes(option.value);
-                const disabled = isSettingsOverriddenByEnv(onDemand?.source ?? "default");
+                const disabled = isSettingsOverriddenByEnv(
+                  onDemand?.source ?? "default",
+                );
                 return (
                   <button
                     key={option.value}
@@ -446,8 +540,10 @@ export function GeneralSettingsModal({ sessionId, cwd, onClose }: GeneralSetting
                     onClick={() =>
                       void saveOnDemand(
                         checked
-                          ? (onDemand?.saved ?? []).filter((name) => name !== option.value)
-                          : [...(onDemand?.saved ?? []), option.value]
+                          ? (onDemand?.saved ?? []).filter(
+                              (name) => name !== option.value,
+                            )
+                          : [...(onDemand?.saved ?? []), option.value],
                       )
                     }
                     className={`rounded-full border px-2 py-0.5 text-[11px] transition-colors ${
@@ -463,13 +559,17 @@ export function GeneralSettingsModal({ sessionId, cwd, onClose }: GeneralSetting
             </div>
           </Row>
           {onDemand && onDemandWarning(onDemand.saved) && (
-            <p className="px-1 text-[11px] leading-4 text-[#B45309]">{onDemandWarning(onDemand.saved)}</p>
-          )}
-          {onDemand && !isSettingsOverriddenByEnv(onDemand.source) && onDemand.saved.length === 0 && (
-            <p className="px-1 text-[11px] leading-4 text-ink-muted">
-              没有勾选 = 全部常驻（等价于 PIFORGE_ON_DEMAND_DOMAINS=0）。
+            <p className="px-1 text-[11px] leading-4 text-[#B45309]">
+              {onDemandWarning(onDemand.saved)}
             </p>
           )}
+          {onDemand &&
+            !isSettingsOverriddenByEnv(onDemand.source) &&
+            onDemand.saved.length === 0 && (
+              <p className="px-1 text-[11px] leading-4 text-ink-muted">
+                没有勾选 = 全部常驻（等价于 PIFORGE_ON_DEMAND_DOMAINS=0）。
+              </p>
+            )}
           <Row label="技能命令" hint="把已安装技能注册成斜杠命令">
             <Toggle
               checked={settings?.enableSkillCommands ?? false}
@@ -491,7 +591,11 @@ export function GeneralSettingsModal({ sessionId, cwd, onClose }: GeneralSetting
             }
           >
             <span className="text-[11px] text-ink-faint">
-              {checkingUpstream ? "检查中…" : upstream?.hasUpdate ? "有更新" : ""}
+              {checkingUpstream
+                ? "检查中…"
+                : upstream?.hasUpdate
+                  ? "有更新"
+                  : ""}
             </span>
           </Row>
           <PiCoreVersionPicker
@@ -507,13 +611,17 @@ export function GeneralSettingsModal({ sessionId, cwd, onClose }: GeneralSetting
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={() => { void reloadResources(); }}
+              onClick={() => {
+                void reloadResources();
+              }}
               disabled={reloading}
               className="rounded-lg border border-divider px-2.5 py-1.5 text-[12px] text-ink-muted transition-colors hover:bg-[#F5F5F7] hover:text-ink disabled:opacity-60"
             >
               {reloading ? "重新加载中…" : "重新加载扩展与技能"}
             </button>
-            {notice && <span className="text-[11px] text-ink-faint">{notice}</span>}
+            {notice && (
+              <span className="text-[11px] text-ink-faint">{notice}</span>
+            )}
           </div>
           <p className="text-[11px] text-ink-faint">
             修改扩展 / SKILL.md 后无需重启：下次发送消息或点此按钮立即生效。

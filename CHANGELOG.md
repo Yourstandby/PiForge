@@ -3,6 +3,23 @@
 迁移条目按「改了什么 / 默认行为变没变 / 开关怎么用」组织。详细数据见 `docs/measurements/`
 （三个口径：记录型 provider、真实 deepseek 会话、重复场景 A/B，三者不要混读）。
 
+## 未发布 — 夜晚模式
+
+### 改了什么
+
+- 常规设置新增「夜晚模式」：跟随系统 / 浅色 / 深色，写入 `localStorage["pi-theme"]`，
+  `<html data-theme>` + `color-scheme` 由内联启动脚本先落一次（无闪烁），
+  `components/ThemeBoot.tsx` 挂载后校正并在「跟随系统」时监听 `prefers-color-scheme`。
+- `app/globals.css`：新增 `:root[data-theme="dark"]` 令牌组（`--color-*` 与旧 `--bg/--text` 系列）；
+  规则区里写死的浅色字面量统一换成令牌；历史组件里的 `bg-white` / `bg-[#hex]` 等字面量由
+  文件末尾的映射表兜底（`scripts/gen-dark-remap.mjs` 生成）。
+- 顺手修掉两处硬编码浅色：`components/FilePanel.tsx` 的 `explorerTokens`（行内覆盖了全局令牌，
+  导致文件树在夜晚模式下仍用深色字）；`ChatSurface` 空会话画布改用 `--empty-canvas`。
+
+### 默认行为变没变
+
+没变：默认仍是浅色霜蓝（`system` 时按系统偏好）。不想要夜晚模式可忽略该设置项。
+
 ## v0.9.2 — agent-host 冷启动 bundle · 上下文硬顶随窗口缩放
 
 主题：**冷启动从 32s 回到秒级**。host 打单文件 bundle，上下文预算改成跟模型窗口联动。

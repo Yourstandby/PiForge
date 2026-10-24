@@ -45,12 +45,12 @@ type Toast = { tone: "ok" | "error"; text: string } | null;
 function statusBadge(file: GitStatusFile): { label: string; color: string; title: string } {
   const code = file.status.replace(/\s+/g, "");
   if (code === "??") return { label: "U", color: "#16A34A", title: "未追踪" };
-  if (code.startsWith("D")) return { label: "D", color: "#DC2626", title: "已删除" };
+  if (code.startsWith("D")) return { label: "D", color: "var(--danger)", title: "已删除" };
   if (code.startsWith("A")) return { label: "A", color: "#16A34A", title: "新增" };
   if (code.startsWith("R")) return { label: "R", color: "#7C5BD6", title: "重命名" };
-  if (code.startsWith("M")) return { label: "M", color: "#2563EB", title: "已修改" };
+  if (code.startsWith("M")) return { label: "M", color: "var(--accent)", title: "已修改" };
   if (code.startsWith("U") || code.startsWith("AA") || code.startsWith("DD")) {
-    return { label: "!", color: "#DC2626", title: "冲突" };
+    return { label: "!", color: "var(--danger)", title: "冲突" };
   }
   return { label: code.slice(0, 1) || "M", color: "#B7791F", title: "改动" };
 }

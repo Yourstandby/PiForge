@@ -43,19 +43,19 @@ type GitStatusMap = Record<string, GitMark>;
 function changedMark(status: string): { label: string; color: string; title: string } {
   const code = status.replace(/\s+/g, "");
   if (code === "??") {
-    return { label: "U", color: "#2563EB", title: "未跟踪文件" };
+    return { label: "U", color: "var(--accent)", title: "未跟踪文件" };
   }
   if (code.startsWith("A")) {
-    return { label: "A", color: "#3E8A63", title: "新增文件" };
+    return { label: "A", color: "var(--success)", title: "新增文件" };
   }
   if (code.startsWith("D")) {
-    return { label: "D", color: "#C2554E", title: "已删除" };
+    return { label: "D", color: "var(--danger)", title: "已删除" };
   }
   if (code.startsWith("R")) {
     return { label: "R", color: "#7C5BD6", title: "已重命名" };
   }
   if (code.startsWith("U") || code === "AA" || code === "DD") {
-    return { label: "!", color: "#C2554E", title: "冲突" };
+    return { label: "!", color: "var(--danger)", title: "冲突" };
   }
   return { label: "M", color: "#B7791F", title: "已修改" };
 }
