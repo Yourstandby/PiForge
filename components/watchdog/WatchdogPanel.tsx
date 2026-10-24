@@ -197,8 +197,9 @@ export function WatchdogPanel({ sessionId }: { sessionId: string | null }) {
         <span className="ml-auto text-[10px] text-ink-faint">本地状态 · 不产生模型调用</span>
       </header>
 
-      {/* ---- 结论条：不点按钮就能拿到「该不该介入」 ---- */}
-      {task && (
+      {/* ---- 结论条：不点按钮就能拿到「该不该介入」 ----
+          旧 Host 不回 verdict 时整条不渲染（版本偏斜时不炸面板）。 */}
+      {task?.verdict && (
         <section
           aria-live="polite"
           className={`border-b border-[#EDF1F7] px-3 py-2 ${verdictSurface(task.verdict.decision)}`}
@@ -379,7 +380,7 @@ export function WatchdogPanel({ sessionId }: { sessionId: string | null }) {
             icon={<ScanSearch size={12} strokeWidth={2} aria-hidden="true" />}
             label={pending === "ask" ? "发送中…" : "深度诊断"}
             onClick={() => void send("ask")}
-            disabled={disabled || task?.verdict.decision !== "intervene"}
+            disabled={disabled || task?.verdict?.decision !== "intervene"}
             tone="ghost"
             hint="允许模型重新查状态，回复更长、消耗更多 Token；只有结论是「该介入」时才需要"
           />

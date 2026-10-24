@@ -36,6 +36,8 @@ function task(overrides: Partial<WatchdogTaskView> = {}): WatchdogTaskView {
     noticeCount: 0,
     interventionCount: 0,
     lastInterventionAt: null,
+    awaiting: "tool",
+    verdict: { decision: "wait", headline: "等待中", evidence: [] },
     ...overrides,
   };
 }
