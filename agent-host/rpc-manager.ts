@@ -28,6 +28,7 @@ import { desktopLtmInlineExtension } from "./desktop-ltm-extension.ts";
 import { readDesktopSettings, type CodemodeMode } from "../lib/desktop-settings.ts";
 import { desktopRuntimeTools } from "./desktop-runtime-tools.ts";
 import { desktopDedupeInlineExtension } from "./desktop-dedupe-extension.ts";
+import { desktopToolGuardInlineExtension } from "./desktop-tool-guard-extension.ts";
 import { desktopFileOriginInlineExtension } from "./desktop-file-origin-extension.ts";
 import { desktopCollabGuidanceInlineExtension } from "./desktop-collab-guidance-extension.ts";
 import { desktopToolSearchAlignmentInlineExtension } from "./desktop-tool-search-alignment.ts";
@@ -1258,6 +1259,9 @@ export async function startRpcSession(
         desktopToolSearchAlignmentInlineExtension(),
         // 每轮增量去重：重复 read / 重复命令只回一句或尾部差异（错误永远完整返回）。
         desktopDedupeInlineExtension(),
+        // 工具护栏：shell 类工具补默认超时 + 封顶（防单条长驻调用把整批挂死），
+        // 单批并行过多时追加一次提醒。只补参数 / 只在超时错误后追加一句改法，不改正常结果。
+        desktopToolGuardInlineExtension(),
         // 跨会话改动署名：别的会话改过的文件，read 时尾部多一行"谁改的"。
         // 必须排在去重之后（去重先判等，署名再追加文本，顺序反了会污染去重哈希）。
         desktopFileOriginInlineExtension(),
