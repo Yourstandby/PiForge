@@ -22,6 +22,8 @@ export type RoundProcessTool = {
     kind: "tool";
     name: string;
     input: Record<string, unknown>;
+    /** 调用 id：看门狗按它把「卡住」只标到对应的那一行。 */
+    toolCallId?: string;
     result?: ToolResultMessage;
   };
   usage?: AssistantMessage["usage"];

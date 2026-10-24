@@ -346,7 +346,13 @@ type TurnBlock =
   | { kind: "thinking"; text: string }
   | { kind: "text"; text: string }
   | { kind: "image"; src: string }
-  | { kind: "tool"; name: string; input: Record<string, unknown>; result?: ToolResultMessage };
+  | {
+      kind: "tool";
+      name: string;
+      input: Record<string, unknown>;
+      toolCallId?: string;
+      result?: ToolResultMessage;
+    };
 
 /** Resolve pi/UI image blocks (`{source:{base64|url}}` or `{data,mimeType}`). */
 function imageSrc(block: Record<string, unknown>): string | null {
@@ -765,6 +771,7 @@ function assistantBlocks(
         kind: "tool",
         name,
         input: input && typeof input === "object" ? input : {},
+        toolCallId: id,
         result: id ? results.get(id) : undefined,
       });
     }
@@ -988,6 +995,7 @@ function ToolCallCard({
   open: controlledOpen,
   onToggleOpen,
   streaming = false,
+  toolCallId,
   tokensPerSecond,
   usage,
   currencySymbol = "$",
@@ -997,6 +1005,8 @@ function ToolCallCard({
 }: {
   name: string;
   input: Record<string, unknown>;
+  /** 本次调用 id：看门狗只把「卡住」标到真正卡住的那一行。 */
+  toolCallId?: string;
   result?: ToolResultMessage;
   details?: unknown;
   nestedExecutions?: Record<string, NestedExecutionView>;
@@ -1082,8 +1092,16 @@ function ToolCallCard({
    */
   const watchdogSessionId = useWatchdogSessionId();
   const stall = useToolStall(watchdogSessionId, Boolean(streaming));
-  /** 仍在执行且没有结果的行才是「被卡住的那一行」。 */
-  const stalledRow = stall?.level === "stalled" && (Boolean(streaming) || !result);
+  /**
+   * 只有「这一行自己」被 Host 判定超阈值无输出时才算卡住：
+   * 看门狗状态是会话级的，早先结束（甚至没参与）的工具不该被一起染红。
+   */
+  const stalledRow =
+    stall?.level === "stalled" &&
+    Boolean(streaming) &&
+    (toolCallId
+      ? stall.stuckToolCallIds.includes(toolCallId)
+      : stall.pendingTool === name);
   const nested = result?.nestedCalls;
   const tree = nested?.calls.length ? buildNestedTree(nested.calls) : null;
   const output = result ? resultText(result).trim() : "";
@@ -1671,6 +1689,7 @@ function ToolCardStack({
           open={openIndex === index}
           onToggleOpen={() => setOpenIndex((prev) => (prev === index ? null : index))}
           streaming={running && !item.block.result}
+          toolCallId={item.block.toolCallId}
           tokensPerSecond={tokensPerSecond}
           usage={blockUsage(
             `${item.block.name} ${JSON.stringify(item.block.input)} ${
