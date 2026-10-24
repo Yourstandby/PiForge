@@ -41,6 +41,7 @@ import {
   startRpcSession,
   updateSessionCodemode,
 } from "./rpc-manager.ts";
+import { ensureRecommendedPiSettings } from "./settings-defaults.ts";
 import {
   subscribeSessionStream,
   type SessionSubscription,
@@ -2307,6 +2308,15 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
       syncCustomProvidersToModels();
     } catch (error) {
       log(`custom provider sync failed: ${errorText(error)}`);
+    }
+    // 一次性补写推荐 pi 设置（只在键缺失时写，绝不覆盖用户手改值）。
+    try {
+      const applied = ensureRecommendedPiSettings(getAgentDir());
+      if (applied.written.length > 0) {
+        log(`pi settings defaults applied: ${applied.written.join(", ")}`);
+      }
+    } catch (error) {
+      log(`pi settings defaults failed: ${errorText(error)}`);
     }
     prepareEndpoint(options.endpoint);
     hostPhase("config.sync");
