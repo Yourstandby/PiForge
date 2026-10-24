@@ -81,7 +81,7 @@ interface SubagentRecord {
   /** 省钱阀门：轮数上限（`PIFORGE_SUBAGENT_MAX_TURNS`，默认 6）。 */
   maxTurns: number;
   /** 熔断原因（命中后立刻中断，并把原因回给主 Agent）。 */
-  guardTrip: GuardTrip | null;
+  guardTrip: "context" | "progress" | null;
   /** 累计用量（成本 / 输出 token 采集：面板与对照实验共用）。 */
   usage: { input: number; cacheRead: number; output: number; cost: number };
   /** 空转计数（按可观测事件推进，见 progress-guard.ts）。 */
@@ -402,6 +402,38 @@ export async function spawnSubagent(input: SpawnSubagentInput): Promise<SpawnSub
         const progressBudget = checkProgressBudget(record.progress);
         if (progressBudget.stop) {
           record.guardTrip = record.guardTrip ?? "progress";
+          record.view.error = guardFailureText("progress", progressBudget.reason ?? "空转");
+          abort.abort();
+          void session.abort().catch(() => undefined);
+          notify({
+            type: "subagent_output",
+            id: record.view.id,
+            name: record.view.name,
+            text: record.view.error,
+            timestamp: Date.now(),
+          });
+          return;
+        }
+        record.assistantTurns = nextTurn;
+        /** 采集：累计用量（成本/输出 token 在面板与对照实验里都要用）。 */
+        const usage = event.message.usage;
+        if (usage) {
+          record.usage = {
+            input: record.usage.input + (usage.input ?? 0),
+            cacheRead: record.usage.cacheRead + (usage.cacheRead ?? 0),
+            output: record.usage.output + (usage.output ?? 0),
+            cost: record.usage.cost + (usage.cost?.total ?? 0),
+          };
+        }
+        /**
+         * 约束 4：「无进展」按**可观测事件**判定（读了文件 / 跑了命令 / 改了代码），
+         * 不是"这一轮没给结论"。探索性任务前几轮只读代码不该被误杀。
+         */
+        record.progress = advanceProgress(record.progress, record.progressThisTurn);
+        record.progressThisTurn = false;
+        const progressBudget = checkProgressBudget(record.progress);
+        if (progressBudget.stop) {
+          record.guardTrip = "progress";
           record.view.error = guardFailureText("progress", progressBudget.reason ?? "空转");
           abort.abort();
           void session.abort().catch(() => undefined);

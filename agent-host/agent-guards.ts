@@ -179,7 +179,7 @@ export function condenseReport(
 }
 
 /** 熔断/超限时回给主 Agent 的统一文案（tool result 里直接给模型看）。 */
-export function guardFailureText(kind: GuardTrip, detail: string): string {
+export function guardFailureText(kind: "turns" | "context" | "progress", detail: string): string {
   const label = kind === "turns" ? "轮数上限" : kind === "context" ? "上下文熔断" : "空转中断";
   return `【${label}】${detail}\n（这是省钱阀门主动中断，不是工具报错；请调整策略后继续。）`;
 }
