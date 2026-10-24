@@ -59,6 +59,19 @@ export function requiredDarwinEsbuildPackages(esbuildManifest) {
   });
 }
 
+/**
+ * esbuild in the standalone output is **optional**: it only ever appeared there
+ * as a transitive dependency of a package that has since been dropped
+ * (`@earendil-works/chord` left with pi-coding-agent 1.4.0), and nothing under
+ * `app/` / `lib/` / `agent-host/` imports it. A fresh checkout therefore traces
+ * no esbuild at all, and hard-requiring its manifest broke the macOS Universal
+ * build with ENOENT. Returns `null` when esbuild is not part of this bundle.
+ */
+export function readOptionalEsbuildManifest(esbuildDirectory) {
+  const manifestPath = join(esbuildDirectory, "package.json");
+  return existsSync(manifestPath) ? readJson(manifestPath) : null;
+}
+
 function packageDirectory(nodeModules, name) {
   return join(nodeModules, ...name.split("/"));
 }
@@ -136,8 +149,14 @@ export function ensureStandaloneMacUniversalRuntimes(projectRoot) {
     readJson(sharpManifestPath),
   );
   const esbuildDirectory = join(standaloneNodeModules, "esbuild");
-  const esbuildManifest = readJson(join(esbuildDirectory, "package.json"));
-  requiredPackages.push(...requiredDarwinEsbuildPackages(esbuildManifest));
+  const esbuildManifest = readOptionalEsbuildManifest(esbuildDirectory);
+  if (esbuildManifest) {
+    requiredPackages.push(...requiredDarwinEsbuildPackages(esbuildManifest));
+  } else {
+    console.log(
+      "ensure-standalone-macos-universal-runtimes: esbuild not traced into standalone — skipping its Darwin binaries",
+    );
+  }
   const temporaryDirectory = mkdtempSync(
     join(tmpdir(), "pi-agent-macos-universal-"),
   );
@@ -145,19 +164,21 @@ export function ensureStandaloneMacUniversalRuntimes(projectRoot) {
   let fetched = 0;
 
   try {
-    // esbuild's postinstall replaces the CLI JavaScript with a host-only Mach-O
-    // binary. Restore the upstream portable CLI so each architecture resolves
-    // its own optional package, just like esbuild's JavaScript API does.
-    const esbuildArchive = npmPack(
-      `esbuild@${esbuildManifest.version}`,
-      temporaryDirectory,
-      projectRoot,
-    );
-    const portableEsbuild = join(temporaryDirectory, "esbuild");
-    extractPackage(esbuildArchive, portableEsbuild);
-    const cliPath = join(esbuildDirectory, "bin", "esbuild");
-    rmSync(cliPath, { force: true });
-    cpSync(join(portableEsbuild, "bin", "esbuild"), cliPath);
+    if (esbuildManifest) {
+      // esbuild's postinstall replaces the CLI JavaScript with a host-only Mach-O
+      // binary. Restore the upstream portable CLI so each architecture resolves
+      // its own optional package, just like esbuild's JavaScript API does.
+      const esbuildArchive = npmPack(
+        `esbuild@${esbuildManifest.version}`,
+        temporaryDirectory,
+        projectRoot,
+      );
+      const portableEsbuild = join(temporaryDirectory, "esbuild");
+      extractPackage(esbuildArchive, portableEsbuild);
+      const cliPath = join(esbuildDirectory, "bin", "esbuild");
+      rmSync(cliPath, { force: true });
+      cpSync(join(portableEsbuild, "bin", "esbuild"), cliPath);
+    }
 
     for (const { name, version } of requiredPackages) {
       const destination = packageDirectory(standaloneNodeModules, name);
