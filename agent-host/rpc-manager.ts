@@ -1265,11 +1265,12 @@ export async function startRpcSession(
      */
     let sessionForCompaction: AgentSessionLike | null = null;
     /**
-     * codemode 模式：设置里 `only` 时普通工具不再声明给模型，全部经脚本调用
-     * （提示词少一整套 schema + 天然批量）。用可变对象传给 SDK，
+     * codemode 模式：`on`（默认）工具照常声明，脚本只是第二种调用方式；
+     * `only` 时普通工具不再声明给模型，全部经脚本调用（提示词少一整套 schema +
+     * 天然批量，代价是脚本内的输出只能整批返回）。用可变对象传给 SDK，
      * 设置页切换后下一条消息就生效。
      */
-    const codemodeOptions: { mode: CodemodeMode } = { mode: desktop.codemodeMode ?? "only" };
+    const codemodeOptions: { mode: CodemodeMode } = { mode: desktop.codemodeMode ?? "on" };
     const resourceLoader = new DefaultResourceLoader({
       cwd,
       agentDir,

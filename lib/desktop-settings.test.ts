@@ -58,18 +58,36 @@ test("validateDesktopSettingsBody", () => {
   assert.equal(validateDesktopSettingsBody({ codemodeEnabled: true }), null);
   assert.equal(validateDesktopSettingsBody({ codemodeMode: "only" }), null);
   assert.match(validateDesktopSettingsBody({ codemodeMode: "off" })!, /codemodeMode/);
+  // worker 池：1–8 的整数，`null` 是显式「跟随环境」。
+  assert.equal(validateDesktopSettingsBody({ codemodeMaxWorkers: 4 }), null);
+  assert.equal(validateDesktopSettingsBody({ codemodeMaxWorkers: 1 }), null);
+  assert.equal(validateDesktopSettingsBody({ codemodeMaxWorkers: 8 }), null);
+  assert.equal(validateDesktopSettingsBody({ codemodeMaxWorkers: null }), null);
+  assert.match(validateDesktopSettingsBody({ codemodeMaxWorkers: 0 })!, /codemodeMaxWorkers/);
+  assert.match(validateDesktopSettingsBody({ codemodeMaxWorkers: 9 })!, /codemodeMaxWorkers/);
+  assert.match(validateDesktopSettingsBody({ codemodeMaxWorkers: 2.5 })!, /codemodeMaxWorkers/);
+  assert.match(validateDesktopSettingsBody({ codemodeMaxWorkers: "4" })!, /codemodeMaxWorkers/);
 });
 
-test("Codemode defaults on with script-only tools (batch execution layer)", () => {
+test("Codemode defaults on with tools declared normally", () => {
   const defaults = defaultDesktopSettings();
   assert.equal(defaults.codemodeEnabled, true);
-  assert.equal(defaults.codemodeMode, "only");
+  // 默认 `on`：工具逐条声明，脚本只是第二种调用方式（`only` 会让界面在长脚本期间空转）。
+  assert.equal(defaults.codemodeMode, "on");
+  // 池大小默认不落盘：交给 PI_CODEMODE_MAX_WORKERS / SDK 的 2。
+  assert.equal(defaults.codemodeMaxWorkers, undefined);
 
   // Invalid mode falls back to the default instead of silently dropping the field.
-  assert.equal(mergeDesktopSettings({ codemodeMode: "nope" }).codemodeMode, "only");
-  assert.equal(mergeDesktopSettings({ codemodeMode: "on" }).codemodeMode, "on");
+  assert.equal(mergeDesktopSettings({ codemodeMode: "nope" }).codemodeMode, "on");
+  // 老用户显式写过的 `only` 不被默认值覆盖。
+  assert.equal(mergeDesktopSettings({ codemodeMode: "only" }).codemodeMode, "only");
   // Explicit opt-out still wins over the new default.
   assert.equal(mergeDesktopSettings({ codemodeEnabled: false }).codemodeEnabled, false);
+
+  // 显式池大小保留；`null` 清掉字段回到跟随环境；非法值不落盘。
+  assert.equal(mergeDesktopSettings({ codemodeMaxWorkers: 4 }).codemodeMaxWorkers, 4);
+  assert.equal(mergeDesktopSettings({ codemodeMaxWorkers: null }).codemodeMaxWorkers, undefined);
+  assert.equal(mergeDesktopSettings({ codemodeMaxWorkers: 42 }).codemodeMaxWorkers, undefined);
 
   const dir = mkdtempSync(join(tmpdir(), "pi-desktop-codemode-"));
   try {

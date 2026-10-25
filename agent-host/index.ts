@@ -187,6 +187,24 @@ async function main(): Promise<void> {
   const { createAgentHostServer } = await import("./server.ts");
   hostPhase("server.module");
 
+  // codemode worker 池：设置页 > 环境变量 > 2。SDK 每次执行脚本都重读这个环境变量，
+  // 所以这里写完从下一条脚本起生效，不需要重启。默认保持 2，日志里给出调到 4 的提示。
+  {
+    const { applyCodemodeWorkerPool, formatCodemodeWorkerPoolLine } = await import(
+      "./codemode-worker-pool.ts"
+    );
+    const { readDesktopSettings } = await import("../lib/desktop-settings.ts");
+    const { getAgentDir } = await import("./sdk-adapter.ts");
+    let maxWorkers: unknown;
+    try {
+      maxWorkers = readDesktopSettings(getAgentDir()).codemodeMaxWorkers;
+    } catch {
+      // 设置文件坏了不该挡住 Host 启动：退回环境变量 / 默认值。
+      maxWorkers = undefined;
+    }
+    log(formatCodemodeWorkerPoolLine(applyCodemodeWorkerPool({ setting: maxWorkers })));
+  }
+
   const parentPort = getParentPort();
   let shuttingDown = false;
   const server = createAgentHostServer({
