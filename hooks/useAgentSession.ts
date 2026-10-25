@@ -318,8 +318,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   });
 
   const sessionIdRef = useRef<string | null>(session?.id ?? null);
-  const { handleAgentEventRef, connectEvents, connectionStatus } =
-    useAgentEvents({ agentRunning });
+  const {
+    handleAgentEventRef,
+    connectEvents,
+    reconnectEvents,
+    getLastAgentEventAt,
+    connectionStatus,
+    reconnectAttempts,
+  } = useAgentEvents({ agentRunning });
 
   const modelTools = useSessionModelTools({
     isNew,
@@ -1007,6 +1013,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     handleToolPresetChange,
     handleThinkingLevelChange,
     connectEvents,
+    reconnectEvents,
+    getLastAgentEventAt,
     connectionStatus,
+    reconnectAttempts,
   };
 }

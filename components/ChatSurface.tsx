@@ -10,6 +10,8 @@ import { useAudio } from "@/hooks/useAudio";
 import { useHostHealth } from "@/hooks/useHostHealth";
 import { estimateContextTokens, resolveTokenGuards, type TokenGuardKind } from "@/lib/token-guard";
 import { TokenGuardBanner } from "./TokenGuardBanner";
+import { StreamHealthBanner } from "./StreamHealthBanner";
+import { evaluateStreamHealth, type StreamHealth } from "@/hooks/agent-session/stream-health";
 import { useSessionSplitHint } from "@/hooks/useSessionSplitHint";
 import { useSessionScope } from "@/hooks/useSessionScope";
 import { conversationToMarkdown } from "@/lib/conversation-markdown";
@@ -332,6 +334,35 @@ function ChatSession({
     api?.setStreamingThrottle?.(Boolean(chat.agentRunning));
     return () => api?.setStreamingThrottle?.(false);
   }, [chat.agentRunning]);
+
+  /**
+   * 事件流健康度：agent 在跑但界面不刷新，是「发了没反应、点停止才出结果」的直接原因。
+   * 这里每 2s 用实时时间戳重算一次（不走 state），把断流/卡死变成输入框上方的可见提示。
+   */
+  const [streamHealth, setStreamHealth] = useState<StreamHealth>({ kind: "ok" });
+  const getLastAgentEventAt = chat.getLastAgentEventAt;
+  useEffect(() => {
+    const tick = () => {
+      setStreamHealth((prev) => {
+        const next = evaluateStreamHealth({
+          agentRunning: chat.agentRunning,
+          status: chat.connectionStatus,
+          lastEventAt: getLastAgentEventAt(),
+          now: Date.now(),
+          attempts: chat.reconnectAttempts,
+        });
+        // 同 kind 只更新字段（趟秒数要变），完全不同时避免无意义重渲染。
+        if (prev.kind !== next.kind) return next;
+        if (next.kind === "stalled" && prev.kind === "stalled") {
+          return prev.idleMs === next.idleMs ? prev : next;
+        }
+        return prev;
+      });
+    };
+    tick();
+    const timer = setInterval(tick, 2000);
+    return () => clearInterval(timer);
+  }, [chat.agentRunning, chat.connectionStatus, chat.reconnectAttempts, getLastAgentEventAt]);
 
   useEffect(() => {
     if (!compactToast) return;
@@ -1853,6 +1884,11 @@ function ChatSession({
           <div className="shrink-0 pb-4">
             <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-8">
               {trustCard}
+              <StreamHealthBanner
+                health={streamHealth}
+                onReconnect={chat.reconnectEvents}
+                onAbort={() => void chat.handleAbort()}
+              />
               {/* 看门狗的可视化已全部收拢到右侧「系统监控」面板；
                   主聊天界面不订阅任何看门狗状态，也不会因此重渲染。 */}
               {/* Token 护栏：前缀失效（P2-2）/ 恢复成本（P2-3a），纯提示可关闭 */}
