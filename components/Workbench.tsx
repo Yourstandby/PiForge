@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import type { SessionInfo } from "@/lib/types";
 import { fetchSessions, invalidateSessions } from "@/lib/sessions-cache";
 import { sessionScope } from "@/lib/session-scope";
@@ -316,10 +317,14 @@ export function Workbench() {
 
   const activateTab = useCallback((key: string) => {
     activeKeyRef.current = key;
-    // 切换会话会挂载/重渲大量消息 DOM：标记为非紧急更新，点击先反馈、渲染可中断，
-    // 避免主线程被一次长任务（成百上千轮 markdown）完全堵住。
+    // ⚠️ activeKey 必须同步提交，绝不能放进 transition。
+    // 历史实现把 setActiveKey 包在 startTransition 里（想避免切会话时的长任务卡顿），
+    // 但标签页是一直挂载、只切 display 的，切换本身很便宜；而 Agent 流式输出会持续
+    // 产生紧急更新，不断打断这条 transition，导致它长时间无法提交 —— 表现就是
+    // 「点标签/点侧栏会话完全没反应」，且不报错、Ctrl+R 也复现。
+    // 现在：activeKey 同步刷新生效；只有「已读标记」这种纯装饰状态留在 transition。
+    flushSync(() => setActiveKey(key));
     startTransition(() => {
-      setActiveKey(key);
       // 切回前台即视为已读，清掉「后台已完成」绿点
       setTabActivity((previous) =>
         previous[key]?.done
@@ -388,8 +393,11 @@ export function Workbench() {
         return;
       }
     }
-    commitTabs([...tabsRef.current, tab]);
-    setDrafts((prev) => ({ ...prev, [tab.key]: readStoredDraft(tab.draftKey) }));
+    // 同理：新标签必须先同步落到 tabs 里，否则 visibleKey 兜底会把视图卡在旧标签上。
+    flushSync(() => {
+      commitTabs([...tabsRef.current, tab]);
+      setDrafts((prev) => ({ ...prev, [tab.key]: readStoredDraft(tab.draftKey) }));
+    });
     activateTab(tab.key);
   }, [commitTabs, activateTab]);
 
@@ -566,12 +574,10 @@ ${fenced}`
         if (session.cwd) setCwd(session.cwd);
         return;
       }
-      // 新建标签 = 挂载一整棵新的 ChatSurface，同样放到非紧急更新里，
-      // 保证侧栏点击的手感不被一次性渲染卡死。
-      startTransition(() => {
-        openTab(makeTab(session, null));
-        if (session.cwd) setCwd(session.cwd);
-      });
+      // 不再包 startTransition：侧栏点击是用户最直接的输入，被流式更新打断时
+      // 表现为「点了没反应」。开关标签的同步成本可控（pane 本来就要挂载）。
+      openTab(makeTab(session, null));
+      if (session.cwd) setCwd(session.cwd);
     },
     [activateTab, openTab],
   );
