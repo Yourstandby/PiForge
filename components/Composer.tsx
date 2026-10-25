@@ -56,12 +56,28 @@ async function fileToAttachment(file: File): Promise<AttachedImage> {
   return {
     data: processed.data,
     mimeType: processed.mimeType,
-    previewUrl: URL.createObjectURL(file),
+    // 缩略图用处理后的小图，不再把整张原图塞给 <img> 解码（这是贴图卡顿的另一半）。
+    previewUrl: processed.previewUrl,
+    fullUrl: processed.fullUrl,
     width: processed.width,
     height: processed.height,
     bytes: processed.bytes,
     originalBytes: processed.originalBytes,
   };
+}
+
+/** 释放附件的两个 object URL（缩略图 + 整图）。 */
+function revokeAttachment(image: AttachedImage): void {
+  URL.revokeObjectURL(image.previewUrl);
+  if (image.fullUrl && image.fullUrl !== image.previewUrl) URL.revokeObjectURL(image.fullUrl);
+}
+
+/** 让出一帧：多张图连拍时，每处理完一张就让 UI 重绘一次。 */
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => resolve());
+    else setTimeout(resolve, 0);
+  });
 }
 
 /** Drag payload carries files (not a reorder drag of the follow-up queue). */
@@ -139,6 +155,9 @@ export function Composer({
   const [images, setImages] = useState<AttachedImage[]>([]);
   const imagesRef = useRef<AttachedImage[]>([]);
   imagesRef.current = images;
+  // 正在处理的贴图：只占位不可发，让粘贴动作立刻有视觉反馈。
+  const [pendingImages, setPendingImages] = useState<{ id: number }[]>([]);
+  const pendingSeq = useRef(0);
   const [dragActive, setDragActive] = useState(false);
   // dragenter/leave fire for every child element; count them instead of
   // toggling so the highlight does not flicker.
@@ -184,7 +203,7 @@ export function Composer({
 
   useEffect(() => {
     return () => {
-      imagesRef.current.forEach((image) => URL.revokeObjectURL(image.previewUrl));
+      imagesRef.current.forEach(revokeAttachment);
     };
   }, []);
 
@@ -305,11 +324,21 @@ export function Composer({
   const addFiles = useCallback(async (files: FileList | File[]) => {
     const picked = Array.from(files).filter((file) => isImageFileLike(file.name, file.type));
     if (picked.length === 0) return;
-    try {
-      const attachments = await Promise.all(picked.map(fileToAttachment));
-      setImages((current) => [...current, ...attachments]);
-    } catch {
-      // Silent: an unreadable image should not block typing.
+    // 先同步占位：贴图后立即出现「处理中」芯片，而不是等编解码完成后才出现。
+    const pending = picked.map(() => ({ id: ++pendingSeq.current }));
+    setPendingImages((current) => [...current, ...pending]);
+    for (let i = 0; i < picked.length; i += 1) {
+      const id = pending[i].id;
+      try {
+        const attachment = await fileToAttachment(picked[i]);
+        setImages((current) => [...current, attachment]);
+      } catch {
+        // Silent: an unreadable image should not block typing.
+      } finally {
+        setPendingImages((current) => current.filter((item) => item.id !== id));
+      }
+      // 串行 + 让帧：一次贴多张图时不会把所有重活堆在同一帧里。
+      if (i < picked.length - 1) await nextFrame();
     }
   }, []);
 
@@ -400,12 +429,13 @@ export function Composer({
     setImages((current) => {
       const next = [...current];
       const [removed] = next.splice(index, 1);
-      if (removed) URL.revokeObjectURL(removed.previewUrl);
+      if (removed) revokeAttachment(removed);
       return next;
     });
   }, []);
 
-  const canSend = (value.trim().length > 0 || images.length > 0) && !disabled;
+  // 图片还在处理中就不能发：否则 Enter 会把这批图默默丢掉。
+  const canSend = (value.trim().length > 0 || images.length > 0) && !disabled && pendingImages.length === 0;
   const mentionOpen = mention !== null && suggestions.length > 0;
 
   const clearInput = () => {
@@ -413,7 +443,7 @@ export function Composer({
     // 发出去之后附件只会以 base64 进会话，缩略图的 Blob URL 必须立刻回收，
     // 否则每贴一张图就永久漏一份整图内存（贴十几张后输入框会明显变卡）。
     setImages((current) => {
-      for (const image of current) URL.revokeObjectURL(image.previewUrl);
+      for (const image of current) revokeAttachment(image);
       return [];
     });
     setMention(null);
@@ -564,12 +594,26 @@ export function Composer({
           e.target.value = "";
         }}
       />
-      {images.length > 0 && (
+      {(images.length > 0 || pendingImages.length > 0) && (
         <div className="px-1 pb-1.5">
-          <AttachmentPreview
-            attachedImages={images}
-            onRemoveImage={(index) => removeImage(index)}
-          />
+          {images.length > 0 && (
+            <AttachmentPreview
+              attachedImages={images}
+              onRemoveImage={(index) => removeImage(index)}
+            />
+          )}
+          {pendingImages.length > 0 && (
+            <div className="mb-1.5 flex gap-1.5" aria-live="polite" aria-label="图片处理中">
+              {pendingImages.map((item) => (
+                <div
+                  key={item.id}
+                  className="flex h-14 w-14 items-center justify-center rounded-md border border-black/[0.08] bg-[#F5F7FA]"
+                >
+                  <span className="h-3.5 w-3.5 animate-spin rounded-full border-[1.5px] border-accent/25 border-t-accent" />
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
       {queuedFollowUps.length > 0 && (

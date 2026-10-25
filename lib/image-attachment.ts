@@ -46,6 +46,27 @@ export interface ProcessedImage {
   bytes: number;
   /** 原始文件字节数（用于 UI 显示省了多少）。 */
   originalBytes: number;
+  /** 缩略图 object URL（≤THUMB_EDGE）：贴图条用它，避免为 56px 预览解码整张原图。 */
+  previewUrl: string;
+  /** 降采样后的整图 object URL（给大图查看器看，别拿 base64 那串糊图）。 */
+  fullUrl: string;
+}
+
+/** 缩略图长边：贴图条只显示 56px，没必要为它解码一张 4K 原图。 */
+export const THUMB_EDGE = 160;
+
+/** 缩略图 JPEG 质量（这么小的图，0.75 看不出差别）。 */
+const THUMB_QUALITY = 0.75;
+
+/** 这些格式重编码会丢东西（GIF 动画、SVG 矢量），一律原样发送。 */
+const NO_REENCODE = /^image\/(gif|svg\+xml)$/i;
+
+interface Decoded {
+  width: number;
+  height: number;
+  draw: CanvasImageSource;
+  /** 释放底层位图（ImageBitmap 不 close 会一直占显存）。 */
+  release: () => void;
 }
 
 export function shouldDownscale(width: number, height: number, bytes: number): boolean {
@@ -123,21 +144,61 @@ function blobToBase64(blob: Blob): Promise<string> {
   });
 }
 
-function canvasToBlob(canvas: HTMLCanvasElement, mimeType: string): Promise<Blob | null> {
+function canvasToBlob(
+  canvas: HTMLCanvasElement,
+  mimeType: string,
+  quality = JPEG_QUALITY,
+): Promise<Blob | null> {
   return new Promise((resolve) => {
     try {
-      canvas.toBlob((blob) => resolve(blob), mimeType, JPEG_QUALITY);
+      canvas.toBlob((blob) => resolve(blob), mimeType, quality);
     } catch {
       resolve(null);
     }
   });
 }
 
-async function decodeSize(file: File): Promise<{ width: number; height: number; draw: CanvasImageSource } | null> {
+/**
+ * 缩放解码：`createImageBitmap` 的 resize 选项在**工作线程**里完成解码 + 重采样，
+ * 主线程拿到的已经是一张目标尺寸的小图。贴图时的卡顿原先就出在主线程
+ * `drawImage(4K 原图, 0, 0, 1568, ...)` 这一下。
+ */
+async function decodeResized(
+  file: File,
+  target: { width: number; height: number },
+): Promise<Decoded | null> {
+  if (typeof createImageBitmap !== "function") return null;
+  try {
+    const bitmap = await createImageBitmap(file, {
+      resizeWidth: target.width,
+      resizeHeight: target.height,
+      resizeQuality: "high",
+    });
+    if (!bitmap.width || !bitmap.height) {
+      bitmap.close?.();
+      return null;
+    }
+    return {
+      width: bitmap.width,
+      height: bitmap.height,
+      draw: bitmap,
+      release: () => bitmap.close?.(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function decodeSize(file: File): Promise<Decoded | null> {
   if (typeof createImageBitmap === "function") {
     try {
       const bitmap = await createImageBitmap(file);
-      return { width: bitmap.width, height: bitmap.height, draw: bitmap };
+      return {
+        width: bitmap.width,
+        height: bitmap.height,
+        draw: bitmap,
+        release: () => bitmap.close?.(),
+      };
     } catch {
       /* 退到 <img> 解码 */
     }
@@ -153,7 +214,14 @@ async function decodeSize(file: File): Promise<{ width: number; height: number; 
       image.src = url;
     });
     if (!image.naturalWidth) return null;
-    return { width: image.naturalWidth, height: image.naturalHeight, draw: image };
+    return {
+      width: image.naturalWidth,
+      height: image.naturalHeight,
+      draw: image,
+      release: () => {
+        image.src = "";
+      },
+    };
   } catch {
     return null;
   } finally {
@@ -161,7 +229,11 @@ async function decodeSize(file: File): Promise<{ width: number; height: number; 
   }
 }
 
-function rawAttachment(dataUrl: string, file: File, originalBytes: number): ProcessedImage {
+function rawAttachment(
+  dataUrl: string,
+  file: File,
+  originalBytes: number,
+): Omit<ProcessedImage, "previewUrl" | "fullUrl"> {
   const comma = dataUrl.indexOf(",");
   const meta = comma >= 0 ? dataUrl.slice(0, comma) : "";
   const mimeType =
@@ -179,64 +251,144 @@ function rawAttachment(dataUrl: string, file: File, originalBytes: number): Proc
 /**
  * 把用户贴进来 / 拖进来的图片处理成附件。
  *
- * 顺序：解码（bitmap → <img>）→ 按「长边 + 像素预算」缩放 → DOM canvas 重编码
- * （`toBlob` 在 Electron / 浏览器里最稳，`OffscreenCanvas.convertToBlob` 只当备选）
- * → base64。任何一步失败都退回原始字节：宁可贵一点，也不能让图片贴不进去。
+ * 顺序：解码（`createImageBitmap` 带 resize，缩放跑在工作线程）→ 按「长边 + 像素
+ * 预算」定目标尺寸 → DOM canvas 重编码（`toBlob` 在 Electron / 浏览器里最稳）→
+ * base64，同时生成一张小缩略图 URL。任何一步失败都退回原始字节：宁可贵一点，
+ * 也不能让图片贴不进去。
+ *
+ * 为什不默认 PNG：截图都是 `image/png` 且名字不叫 screenshot，PNG 编码一张
+ * 1.5MP 的图要一两百毫秒且发生在主线程上；除非探测到真有透明像素，一律用 JPEG。
  */
 export async function processImageFile(file: File): Promise<ProcessedImage> {
   const originalBytes = file.size;
-  const decoded = await decodeSize(file).catch(() => null);
 
-  if (decoded) {
-    const target = fitWithin(decoded.width, decoded.height);
-    const needsWork = shouldDownscale(decoded.width, decoded.height, originalBytes) ||
-      target.width !== decoded.width ||
-      target.height !== decoded.height;
+  if (NO_REENCODE.test(file.type || "")) return rawProcessed(file, originalBytes);
 
-    if (!needsWork) {
-      try {
-        return rawAttachment(await readAsDataUrl(file), file, originalBytes);
-      } catch {
-        /* 落到下面重编码 */
-      }
-    }
+  const original = await decodeSize(file).catch(() => null);
+  if (original) {
+    try {
+      const target = fitWithin(original.width, original.height);
+      const sameSize = target.width === original.width && target.height === original.height;
 
-    if (target.width > 0 && target.height > 0) {
-      // 截图（无透明需求）走 JPEG，体积能再降一个量级；其余保持 PNG。
-      const mimeType = /^image\/(jpeg|jpg|webp)$/i.test(file.type) || /screenshot|snip/i.test(file.name)
-        ? "image/jpeg"
-        : "image/png";
-      const canvas = typeof document !== "undefined" ? document.createElement("canvas") : null;
-      if (canvas) {
-        canvas.width = target.width;
-        canvas.height = target.height;
-        const context = canvas.getContext("2d", { alpha: mimeType === "image/png" });
-        if (context) {
-          context.imageSmoothingEnabled = true;
-          context.imageSmoothingQuality = "high";
-          if (mimeType === "image/jpeg") {
-            context.fillStyle = "#FFFFFF";
-            context.fillRect(0, 0, target.width, target.height);
-          }
-          context.drawImage(decoded.draw, 0, 0, target.width, target.height);
-          const blob = await canvasToBlob(canvas, mimeType);
-          if (blob && blob.size > 0) {
-            const data = await blobToBase64(blob);
-            return {
-              data,
-              mimeType,
-              width: target.width,
-              height: target.height,
-              bytes: blob.size,
-              originalBytes,
-            };
-          }
+      // 已经够小：不重编码，直接发原始字节（省一次编解码）。
+      if (sameSize && !shouldDownscale(original.width, original.height, originalBytes)) {
+        try {
+          const raw = rawAttachment(await readAsDataUrl(file), file, originalBytes);
+          const thumbnail = await makeThumbnail(original.draw, original.width, original.height, false);
+          return {
+            ...raw,
+            previewUrl: thumbnail ?? URL.createObjectURL(file),
+            fullUrl: URL.createObjectURL(file),
+          };
+        } catch {
+          /* 落到下面的重编码路径 */
         }
       }
+
+      if (target.width > 0 && target.height > 0) {
+        const resized = sameSize ? null : await decodeResized(file, target);
+        const source = resized ?? original;
+        const alpha = hasTransparency(source.draw);
+        const mimeType = alpha ? "image/png" : "image/jpeg";
+        const canvas = typeof document !== "undefined" ? document.createElement("canvas") : null;
+        if (canvas) {
+          canvas.width = target.width;
+          canvas.height = target.height;
+          const context = canvas.getContext("2d", { alpha });
+          if (context) {
+            context.imageSmoothingEnabled = true;
+            context.imageSmoothingQuality = "high";
+            if (!alpha) {
+              context.fillStyle = "#FFFFFF";
+              context.fillRect(0, 0, target.width, target.height);
+            }
+            context.drawImage(source.draw, 0, 0, target.width, target.height);
+            const blob = await canvasToBlob(canvas, mimeType);
+            if (blob && blob.size > 0) {
+              const data = await blobToBase64(blob);
+              const fullUrl = URL.createObjectURL(blob);
+              const previewUrl =
+                (await makeThumbnail(source.draw, source.width, source.height, alpha)) ?? fullUrl;
+              return {
+                data,
+                mimeType,
+                width: target.width,
+                height: target.height,
+                bytes: blob.size,
+                originalBytes,
+                previewUrl,
+                fullUrl,
+              };
+            }
+          }
+        }
+        resized?.release();
+      }
+    } finally {
+      original.release();
     }
-    if (decoded.draw instanceof ImageBitmap) decoded.draw.close?.();
   }
 
   // 兜底：原始字节（HEIC、损坏文件、无 canvas 环境…）
-  return rawAttachment(await readAsDataUrl(file), file, originalBytes);
+  return rawProcessed(file, originalBytes);
+}
+
+async function rawProcessed(file: File, originalBytes: number): Promise<ProcessedImage> {
+  const raw = rawAttachment(await readAsDataUrl(file), file, originalBytes);
+  const url = URL.createObjectURL(file);
+  return { ...raw, previewUrl: url, fullUrl: url };
+}
+
+/**
+ * 透明像素探测：24×24 抽样就够，成本是微秒级。
+ * 没有透明的截图没必要付 PNG 的编码代价。
+ */
+function hasTransparency(source: CanvasImageSource): boolean {
+  if (typeof document === "undefined") return false;
+  const probe = 24;
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = probe;
+    canvas.height = probe;
+    const context = canvas.getContext("2d", { alpha: true, willReadFrequently: true });
+    if (!context) return false;
+    context.clearRect(0, 0, probe, probe);
+    context.drawImage(source, 0, 0, probe, probe);
+    const { data } = context.getImageData(0, 0, probe, probe);
+    for (let i = 3; i < data.length; i += 4) {
+      if (data[i] < 250) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/** 生成贴图条用的缩略图 object URL；失败返回 null（调用方再回退）。 */
+async function makeThumbnail(
+  source: CanvasImageSource,
+  width: number,
+  height: number,
+  alpha: boolean,
+): Promise<string | null> {
+  if (typeof document === "undefined" || width <= 0 || height <= 0) return null;
+  const fit = fitWithin(width, height, THUMB_EDGE, THUMB_EDGE * THUMB_EDGE);
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = fit.width;
+    canvas.height = fit.height;
+    const context = canvas.getContext("2d", { alpha });
+    if (!context) return null;
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "medium";
+    if (!alpha) {
+      context.fillStyle = "#FFFFFF";
+      context.fillRect(0, 0, fit.width, fit.height);
+    }
+    context.drawImage(source, 0, 0, fit.width, fit.height);
+    const blob = await canvasToBlob(canvas, alpha ? "image/png" : "image/jpeg", THUMB_QUALITY);
+    return blob ? URL.createObjectURL(blob) : null;
+  } catch {
+    return null;
+  }
 }

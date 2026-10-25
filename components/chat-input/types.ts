@@ -1,7 +1,9 @@
 export interface AttachedImage {
   data: string;   // base64, no prefix
   mimeType: string;
-  previewUrl: string; // object URL for display
+  previewUrl: string; // object URL for display（缩略图）
+  /** 降采样后的整图 object URL；大图查看器优先用它，base64 那串会糊。 */
+  fullUrl?: string;
   /** 发给模型的像素尺寸（大图会先缩到长边 1568，见 lib/image-attachment.ts）。 */
   width?: number;
   height?: number;
