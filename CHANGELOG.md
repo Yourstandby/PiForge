@@ -3,6 +3,48 @@
 迁移条目按「改了什么 / 默认行为变没变 / 开关怎么用」组织。详细数据见 `docs/measurements/`
 （三个口径：记录型 provider、真实 deepseek 会话、重复场景 A/B，三者不要混读）。
 
+## v0.11.0 — 调用预算与卡顿收口（工具开销 / codemode / 界面计时 / 冒烟脚本）
+
+主题：**把「卡住」变成看得见的数字**。每用户轮工具调用预算写死（<8 次，第 4 次自检），
+工具固定开销整体压缩，codemode 恢复逐条声明并回传脚本内进度；界面修掉「点了没反应」
+「一上翻被拽回」「工具卡一直跳秒」；度量与冒烟脚本不再静默挂死。
+
+### 改了什么
+
+- **调用预算**：`BATCHING_RULES` 拆出「调用预算（写死）」与「中途自检」（简单 ≤4 / 普通 ≤8 /
+  调研 ≤10、第 4 次自检、禁 `du -sh` 与全量 `grep -r`、`timeout 30`）；tool-guard 新增
+  `TURN_BUDGET` + `createTurnBudgetTracker()`，第 4/8 次在结果尾部追加提醒，`before_agent_start`
+  复位，codemode 嵌套调用不重复计数。
+- **工具开销**：输出预算默认 4000→24000 字符（头尾各 9000、400 行，`read` 档位不缩放，
+  二次裁剪幂等）；超时默认 120/900→45/300 s；调度器重型 4/2→6/4。
+- **codemode**：池上限可配（设置页 > `PI_CODEMODE_MAX_WORKERS` > 2）；默认模式 `only`→`on`；
+  脚本内调用进度折成一行经 liveOutput 回传；超时/取消时观察扩展推断 `slot held (pool=N)` 日志；
+  附 `scripts/hotfix/hotfix-codemode.{ps1,sh}` 打包版热修复脚本。
+- **界面**：工具卡耗时完成即冻结（`lib/tool-clock.ts`，`toolCallId` 模块级 Map，优先 pi 的
+  `durationMs`）；标签切换/侧栏会话点击改为同步提交（去掉被流式更新打断的 `startTransition`）；
+  滚动监听 deps 补 `showTranscript`、取消平滑滚动改 `behavior:'instant'`；介入文本加 `[系统提示]`
+  前缀，渲染为灰色系统卡、不进回合导航。
+- **会话侧栏**：首屏给每个项目补一条最新会话并返回 `nextOffset` 游标，历史项目分组不再整块消失。
+- **脚本不再静默挂死**：等帧 60 s 硬期限、host 退出/断连立即 reject 并把退出码并入错误
+  （`HOST_EXIT_GRACE_MS=700`）；新增 `scripts/lib/host-spawn.mjs`（`spawnNodeHost` / `hostChildEnv`），
+  12 个脚本改走工厂，stdin 护栏只写一处；`smoke:prefix-budget` 每步输出进度 + 硬超时
+  （`PIFORGE_SMOKE_STEP_TIMEOUT_MS`，Windows 用 `taskkill /F /T`）。
+
+### 默认行为变没变
+
+变了，五处：codemode 默认 `on`（工具逐条声明）；无 `timeout` 的 shell 调用 45 s（重型 300 s）
+被打断；输出预算 24000 字符；每用户轮软上限 4 / 硬上限 8（仅结果尾部追加提醒，不拦截）；
+调度器重型配额 6 / 4。
+
+### 开关怎么用
+
+- 输出预算 `PIFORGE_TOOL_OUTPUT_CHARS`；超时 `PIFORGE_TOOL_GUARD=0` 或 `PIFORGE_TOOL_TIMEOUT_*`；
+  调度器 `PIFORGE_TOOL_SCHEDULER=0` 或 `PIFORGE_SCHED_*`。
+- codemode 模式与 worker 池上限在设置页「扩展与 MCP → Codemode」（后者也可用
+  `PI_CODEMODE_MAX_WORKERS`）。
+- 调试日志 `PIFORGE_DEBUG_TOOL_GUARD=1` / `PIFORGE_DEBUG_TOOL_SCHEDULER=1`。
+- 完整说明见 [`docs/releases/v0.11.0.md`](docs/releases/v0.11.0.md)。
+
 ## v0.10.0 — 边界收口（分支 / 排队 / 看门狗 / 工具调度与超时）
 
 主题：**点了要有反应**。前端把「点了没反应」「点了要等」逐个拆掉；Host 侧新增工具执行
