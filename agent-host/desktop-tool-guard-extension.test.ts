@@ -3,8 +3,12 @@ import test from "node:test";
 import {
   DEFAULT_TOOL_GUARD,
   TIMEOUT_HINT,
+  TURN_BUDGET,
+  TURN_BUDGET_EXHAUSTED_HINT,
+  TURN_SELF_CHECK_HINT,
   createDesktopToolGuardFactory,
   createParallelTracker,
+  createTurnBudgetTracker,
   emptyToolGuardStats,
   guardShellTimeout,
   isHeavyCommand,
@@ -113,6 +117,7 @@ function hookInto(options?: { enabled?: () => boolean; env?: Record<string, stri
   };
   createDesktopToolGuardFactory(options)(pi as never);
   return {
+    start: () => handlers.before_agent_start?.({}),
     call: (event: unknown) => handlers.tool_call?.(event),
     result: (event: unknown) => handlers.tool_result?.(event),
   };
@@ -208,7 +213,50 @@ test("stats start empty and the advisory text names the actual numbers", () => {
     advisories: 0,
     timeoutHints: 0,
     peakParallel: 0,
+    turnSelfChecks: 0,
+    turnBudgetHits: 0,
   });
   assert.match(parallelAdvisory(25, 8), /并行 25 个调用（建议 ≤8）/);
   assert.match(parallelAdvisory(25, 8), /codemode/);
+});
+
+test("the turn budget self-checks at the 4th call and closes the line at the 8th", () => {
+  const tracker = createTurnBudgetTracker();
+  assert.equal(TURN_BUDGET.hardLimit, 8);
+  const hints: (string | undefined)[] = [];
+  for (let i = 0; i < 9; i += 1) hints.push(tracker.use(false));
+  assert.equal(hints[3], TURN_SELF_CHECK_HINT);
+  assert.equal(hints[7], TURN_BUDGET_EXHAUSTED_HINT);
+  assert.equal(hints[8], TURN_BUDGET_EXHAUSTED_HINT, "超预算后每次都要提醒，而不是只提醒一次");
+  assert.equal(hints[0] ?? hints[1] ?? hints[2], undefined);
+
+  // 新用户轮重新计数。
+  tracker.reset();
+  assert.equal(tracker.used, 0);
+  assert.equal(tracker.use(true), undefined, "codemode 嵌套调用不重复计数");
+  assert.equal(tracker.used, 0);
+});
+
+test("the extension appends the self-check and exhaustion hints to tool results", () => {
+  const hooks = hookInto();
+  let hint: unknown;
+  for (let i = 1; i <= 8; i += 1) {
+    const id = `t${i}`;
+    hooks.call({ toolName: "read", toolCallId: id, input: {} });
+    hint = hooks.result({ toolCallId: id, content: [{ type: "text", text: "ok" }], isError: false });
+  }
+  const text = (hint as { content: { text: string }[] }).content.map((b) => b.text).join("\n");
+  assert.match(text, /8 次调用预算已用完/);
+
+  const second = hookInto();
+  second.start();
+  for (let i = 1; i <= 3; i += 1) {
+    second.call({ toolName: "read", toolCallId: `s${i}`, input: {} });
+    assert.equal(second.result({ toolCallId: `s${i}`, content: [], isError: false }), undefined);
+  }
+  second.call({ toolName: "read", toolCallId: "s4", input: {} });
+  const fourth = second.result({ toolCallId: "s4", content: [], isError: false }) as {
+    content: { text: string }[];
+  };
+  assert.match(fourth.content.map((b) => b.text).join("\n"), /中途自检/);
 });

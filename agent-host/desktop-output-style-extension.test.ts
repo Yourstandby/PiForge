@@ -13,11 +13,13 @@ test("output style guidelines are static: no timestamps, ids or interpolation", 
 });
 
 test("batching rules are static, independent of the output-style switch", () => {
-  assert.equal(BATCHING_RULES.length, 4);
+  assert.equal(BATCHING_RULES.length, 5);
   for (const line of BATCHING_RULES) {
     assert.doesNotMatch(line, /\$\{|\d{4}-\d{2}-\d{2}|[0-9a-f]{8}-[0-9a-f]{4}/i, `动态内容会破坏 prompt cache: ${line}`);
   }
-  // 必须明确「先交付结论再问」，否则模型会把预算当硬顶中途停手。
+  // 预算写死：每用户轮 <8 次，第 4 次必须中途自检，到顶先交付再问。
+  assert.match(BATCHING_RULES.join("\n"), /每个用户轮工具调用 <8 次/);
+  assert.match(BATCHING_RULES.join("\n"), /中途自检/);
   assert.match(BATCHING_RULES.join("\n"), /先交付可验证的结论/);
   // 并行上限必须写死在提示里（硬护栏在 desktop-tool-guard-extension，这里是软约束）。
   assert.match(BATCHING_RULES.join("\n"), /同一批并行 ≤8/);
