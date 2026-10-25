@@ -31,15 +31,62 @@ if (!existsSync(entry)) {
 
 const script = path.join(repoRoot, "scripts", "measure-prefix.mjs");
 
+/**
+ * 单步硬超时。measure-prefix 自己只在「等 host ready」上有 60s 兜底，链起来仍可能
+ * 无声卡几分钟（调用方看不到任何输出，表现就是「bash 卡住了」）。这里给每步一个
+ * 明确的期限 + 一行进度，超了就杀掉进程树并以非零码退出。默认 300s 够全量跑。
+ */
+const STEP_TIMEOUT_MS = Number(process.env.PIFORGE_SMOKE_STEP_TIMEOUT_MS ?? 300_000);
+
+/** Windows 上 child.kill() 只杀 measure-prefix，host 子孙进程会留存，必须整棵树杀。 */
+function killTree(child) {
+  if (!child.pid) return;
+  if (process.platform === "win32") {
+    const killer = spawn(
+      path.join(process.env.SystemRoot || "C:\\Windows", "System32", "taskkill.exe"),
+      ["/F", "/T", "/PID", String(child.pid)],
+      { stdio: "ignore", windowsHide: true }
+    );
+    killer.once("error", () => {});
+    return;
+  }
+  child.kill("SIGKILL");
+}
+
 function run(args, env = {}) {
+  const label = args.includes("--probe-search")
+    ? `probe:${args[args.indexOf("--probe-search") + 1]}`
+    : `codemode:${args[args.indexOf("--codemode") + 1] ?? "default"}`;
+  const started = Date.now();
+  process.stderr.write(`smoke-prefix-budget: ${label} 开始 (${args.join(" ")})\n`);
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [script, ...args], {
       cwd: repoRoot,
       stdio: "inherit",
       env: { ...process.env, ...env },
     });
-    child.once("error", reject);
-    child.once("exit", (code) => resolve(code ?? 1));
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      process.stderr.write(
+        `smoke-prefix-budget: ${label} 超过 ${Math.round(STEP_TIMEOUT_MS / 1000)}s 未结束，终止进程树\n`
+      );
+      killTree(child);
+    }, STEP_TIMEOUT_MS);
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once("exit", (code, signal) => {
+      clearTimeout(timer);
+      const seconds = ((Date.now() - started) / 1000).toFixed(1);
+      process.stderr.write(
+        `smoke-prefix-budget: ${label} 结束 code=${code ?? "null"}${
+          signal ? ` signal=${signal}` : ""
+        } (${seconds}s)${timedOut ? " [超时]" : ""}\n`
+      );
+      resolve(timedOut ? 124 : (code ?? 1));
+    });
   });
 }
 

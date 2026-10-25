@@ -35,6 +35,12 @@ PiForge 是 Pi Coding Agent 的 Windows 桌面端，对标
   - **日常改动** → 只 lint 改过的文件：`npx eslint <paths>`；纯文案 / 纯样式可跳；
   - **单测** → 只跑与改动相关的文件（如 `node --test agent-host/intervention.test.ts`）；
   - **提交前** → 全量 `npm run lint` + `npx tsc --noEmit`；全量 `npm test` 留给发版 / 大改。
+  - **bash 分档超时（每次调用都显式传 `timeout`）**：读 / 查 / `rg` / `ls` 20–30s，单测 60–120s，
+    `tsc` / 全量 lint / `build` / `dist` 300–600s。**不传 `timeout` 就没有任何兜底**，
+    命令不返回就一直挂着；宁可快速失败再重跑，也不要静默等满 3 分钟。
+  - **会起服务或等输入的命令不许串进 bash 链**：`npm run dev`、`smoke:*`、`measure:*`、任何
+    `--watch` 一律单拆一条命令或走受管进程（shell 工具）；也不要和 `| head`、`echo exit=$?`
+    拼在同一条命令里 —— 链尾不退出会把前面所有输出一起扣住，表现就是「卡在 bash 上」而不是报错。
   - 全量命令很慢（各 30s+），别为一个三行改动跑全仓。
 
 ---
