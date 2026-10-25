@@ -16,7 +16,7 @@ export async function POST(req: Request) {
     if (!cwd) return jsonError(req, 400, "Missing cwd");
 
     try {
-      await authorizeHostPath(cwd, "list");
+      await authorizeHostPath(cwd, "list", cwd);
     } catch (error) {
       return hostFileAccessError(req, error, "/api/git/commit", "POST");
     }

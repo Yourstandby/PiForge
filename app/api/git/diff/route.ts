@@ -15,7 +15,7 @@ export async function GET(req: Request) {
 
   try {
     try {
-      await authorizeHostPath(cwd, "list");
+      await authorizeHostPath(cwd, "list", cwd);
     } catch (error) {
       return hostFileAccessError(req, error, "/api/git/diff", "GET");
     }

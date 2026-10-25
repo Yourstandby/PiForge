@@ -294,6 +294,17 @@ export function Workbench() {
   );
   const activeCwd = activeTab?.session?.cwd ?? activeTab?.newSessionCwd ?? cwd;
 
+  // 项目隔离：把「当前项目」上报给 Host（隔离开启时它就是唯一放行的目录）。
+  // 关着时这次上报不产生任何限制，只是让 Host 记住上下文。
+  useEffect(() => {
+    if (!activeCwd) return;
+    void fetch("/api/files/scope", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ cwd: activeCwd }),
+    }).catch(() => {});
+  }, [activeCwd]);
+
   // Switching tabs must re-read the tree even when two tabs share a cwd (an
   // agent may have changed files in between).
   const [explorerRefreshKey, setExplorerRefreshKey] = useState(0);

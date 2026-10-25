@@ -97,6 +97,11 @@ export interface DesktopSettings {
   onDemandDomains?: string[];
   /** Optional LTM config; omitted when unset. Merged by getLtmConfig. */
   ltm?: DesktopLtmSettings;
+  /**
+   * 项目隔离（默认关）。开启后 Host 的文件授权只放行「当前项目」目录内的路径，
+   * 别的项目/任意目录一律 AccessDenied —— 一个项目的会话不能随手读另一个项目。
+   */
+  projectIsolation?: boolean;
 }
 
 const DESKTOP_SETTINGS_FILENAME = "desktop-settings.json";
@@ -173,6 +178,10 @@ export function mergeDesktopSettings(raw: unknown): DesktopSettings {
   if (typeof obj.collabGuidelines === "boolean") {
     result.collabGuidelines = obj.collabGuidelines;
   }
+  // 默认关：不写就是 undefined，授权回落成「所有会话 cwd 都可访问」的旧行为。
+  if (typeof obj.projectIsolation === "boolean") {
+    result.projectIsolation = obj.projectIsolation;
+  }
   if (Array.isArray(obj.onDemandDomains)) {
     const allowed = new Set(["browser", "shell", "fleet", "memory", "orchestrator", "plugin"]);
     result.onDemandDomains = [...new Set(obj.onDemandDomains.filter(
@@ -235,6 +244,7 @@ export function validateDesktopSettingsBody(body: unknown): string | null {
     "outputStyleGuidelines",
     "responseLanguageGuideline",
     "collabGuidelines",
+    "projectIsolation",
   ] as const) {
     if (obj[key] !== undefined && typeof obj[key] !== "boolean") {
       return `${key} must be a boolean`;
