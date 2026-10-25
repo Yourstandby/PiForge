@@ -11,6 +11,7 @@ import {
 import type { SessionInfo, SessionTreeNode, UserMessage } from "@/lib/types";
 import type { FollowUpQueueSnapshot } from "@/lib/follow-up-queue";
 import type { PrefixAuditView } from "@/lib/token-guard";
+import { formatCodemodeProgressFromResult } from "@/lib/codemode-progress";
 import {
   calculateSessionActivity,
   calculateSessionStats,
@@ -449,7 +450,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
 
       if (event.type === "tool_execution_update") {
-        const text = nestedOutputText(event.partialResult);
+        // codemode 脚本的 `content` 是空数组，只有 `details.calls`：此时折成一行调用进度，
+        // 否则长脚本执行期间工具卡会一直停在「正在执行…」。
+        const text =
+          nestedOutputText(event.partialResult) || formatCodemodeProgressFromResult(event.partialResult);
         // 开发期确认"工具日志真的在流"：F12 Console 会源源不断刷 [Tool Stream]。
         if (process.env.NODE_ENV !== "production") {
           console.log("[Tool Stream]", event.toolName, text.slice(-200));

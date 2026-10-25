@@ -51,6 +51,7 @@ export async function PUT(req: Request) {
       .call("agent.updateCodemode", {
         enabled: saved.codemodeEnabled ?? false,
         ...(saved.codemodeMode ? { mode: saved.codemodeMode } : {}),
+        ...(saved.codemodeMaxWorkers !== undefined ? { maxWorkers: saved.codemodeMaxWorkers } : {}),
       })
       .catch(() => {});
     const onDemand = resolveOnDemandDomains({

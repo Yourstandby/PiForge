@@ -43,12 +43,30 @@ export function isCodemodeMode(value: unknown): value is CodemodeMode {
   return value === "on" || value === "only";
 }
 
+/** codemode worker 池上限的合法区间（SDK 默认 2）。 */
+export const CODEMODE_MAX_WORKERS_MIN = 1;
+export const CODEMODE_MAX_WORKERS_MAX = 8;
+
+export function isCodemodeMaxWorkers(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= CODEMODE_MAX_WORKERS_MIN &&
+    value <= CODEMODE_MAX_WORKERS_MAX
+  );
+}
+
 export interface DesktopSettings {
   defaultAgentMode: AgentMode;
   defaultToolPreset: ToolPreset;
   codemodeEnabled?: boolean;
-  /** `codemodeEnabled` 打开时工具如何呈现给模型（默认 `only`）。 */
+  /** `codemodeEnabled` 打开时工具如何呈现给模型（默认 `on`：工具照常声明）。 */
   codemodeMode?: CodemodeMode;
+  /**
+   * codemode worker 池上限（1–8）。缺省时跟随 `PI_CODEMODE_MAX_WORKERS`，都没有就是 2。
+   * SDK 每次执行脚本都会重读该环境变量，所以改完从下一条脚本起生效（无需重启 Host）。
+   */
+  codemodeMaxWorkers?: number;
   /** User-picked fast/strong models for the "Auto" routing mode. */
   autoRoutingFast?: AutoRoutingModelSelection;
   autoRoutingStrong?: AutoRoutingModelSelection;
@@ -89,7 +107,9 @@ export function defaultDesktopSettings(): DesktopSettings {
     defaultToolPreset: DEFAULT_TOOL_PRESET,
     // 批量执行层默认开：模型一次脚本内做完全部读/查/并行调用，而不是逐个工具往返。
     codemodeEnabled: true,
-    codemodeMode: "only",
+    // 默认 `on`：工具照常逐条声明给模型，脚本只是第二种调用方式 ——
+    // `only` 会让工具输出只能整批返回，长命令期间界面空转，故不作默认。
+    codemodeMode: "on",
     // Browser capabilities are explicit opt-ins for the agent.
     browserReadEnabled: false,
     browserInteractEnabled: false,
@@ -134,6 +154,14 @@ export function mergeDesktopSettings(raw: unknown): DesktopSettings {
   result.codemodeEnabled =
     typeof obj.codemodeEnabled === "boolean" ? obj.codemodeEnabled : base.codemodeEnabled === true;
   result.codemodeMode = isCodemodeMode(obj.codemodeMode) ? obj.codemodeMode : base.codemodeMode;
+  // 只有显式写过合法值才落盘；没写过就保持 undefined（交给环境变量 / SDK 默认）。
+  const maxWorkers = obj.codemodeMaxWorkers;
+  if (isCodemodeMaxWorkers(maxWorkers)) result.codemodeMaxWorkers = maxWorkers;
+  else if (maxWorkers === null) {
+    // 显式选「跟随环境」：不落这个字段，池大小交回 env / SDK 默认。
+  } else if (isCodemodeMaxWorkers(base.codemodeMaxWorkers)) {
+    result.codemodeMaxWorkers = base.codemodeMaxWorkers;
+  }
   result.browserReadEnabled = obj.browserReadEnabled === true;
   result.browserInteractEnabled = obj.browserInteractEnabled === true;
   if (typeof obj.outputStyleGuidelines === "boolean") {
@@ -192,6 +220,14 @@ export function validateDesktopSettingsBody(body: unknown): string | null {
   }
   if (obj.codemodeMode !== undefined && !isCodemodeMode(obj.codemodeMode)) {
     return "codemodeMode must be on | only";
+  }
+  // `null` 是合法的「清空」指令：回到跟随环境变量 / SDK 默认。
+  if (
+    obj.codemodeMaxWorkers !== undefined &&
+    obj.codemodeMaxWorkers !== null &&
+    !isCodemodeMaxWorkers(obj.codemodeMaxWorkers)
+  ) {
+    return `codemodeMaxWorkers must be an integer between ${CODEMODE_MAX_WORKERS_MIN} and ${CODEMODE_MAX_WORKERS_MAX}`;
   }
   for (const key of [
     "browserReadEnabled",

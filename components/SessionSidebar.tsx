@@ -52,6 +52,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const loadingMoreRef = useRef(false);
   /** 当前列表已经加载到多深（刷新时按这个深度重取，避免列表缩短）。 */
   const loadedDepthRef = useRef(0);
+  /** 服务端给的分页游标：首页多了「每项目最新一条」，不能用列表长度当 offset。 */
+  const nextOffsetRef = useRef(0);
   const hasMoreRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -75,15 +77,18 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       // 的项目分组会「消失 → 又出现」，看起来就是侧栏在跳。
       let sessions = page.sessions;
       let hasMore = page.hasMore;
+      let cursor = page.nextOffset ?? page.sessions.length;
       const depth = loadedDepthRef.current;
       if (depth > sessions.length) {
         const deep = await fetchSessionsUpTo(depth);
         if (deep && deep.sessions.length > sessions.length) {
           sessions = deep.sessions;
           hasMore = deep.hasMore;
+          cursor = deep.nextOffset ?? deep.sessions.length;
         }
       }
       loadedDepthRef.current = sessions.length;
+      nextOffsetRef.current = cursor;
       hasMoreRef.current = hasMore;
       setHasMore(hasMore);
       setAllSessions((previous) => mergeSessionList(previous, sessions));
@@ -117,7 +122,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     loadingMoreRef.current = true;
     setLoadingMore(true);
     try {
-      const page = await fetchSessionPage(allSessions.length, SESSION_PAGE_STEP);
+      const offset = nextOffsetRef.current;
+      const page = await fetchSessionPage(offset, SESSION_PAGE_STEP);
+      nextOffsetRef.current = page.nextOffset ?? offset + SESSION_PAGE_STEP;
       hasMoreRef.current = page.hasMore;
       setHasMore(page.hasMore);
       setAllSessions((previous) => {
@@ -134,7 +141,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       loadingMoreRef.current = false;
       setLoadingMore(false);
     }
-  }, [allSessions.length]);
+  }, []);
 
   const initialLoadDone = useRef(false);
   useEffect(() => {

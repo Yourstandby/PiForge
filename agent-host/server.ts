@@ -42,7 +42,8 @@ import {
   updateSessionCodemode,
 } from "./rpc-manager.ts";
 import { ensureRecommendedPiSettings } from "./settings-defaults.ts";
-import { isCodemodeMode } from "../lib/desktop-settings.ts";
+import { isCodemodeMaxWorkers, isCodemodeMode } from "../lib/desktop-settings.ts";
+import { applyCodemodeWorkerPool, formatCodemodeWorkerPoolLine } from "./codemode-worker-pool.ts";
 import {
   subscribeSessionStream,
   type SessionSubscription,
@@ -1364,7 +1365,16 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
           fail(state, frame.id, "E_INVALID_PARAMS", "mode must be on | only");
           return;
         }
+        const maxWorkers = params.maxWorkers;
+        if (maxWorkers !== undefined && !isCodemodeMaxWorkers(maxWorkers)) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "maxWorkers must be an integer between 1 and 8");
+          return;
+        }
         updateSessionCodemode(params.enabled, mode);
+        // 池大小是进程级全局（SDK 每条脚本重读 env），改完从下一条脚本起生效。
+        if (maxWorkers !== undefined) {
+          console.log(`[agent-host] ${formatCodemodeWorkerPoolLine(applyCodemodeWorkerPool({ setting: maxWorkers }))}`);
+        }
         result(state, frame.id, { updated: listRpcSessions().length });
         return;
       }

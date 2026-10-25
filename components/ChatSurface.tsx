@@ -736,12 +736,16 @@ function ChatSession({
         // 都把人拽回底部，手一动就被拉回去，看起来就是上下颠。
         pinBottomUntilRef.current = 0;
         // 取消进行中的平滑滚动，避免惯性把用户拽回底部。
-        el.scrollTop = el.scrollTop;
+        // 写同名 scrollTop 取消不掉 scrollTo({behavior:"smooth"}) 的动画，必须显式 instant。
+        el.scrollTo({ top: el.scrollTop, behavior: "instant" });
       }
     };
     el.addEventListener("wheel", onWheel, { passive: true });
     return () => el.removeEventListener("wheel", onWheel);
-  }, []);
+    // 依赖 showTranscript：首屏（loading/空态）时滚动容器还不存在，
+    // 这个 effect 早期 return 后如果 deps 为空就再也不会重跑，
+    // 滚轮上翻会彻底失效 —— 用户一往上滚就被自动贴底拽回底部。
+  }, [showTranscript]);
 
   /** 点击对话区（选中文本、展开工具卡、点链接等）= 用户接管，停止自动跟随。 */
   useEffect(() => {
@@ -751,11 +755,12 @@ function ChatSession({
     // 点击/选文本后如果没人再滚动，就没有 scroll 事件来恢复，
     // 超长流式输出会永久停住（原来的 bug）。贴底判定交给底部哨兵。
     const onPointerDown = () => {
-      el.scrollTop = el.scrollTop;
+      el.scrollTo({ top: el.scrollTop, behavior: "instant" });
     };
     el.addEventListener("pointerdown", onPointerDown, { passive: true });
     return () => el.removeEventListener("pointerdown", onPointerDown);
-  }, []);
+    // 同 wheel：容器随 showTranscript 挂载，deps 必须带上它。
+  }, [showTranscript]);
 
   /**
    * 「是否贴底」的唯一判据：底部哨兵 + IntersectionObserver。
@@ -1031,7 +1036,8 @@ function ChatSession({
   const userTurns = useMemo(() => {
     const out: Array<{ turnIndex: number; text: string }> = [];
     visibleTurns.forEach((turn, turnIndex) => {
-      if (turn.role !== "user") return;
+      // 人工介入注入的系统提示不算「用户提问」，不进回合导航刻度。
+      if (turn.role !== "user" || turn.systemNote) return;
       const message = chat.messages[turn.messageIndex];
       out.push({ turnIndex, text: message ? navPreview(message) : turn.text });
     });

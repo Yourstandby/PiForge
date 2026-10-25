@@ -10,6 +10,7 @@ import type { AgentMessage, AssistantMessage, ToolResultMessage } from "@/lib/ty
 import { diffStats } from "@/lib/diff-lines";
 import { stripImageDimensionNotes } from "@/lib/image-dimension-note";
 import { buildWithTurnCache, type TurnCacheEntry } from "@/lib/transcript-turn-cache";
+import { isInterventionText } from "@/contract/intervention-marker";
 import { estimateTokens } from "@/lib/live-usage";
 import type { BranchSwitchInfo } from "@/lib/session-branches-view";
 import { isEditToolName, toolDiffPath, toolDiffRows } from "@/lib/tool-diff";
@@ -2354,6 +2355,12 @@ export interface TranscriptTurnView {
   messageIndex: number;
   /** 该条消息自己的时间戳（ms），左下角标签用；老数据可能没有。 */
   timestamp?: number;
+  /**
+   * 由「人工介入」注入的 user 消息（看门狗追问 / 强制跳过）。
+   * 它在会话文件里就是一条 user 消息，但用户并没有亲手输入 ——
+   * 渲染成灰卡片，并从回合导航里剔除，避免「你」说出自己没说过的话。
+   */
+  systemNote?: boolean;
 }
 
 /**
@@ -2412,8 +2419,9 @@ function buildTranscriptTurn(
     const text = userText(message).trim();
     const images = contentImages((message as { content?: unknown }).content);
     const timestamp = (message as { timestamp?: number }).timestamp;
+    const systemNote = isInterventionText(text);
     return text || images.length > 0
-      ? { role: "user", text, images, blocks: [], messageIndex, timestamp }
+      ? { role: "user", text, images, blocks: [], messageIndex, timestamp, systemNote }
       : null;
   }
   if (message.role === "assistant") {
@@ -2550,8 +2558,9 @@ function TurnRowImpl({
 
   // The very first message cannot be forked (nothing before it), and a
   // fork mid-stream would race the entry ids the SSE events don't carry.
-  const canFork = Boolean(onFork && entryId) && turn.messageIndex > 0;
-  const canBranch = Boolean(onBranch && entryId);
+  // 系统提示不是用户的提问：从它派生/开分支没有意义。
+  const canFork = Boolean(onFork && entryId) && turn.messageIndex > 0 && !turn.systemNote;
+  const canBranch = Boolean(onBranch && entryId) && !turn.systemNote;
   const switcher = entryId && branchSwitch ? branchSwitch(entryId) : null;
   /** 后面已经有新的轮次 → 本条的思考 / 工具已经结束，过程块立刻收起。 */
   const laterTurnStarted = liveTurn && !live;
@@ -2568,9 +2577,11 @@ function TurnRowImpl({
       // 细分割线 + 大间距划出一轮对话的边界。
       className={`group relative overflow-hidden scroll-mt-4 [contain:content] [overflow-anchor:none] ${
         turn.role === "user"
-          ? firstInList
-            ? "mb-1"
-            : "mt-8 mb-1 border-t border-gray-100 pt-6"
+          ? turn.systemNote
+            ? "mt-4 mb-1"
+            : firstInList
+              ? "mb-1"
+              : "mt-8 mb-1 border-t border-gray-100 pt-6"
           : "mt-0.5 mb-3"
       }`}
     >
@@ -2612,10 +2623,10 @@ function TurnRowImpl({
           )}
           <span
             className={`truncate text-[11px] font-medium uppercase tracking-[0.08em] ${
-              turn.role === "user" ? "text-accent" : "text-gray-700"
+              turn.systemNote ? "text-ink-faint" : turn.role === "user" ? "text-accent" : "text-gray-700"
             }`}
           >
-            {turn.role === "user" ? "你" : "PiForge"}
+            {turn.systemNote ? "系统提示" : turn.role === "user" ? "你" : "PiForge"}
           </span>
         </div>
         <div className="flex shrink-0 items-center gap-1">
@@ -2668,7 +2679,13 @@ function TurnRowImpl({
 
       <LazyTurnBody pin={live}>
       {turn.role === "user" ? (
-        <div className="whitespace-pre-wrap break-words rounded-xl border border-[#E7E9EE] border-l-2 border-l-accent/50 bg-blue-50/30 px-4 py-3 text-[14px] leading-7 text-ink">
+        <div
+          className={
+            turn.systemNote
+              ? "whitespace-pre-wrap break-words rounded-lg border border-dashed border-[#E3E8F2] bg-[#F7F8FA] px-3.5 py-2.5 text-[12.5px] leading-6 text-ink-muted"
+              : "whitespace-pre-wrap break-words rounded-xl border border-[#E7E9EE] border-l-2 border-l-accent/50 bg-blue-50/30 px-4 py-3 text-[14px] leading-7 text-ink"
+          }
+        >
           {turn.text && <FileLinkText text={turn.text} cwd={cwd} onOpenFile={onOpenFile} />}
           {turn.images.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-2">

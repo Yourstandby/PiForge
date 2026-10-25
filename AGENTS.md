@@ -30,7 +30,12 @@ PiForge 是 Pi Coding Agent 的 Windows 桌面端，对标
 ### 3. AI 行为准则（防暴走）
 - **拒绝过度思考**：不要长篇大论写规划报告，直接看代码、写代码。
 - **禁止乱删文件**：清理死代码前必须确认无引用，禁止破坏核心业务逻辑。
-- **验证闭环**：改完必须运行 `npx tsc --noEmit` 和 `npm run lint`。
+- **验证闭环（分档，别每次全量）**：
+  - **改到类型 / 公共接口 / 新增文件** → 全量 `NODE_OPTIONS=--max-old-space-size=6144 npx tsc --noEmit`（默认堆会 OOM）；
+  - **日常改动** → 只 lint 改过的文件：`npx eslint <paths>`；纯文案 / 纯样式可跳；
+  - **单测** → 只跑与改动相关的文件（如 `node --test agent-host/intervention.test.ts`）；
+  - **提交前** → 全量 `npm run lint` + `npx tsc --noEmit`；全量 `npm test` 留给发版 / 大改。
+  - 全量命令很慢（各 30s+），别为一个三行改动跑全仓。
 
 ---
 

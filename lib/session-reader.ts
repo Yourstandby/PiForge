@@ -6,7 +6,7 @@ import { normalizeToolCalls } from "./normalize.ts";
 import { JSONL_WORKER_THRESHOLD_BYTES, parseJsonlFileInWorker } from "./jsonl-worker.ts";
 import { scanSessionDirInWorker } from "./session-scan-worker.ts";
 import { readFile, readdir, stat } from "fs/promises";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { createReadStream } from "fs";
 import { createInterface } from "node:readline";
@@ -380,6 +380,30 @@ export interface SessionListPage {
   sessions: SessionInfo[];
   total: number;
   hasMore: boolean;
+  /** 下一页的 offset 游标（= 已交付的文件窗口末端），前端追加时用它而不是列表长度。 */
+  nextOffset: number;
+}
+
+/**
+ * 首屏「每个项目至少一条」的补齐。
+ *
+ * 索引把全部项目的会话按 mtime 混排，最近几十条往往全属于同一个项目：只返回窗口
+ * 的话，其余项目分组会整块不出现，看起来就像「升级后历史项目全没了」。这里给每个
+ * 会话目录补上它自己最新的一条（只读这一条的 header），保证分组齐全；其余会话仍由
+ * 滚动分页补充。
+ */
+async function latestPerProject(files: SessionFileRef[], knownPaths: Set<string>): Promise<SessionInfo[]> {
+  const newestByDir = new Map<string, SessionFileRef>();
+  for (const file of files) {
+    const dir = dirname(file.path);
+    if (!newestByDir.has(dir)) newestByDir.set(dir, file);
+  }
+  const picked = [...newestByDir.values()].filter((file) => !knownPaths.has(file.path));
+  if (picked.length === 0) return [];
+  const infos = await mapWithLimit(picked, INFO_READ_CONCURRENCY, (file) =>
+    readSessionInfoCached(file).catch(() => null),
+  );
+  return infos.filter((info): info is SessionInfo => info !== null && !isScratchSessionCwd(info.cwd));
 }
 
 /**
@@ -398,9 +422,17 @@ export async function listSessionsPage(options?: {
   const infos = await mapWithLimit(window, INFO_READ_CONCURRENCY, (file) =>
     readSessionInfoCached(file).catch(() => null),
   );
-  const sessions = infos.filter(
+  let sessions = infos.filter(
     (info): info is SessionInfo => info !== null && !isScratchSessionCwd(info.cwd),
   );
+  const cursor = offset + window.length;
+
+  if (offset === 0) {
+    const extra = await latestPerProject(files, new Set(sessions.map((session) => session.path)));
+    if (extra.length > 0) {
+      sessions = [...sessions, ...extra].sort((a, b) => b.modified.localeCompare(a.modified));
+    }
+  }
 
   const keep = options?.keep ?? null;
   if (keep && !sessions.some((session) => session.id === keep)) {
@@ -414,7 +446,7 @@ export async function listSessionsPage(options?: {
   // 打开会话只需 id → 路径，这里顺手把本页写进路径缓存。
   for (const session of sessions) cacheSessionPath(session.id, session.path);
 
-  return { sessions, total: files.length, hasMore: offset + window.length < files.length };
+  return { sessions, total: files.length, hasMore: cursor < files.length, nextOffset: cursor };
 }
 
 /** 只认索引里的文件名，不读内容（用于 resolveSessionPath 的兜底）。 */

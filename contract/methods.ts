@@ -276,7 +276,7 @@ export interface AgentHostMethods {
     result: { reloaded: number };
   };
   "agent.updateCodemode": {
-    params: { enabled: boolean; mode?: "on" | "only" };
+    params: { enabled: boolean; mode?: "on" | "only"; maxWorkers?: number };
     result: { updated: number };
   };
 
