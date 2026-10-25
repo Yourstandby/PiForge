@@ -138,6 +138,13 @@ const probe = (() => {
 })();
 const TIMEOUT_MS = 60_000;
 
+/**
+ * 连接先断、host 退出码后到的那一帧：最多等这么久把它写进错误里。
+ * 宁可晚 700 ms 也要带上 code —— 「握手后崩了」和「管道被关了」是两种完全不同的故障，
+ * 只报后者等于把唯一有用的信息丢掉；但也不能等更久（验收：≤2 s 必须失败）。
+ */
+const HOST_EXIT_GRACE_MS = 700;
+
 function valueOf(flag) {
   const index = args.indexOf(flag);
   return index >= 0 ? args[index + 1] : undefined;
@@ -344,18 +351,41 @@ function createClient(endpoint, hostChild) {
       if (fatal) return Promise.reject(fatal);
       return new Promise((done, failed) => waiters.push({ resolve: done, reject: failed }));
     };
+    /**
+     * host 子进程的结束原因（含退出码）。这是「握手后崩」唯一可靠的证据：
+     * socket 往往比 exit 事件先 close，只报「连接已关闭」就看不出是崩了还是被关掉了。
+     */
+    const hostExit = new Promise((resolve) => {
+      if (!hostChild) return resolve(null);
+      const describe = () =>
+        `host 已退出（host exited, code=${hostChild.exitCode ?? hostChild.signalCode}）`;
+      if (hostChild.exitCode !== null || hostChild.signalCode !== null) return resolve(describe());
+      hostChild.once("exit", () => resolve(describe()));
+      hostChild.once("error", (error) => resolve(`host 启动失败（${error.message}）`));
+    });
+    /** 连接断了：等一小会儿（≤HOST_EXIT_GRACE_MS）把 host 退出码并进错误里再 reject。 */
+    const failWithHostReason = (reason) => {
+      const timer = setTimeout(() => fail(new Error(reason)), HOST_EXIT_GRACE_MS);
+      hostExit.then((detail) => {
+        clearTimeout(timer);
+        fail(new Error(detail ? `${detail}：${reason}` : reason));
+      });
+    };
     socket.once("error", (error) => {
       fail(error);
       reject(error);
     });
-    socket.once("close", () => fail(new Error("与 host 的连接已关闭")));
+    socket.once("close", () => failWithHostReason("与 host 的连接已关闭"));
     if (hostChild) {
-      const exited = () =>
-        fail(new Error(`host 已退出（code=${hostChild.exitCode ?? hostChild.signalCode}），后续帧不会再到达`));
       // exitCode 已定 = 握手前就死了，不用等事件。
-      if (hostChild.exitCode !== null || hostChild.signalCode !== null) exited();
-      else hostChild.once("exit", exited);
-      hostChild.once("error", (error) => fail(error));
+      if (hostChild.exitCode !== null || hostChild.signalCode !== null) {
+        failWithHostReason("host 在握手前已退出");
+      } else {
+        hostChild.once("exit", (code, signal) =>
+          fail(new Error(`host 已退出（host exited, code=${code ?? signal}），后续帧不会再到达`))
+        );
+        hostChild.once("error", (error) => fail(error));
+      }
     }
     socket.once("connect", () =>
       resolve({
