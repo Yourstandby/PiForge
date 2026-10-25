@@ -3,6 +3,33 @@
 迁移条目按「改了什么 / 默认行为变没变 / 开关怎么用」组织。详细数据见 `docs/measurements/`
 （三个口径：记录型 provider、真实 deepseek 会话、重复场景 A/B，三者不要混读）。
 
+## v0.11.1 — 贴图卡顿 / 秒表 / 流健康 / 项目隔离（默认关）
+
+主题：**修 0.11.0 漏掉的三处「看着像卡死」**，并补一个默认关闭的项目级文件隔离。
+不涉及调用预算与工具默认值；`v0.11.0` 的内容通过合并 `v0.11.0` tag 一并保留。
+
+### 改了什么
+
+- **贴图不再卡主线程**（`lib/image-attachment.ts`）：缩放改走 `createImageBitmap` 的 resize
+  选项（解码 + 重采样在工作线程），主线程只搬小图；24×24 抽样探测透明，只有真透明才 PNG
+  （其余 JPEG 0.92），GIF/SVG 原样发送；额外生成 160px 缩略图 `previewUrl` 与降采样整图
+  `fullUrl`，`ImageBitmap` 显式 `close()`。
+- **贴图交互**（`components/Composer.tsx`）：粘贴后先同步插入「处理中」占位，多图串行 + 每张让
+  一帧；处理中禁止发送；移除/发送/卸载时两个 object URL 一并 revoke。
+- **工具卡秒表**（`lib/tool-clock.ts` / `components/Transcript.tsx`）：耗时以 `tool_execution_end`
+  为准完成即冻结，不再跟着最新调用一直数。
+- **流健康**（`hooks/agent-session/stream-health.ts` + `components/StreamHealthBanner.tsx`）：区分
+  `reconnecting` / `failed` / `stalled`（30 s 无真实增量），事件流断了明确告知，不再停在
+  「PiForge 正在思考…」。
+- **项目隔离**（新开关，默认关）：`desktop-settings.json` 的 `projectIsolation`；Host 的
+  `authorizePath(target, op, scope?)` 在开启时要求路径落在当前项目内，无当前项目即 fail-closed；
+  新增 RPC `files.setScope` + Next 路由 `/api/files/scope`（Workbench 上报活动 cwd），
+  `file-index` / `git` / `statusline` / `processes` 各自把 cwd 当 scope。
+
+### 默认行为变没变
+
+只有一处新开关，且**默认关**：不打开「项目隔离」时文件授权行为与 0.11.0 完全一致。
+
 ## v0.11.0 — 调用预算与卡顿收口（工具开销 / codemode / 界面计时 / 冒烟脚本）
 
 主题：**把「卡住」变成看得见的数字**。每用户轮工具调用预算写死（<8 次，第 4 次自检），
