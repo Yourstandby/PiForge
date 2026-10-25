@@ -153,6 +153,23 @@ test("switching a cold branch stores the leaf for the next start", async () => {
   }
 });
 
+test("cold sessions report the distill skip instead of faking a summary", async () => {
+  const fixture = createFixture();
+  try {
+    const result = await switchSessionBranch({
+      sessionId: fixture.sessionId,
+      leafId: fixture.ids[1],
+      summarize: true,
+    });
+    assert.equal(result.live, false);
+    assert.equal(result.summarized, undefined);
+    assert.equal(result.summarizeSkipped, "not-live");
+    assert.equal(result.leafId, fixture.ids[1]);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("switching rejects unknown leaves and foreign files", async () => {
   const fixture = createFixture();
   try {

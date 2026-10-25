@@ -36,6 +36,8 @@ function task(overrides: Partial<WatchdogTaskView> = {}): WatchdogTaskView {
     noticeCount: 0,
     interventionCount: 0,
     lastInterventionAt: null,
+    awaiting: "tool",
+    verdict: { decision: "wait", headline: "等待中", evidence: [] },
     ...overrides,
   };
 }
@@ -91,6 +93,39 @@ test("describeStall only fires past the threshold and escalates when marked stal
   assert.equal(describeStall(fresh, { streaming: false, now: 200_000 }), null);
   // 但任务真被标 stalled 时，行仍要能看到诊断
   assert.equal(describeStall(task({ status: "stalled" }), { streaming: false, now: 200_000 })?.level, "stalled");
+});
+
+test("stuckToolCallIds 只包含超阈值的工具，别的行不被连坐", () => {
+  const running = task({
+    status: "stalled",
+    lastActivityAt: 10_000,
+    pendingTool: "codemode",
+    tools: [
+      {
+        toolCallId: "call_stuck",
+        name: "codemode",
+        startedAt: 10_000,
+        runningSeconds: 130,
+        idleSeconds: 130,
+        hasOutput: false,
+        overThreshold: true,
+      },
+      {
+        toolCallId: "call_fresh",
+        name: "bash",
+        startedAt: 139_000,
+        runningSeconds: 1,
+        idleSeconds: 1,
+        hasOutput: true,
+        overThreshold: false,
+      },
+    ],
+  });
+  const view = describeStall(running, { streaming: true, now: 140_000, stallMs: 30_000 });
+  assert.ok(view);
+  assert.deepEqual(view.stuckToolCallIds, ["call_stuck"]);
+  // 没有工具超阈值（例如模型自己卡在思考里）：不允许任何工具行染红
+  assert.deepEqual(describeStall(task({ status: "stalled" }), { streaming: false, now: 200_000 })?.stuckToolCallIds, []);
 });
 
 test("sessionStatusDot only lights up for active tasks", () => {

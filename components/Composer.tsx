@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, ChevronDown, ChevronUp, File, Folder, GripVertical, ImagePlus, Paperclip, Square } from "lucide-react";
+import { ArrowUp, ChevronDown, ChevronUp, File, Folder, GripVertical, ImagePlus, Paperclip, Square, X } from "lucide-react";
 import type { AttachedImage } from "./chat-input/types";
 import { processImageFile } from "@/lib/image-attachment";
 import { AttachmentPreview } from "./chat-input/AttachmentPreview";
@@ -114,6 +114,7 @@ export function Composer({
   queuedFollowUps = [],
   queueBusy = false,
   onReorderFollowUps,
+  onRemoveFollowUp,
 }: {
   value: string;
   onValueChange: (value: string) => void;
@@ -130,7 +131,7 @@ export function Composer({
   queuedFollowUps?: Array<{ id: string; message: string; attachmentCount?: number }>;
   queueBusy?: boolean;
   onReorderFollowUps?: (orderedIds: string[]) => void;
-  /** 删除单条排队消息（宿主命令恢复前为本地移除占位）。 */
+  /** 删除单条排队消息（交给宿主真正出队，本地只是乐观更新）。 */
   onRemoveFollowUp?: (id: string) => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -629,6 +630,18 @@ export function Composer({
                     <ChevronDown size={11} strokeWidth={2} />
                   </button>
                 </span>
+              )}
+              {onRemoveFollowUp && (
+                <button
+                  type="button"
+                  onClick={() => onRemoveFollowUp(item.id)}
+                  disabled={queueBusy}
+                  aria-label={`删除队列消息 ${index + 1}`}
+                  title="删除队列消息"
+                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-ink-faint hover:bg-[#FDF2F2] hover:text-[#DC2626] disabled:opacity-30"
+                >
+                  <X size={11} strokeWidth={2} />
+                </button>
               )}
             </div>
           ))}

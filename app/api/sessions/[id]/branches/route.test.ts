@@ -4,10 +4,18 @@ import { GET, POST } from "./route.ts";
 
 function stubClient(handler: (method: string, params: Record<string, unknown>) => unknown) {
   const previous = globalThis.__piforgeAgentHostClient;
-  const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+  const calls: Array<{
+    method: string;
+    params: Record<string, unknown>;
+    options?: { timeoutMs?: number };
+  }> = [];
   globalThis.__piforgeAgentHostClient = {
-    call: async (method: string, params: Record<string, unknown>) => {
-      calls.push({ method, params });
+    call: async (
+      method: string,
+      params: Record<string, unknown>,
+      options?: { timeoutMs?: number },
+    ) => {
+      calls.push({ method, params, ...(options ? { options } : {}) });
       return handler(method, params);
     },
   } as unknown as typeof previous;
@@ -57,6 +65,35 @@ test("POST /api/sessions/[id]/branches switches the leaf", async () => {
     assert.equal(body.leafId, "a");
     assert.equal(stub.calls[0]?.method, "sessions.switchBranch");
     assert.equal(stub.calls[0]?.params.leafId, "a");
+  } finally {
+    stub.restore();
+  }
+});
+
+test("POST forwards the distill flag and widens the RPC deadline", async () => {
+  const stub = stubClient((_method, params) => ({
+    cancelled: false,
+    live: true,
+    leafId: params.leafId,
+    summarized: true,
+    summaryText: "distilled",
+  }));
+  try {
+    const res = await POST(
+      new Request("http://localhost/api/sessions/s1/branches", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leafId: "main-leaf", summarize: true }),
+      }),
+      { params: Promise.resolve({ id: "s1" }) },
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.summarized, true);
+    assert.equal(stub.calls[0]?.method, "sessions.switchBranch");
+    assert.equal(stub.calls[0]?.params.summarize, true);
+    // 蒸馏要跑一次模型调用，不能沿用 15s 的默认超时。
+    assert.equal(stub.calls[0]?.options?.timeoutMs, 300_000);
   } finally {
     stub.restore();
   }

@@ -48,7 +48,10 @@ export async function PUT(req: Request) {
     const merged = mergeDesktopSettings({ ...current, ...(body as object) });
     const saved = writeDesktopSettings(agentDir, merged);
     void getAgentHostClient()
-      .call("agent.updateCodemode", { enabled: saved.codemodeEnabled ?? false })
+      .call("agent.updateCodemode", {
+        enabled: saved.codemodeEnabled ?? false,
+        ...(saved.codemodeMode ? { mode: saved.codemodeMode } : {}),
+      })
       .catch(() => {});
     const onDemand = resolveOnDemandDomains({
       env: process.env,

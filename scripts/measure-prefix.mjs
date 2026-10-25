@@ -19,6 +19,8 @@
  *   node scripts/measure-prefix.mjs --json > tmp/prefix.json
  *   node scripts/measure-prefix.mjs --baseline tmp/prefix.json   # 与旧快照比
  *   node scripts/measure-prefix.mjs --max-prefix 6000            # 预算护栏（超了退出码 2）
+ *   node scripts/measure-prefix.mjs --mode host --summary       # 只打几行决策数字（省上下文）
+ *   node scripts/measure-prefix.mjs --codemode off              # 关掉 codemode，工具照常声明
  *
  * 退出码：0 正常；1 环境/运行问题；2 超出 --max-prefix 预算。
  */
@@ -33,11 +35,13 @@ import {
   analyzeRequest,
   buildReport,
   compareReports,
+  formatSummaryLines,
   hasTools,
   declaredTools,
   printReport,
   readProbeResult,
   startRecorder,
+  summarizeCache,
 } from "./lib/prefix-measure.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -47,9 +51,20 @@ const hostEntry = process.env.PIFORGE_HOST_ENTRY
 
 const args = process.argv.slice(2);
 const asJson = args.includes("--json");
+/** --summary：只打决策要用的几行数字（完整报告走 --json / --dump）。 */
+const summaryOnly = args.includes("--summary");
 const mode = valueOf("--mode") ?? "both";
 const baselinePath = valueOf("--baseline");
 const maxPrefixArg = valueOf("--max-prefix");
+/**
+ * `--codemode off|on|only`：写进 desktop-settings.json 的 codemodeEnabled / codemodeMode。
+ * 默认（不传）＝不写该文件，走应用默认值（当前是开启 + `only`：普通工具不声明给模型）。
+ * 量「按需域 / 工具声明」这类护栏时必须传 `off`，否则声明集合里本来就没有普通工具。
+ */
+const codemodeArg = valueOf("--codemode");
+if (codemodeArg !== undefined && !["off", "on", "only"].includes(codemodeArg)) {
+  throw new Error("--codemode expects off | on | only");
+}
 const dumpDir = valueOf("--dump");
 const turns = Number(valueOf("--turns") ?? 2);
 /** provider API 形状：openai-completions（默认）或 anthropic-messages（验缓存断点）。 */
@@ -203,38 +218,32 @@ function writeAgentDir(agentDir, baseUrl, apiShape = "openai-completions") {
     )}\n`
   );
   writeFileSync(path.join(agentDir, "auth.json"), `${JSON.stringify({}, null, 2)}\n`);
+  // 三项开关合并写一次：分开写会互相覆盖（后一次写把前一次的字段吃掉）。
+  const desktopSettings = { defaultAgentMode: "full", defaultToolPreset: "default" };
   if (onDemandSettings !== undefined) {
-    writeFileSync(
-      path.join(agentDir, "desktop-settings.json"),
-      `${JSON.stringify(
-        {
-          defaultAgentMode: "full",
-          defaultToolPreset: "default",
-          onDemandDomains: onDemandSettings
-            .split(",")
-            .map((entry) => entry.trim())
-            .filter(Boolean),
-        },
-        null,
-        2
-      )}
-`
-    );
+    desktopSettings.onDemandDomains = onDemandSettings
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
   }
-
   if (noAddons) {
+    desktopSettings.outputStyleGuidelines = false;
+    desktopSettings.responseLanguageGuideline = false;
+  }
+  if (codemodeArg === "off") {
+    desktopSettings.codemodeEnabled = false;
+  } else if (codemodeArg !== undefined) {
+    desktopSettings.codemodeEnabled = true;
+    desktopSettings.codemodeMode = codemodeArg;
+  }
+  if (
+    onDemandSettings !== undefined ||
+    noAddons ||
+    codemodeArg !== undefined
+  ) {
     writeFileSync(
       path.join(agentDir, "desktop-settings.json"),
-      `${JSON.stringify(
-        {
-          defaultAgentMode: "full",
-          defaultToolPreset: "default",
-          outputStyleGuidelines: false,
-          responseLanguageGuideline: false,
-        },
-        null,
-        2
-      )}
+      `${JSON.stringify(desktopSettings, null, 2)}
 `
     );
   }
@@ -581,6 +590,13 @@ async function main() {
 
   if (asJson) {
     process.stdout.write(`${JSON.stringify(reports, null, 2)}\n`);
+  } else if (summaryOnly) {
+    for (const line of formatSummaryLines(reports, {
+      ...(cacheStats ? { cache: summarizeCache(recorder.requests) } : {}),
+      ...(hostState?.prefixAudit ? { audit: hostState.prefixAudit } : {}),
+    })) {
+      console.log(line);
+    }
   } else {
     for (const key of keys) {
       if (reports[key].turns.length === 0) continue;

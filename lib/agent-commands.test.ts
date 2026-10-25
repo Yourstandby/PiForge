@@ -8,7 +8,7 @@ import {
 test("AGENT_COMMAND_TYPES covers all send() cases", () => {
   // Must stay in sync with the switch in agent-host/rpc-manager.ts. If either side
   // adds/removes a case, this test forces an explicit update here too.
-  assert.equal(AGENT_COMMAND_TYPES.size, 20);
+  assert.equal(AGENT_COMMAND_TYPES.size, 21);
   for (const t of [
     "prompt",
     "abort",
@@ -22,6 +22,7 @@ test("AGENT_COMMAND_TYPES covers all send() cases", () => {
     "steer",
     "follow_up",
     "reorder_follow_ups",
+    "remove_follow_up",
     "get_tools",
     "set_tools",
     "abort_compaction",

@@ -13,7 +13,7 @@ import { TokenGuardBanner } from "./TokenGuardBanner";
 import { useSessionSplitHint } from "@/hooks/useSessionSplitHint";
 import { useSessionScope } from "@/hooks/useSessionScope";
 import { conversationToMarkdown } from "@/lib/conversation-markdown";
-import { buildBranchSwitchMap } from "@/lib/session-branches-view";
+import { branchNodesToTree, buildBranchSwitchMap } from "@/lib/session-branches-view";
 import { buildImagineMessage } from "@/lib/imagine-command";
 import { BranchCloneModal, type BranchCloneMode } from "./BranchCloneModal";
 import { BranchNavigator } from "./BranchNavigator";
@@ -232,10 +232,6 @@ function ChatSession({
     [],
   );
 
-  const handleBranchLeafChange = useCallback((leafId: string | null) => {
-    branchLeafChangeRef.current?.(leafId);
-  }, []);
-
   // 会话加载失败时的优雅重试：手动点「重试」+ 可重试错误自动退避重试。
   const [retrying, setRetrying] = useState(false);
   const autoRetryRef = useRef(0);
@@ -448,12 +444,24 @@ function ChatSession({
     [branchSwitchMap],
   );
 
+  /** 分支图优先：它含兄弟分叉，data.tree 只有当前路径。 */
+  const navigatorTree = useMemo(() => {
+    const nodes = chat.branches?.nodes;
+    return nodes && nodes.length > 0 ? branchNodesToTree(nodes) : branchTree;
+  }, [chat.branches, branchTree]);
+
   const handleSwitchBranch = useCallback(
-    (leafId: string | null) => {
-      void chat.handleLeafChange(leafId);
-    },
+    (leafId: string | null, options?: { summarize?: boolean }) =>
+      chat.handleLeafChange(leafId, options),
     [chat],
   );
+
+  /**
+   * 会话还在跑（流式回复 / 工具执行）时，宿主会直接拒绝 fork 和切分支：
+   * fork 要读一份可能正被追加写的 .jsonl，切分支要移活会话的叶子。
+   * 与其点了毫无反应，不如按钮先禁用并说明原因。
+   */
+  const actionsBlocked = Boolean(chat.agentRunning || chat.streamState.isStreaming);
 
   /** GitBranch button: fork at this message, prefilling the composer when pi returns text. */
   const handleBranchAt = useCallback(
@@ -1696,8 +1704,9 @@ function ChatSession({
         messages={chat.messages}
         messageKeys={messageKeys}
         entryIds={chat.entryIds}
-        onFork={chat.agentRunning ? undefined : chat.handleFork}
+        onFork={chat.handleFork}
         forkingEntryId={chat.forkingEntryId}
+        busy={actionsBlocked}
         cwd={session?.cwd ?? newSessionCwd}
         onOpenFile={onOpenFile}
         onInsertCode={onInsertCode}
@@ -1713,6 +1722,7 @@ function ChatSession({
       messageKeys,
       chat.entryIds,
       chat.agentRunning,
+      actionsBlocked,
       chat.handleFork,
       chat.forkingEntryId,
       chat.nestedToolExecutions,
@@ -1754,9 +1764,9 @@ function ChatSession({
 
       {showTranscript && session && (
         <BranchNavigator
-          tree={branchTree}
-          activeLeafId={branchLeafId}
-          onLeafChange={handleBranchLeafChange}
+          tree={navigatorTree}
+          activeLeafId={chat.branches?.leafId ?? branchLeafId}
+          onLeafChange={handleSwitchBranch}
           onBranch={() =>
             setBranchModal({ isOpen: true, mode: "branch", targetEntryId: branchLeafId ?? undefined })
           }

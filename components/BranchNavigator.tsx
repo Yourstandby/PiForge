@@ -2,12 +2,25 @@
 
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import type { SessionEntry, SessionTreeNode } from "@/lib/types";
+import { hasBranchPoint, rootTreesOf } from "@/lib/session-branches-view";
 import { useI18n } from "./I18nProvider";
+
+/** 蒸馏开关的持久化键：切分支时默认是否把被放弃的分支蒸馏成摘要。 */
+const DISTILL_STORAGE_KEY = "piforge:branch-distill";
 
 interface Props {
   tree: SessionTreeNode[];
   activeLeafId: string | null;
-  onLeafChange: (leafId: string | null) => void;
+  /**
+   * `summarize` 打开时，被放弃的分支会先蒸馏成一段摘要再接到目标位置
+   * （Host 侧走 pi 的 `navigateTree(target, { summarize: true })`）。
+   */
+  onLeafChange: (
+    leafId: string | null,
+    options?: { summarize?: boolean },
+  ) =>
+    | void
+    | Promise<{ summarized?: boolean; summarySkipped?: "not-live" | "nothing-to-summarize" } | null>;
   /** Action callback to open Branch modal */
   onBranch?: () => void;
   /** Action callback to open Clone modal */
@@ -71,13 +84,42 @@ function getLabel(entry: SessionEntry): string {
   return entry.type;
 }
 
-// Does the tree have any branching at all?
-function hasBranch(nodes: SessionTreeNode[]): boolean {
-  for (const node of nodes) {
-    if (node.children.length > 1) return true;
-    if (hasBranch(node.children)) return true;
-  }
-  return false;
+/** 蒸馏开关：只有存在分支（有兄弟路径）时才渲染在树顶部。 */
+function DistillBar({ enabled, busy, label, note, onToggle }: {
+  enabled: boolean;
+  busy: boolean;
+  label: string;
+  note: string | null;
+  onToggle: () => void;
+}) {
+  return (
+    <div style={{ padding: "2px 0 6px 0", flexShrink: 0 }}>
+      <label
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          fontSize: 11,
+          cursor: busy ? "progress" : "pointer",
+          color: enabled ? "var(--accent)" : "var(--text-muted)",
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={onToggle}
+          disabled={busy}
+          style={{ accentColor: "var(--accent)", width: 11, height: 11, margin: 0 }}
+        />
+        <span>{label}</span>
+      </label>
+      {note && (
+        <div style={{ fontSize: 11, color: "var(--text-dim)", paddingLeft: 17, paddingTop: 2 }}>
+          {note}
+        </div>
+      )}
+    </div>
+  );
 }
 
 interface TreeNodeProps {
@@ -108,7 +150,7 @@ function TreeNodeView({ node, activePathIds, depth, isLast, parentLines, onSelec
           height: 24,
           cursor: "pointer",
         }}
-        onClick={() => onSelect(rep.entry.id)}
+        onClick={() => onSelect(rep.leafId ?? rep.entry.id)}
       >
         {/* Indent guide lines */}
         {parentLines.map((hasLine, i) => (
@@ -221,6 +263,30 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, onBranch, on
   const [openInternal, setOpenInternal] = useState(false);
   const open = openProp !== undefined ? openProp : openInternal;
   const btnRef = useRef<HTMLButtonElement>(null);
+  /**
+   * 分支蒸馏：切分支前把被放弃的分支摘要成一条 `branch_summary` 接到目标位置，
+   * 于是"两条路都跑过、只留一条"的探索不会白花，也不用把两段对话硬拼进上下文。
+   */
+  const [distill, setDistill] = useState(false);
+  const [distilling, setDistilling] = useState(false);
+  const [distillNote, setDistillNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      setDistill(window.localStorage.getItem(DISTILL_STORAGE_KEY) === "1");
+    } catch { /* 隐私模式读不到 localStorage：保持默认关闭 */ }
+  }, []);
+
+  const toggleDistill = useCallback(() => {
+    setDistillNote(null);
+    setDistill((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem(DISTILL_STORAGE_KEY, next ? "1" : "0");
+      } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
 
   useEffect(() => {
@@ -252,23 +318,41 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, onBranch, on
     };
   }, [open, inline, containerRef]);
 
+  // pi 的 session / model_change 条目各自 parentId=null，是多根图；只渲染
+  // tree[0] 会漏掉真正的分叉，先合成一个虚拟根让各根并列。
+  const roots = useMemo(() => rootTreesOf(tree), [tree]);
+
   const activePathIds = useMemo(
-    () => buildActivePath(tree, activeLeafId),
-    [tree, activeLeafId]
+    () => buildActivePath(roots, activeLeafId),
+    [roots, activeLeafId]
   );
 
   const handleSelect = useCallback((id: string) => {
-    onLeafChange(id);
-  }, [onLeafChange]);
+    // 蒸馏期间禁止再切：Host 侧 navigateTree 也会拒绝并发导航。
+    if (distilling) return;
+    if (!distill || id === activeLeafId) {
+      void onLeafChange(id);
+      return;
+    }
+    setDistillNote(null);
+    setDistilling(true);
+    void Promise.resolve(onLeafChange(id, { summarize: true }))
+      .then((outcome) => {
+        if (outcome?.summarySkipped === "not-live") setDistillNote(t("branch.distillNeedsLive"));
+        else if (outcome?.summarySkipped === "nothing-to-summarize") setDistillNote(t("branch.distillNothing"));
+        else if (outcome?.summarized) setDistillNote(t("branch.distillDone"));
+      })
+      .finally(() => setDistilling(false));
+  }, [activeLeafId, distill, distilling, onLeafChange, t]);
 
   const noBranchReason = !hasSession
     ? t("branch.noActiveSession")
-    : !hasBranch(tree)
+    : !hasBranchPoint(roots)
       ? t("branch.noSession")
       : null;
 
   // Find first meaningful node (skip pure linear prefix)
-  const compressed = tree.length > 0 ? compress(tree[0]) : null;
+  const compressed = roots.length > 0 ? compress(roots[0]) : null;
   const firstNode = compressed?.node ?? null;
   const hasContent = !noBranchReason && firstNode && firstNode.children.length > 1;
 
@@ -370,6 +454,13 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, onBranch, on
             )}
             {hasContent && firstNode ? (
               <div style={{ padding: "4px 12px 8px 12px", maxHeight: 260, overflowY: "auto" }}>
+                <DistillBar
+                  enabled={distill}
+                  busy={distilling}
+                  label={distilling ? t("branch.distilling") : t("branch.distillToggle")}
+                  note={distillNote}
+                  onToggle={toggleDistill}
+                />
                 {firstNode.children.map((child, idx) => (
                   <TreeNodeView
                     key={child.entry.id}
@@ -485,6 +576,13 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, onBranch, on
           )}
           {hasContent && firstNode ? (
             <div style={{ padding: "4px 12px 8px 12px", flex: 1, minHeight: 0, overflowY: "auto" }}>
+              <DistillBar
+                enabled={distill}
+                busy={distilling}
+                label={distilling ? t("branch.distilling") : t("branch.distillToggle")}
+                note={distillNote}
+                onToggle={toggleDistill}
+              />
               {firstNode.children.map((child, idx) => (
                 <TreeNodeView
                   key={child.entry.id}

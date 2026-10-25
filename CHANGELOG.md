@@ -3,7 +3,82 @@
 迁移条目按「改了什么 / 默认行为变没变 / 开关怎么用」组织。详细数据见 `docs/measurements/`
 （三个口径：记录型 provider、真实 deepseek 会话、重复场景 A/B，三者不要混读）。
 
-## 未发布 — 夜晚模式
+## v0.10.0 — 边界收口（分支 / 排队 / 看门狗 / 工具调度与超时）
+
+主题：**点了要有反应**。前端把「点了没反应」「点了要等」逐个拆掉；Host 侧新增工具执行
+调度器与 shell 超时硬护栏。默认行为有变的三处见「默认行为变没变」。
+
+### 改了什么
+
+- **分支**：下拉改用 `getBranches` 的完整分支图（旧实现依赖只含当前路径的 `tree`，
+  `hasBranch()` 恒 false）；多根 `.jsonl` 先合成虚拟根再判分支；切分支可勾「蒸馏要离开的分支」
+  （`navigateTree(target, { summarize: true })`，结论以 `branch_summary` 接回目标节点，不破坏前缀缓存）；
+  流式期间禁用分支/派生并给出原因，失败不再只打 console。
+- **排队消息**：可删除（hover 变红），Host 按 revision 出队，前端乐观更新 + 冲突重拉。
+- **看门狗**：`agent.intervene` 同步受理立即回执、投递走后台；强制跳过时工具已跑 >10 s 先
+  `abortBash()` 再投递；卡顿只标到真正卡住的那一行（`stuckToolCallIds`）；`verdict` 缺失时
+  不渲染结论条（兼容旧 Host）。
+- **文件授权走独立 RPC 连接**（`lib/host-files.ts` + `__piforgeFilesHostClient`）：不再和 agent
+  事件流共用主连接，工具跑着也能点文件。
+- **工具执行调度器**（`agent-host/desktop-tool-scheduler-extension.ts`，默认开）：全局 heavy 4 /
+  light 12、单会话 heavy 2 / light 6，超额在本调用的 `tool_call` 钩子里排队；60 s 等不到槽位就
+  放弃排队照常执行，15 min 强制回收，`session_shutdown` 清空；codemode / tool_search / 嵌套调用豁免。
+- **shell 超时硬护栏**（`agent-host/desktop-tool-guard-extension.ts`，默认开）：`tool_call` 阶段
+  补 `input.timeout`（普通 120 s、重型 900 s，上限 600 / 900），非法值修正而非抛错；单批并行 >8
+  时只在该批首个超限调用结果尾部提醒一次。
+- **提示词**：`BATCHING_RULES` 增补「同一批并行 ≤ 8」「重型命令显式传 `timeout`」，探索改成
+  「先 `rg -l` 拿文件名再定向 `read`」。仍是静态常量，前缀 +26 字符。
+- **度量**：`npm run measure:prefix -- --summary` 只打 ≤10 行决策数字。
+
+### 默认行为变没变
+
+变了，三处：
+
+1. 不显式传 `timeout` 的 shell 调用会在 120 s（重型 900 s）被打断；常驻进程 / 全量打包请显式传
+   `timeout`。
+2. 同一 Host 内并行工具调用开始按全局与单会话配额排队（只延后执行，参数与结果不变）。
+3. 逐项功能未变：分支下拉的可见性变多属修 bug；蒸馏开关仍**默认关**。
+
+### 开关怎么用
+
+- 关掉调度器：`PIFORGE_TOOL_SCHEDULER=0`；配额与等待走 `PIFORGE_SCHED_*`（`GLOBAL_HEAVY` /
+  `GLOBAL_LIGHT` / `SESSION_HEAVY` / `SESSION_LIGHT` / `MAX_WAIT_MS` / `QUEUE_HINT_MS` / `MAX_HOLD_MS`）。
+- 关掉超时护栏：`PIFORGE_TOOL_GUARD=0`；阈值走 `PIFORGE_TOOL_TIMEOUT_SECONDS` /
+  `PIFORGE_TOOL_TIMEOUT_HEAVY_SECONDS` / `PIFORGE_TOOL_TIMEOUT_MAX_SECONDS` / `PIFORGE_TOOL_MAX_PARALLEL`。
+- 蒸馏：分支下拉里的开关，写在 `localStorage["piforge:branch-distill"]`。
+- 完整说明见 [`docs/releases/v0.10.0.md`](docs/releases/v0.10.0.md)。
+
+## v0.9.4 — 调用压缩（工具调用次数 / 思考预算）
+
+主题：**同样的任务少问几轮**。不删工具、不降能力，只压缩「模型往返次数」和「thinking 占 output」。
+
+### 改了什么
+
+- **codemode 默认开启，且默认 `only`**（`lib/desktop-settings.ts`）：普通工具不再声明给模型，
+  改由一次脚本批量调用（`createCodemodeExtension({ mode })` 下发，**不写** `~/.pi/agent/settings.json`）。
+  `agent.updateCodemode` 契约新增可选 `mode`，设置页切换后下一条消息生效（SDK 的 `getMode` 惰性读取）。
+- **提示词新增四条批量/预算约束**（`agent-host/prompts/output-style.ts` 的 `BATCHING_RULES`）：
+  批量优先、先引用后补测、调用预算（≤15 次模型调用 / ≤45 次工具调用，接近上限先交付结论再问）、
+  报错先读完 traceback 再改。纯静态常量，只进一次前缀。
+- **截断续读引导改写**（`agent-host/tool-output-budget.ts`）：从「grep/sed 逐段读」改成
+  「一次 codemode 脚本批量读，或用 `tool_history_get` 翻页」。只在被截断时出现，稳态零成本。
+- **Host 首次启动补写 `defaultThinkingLevel: "low"`**（`agent-host/settings-defaults.ts`）：
+  只在该键缺失时写一次，原子写，解析失败即放弃；之后在常规设置里改回来即可。
+  不写 `thinkingBudgets`——pi 的 low 预算本来就是 2048。
+
+### 默认行为变没变
+
+变了，三处：新会话默认走 codemode（可在「扩展与 MCP → Codemode」关掉或切回「照常声明工具」）；
+新会话默认思考等级 low（常规设置可改）；首次启动会写一行 `defaultThinkingLevel`。
+工具集、审批策略、工具输出预算、`onDemandDomains` 均未改动。
+
+### 开关怎么用
+
+- 关掉批量层：「扩展与 MCP → Codemode」开关置为关闭（工具恢复直呼，脚本仍可用）。
+- 只想让工具照常声明、不要 `only`：同页「工具呈现方式」选「照常声明工具」（`codemodeMode: "on"`）。
+- 思考预算：常规设置 → 默认思考等级（写回 `~/.pi/agent/settings.json`）。
+
+## v0.9.4 — 夜晚模式
 
 ### 改了什么
 

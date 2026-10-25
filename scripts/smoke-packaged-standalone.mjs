@@ -95,6 +95,7 @@ console.log("smoke-packaged-standalone: agent-host runtime present");
 
 // Extension UI Bridge must survive packaging: confirm request -> response ->
 // extension resumes, without the Host hanging while waiting for the renderer.
+const uiBridgeStartedAt = Date.now();
 const uiBridge = spawnSync(
   process.execPath,
   [join(scriptsDir, "smoke-extension-ui-bridge.mjs")],
@@ -109,6 +110,8 @@ if (uiBridge.error) {
   console.error(`smoke-packaged-standalone: UI bridge smoke failed to start: ${uiBridge.error.message}`);
   process.exit(1);
 }
+// 耗时写进日志：CI 上到底是“卡死”还是“慢但能过”，看这一行就够。
+console.log(`smoke-packaged-standalone: UI bridge smoke took ${Date.now() - uiBridgeStartedAt}ms`);
 if (uiBridge.status !== 0) {
   console.error("smoke-packaged-standalone: UI bridge smoke failed");
   process.exit(uiBridge.status ?? 1);

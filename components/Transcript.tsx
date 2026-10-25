@@ -346,7 +346,13 @@ type TurnBlock =
   | { kind: "thinking"; text: string }
   | { kind: "text"; text: string }
   | { kind: "image"; src: string }
-  | { kind: "tool"; name: string; input: Record<string, unknown>; result?: ToolResultMessage };
+  | {
+      kind: "tool";
+      name: string;
+      input: Record<string, unknown>;
+      toolCallId?: string;
+      result?: ToolResultMessage;
+    };
 
 /** Resolve pi/UI image blocks (`{source:{base64|url}}` or `{data,mimeType}`). */
 function imageSrc(block: Record<string, unknown>): string | null {
@@ -765,6 +771,7 @@ function assistantBlocks(
         kind: "tool",
         name,
         input: input && typeof input === "object" ? input : {},
+        toolCallId: id,
         result: id ? results.get(id) : undefined,
       });
     }
@@ -988,6 +995,7 @@ function ToolCallCard({
   open: controlledOpen,
   onToggleOpen,
   streaming = false,
+  toolCallId,
   tokensPerSecond,
   usage,
   currencySymbol = "$",
@@ -997,6 +1005,8 @@ function ToolCallCard({
 }: {
   name: string;
   input: Record<string, unknown>;
+  /** 本次调用 id：看门狗只把「卡住」标到真正卡住的那一行。 */
+  toolCallId?: string;
   result?: ToolResultMessage;
   details?: unknown;
   nestedExecutions?: Record<string, NestedExecutionView>;
@@ -1082,8 +1092,16 @@ function ToolCallCard({
    */
   const watchdogSessionId = useWatchdogSessionId();
   const stall = useToolStall(watchdogSessionId, Boolean(streaming));
-  /** 仍在执行且没有结果的行才是「被卡住的那一行」。 */
-  const stalledRow = stall?.level === "stalled" && (Boolean(streaming) || !result);
+  /**
+   * 只有「这一行自己」被 Host 判定超阈值无输出时才算卡住：
+   * 看门狗状态是会话级的，早先结束（甚至没参与）的工具不该被一起染红。
+   */
+  const stalledRow =
+    stall?.level === "stalled" &&
+    Boolean(streaming) &&
+    (toolCallId
+      ? stall.stuckToolCallIds.includes(toolCallId)
+      : stall.pendingTool === name);
   const nested = result?.nestedCalls;
   const tree = nested?.calls.length ? buildNestedTree(nested.calls) : null;
   const output = result ? resultText(result).trim() : "";
@@ -1671,6 +1689,7 @@ function ToolCardStack({
           open={openIndex === index}
           onToggleOpen={() => setOpenIndex((prev) => (prev === index ? null : index))}
           streaming={running && !item.block.result}
+          toolCallId={item.block.toolCallId}
           tokensPerSecond={tokensPerSecond}
           usage={blockUsage(
             `${item.block.name} ${JSON.stringify(item.block.input)} ${
@@ -2484,6 +2503,8 @@ interface TurnRowProps {
   onFork?: (entryId: string) => void;
   /** 正在为本条派生新会话。 */
   forking: boolean;
+  /** 会话正在跑：分支/派生按钮禁用（宿主会拒绝）。 */
+  busy?: boolean;
   onBranch?: (entryId: string) => void | Promise<void>;
   branchSwitch?: (entryId: string) => BranchSwitchInfo | null;
   onSwitchBranch?: (leafId: string | null) => void;
@@ -2514,6 +2535,7 @@ function TurnRowImpl({
   onCopy,
   onFork,
   forking,
+  busy,
   onBranch,
   branchSwitch,
   onSwitchBranch,
@@ -2615,9 +2637,10 @@ function TurnRowImpl({
           <button
             type="button"
             onClick={() => void onBranch!(entryId!)}
-            title="从此消息开启新分支"
-            aria-label="从此消息开启新分支"
-            className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-ink-faint opacity-0 transition-colors duration-150 hover:bg-[#ECECEF] hover:text-accent-strong focus:opacity-100 group-hover:opacity-100"
+            disabled={busy}
+            title={busy ? "本轮回复结束后才能切分支" : "从此消息开启新分支"}
+            aria-label={busy ? "本轮回复结束后才能切分支" : "从此消息开启新分支"}
+            className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-ink-faint opacity-0 transition-colors duration-150 hover:bg-[#ECECEF] hover:text-accent-strong focus:opacity-100 group-hover:opacity-100 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-ink-faint"
           >
             <GitBranch size={11} strokeWidth={1.9} aria-hidden="true" />
             分支
@@ -2627,9 +2650,9 @@ function TurnRowImpl({
           <button
             type="button"
             onClick={() => onFork!(entryId!)}
-            disabled={forking}
-            title={forking ? "正在创建会话…" : "从此处派生新会话"}
-            aria-label={forking ? "正在创建会话" : "从此处派生新会话"}
+            disabled={forking || Boolean(busy)}
+            title={forking ? "正在创建会话…" : busy ? "本轮回复结束后才能派生新会话" : "从此处派生新会话"}
+            aria-label={forking ? "正在创建会话" : busy ? "本轮回复结束后才能派生新会话" : "从此处派生新会话"}
             className={`flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] transition-colors duration-150 disabled:cursor-not-allowed ${
               forking
                 ? "text-accent opacity-100"
@@ -2720,6 +2743,7 @@ function areTurnRowPropsEqual(prev: TurnRowProps, next: TurnRowProps): boolean {
   if (prev.live !== next.live) return false;
   if (prev.liveTurn !== next.liveTurn) return false;
   if (prev.forking !== next.forking) return false;
+  if (prev.busy !== next.busy) return false;
   if (prev.nestedExecutions !== next.nestedExecutions) return false;
   if (prev.cwd !== next.cwd) return false;
   if (prev.onOpenFile !== next.onOpenFile) return false;
@@ -2748,6 +2772,7 @@ export function Transcript({
   entryIds,
   onFork,
   forkingEntryId,
+  busy,
   cwd,
   onOpenFile,
   onInsertCode,
@@ -2771,6 +2796,12 @@ export function Transcript({
   entryIds?: Array<string | undefined>;
   onFork?: (entryId: string) => void;
   forkingEntryId?: string | null;
+  /**
+   * 会话正在跑（流式 / 工具执行中）：
+   * 宿主会拒绝 fork 与切分支（改文件、移叶子都会踩到半写入的 .jsonl），
+   * 所以按钮保留但禁用 + 说明原因，别让人点了「像坏了一样」。
+   */
+  busy?: boolean;
   /** Project root for resolving relative file references. */
   cwd?: string | null;
   onOpenFile?: OpenFileHandler;
@@ -3307,6 +3338,7 @@ export function Transcript({
             onCopy={copyTurn}
             onFork={onFork}
             forking={Boolean(entryId) && forkingEntryId === entryId}
+            busy={busy}
             onBranch={onBranch}
             branchSwitch={branchSwitch}
             onSwitchBranch={onSwitchBranch}

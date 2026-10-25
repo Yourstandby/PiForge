@@ -21,6 +21,41 @@ const MAX_TRACKED_TASKS = 32;
 export const MAX_TRACKED_TOOLS = 16;
 
 /**
+ * 每个工具名最近若干次的实际耗时（毫秒）。
+ *
+ * 用途只有一个：给「卡了多久算久」找一个**相对**基线。绝对阈值回答不了
+ * 「要不要介入」——tsc 跑 90 秒是正常，等模型首 token 30 秒就该管。
+ * 全程只读历史、不写会话、不触发任何模型调用。
+ */
+const TOOL_DURATION_SAMPLES = 20;
+const toolDurationSamples = new Map<string, number[]>();
+
+/** 记录一次已结束工具的实际耗时（供基线统计，不参与任何状态写回）。 */
+export function recordToolDuration(name: string, ms: number): void {
+  if (!name || !Number.isFinite(ms) || ms <= 0) return;
+  const samples = toolDurationSamples.get(name) ?? [];
+  samples.push(Math.round(ms));
+  if (samples.length > TOOL_DURATION_SAMPLES) samples.shift();
+  toolDurationSamples.set(name, samples);
+}
+
+/** 某工具的历史耗时中位数；样本不足 3 个时返回 null（不拿噪声当基线）。 */
+export function toolDurationBaseline(name: string): { medianMs: number; samples: number } | null {
+  const samples = toolDurationSamples.get(name);
+  if (!samples || samples.length < 3) return null;
+  const sorted = [...samples].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  const medianMs =
+    sorted.length % 2 === 1 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+  return { medianMs, samples: samples.length };
+}
+
+/** 测试用：清空基线样本。 */
+export function resetToolDurationBaselinesForTest(): void {
+  toolDurationSamples.clear();
+}
+
+/**
  * 一个仍在跑的工具。
  *
  * 为什么必须逐个跟踪：「6 个 bash 并发跑 62 秒且都没输出」在任务层面看起来
@@ -465,7 +500,9 @@ export class ProgressTracker {
         const index = endedId
           ? task.runningTools.findIndex((entry) => entry.toolCallId === endedId)
           : task.runningTools.findIndex((entry) => entry.name === tool);
+        const endedTool = index !== -1 ? task.runningTools[index] : null;
         if (index !== -1) task.runningTools.splice(index, 1);
+        if (endedTool) recordToolDuration(endedTool.name, now - endedTool.startedAt);
         const stillRunningSame = task.runningTools.filter((entry) => entry.name === tool);
         if (task.pendingTool === tool) {
           const last = stillRunningSame[stillRunningSame.length - 1];

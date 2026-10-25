@@ -762,19 +762,51 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   );
 
   /**
-   * 删除单条排队消息。
+   * 删除单条排队消息：先本地乐观移除，再让宿主真正出队。
    *
-   * 注意：宿主侧的 `remove_follow_up` 命令在事故（误还原工作区）中丢失，
-   * 这里只做本地乐观移除 + 告警；宿主下一次 `follow_up_queue_update` 快照会把
-   * 它请回来。恢复宿主命令后，把这里换成 sendAgentCommand 即可。
+   * 宿主是队列的唯一真相；只删本地的话下一次 `follow_up_queue_update` 快照会把它
+   * 请回来。失败时重新拉一次状态对齐（revision 冲突同理）。
    */
-  const handleRemoveFollowUp = useCallback((id: string) => {
-    console.warn("[follow-up] remove_follow_up 命令尚未恢复，仅本地移除:", id);
-    setFollowUpQueue((prev) => ({
-      ...prev,
-      items: prev.items.filter((item) => item.id !== id),
-    }));
-  }, []);
+  const handleRemoveFollowUp = useCallback(
+    async (id: string) => {
+      if (followUpQueueBusy) return;
+      const previous = followUpQueueRef.current;
+      if (!previous.items.some((item) => item.id === id)) return;
+      const optimistic: FollowUpQueueSnapshot = {
+        revision: previous.revision,
+        items: previous.items.filter((item) => item.id !== id),
+      };
+      followUpQueueRef.current = optimistic;
+      setFollowUpQueue(optimistic);
+      const sid = sessionIdRef.current;
+      if (!sid) return;
+      setFollowUpQueueBusy(true);
+      try {
+        const snapshot = await sendAgentCommand<FollowUpQueueSnapshot>(sid, {
+          type: "remove_follow_up",
+          id,
+          expectedRevision: previous.revision,
+        });
+        acceptFollowUpQueue(snapshot);
+      } catch (error) {
+        console.error("Failed to remove follow-up:", error);
+        try {
+          const state = await sendAgentCommand<{
+            followUpQueue?: FollowUpQueueSnapshot;
+          }>(sid, { type: "get_state" });
+          if (state.followUpQueue) acceptFollowUpQueue(state.followUpQueue);
+        } catch {
+          if (followUpQueueRef.current.revision === previous.revision) {
+            followUpQueueRef.current = previous;
+            setFollowUpQueue(previous);
+          }
+        }
+      } finally {
+        setFollowUpQueueBusy(false);
+      }
+    },
+    [acceptFollowUpQueue, followUpQueueBusy, sessionIdRef],
+  );
 
   // Load session on mount AND on session change.
   //

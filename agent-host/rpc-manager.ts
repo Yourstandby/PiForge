@@ -25,9 +25,11 @@ import {
 import { ExtensionUiBridge } from "./extension-ui-bridge.ts";
 import { desktopApprovalInlineExtension, type AgentModeRef } from "./desktop-approval-extension.ts";
 import { desktopLtmInlineExtension } from "./desktop-ltm-extension.ts";
-import { readDesktopSettings } from "../lib/desktop-settings.ts";
+import { readDesktopSettings, type CodemodeMode } from "../lib/desktop-settings.ts";
 import { desktopRuntimeTools } from "./desktop-runtime-tools.ts";
 import { desktopDedupeInlineExtension } from "./desktop-dedupe-extension.ts";
+import { desktopToolGuardInlineExtension } from "./desktop-tool-guard-extension.ts";
+import { desktopToolSchedulerInlineExtension } from "./desktop-tool-scheduler-extension.ts";
 import { desktopFileOriginInlineExtension } from "./desktop-file-origin-extension.ts";
 import { desktopCollabGuidanceInlineExtension } from "./desktop-collab-guidance-extension.ts";
 import { desktopToolSearchAlignmentInlineExtension } from "./desktop-tool-search-alignment.ts";
@@ -154,6 +156,12 @@ export class AgentSessionWrapper {
   private resourcesChanged = false;
   private reloadingResources = false;
   private pendingCodemode: boolean | undefined;
+  /**
+   * codemode 呈现模式的可变载体（直接交给 SDK 的 createCodemodeExtension）。
+   * SDK 的 `getMode` 是**惰性**读取的（每次构建请求时才调），所以改这里的值
+   * 就对下一条消息生效，不用重建会话、也不用写全局 settings.json。
+   */
+  private codemodeOptions: { mode: CodemodeMode } | null = null;
 
   readonly inner: AgentSessionLike;
 
@@ -233,6 +241,22 @@ export class AgentSessionWrapper {
     }
     this._modeRef.codemodeEnabled = enabled;
     this.applyAgentMode(this._agentMode);
+  }
+  /**
+   * 切换 codemode 呈现模式（on = 工具照常声明；only = 全部经脚本调用）。
+   * 与 `setCodemodeEnabled` 不同，这里不需要重算 active tools：声明集不变，
+   * 只是下一条请求构建 loadout 时换一种呈现方式。
+   */
+  setCodemodeMode(mode: CodemodeMode): void {
+    if (!this.codemodeOptions || this.codemodeOptions.mode === mode) return;
+    this.codemodeOptions.mode = mode;
+  }
+  get codemodeMode(): CodemodeMode | null {
+    return this.codemodeOptions?.mode ?? null;
+  }
+  /** 由 startRpcSession 把交给 SDK 的同一个对象挂上来（同一个引用，改即生效）。 */
+  attachCodemodeOptions(options: { mode: CodemodeMode }): void {
+    this.codemodeOptions = options;
   }
 
   requestResourceReload(): void {
@@ -536,6 +560,20 @@ export class AgentSessionWrapper {
    * 三条都是**既有通路**：这里不新增任何模型调用入口，也不拼 system prompt。
    * 指令内容由调用方（`agent.intervene`）用纯函数生成，本方法只负责投递。
    */
+  /**
+   * 打断当前正在跑的工具（只给「强制跳过 + 工具已跑过阈值」用）。
+   *
+   * bash 会被 abort；不可中断的工具静默失败，不影响后续 steer 投递。
+   */
+  abortCurrentTool(): void {
+    if (!this._alive) return;
+    try {
+      this.inner.abortBash?.();
+    } catch (error) {
+      this.emitAgentError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   async deliverIntervention(message: string): Promise<{ delivered: InterventionDelivery }> {
     if (!this._alive) throw new Error("Session is not running");
     let streaming = false;
@@ -931,6 +969,14 @@ export class AgentSessionWrapper {
         return this.emitFollowUpQueue(snapshot);
       }
 
+      case "remove_follow_up": {
+        const snapshot = this.followUpQueue.remove(
+          command.id as string,
+          command.expectedRevision as number,
+        );
+        return this.emitFollowUpQueue(snapshot);
+      }
+
       case "get_tools": {
         const all: ToolInfo[] = this.inner.getAllTools();
         const active = new Set<string>(this.inner.getActiveToolNames());
@@ -1122,8 +1168,11 @@ export async function destroyAllRpcSessions(): Promise<number> {
   return sessions.length;
 }
 
-export function updateSessionCodemode(enabled: boolean): void {
-  for (const session of getRegistry().values()) session.setCodemodeEnabled(enabled);
+export function updateSessionCodemode(enabled: boolean, mode?: CodemodeMode): void {
+  for (const session of getRegistry().values()) {
+    session.setCodemodeEnabled(enabled);
+    if (mode) session.setCodemodeMode(mode);
+  }
 }
 
 export function requestSessionResourceReload(cwd?: string): void {
@@ -1215,11 +1264,17 @@ export async function startRpcSession(
      * 只有 session 建好之后才有 —— 用一个可变引用接上。
      */
     let sessionForCompaction: AgentSessionLike | null = null;
+    /**
+     * codemode 模式：设置里 `only` 时普通工具不再声明给模型，全部经脚本调用
+     * （提示词少一整套 schema + 天然批量）。用可变对象传给 SDK，
+     * 设置页切换后下一条消息就生效。
+     */
+    const codemodeOptions: { mode: CodemodeMode } = { mode: desktop.codemodeMode ?? "only" };
     const resourceLoader = new DefaultResourceLoader({
       cwd,
       agentDir,
       extensionFactories: [
-        createCodemodeExtension({ mode: "on" }),
+        createCodemodeExtension(codemodeOptions),
         createToolSearchExtension(),
         createMcpExtension({ loadConfig: (ctx) => loadDesktopMcpConfig(agentDir, ctx.cwd, ctx.isProjectTrusted()) }),
         desktopApprovalInlineExtension(modeRef),
@@ -1227,6 +1282,12 @@ export async function startRpcSession(
         desktopToolSearchAlignmentInlineExtension(),
         // 每轮增量去重：重复 read / 重复命令只回一句或尾部差异（错误永远完整返回）。
         desktopDedupeInlineExtension(),
+        // 工具护栏：shell 类工具补默认超时 + 封顶（防单条长驻调用把整批挂死），
+        // 单批并行过多时追加一次提醒。只补参数 / 只在超时错误后追加一句改法，不改正常结果。
+        desktopToolGuardInlineExtension(),
+        // 会话隔离：跨会话共享配额（全局 + 单会话），超额调用在 tool_call 里排队而不是同时开跑。
+        // 必须排在审批扩展之后——被审批拦下的调用不能先占槽位。
+        desktopToolSchedulerInlineExtension({ getSessionKey: () => sessionId }),
         // 跨会话改动署名：别的会话改过的文件，read 时尾部多一行"谁改的"。
         // 必须排在去重之后（去重先判等，署名再追加文本，顺序反了会污染去重哈希）。
         desktopFileOriginInlineExtension(),
@@ -1317,6 +1378,7 @@ export async function startRpcSession(
     // our thin facade free of full ExtensionUIContext coupling.
     const wrapper = new AgentSessionWrapper(inner as unknown as AgentSessionLike, { modeRef });
     wrapper.initPolicy(agentMode, toolPreset, desktop.codemodeEnabled ?? false);
+    wrapper.attachCodemodeOptions(codemodeOptions);
 
     const bridge = new ExtensionUiBridge((event) => {
       wrapper.emitEvent(event);

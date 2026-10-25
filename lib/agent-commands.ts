@@ -18,6 +18,7 @@ const AGENT_COMMAND_TYPE_LIST = [
   "steer",
   "follow_up",
   "reorder_follow_ups",
+  "remove_follow_up",
   "get_tools",
   "set_tools",
   "abort_compaction",

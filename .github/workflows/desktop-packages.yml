@@ -15,6 +15,10 @@ permissions:
 
 env:
   CSC_IDENTITY_AUTO_DISCOVERY: "false"
+  # 冒烟脚本里单帧等待的预算（默认 60s）。macOS runner 是 APFS 冷启动 + 首次
+  # 读几万个 node_modules 文件，旧脚本写死 20s，一次正常但慢的启动就会被判成
+  # "timed out waiting for a frame"。CI 再给 3 倍余量，宁可慢切不可假红。
+  PIFORGE_SMOKE_UI_TIMEOUT_MS: "180000"
 
 jobs:
   package:
@@ -72,6 +76,16 @@ jobs:
       - name: Build installer
         shell: bash
         run: ${{ matrix.dist_prefix }} npm run ${{ matrix.dist_script }}
+
+      # 打包后的冒烟失败时，再用仓库里编译出的 Agent Host 跑一遍同样的桥接冒烟：
+      # 过了 = 问题在打包产物（布局/符号链接/依赖解析）；也过不了 = 环境/时序问题。
+      - name: Diagnose extension UI bridge (non-packaged host)
+        if: failure() && matrix.pack_id == 'macos'
+        shell: bash
+        run: |
+          echo "== timing baseline on $(uname -a) =="
+          node -p "process.version"
+          node scripts/smoke-extension-ui-bridge.mjs || true
 
       - name: Verify Windows artifacts and write SHA-256
         if: matrix.pack_id == 'windows'

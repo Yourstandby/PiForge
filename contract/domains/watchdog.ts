@@ -28,6 +28,28 @@ export interface WatchdogToolView {
   overThreshold: boolean;
 }
 
+/**
+ * 「该不该介入」的即时结论。
+ *
+ * 为什么要有它：用户真正的问题不是「卡了多久」，而是「我现在要不要管」。
+ * 用秒数阈值回答不了这个问题（tsc 跑 90 秒很正常，等 token 30 秒就该管），
+ * 所以结论由 Host 侧的纯规则推导（相对历史基线 + 重复调用 + 等待对象），
+ * **不调用模型、不写 prompt**，随每次 `watchdog.status` 一起返回。
+ * 模型只用来「解释结论」，不用来决定结论。
+ */
+export type WatchdogVerdictDecision = "wait" | "you" | "intervene" | "idle" | "done";
+
+export interface WatchdogVerdict {
+  decision: WatchdogVerdictDecision;
+  /** 一句话结论，面板直接渲染（不点任何按钮就能看到）。 */
+  headline: string;
+  /** 支撑证据（0-3 条短句），面板折叠展示。 */
+  evidence: string[];
+}
+
+/** 现在到底在等谁：模型出 token / 工具执行 / 人点确认。 */
+export type WatchdogAwaiting = "model" | "tool" | "user";
+
 /** `get_task_status(task_id)` 的返回体（含派生字段，便于 UI 直接渲染）。 */
 export interface WatchdogTaskView {
   taskId: string;
@@ -70,6 +92,10 @@ export interface WatchdogTaskView {
   interventionCount: number;
   /** 上一次介入时刻（epoch ms）。 */
   lastInterventionAt: number | null;
+  /** 现在在等谁（模型 / 工具 / 人）。用于把「卡住」拆成三类不同的事。 */
+  awaiting: WatchdogAwaiting;
+  /** 「该不该介入」的即时结论：面板不必等用户点按钮就能显示。 */
+  verdict: WatchdogVerdict;
 }
 
 /**
@@ -94,6 +120,11 @@ export interface InterventionResult {
   task: WatchdogTaskView | null;
   /** 被拒绝时的原因；`ok: false` 时必有。 */
   rejected?: InterventionRejectionReason;
+  /**
+   * 只是「已受理」，投递还在后台推进（steer 要等当前工具跑完才落地）。
+   * UI 看到它就该退出 pending，不必等真正送达。
+   */
+  accepted?: boolean;
   /** 面向用户的一句话（拒绝原因 / 成功回显）。 */
   detail?: string;
 }

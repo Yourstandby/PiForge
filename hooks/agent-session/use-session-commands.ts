@@ -90,6 +90,26 @@ export type UseSessionCommandsOptions = {
   onPromptError?: (message: string) => void;
 };
 
+/**
+ * 分支 / 派生失败时宿主抛的是英文原文（有的还带错误码），直接丢给用户看不懂，
+ * 而只 console.error 又等于「点了没反应」。这里统一翻成一句能懂的提示。
+ */
+function branchActionErrorMessage(error: unknown, action: "branch" | "fork"): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  if (/SESSION_BUSY|Session is streaming|Wait for the current response/i.test(raw)) {
+    return action === "branch"
+      ? "本轮回复还没结束，等它跑完再切分支。"
+      : "本轮回复还没结束，等它跑完再派生新会话。";
+  }
+  if (/Invalid entry ID/i.test(raw)) {
+    return "这条消息在会话文件里已经找不到了（可能刚被别的分支改写过）。";
+  }
+  if (/not found|ENOENT/i.test(raw)) {
+    return "会话文件已失效，刷新后重试。";
+  }
+  return (action === "branch" ? "切分支失败：" : "派生失败：") + raw;
+}
+
 export function useSessionCommands(opts: UseSessionCommandsOptions) {
   const {
     session,
@@ -493,11 +513,12 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
         }
       } catch (e) {
         console.error("Fork failed:", e);
+        onPromptError?.(branchActionErrorMessage(e, "fork"));
       } finally {
         setForkingEntryId(null);
       }
     },
-    [onSessionForked, sessionIdRef, setForkingEntryId]
+    [onPromptError, onSessionForked, sessionIdRef, setForkingEntryId]
   );
 
   /**
@@ -507,21 +528,33 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
    * start. Only the transcript is reloaded — drafts and streaming state stay.
    */
   const navigateToLeaf = useCallback(
-    async (leafId: string | null): Promise<{ editorText?: string } | null> => {
+    async (
+      leafId: string | null,
+      options: { summarize?: boolean } = {},
+    ): Promise<{
+      editorText?: string;
+      summarized?: boolean;
+      summarySkipped?: "not-live" | "nothing-to-summarize";
+    } | null> => {
       const sid = sessionIdRef.current;
       if (!sid) return null;
       try {
-        const result = await switchBranchApi(sid, leafId, sessionFilePath);
+        const result = await switchBranchApi(sid, leafId, sessionFilePath, options);
         if (result.cancelled) return null;
         setActiveLeafId(result.leafId);
         await loadContext(sid, result.leafId);
-        return result.editorText ? { editorText: result.editorText } : {};
+        return {
+          ...(result.editorText ? { editorText: result.editorText } : {}),
+          ...(result.summarized !== undefined ? { summarized: result.summarized } : {}),
+          ...(result.summarizeSkipped ? { summarySkipped: result.summarizeSkipped } : {}),
+        };
       } catch (e) {
         console.error("switch branch failed:", e);
+        onPromptError?.(branchActionErrorMessage(e, "branch"));
         return null;
       }
     },
-    [loadContext, sessionIdRef, sessionFilePath, setActiveLeafId]
+    [loadContext, onPromptError, sessionIdRef, sessionFilePath, setActiveLeafId]
   );
 
   const handleNavigate = useCallback(
@@ -531,10 +564,10 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
     [navigateToLeaf]
   );
 
+  /** 蒸馏开关打开时，切走的分支会先被摘要成 `branch_summary` 再落回目标位置。 */
   const handleLeafChange = useCallback(
-    (leafId: string | null) => {
-      void navigateToLeaf(leafId);
-    },
+    (leafId: string | null, options: { summarize?: boolean } = {}) =>
+      navigateToLeaf(leafId, options),
     [navigateToLeaf]
   );
 

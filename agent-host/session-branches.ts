@@ -157,6 +157,11 @@ export async function switchSessionBranch(input: {
   sessionId: string;
   filePath?: string;
   leafId: string | null;
+  /**
+   * Distill the branch being left into a `branch_summary` entry
+   * (pi's `navigateTree(target, { summarize: true })` semantics).
+   */
+  summarize?: boolean;
 }): Promise<SessionBranchSwitchResult> {
   const sessionId = input.sessionId?.trim();
   if (!sessionId) throw new SessionBranchError("E_INVALID_PARAMS", "sessionId is required");
@@ -169,17 +174,21 @@ export async function switchSessionBranch(input: {
     throw new SessionBranchError("E_INVALID_PARAMS", `Entry ${leafId} not found`);
   }
 
+  // Distilling needs a live AgentSession (model + auth); cold sessions only
+  // remember the leaf, so report the skip instead of silently dropping it.
+  const summarizeSkipped = input.summarize ? { summarizeSkipped: "not-live" as const } : {};
+
   if (!live) {
     // The leaf pointer is in memory only; remember it so a later prompt starts
     // the session on the branch the user is looking at.
     setPendingSessionLeaf(sessionId, leafId);
-    return { cancelled: false, live: false, leafId };
+    return { cancelled: false, live: false, leafId, ...summarizeSkipped };
   }
 
   const wrapper = getRpcSession(sessionId);
   if (!wrapper?.isAlive()) {
     setPendingSessionLeaf(sessionId, leafId);
-    return { cancelled: false, live: false, leafId };
+    return { cancelled: false, live: false, leafId, ...summarizeSkipped };
   }
   if (leafId === null) {
     manager.resetLeaf();
@@ -191,11 +200,20 @@ export async function switchSessionBranch(input: {
       "Wait for the current response to finish before switching branches.",
     );
   }
-  const result = await wrapper.inner.navigateTree(leafId, {});
+  const result = await wrapper.inner.navigateTree(
+    leafId,
+    input.summarize ? { summarize: true } : {},
+  );
+  const summary = result.summaryEntry;
   return {
     cancelled: result.cancelled,
     live: true,
     leafId: manager.getLeafId(),
     ...(result.editorText ? { editorText: result.editorText } : {}),
+    ...(summary
+      ? { summarized: true, summaryEntryId: summary.id, summaryText: summary.summary }
+      : input.summarize
+        ? { summarized: false, summarizeSkipped: "nothing-to-summarize" as const }
+        : {}),
   };
 }

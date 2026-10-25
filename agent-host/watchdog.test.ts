@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ProgressTracker, describeSuspectedBlocker } from "./progress-tracker.ts";
 import {
+  ProgressTracker,
+  describeSuspectedBlocker,
+  recordToolDuration,
+  resetToolDurationBaselinesForTest,
+} from "./progress-tracker.ts";
+import {
+  acceptIntervention,
   getTaskStatus,
   getWatchdogSnapshot,
   performIntervention,
@@ -438,6 +444,31 @@ test("duplicate clicks are rejected host-side and never reach the queue twice", 
   assert.equal(session.delivered.length, 1, "重复点击不得再注入一条");
 });
 
+test("accepting an intervention returns without waiting for delivery", () => {
+  const clock = fixedClock();
+  resetWatchdogForTest({ stallMs: 90_000, stallScans: 1 });
+  setWatchdogClockForTest(clock.now);
+  observeAgentEvent(SESSION, { type: "agent_start" });
+  clock.advance(1_000);
+
+  // 模拟「投递要等当前工具跑完」：这个 Promise 永不 settle。
+  let deliverCalls = 0;
+  const slowSession = {
+    deliverIntervention() {
+      deliverCalls += 1;
+      return new Promise<{ delivered: "steer" }>(() => {});
+    },
+  };
+
+  // 同步返回是关键：UI 的「发送中…」不能被投递延迟绑住。
+  const accepted = acceptIntervention({ sessionId: SESSION, actionType: "skip", now: clock.now() });
+  assert.equal(accepted.ok, true);
+  assert.equal(accepted.accepted, true);
+  assert.equal(deliverCalls, 0, "受理阶段不得自己投递");
+  assert.equal(accepted.task?.status, "running", "红灯要立刻变绿，不等送达");
+  assert.equal(accepted.task?.interventionCount, 1);
+});
+
 test("intervention is refused when nothing is running or the watchdog is off", async () => {
   const clock = fixedClock();
   resetWatchdogForTest({ stallMs: 90_000, stallScans: 1 });
@@ -602,4 +633,71 @@ test("one tool streaming output does not hide the other blocked tools", () => {
   assert.equal(blocked.status, "stalled");
   assert.equal(blocked.tools.find((tool) => tool.toolCallId === "call-1")?.overThreshold, false);
   assert.equal(blocked.tools.filter((tool) => tool.overThreshold).length, 5);
+});
+
+// ---------------------------------------------------------------------------
+// D. verdict：不点按钮也要拿到「该不该介入」
+// ---------------------------------------------------------------------------
+
+test("verdict says wait while a running tool is still streaming output", () => {
+  const clock = fixedClock();
+  resetWatchdogForTest({ stallMs: 20_000, stallScans: 2 });
+  setWatchdogClockForTest(clock.now);
+  observeAgentEvent(SESSION, { type: "agent_start" });
+  observeAgentEvent(SESSION, { type: "tool_execution_start", toolCallId: "t1", toolName: "bash" });
+  clock.advance(5_000);
+  observeAgentEvent(SESSION, { type: "tool_execution_update", toolCallId: "t1", toolName: "bash" });
+  clock.advance(2_000);
+
+  const view = getWatchdogSnapshot(clock.now()).tasks[0]!;
+  assert.equal(view.verdict.decision, "wait");
+  assert.equal(view.awaiting, "tool");
+  assert.match(view.verdict.headline, /bash/);
+  assert.match(view.verdict.headline, /仍在输出/);
+});
+
+test("verdict asks for intervention once a silent tool passes the threshold", () => {
+  const clock = fixedClock();
+  resetWatchdogForTest({ stallMs: 20_000, stallScans: 2 });
+  setWatchdogClockForTest(clock.now);
+  observeAgentEvent(SESSION, { type: "agent_start" });
+  observeAgentEvent(SESSION, { type: "tool_execution_start", toolCallId: "t1", toolName: "bash" });
+  clock.advance(30_000);
+
+  const view = getWatchdogSnapshot(clock.now()).tasks[0]!;
+  assert.equal(view.verdict.decision, "intervene");
+  assert.equal(view.awaiting, "tool");
+  assert.ok(view.verdict.evidence.length > 0);
+  assert.match(view.verdict.headline, /无输出/);
+});
+
+test("verdict blames the model when no tool is running", () => {
+  const clock = fixedClock();
+  resetWatchdogForTest({ stallMs: 20_000, stallScans: 2 });
+  setWatchdogClockForTest(clock.now);
+  observeAgentEvent(SESSION, { type: "agent_start" });
+  clock.advance(30_000);
+
+  const view = getWatchdogSnapshot(clock.now()).tasks[0]!;
+  assert.equal(view.awaiting, "model");
+  assert.equal(view.verdict.decision, "intervene");
+  assert.match(view.verdict.headline, /模型/);
+});
+
+test("verdict keeps waiting while silence stays inside the tool's own baseline", () => {
+  const clock = fixedClock();
+  resetToolDurationBaselinesForTest();
+  // 历史：bash 每次约 30s（3 个样本才构成基线）
+  recordToolDuration("bash", 30_000);
+  recordToolDuration("bash", 31_000);
+  recordToolDuration("bash", 29_000);
+  resetWatchdogForTest({ stallMs: 20_000, stallScans: 2 });
+  setWatchdogClockForTest(clock.now);
+  observeAgentEvent(SESSION, { type: "agent_start" });
+  observeAgentEvent(SESSION, { type: "tool_execution_start", toolCallId: "t1", toolName: "bash" });
+  clock.advance(25_000); // 超阈值，但没到历史中位的 2 倍
+
+  const view = getWatchdogSnapshot(clock.now()).tasks[0]!;
+  assert.equal(view.verdict.decision, "wait", "相对基线优先于绝对阈值");
+  assert.ok(view.verdict.evidence.some((line) => line.includes("历史中位")));
 });

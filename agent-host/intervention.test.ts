@@ -10,6 +10,8 @@ import {
   checkIntervention,
   isInterventionAction,
   resolveDelivery,
+  shouldInterruptTool,
+  INTERRUPT_TOOL_AFTER_MS,
   INTERVENE_COOLDOWN_MS,
   MAX_INTERVENTIONS_PER_TASK,
 } from "./intervention.ts";
@@ -139,6 +141,17 @@ test("guard caps interventions per task", () => {
   });
   assert.equal(result.allowed, false);
   assert.equal(result.reason, "too_many");
+});
+
+test("only skip interrupts a tool, and only once it has run past the threshold", () => {
+  const long = [{ runningSeconds: INTERRUPT_TOOL_AFTER_MS / 1000 + 1 }];
+  const short = [{ runningSeconds: 1 }];
+  assert.equal(shouldInterruptTool("skip", long), true);
+  assert.equal(shouldInterruptTool("skip", short), false, "短命令打断只会白丢结果");
+  assert.equal(shouldInterruptTool("ask", long), false, "询问不打断，只在 turn 边界插话");
+  assert.equal(shouldInterruptTool("ask_brief", long), false);
+  assert.equal(shouldInterruptTool("skip", []), false);
+  assert.equal(shouldInterruptTool("skip", null), false);
 });
 
 test("actionType validation only accepts skip / ask / ask_brief", () => {

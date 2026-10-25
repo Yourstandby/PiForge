@@ -34,7 +34,8 @@ test("ChatSurface never subscribes to watchdog state", () => {
 
 test("tool rows keep only the red tint + icon, no banner or diagnostics popup", () => {
   const src = read("components/Transcript.tsx");
-  assert.match(src, /const stalledRow = stall\?\.level === "stalled"/);
+  // 允许 prettier 把这一句折成多行（源码格式化不该让结构护栏误报）。
+  assert.match(src, /const stalledRow =\s*stall\?\.level === "stalled"/);
   assert.match(src, /bg-\[#FDF2F2\]/, "整行微红底色仍然保留");
   assert.match(src, /TriangleAlert/, "卡死行仍然有图标提示");
   assert.equal(src.includes("StallDiagnosticsButton"), false, "诊断弹窗已移到右侧面板");
@@ -140,7 +141,11 @@ test("interventions go through the local proxy route, not the model", () => {
 test("server wires agent.intervene to the testable orchestrator", () => {
   const server = read("agent-host/server.ts");
   assert.match(server, /case "agent\.intervene"/);
-  assert.match(server, /await performIntervention\(\{/);
+  // 回执必须同步：受理完立刻 result()，投递在后台推进（否则按钮会等工具跑完）。
+  assert.match(server, /const accepted = acceptIntervention\(\{ sessionId, actionType \}\)/);
+  assert.equal(server.includes("await performIntervention("), false, "投递不得进入回执路径");
+  assert.match(server, /void session\.deliverIntervention\(accepted\.message\)/);
+  assert.match(server, /shouldInterruptTool\(actionType, accepted\.task\?\.tools\)/);
   assert.match(server, /isInterventionAction\(actionType\)/);
   // 参数非法时必须在进 Host 之前就被打回。
   assert.match(server, /actionType must be 'skip' \| 'ask' \| 'ask_brief'/);

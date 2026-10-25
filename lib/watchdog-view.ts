@@ -22,6 +22,13 @@ export interface StallView {
   /** 疑似阻塞点（Host 推导，UI 原样显示）。 */
   blocker: string;
   pendingTool: string | null;
+  /**
+   * 已超过 stallMs 无输出的工具调用 id。
+   *
+   * 工具行只在**自己**出现在这里时才染红：任务是会话级的，「当前有工具卡住」
+   * 不代表同一条消息里那些早已结束（或根本没参与）的工具也该变红。
+   */
+  stuckToolCallIds: string[];
 }
 
 /** 与 Host 默认阈值一致（20s）；关闭/自定义时以快照里的 config 为准。 */
@@ -87,6 +94,9 @@ export function describeStall(
   const idleMs = Math.max(0, options.now - task.lastActivityAt);
   const idleSeconds = Math.round(idleMs / 1000);
   const stalled = task.status === "stalled" || task.status === "failed";
+  const stuckToolCallIds = task.tools
+    .filter((tool) => tool.overThreshold)
+    .map((tool) => tool.toolCallId);
   if (options.streaming) {
     if (stalled) {
       return {
@@ -96,6 +106,7 @@ export function describeStall(
         lastSuccessAction: task.lastSuccessAction,
         blocker: task.suspectedBlocker,
         pendingTool: task.pendingTool,
+        stuckToolCallIds,
       };
     }
     if (idleMs > stallMs) {
@@ -106,6 +117,7 @@ export function describeStall(
         lastSuccessAction: task.lastSuccessAction,
         blocker: task.suspectedBlocker,
         pendingTool: task.pendingTool,
+        stuckToolCallIds,
       };
     }
     return null;
@@ -118,6 +130,7 @@ export function describeStall(
       lastSuccessAction: task.lastSuccessAction,
       blocker: task.suspectedBlocker,
       pendingTool: task.pendingTool,
+      stuckToolCallIds,
     };
   }
   return null;

@@ -80,6 +80,26 @@ export function resolveDelivery(input: {
 
 /** 同一个任务内，同一种介入动作的冷却时间（防连点 / 防重放）。 */
 export const INTERVENE_COOLDOWN_MS = 3_000;
+/**
+ * 工具跑到这个时长才允许被打断。
+ *
+ * 短命令打断只会白丢结果（模型要重跑）；长命令打断才真的省时间。
+ */
+export const INTERRUPT_TOOL_AFTER_MS = 10_000;
+
+/**
+ * `skip` 是否该顺手打断当前工具。
+ *
+ * 只有「用户明确要跳过」+「某个工具已跑过阈值」才动手；
+ * `ask` / `ask_brief` 一律不打断 —— 它们只需要在 turn 边界插一句话。
+ */
+export function shouldInterruptTool(
+  actionType: InterventionAction,
+  tools: ReadonlyArray<{ runningSeconds: number }> | null | undefined,
+): boolean {
+  if (actionType !== "skip" || !tools?.length) return false;
+  return tools.some((tool) => tool.runningSeconds * 1000 >= INTERRUPT_TOOL_AFTER_MS);
+}
 /** 单个任务最多介入这么多次，防止把队列刷爆。 */
 export const MAX_INTERVENTIONS_PER_TASK = 5;
 

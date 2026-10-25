@@ -52,7 +52,7 @@ test("over-long output keeps head and tail and states the real total", () => {
   assert.equal(result.totalLines, 1_000);
   assert.match(result.text, /^line 1\n/);
   assert.match(result.text, /\[\.\.\.已截断 1000 行/);
-  assert.ok(result.text.includes(TRUNCATION_HINT), "必须带上 grep/sed 的续读引导");
+  assert.ok(result.text.includes(TRUNCATION_HINT), "必须带上批量续读的引导");
   assert.match(result.text, /line 1000$/);
   assert.doesNotMatch(result.text, /line 500/);
   assert.ok(
@@ -120,7 +120,10 @@ test("truncation notice wording is stable", () => {
     truncationNotice(1_234, READ_TOOL_OUTPUT_BUDGET, 900),
     "[...已截断 1234 行 / 900 字符...]（已保留前 3000 字符 + 后 1000 字符）",
   );
-  assert.match(TRUNCATION_HINT, /如需查看完整内容，请使用 grep、sed 等工具分段读取/);
+  // 引导必须指向「一次脚本批量读 / 工具翻页」，而不是让模型逐条 read。
+  assert.match(TRUNCATION_HINT, /codemode/);
+  assert.match(TRUNCATION_HINT, /tool_history_get/);
+  assert.match(TRUNCATION_HINT, /不要逐条续读/);
 });
 
 // ---------------------------------------------------------------------------
