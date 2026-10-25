@@ -16,7 +16,8 @@ npm run measure:prefix -- --turns 4 --language message  # 回复语言放在用�
 npm run measure:prefix -- --cache-stats --cache-warming idle --cache-ttl-ms 15000 --pause-ms 20000
 npm run measure:prefix -- --resume --cache-stats        # 恢复会话的首轮预热
 npm run measure:prefix -- --probe orchestrator:status   # 真调一次多态工具，验证分派链路
-npm run smoke:prefix-budget                             # 护栏：前缀 ≤7200 + 命中率 ≥90% + 按需域探针（两种配置）
+npm run measure:prefix -- --codemode off              # 关掉 codemode（工具照常声明）再量
+npm run smoke:prefix-budget                             # 护栏：默认配置前缀 ≤7600 + 命中率 ≥90% + 按需域探针（需 --codemode off）
 npm run measure:long-session                            # 30 轮真实模型会话（需要 auth.json）
 npm run measure:increment                               # 工具结果去重 A/B（记录型 provider）
 ```
