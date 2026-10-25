@@ -18,7 +18,7 @@
  *
  * 退出码：0 正常；1 环境/运行失败；2 auth 缺失；3 命中率断言失败。
  */
-import { spawn } from "node:child_process";
+import { spawnNodeHost } from "./lib/host-spawn.mjs";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
@@ -283,10 +283,15 @@ const sourceAuth = path.join(
   const endpoint = createEndpoint();
   const token = `long-${Math.random().toString(36).slice(2)}`;
   const logs = [];
-  const child = spawn(process.execPath, [hostEntry], {
+  const child = spawnNodeHost({
+    entry: hostEntry,
     cwd: repoRoot,
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, PIFORGE_AGENT_ENDPOINT: endpoint, PIFORGE_AGENT_TOKEN: token },
+    env: {
+      PI_CODING_AGENT_DIR: agentDir,
+      PIFORGE_AGENT_ENDPOINT: endpoint,
+      PIFORGE_AGENT_TOKEN: token,
+    },
   });
 
   const rows = [];

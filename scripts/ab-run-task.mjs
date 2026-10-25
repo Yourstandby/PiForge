@@ -19,7 +19,7 @@
  *
  * A/B 的对照组只差一个环境变量（`PIFORGE_TOOL_OUTPUT_CHARS`），其余完全一致。
  */
-import { spawn } from "node:child_process";
+import { spawnNodeHost } from "./lib/host-spawn.mjs";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
@@ -193,9 +193,14 @@ function createEndpoint() {
 function startHost({ env, log }) {
   const endpoint = createEndpoint();
   const token = randomBytes(32).toString("hex");
-  const child = spawn(process.execPath, [HOST_ENTRY], {
+  const child = spawnNodeHost({
+    entry: HOST_ENTRY,
     cwd: repoRoot,
-    env: { ...process.env, ...env, PIFORGE_AGENT_ENDPOINT: endpoint, PIFORGE_AGENT_TOKEN: token },
+    env: {
+      ...env,
+      PIFORGE_AGENT_ENDPOINT: endpoint,
+      PIFORGE_AGENT_TOKEN: token,
+    },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });

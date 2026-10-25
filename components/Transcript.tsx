@@ -14,6 +14,7 @@ import { isInterventionText } from "@/contract/intervention-marker";
 import { estimateTokens } from "@/lib/live-usage";
 import type { BranchSwitchInfo } from "@/lib/session-branches-view";
 import { isEditToolName, toolDiffPath, toolDiffRows } from "@/lib/tool-diff";
+import { settleToolMs, toolClockFor } from "@/lib/tool-clock";
 import { ImageLightbox } from "./chat-input/ImageLightbox";
 import { useI18n } from "./I18nProvider";
 import { useTypedText } from "@/hooks/useSmoothTypewriter";
@@ -1070,36 +1071,54 @@ function ToolCallCard({
   }, [result, open, setOpen]);
   const rawSummary = toolSummary(input);
   /** 执行中：参数摘要和日志用打字机逐字刷出（结束后立刻补齐）。 */
-  const typingLog = streaming && !result;
+  /** 有结果就算跑完：完成卡不再挂运行态样式，也不再走秒表。 */
+  const running = Boolean(streaming) && !result;
+  const typingLog = running;
   const summary = useTypedText(rawSummary, typingLog, 10);
   const typedLiveOutput = useTypedText(liveOutput ?? "", typingLog, 24);
   const hasArgs = Object.keys(input).length > 0;
   const hasDetails = hasArgs || Boolean(result);
-  const duration = formatDuration(result?.durationMs);
-  /** 运行中的秒表：每 200ms 刷新，给人「真的在跑」的反馈。 */
-  const [elapsedMs, setElapsedMs] = useState(0);
-  const startedAtRef = useRef<number>(0);
+  /**
+   * 秒表只在「首次看到这行在跑」时起算，并把起点留在模块级 Map：
+   * 重挂载不会归零，完成后冻结成真实耗时（后端 durationMs 优先）。
+   */
+  const clockKey = toolCallId ?? stateKey ?? `${name}:${summary}`;
+  const clock = running || result ? toolClockFor(clockKey) : undefined;
+  const [nowMs, setNowMs] = useState(0);
+  const [settledMs, setSettledMs] = useState<number | undefined>(undefined);
+  /** 只在真正跑起来时起表；历史加载的卡片没有起点，不会凭空报个耗时长。 */
   useEffect(() => {
-    if (!streaming) return;
-    startedAtRef.current = Date.now();
-    setElapsedMs(0);
-    const timer = window.setInterval(() => setElapsedMs(Date.now() - startedAtRef.current), 200);
+    if (!running || !clock || clock.startedAt !== undefined) return;
+    clock.startedAt = Date.now();
+  }, [running, clock]);
+  useEffect(() => {
+    if (!running) return;
+    setNowMs(Date.now());
+    const timer = window.setInterval(() => setNowMs(Date.now()), 200);
     return () => window.clearInterval(timer);
-  }, [streaming]);
+  }, [running]);
+  /** 完成那一刻冻结耗时：后端给了 durationMs 就用它，否则用自测的起止差。 */
+  useEffect(() => {
+    if (!result) return;
+    if (clock && clock.endedAt === undefined) clock.endedAt = Date.now();
+    setSettledMs((prev) => (prev === undefined ? settleToolMs(result.durationMs, clock) : prev));
+  }, [result, clock]);
+  const liveElapsedMs = clock?.startedAt !== undefined && nowMs > 0 ? nowMs - clock.startedAt : 0;
+  const duration = formatDuration(settledMs);
   /**
    * 看门狗只读视图：主界面**只**保留「整行微红 + 图标提示」——
    * 详细诊断与介入动作全部收拢到右侧「系统监控」面板。
    * 数据来自只读快照，不触发任何请求/模型调用；未配置 Provider 时恒为 null。
    */
   const watchdogSessionId = useWatchdogSessionId();
-  const stall = useToolStall(watchdogSessionId, Boolean(streaming));
+  const stall = useToolStall(watchdogSessionId, running);
   /**
    * 只有「这一行自己」被 Host 判定超阈值无输出时才算卡住：
    * 看门狗状态是会话级的，早先结束（甚至没参与）的工具不该被一起染红。
    */
   const stalledRow =
     stall?.level === "stalled" &&
-    Boolean(streaming) &&
+    running &&
     (toolCallId
       ? stall.stuckToolCallIds.includes(toolCallId)
       : stall.pendingTool === name);
@@ -1125,15 +1144,15 @@ function ToolCallCard({
   const outputRef = useRef<HTMLPreElement>(null);
   useEffect(() => {
     const el = outputRef.current;
-    if (el && streaming) el.scrollTop = el.scrollHeight;
-  }, [streaming, output, liveOutput]);
+    if (el && running) el.scrollTop = el.scrollHeight;
+  }, [running, output, liveOutput]);
 
   return (
     <div
       className={`overflow-hidden ${
         stalledRow
           ? "rounded-md border border-[#E9B8B4] bg-[#FDF2F2]"
-          : streaming
+          : running
             ? "tool-running rounded-md border border-accent/35 bg-white"
             : ""
       }`}
@@ -1146,7 +1165,7 @@ function ToolCallCard({
           hasDetails ? "cursor-pointer transition-colors hover:bg-[#F7FAFF]" : "cursor-default"
         }`}
       >
-        {streaming && (
+        {running && (
           <span
             aria-hidden="true"
             className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-[#22c55e]"
@@ -1172,8 +1191,8 @@ function ToolCallCard({
         )}
         <span className="shrink-0 font-mono text-[11px] text-ink-muted">· {name}</span>
         <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-ink-soft">
-          {summary || (streaming ? "" : "（无参数）")}
-          {streaming && !result && (
+          {summary || (running ? "" : "（无参数）")}
+          {running && (
             <span className="ml-0.5 animate-pulse text-accent" aria-hidden="true">
               ▍
             </span>
@@ -1182,13 +1201,13 @@ function ToolCallCard({
         {tree && (
           <span className="shrink-0 text-[10px] text-ink-faint">{nested?.calls.length} 子调用</span>
         )}
-        {streaming ? (
+        {running ? (
           <span
             className={`shrink-0 tabular-nums text-[10.5px] ${
               stalledRow ? "text-[#B0443C]" : "text-accent-strong"
             }`}
           >
-            {formatDuration(elapsedMs) ?? "0 ms"}
+            {formatDuration(liveElapsedMs) ?? "0 ms"}
           </span>
         ) : (
           duration && (

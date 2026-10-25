@@ -8,6 +8,7 @@
  * with Next through the environment and never written to disk.
  */
 import { spawn } from "node:child_process";
+import { spawnNodeHost } from "./lib/host-spawn.mjs";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -74,11 +75,11 @@ function startHost() {
   }
 
   console.log(`[dev] Starting Agent Host (endpoint: ${endpoint})`);
-  const child = spawn(process.execPath, [hostEntry], {
+  const child = spawnNodeHost({
+    entry: hostEntry,
     cwd: repoRoot,
     stdio: ["ignore", "pipe", "pipe"],
     env: {
-      ...process.env,
       PIFORGE_AGENT_ENDPOINT: endpoint,
       PIFORGE_AGENT_TOKEN: token,
     },

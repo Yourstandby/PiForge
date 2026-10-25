@@ -10,7 +10,7 @@
  *
  * 输出：每条 host 日志的相对毫秒 + `host_ready` 的毫秒数。
  */
-import { spawn } from "node:child_process";
+import { spawnNodeHost } from "./lib/host-spawn.mjs";
 import { performance } from "node:perf_hooks";
 import path from "node:path";
 import { existsSync } from "node:fs";
@@ -36,8 +36,9 @@ const t0 = performance.now();
 const stamp = () => String(Math.round(performance.now() - t0)).padStart(6);
 console.log(`[${stamp()}ms] spawn ${entry}`);
 
-const child = spawn(process.execPath, [entry], {
-  env: { ...process.env, PIFORGE_AGENT_ENDPOINT: endpoint, PIFORGE_AGENT_TOKEN: "x".repeat(32) },
+const child = spawnNodeHost({
+  entry: entry,
+  env: { PIFORGE_AGENT_ENDPOINT: endpoint, PIFORGE_AGENT_TOKEN: "x".repeat(32) },
   // 打包版从 standalone 目录解析依赖（与 Electron utilityProcess 的 cwd 一致）。
   cwd: entry.includes(`${BS}standalone${BS}`) ? path.dirname(path.dirname(entry)) : process.cwd(),
   stdio: ["ignore", "pipe", "pipe"],

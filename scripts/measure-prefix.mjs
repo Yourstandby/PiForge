@@ -24,7 +24,7 @@
  *
  * 退出码：0 正常；1 环境/运行问题；2 超出 --max-prefix 预算。
  */
-import { spawn } from "node:child_process";
+import { spawnNodeHost } from "./lib/host-spawn.mjs";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
@@ -138,6 +138,13 @@ const probe = (() => {
 })();
 const TIMEOUT_MS = 60_000;
 
+/**
+ * 连接先断、host 退出码后到的那一帧：最多等这么久把它写进错误里。
+ * 宁可晚 700 ms 也要带上 code —— 「握手后崩了」和「管道被关了」是两种完全不同的故障，
+ * 只报后者等于把唯一有用的信息丢掉；但也不能等更久（验收：≤2 s 必须失败）。
+ */
+const HOST_EXIT_GRACE_MS = 700;
+
 function valueOf(flag) {
   const index = args.indexOf(flag);
   return index >= 0 ? args[index + 1] : undefined;
@@ -145,6 +152,21 @@ function valueOf(flag) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * 给未定限的 frame 等待套一个硬期限。`client.waitFor` 原本会永久等一帧不来的响应，
+ * 一步卡死时整条 smoke 只“安静”，调用方看到的却是「bash 卡死了」。
+ */
+function withDeadline(promise, ms) {
+  let timer;
+  const guard = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`等帧超时:${Math.round(ms / 1000)}s 内未收到匹配的响应帧`)),
+      ms
+    );
+  });
+  return Promise.race([promise, guard]).finally(() => clearTimeout(timer));
 }
 
 /** 等会话空闲（不 streaming），避免下一条 prompt 被 "Session is streaming" 拒掉。 */
@@ -278,19 +300,34 @@ function waitForReady(child, logs) {
   });
 }
 
-function createClient(endpoint) {
+function createClient(endpoint, hostChild) {
   return new Promise((resolve, reject) => {
     const socket = connect(endpoint);
     let buffer = "";
     const pending = [];
     const waiters = [];
+    /**
+     * host 退出 / 连接断开后置位。此后等帧一律**立即 reject**：帧再也不会来了，
+     * 继续等只是在白等硬期限（`withDeadline`），调用方看到的仍是「卡了 60 s」。
+     */
+    let fatal = null;
+    const fail = (error) => {
+      if (fatal) return;
+      fatal = error;
+      for (const waiter of waiters.splice(0)) waiter.reject(error);
+      try {
+        socket.destroy();
+      } catch {
+        /* 已经断了 */
+      }
+    };
     const deliver = (frame) => {
       if (frame.kind === "ping") {
         socket.write(`${JSON.stringify({ kind: "pong", nonce: frame.nonce })}\n`);
         return;
       }
       const waiter = waiters.shift();
-      if (waiter) waiter(frame);
+      if (waiter) waiter.resolve(frame);
       else pending.push(frame);
     };
     socket.on("data", (chunk) => {
@@ -311,15 +348,56 @@ function createClient(endpoint) {
     });
     const next = () => {
       if (pending.length > 0) return Promise.resolve(pending.shift());
-      return new Promise((done) => waiters.push(done));
+      if (fatal) return Promise.reject(fatal);
+      return new Promise((done, failed) => waiters.push({ resolve: done, reject: failed }));
     };
-    socket.once("error", reject);
+    /**
+     * host 子进程的结束原因（含退出码）。这是「握手后崩」唯一可靠的证据：
+     * socket 往往比 exit 事件先 close，只报「连接已关闭」就看不出是崩了还是被关掉了。
+     */
+    const hostExit = new Promise((resolve) => {
+      if (!hostChild) return resolve(null);
+      const describe = () =>
+        `host 已退出（host exited, code=${hostChild.exitCode ?? hostChild.signalCode}）`;
+      if (hostChild.exitCode !== null || hostChild.signalCode !== null) return resolve(describe());
+      hostChild.once("exit", () => resolve(describe()));
+      hostChild.once("error", (error) => resolve(`host 启动失败（${error.message}）`));
+    });
+    /** 连接断了：等一小会儿（≤HOST_EXIT_GRACE_MS）把 host 退出码并进错误里再 reject。 */
+    const failWithHostReason = (reason) => {
+      const timer = setTimeout(() => fail(new Error(reason)), HOST_EXIT_GRACE_MS);
+      hostExit.then((detail) => {
+        clearTimeout(timer);
+        fail(new Error(detail ? `${detail}：${reason}` : reason));
+      });
+    };
+    socket.once("error", (error) => {
+      fail(error);
+      reject(error);
+    });
+    socket.once("close", () => failWithHostReason("与 host 的连接已关闭"));
+    if (hostChild) {
+      // exitCode 已定 = 握手前就死了，不用等事件。
+      if (hostChild.exitCode !== null || hostChild.signalCode !== null) {
+        failWithHostReason("host 在握手前已退出");
+      } else {
+        hostChild.once("exit", (code, signal) =>
+          fail(new Error(`host 已退出（host exited, code=${code ?? signal}），后续帧不会再到达`))
+        );
+        hostChild.once("error", (error) => fail(error));
+      }
+    }
     socket.once("connect", () =>
       resolve({
         send: (frame) => socket.write(`${JSON.stringify(frame)}\n`),
-        waitFor: async (predicate) => {
+        waitFor: async (predicate, timeoutMs = TIMEOUT_MS) => {
+          const deadline = Date.now() + timeoutMs;
           for (;;) {
-            const frame = await next();
+            const remaining = deadline - Date.now();
+            if (remaining <= 0) {
+              throw new Error(`等帧超时:${Math.round(timeoutMs / 1000)}s 内未出现匹配帧`);
+            }
+            const frame = await withDeadline(next(), remaining);
             if (predicate(frame)) return frame;
           }
         },
@@ -343,13 +421,13 @@ async function measureHost(recorder) {
   let state = null;
   const captured = () => recorder.requests.slice(start).map((entry) => entry.body);
 
-  const child = spawn(process.execPath, [hostEntry], {
+  const child = spawnNodeHost({
+    entry: hostEntry,
     cwd: repoRoot,
     stdio: ["ignore", "pipe", "pipe"],
     env: {
-      ...process.env,
       PI_CODING_AGENT_DIR: agentDir,
-      PIFORGE_AGENT_ENDPOINT: endpoint,
+                  PIFORGE_AGENT_ENDPOINT: endpoint,
       PIFORGE_AGENT_TOKEN: token,
       ...(languageInMessage ? { PIFORGE_LANGUAGE_IN_MESSAGE: "1" } : {}),
     },
@@ -357,7 +435,7 @@ async function measureHost(recorder) {
 
   try {
     await waitForReady(child, logs);
-    const client = await createClient(endpoint);
+    const client = await createClient(endpoint, child);
     client.send({
       kind: "hello",
       protocolVersion: 1,

@@ -14,7 +14,7 @@
  *
  * 退出码：0 正常；1 环境问题；2 断言失败（错误被去重 / 命中数为 0）。
  */
-import { spawn } from "node:child_process";
+import { spawnNodeHost } from "./lib/host-spawn.mjs";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
@@ -182,11 +182,11 @@ async function runOnce(dedupeEnabled) {
   const endpoint = createEndpoint();
   const token = `inc-${Math.random().toString(36).slice(2)}`;
   const logs = [];
-  const child = spawn(process.execPath, [hostEntry], {
+  const child = spawnNodeHost({
+    entry: hostEntry,
     cwd: repoRoot,
     stdio: ["ignore", "pipe", "pipe"],
     env: {
-      ...process.env,
       PI_CODING_AGENT_DIR: agentDir,
       PIFORGE_AGENT_ENDPOINT: endpoint,
       PIFORGE_AGENT_TOKEN: token,

@@ -21,6 +21,7 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
+import { hostChildEnv } from "./lib/host-spawn.mjs";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { connect } from "node:net";
@@ -169,13 +170,14 @@ async function measure({ label, command, args, env, cwd }) {
     cwd,
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
-    env: {
-      ...process.env,
+    // 这里 spawn 的可能是 electron 二进制 / utilityProcess 包装，不是 node 自身，
+    // 所以不走 spawnNodeHost()；但 env 护栏必须走同一个 helper，别再手写。
+    env: hostChildEnv({
       ...env,
       PI_CODING_AGENT_DIR: agentDir,
       PIFORGE_AGENT_ENDPOINT: endpoint,
       PIFORGE_AGENT_TOKEN: token,
-    },
+    }),
   });
 
   let output = "";
