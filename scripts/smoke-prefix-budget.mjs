@@ -2,14 +2,17 @@
 /**
  * 前缀预算 + 缓存命中率 + 按需域机制的回归护栏。
  *
- * 两种配置各跑一次 measure-prefix：
- *   1. 默认（codemode `only`，普通工具不声明）：前缀 ≤ 7600 tok、稳定段命中率 ≥ 90%、
- *      无「非预期前缀变化」；
- *   2. 工具声明模式（`--codemode off`）下验按需域：`PIFORGE_ON_DEMAND_DOMAINS=1` 时
+ * 三种配置各跑一次 measure-prefix：
+ *   1. `--codemode only`（脚本专用形态）：前缀 ≤ 7600 tok、稳定段命中率 ≥ 90%、
+ *      无「非预期前缀变化」。7600 是按 `only` 实测标定的，所以这里**显式传参**，
+ *      不跟随应用默认值（默认已改为 `on`）；
+ *   2. 默认（`--codemode on`，普通工具逐条声明）：锁住「默认确实声明了普通工具」，
+ *      预算用 `PIFORGE_PREFIX_BUDGET_ON` 注入（本地实测值待补，见文件末尾注释）；
+ *   3. 工具声明模式（`--codemode off`）下验按需域：`PIFORGE_ON_DEMAND_DOMAINS=1` 时
  *      `tool_search` 能激活 memory / orchestrator，激活后连续两轮 prefixHash 一致。
  *
- * 按需域 / 声明集合类断言一律带 `--codemode off`：应用默认是 codemode `only`，
- * 那个模式下普通工具本来就不在声明集合里，断言会退化成恒真而失去护栏作用。
+ * 按需域 / 声明集合类断言一律带 `--codemode off`（或显式 `only`）：
+ * `on` 模式下普通工具本来就声明着，断言会退化成恒真而失去护栏作用。
  *
  * 没构建 agent-host/dist 时直接跳过（CI 里由 build:agent-host 负责）。
  */
@@ -40,11 +43,14 @@ function run(args, env = {}) {
   });
 }
 
-// 默认配置（用户开箱即得的状态）：codemode `only`，声明集合只有 codemode + tool_search。
+// 脚本专用形态（`only`）：声明集合只有 codemode + tool_search。
 // 7433 tok 是现网实测值（sys 4313 + tools 3120），留 ~2% 余量；涨过 7600 就是真回归。
+// 应用默认已改为 `on`，所以这里必须显式传 `--codemode only` 才能保住这个基线。
 const budget = await run([
   "--mode",
   "host",
+  "--codemode",
+  "only",
   "--max-prefix",
   "7600",
   "--assert-hit-rate",
@@ -58,6 +64,24 @@ const budget = await run([
   "4",
 ]);
 if (budget !== 0) process.exit(budget);
+
+// 应用默认（codemode `on`）：普通工具逐条声明，前缀比 `only` 明显更大。
+// 这里先锁行为契约（`bash` 必须在声明集合里），预算等实测值落地后再收紧：
+//   node scripts/measure-prefix.mjs --mode host --codemode on --turns 4 --summary
+// 把测得的 max prefix 写进 PIFORGE_PREFIX_BUDGET_ON（CI 变量）或直接替换下面的常量。
+const onBudget = process.env.PIFORGE_PREFIX_BUDGET_ON?.trim();
+const defaultOn = await run([
+  "--mode",
+  "host",
+  "--codemode",
+  "on",
+  "--turns",
+  "4",
+  "--assert-declared",
+  "bash",
+  ...(onBudget ? ["--max-prefix", onBudget] : []),
+]);
+if (defaultOn !== 0) process.exit(defaultOn);
 
 // 设置项驱动的配置（不设环境变量，走 desktop-settings.json 的 onDemandDomains）。
 // 必须关掉 codemode：不关的话 shell 是「本来就不声明」，断言等于没测。
