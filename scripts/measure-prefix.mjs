@@ -147,6 +147,21 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * 给未定限的 frame 等待套一个硬期限。`client.waitFor` 原本会永久等一帧不来的响应，
+ * 一步卡死时整条 smoke 只“安静”，调用方看到的却是「bash 卡死了」。
+ */
+function withDeadline(promise, ms) {
+  let timer;
+  const guard = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`等帧超时:${Math.round(ms / 1000)}s 内未收到匹配的响应帧`)),
+      ms
+    );
+  });
+  return Promise.race([promise, guard]).finally(() => clearTimeout(timer));
+}
+
 /** 等会话空闲（不 streaming），避免下一条 prompt 被 "Session is streaming" 拒掉。 */
 async function waitIdle(client, sessionId, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
@@ -317,9 +332,14 @@ function createClient(endpoint) {
     socket.once("connect", () =>
       resolve({
         send: (frame) => socket.write(`${JSON.stringify(frame)}\n`),
-        waitFor: async (predicate) => {
+        waitFor: async (predicate, timeoutMs = TIMEOUT_MS) => {
+          const deadline = Date.now() + timeoutMs;
           for (;;) {
-            const frame = await next();
+            const remaining = deadline - Date.now();
+            if (remaining <= 0) {
+              throw new Error(`等帧超时:${Math.round(timeoutMs / 1000)}s 内未出现匹配帧`);
+            }
+            const frame = await withDeadline(next(), remaining);
             if (predicate(frame)) return frame;
           }
         },
