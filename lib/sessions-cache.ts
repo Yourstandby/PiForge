@@ -20,6 +20,11 @@ export interface SessionPage {
   sessions: SessionInfo[];
   total: number;
   hasMore: boolean;
+  /**
+   * 下一页的 offset 游标。首页会额外补上「每个项目最新一条」，条数因此大于
+   * limit，追加时必须用这个游标，不能用已渲染条数，否则会跳过若干历史会话。
+   */
+  nextOffset?: number;
 }
 
 interface PageEntry {
@@ -62,6 +67,7 @@ async function request(offset: number, limit: number): Promise<SessionPage> {
     sessions,
     total: typeof data.total === "number" ? data.total : offset + sessions.length,
     hasMore: typeof data.hasMore === "boolean" ? data.hasMore : false,
+    nextOffset: typeof data.nextOffset === "number" ? data.nextOffset : offset + sessions.length,
   };
 }
 
