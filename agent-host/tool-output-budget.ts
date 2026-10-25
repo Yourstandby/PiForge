@@ -31,17 +31,18 @@ export interface ToolOutputBudget {
 }
 
 /**
- * 默认预算：4000 字符（≈1000 tokens）+ 60 行兜底。
- * 超出后只留**前 1500 + 后 1500 字符**，中间用明确的截断说明代替。
+ * 默认预算：24000 字符（≈6000 tokens）+ 400 行兜底。
+ * 目标是把常见的大输出一次取完，减少「截断 → 续读」的往返；超出后只留**前 9000 + 后 9000 字符**，
+ * 中间用明确的截断说明代替。env `PIFORGE_TOOL_OUTPUT_CHARS` 的 500–200000 范围不变。
  */
-export const DEFAULT_MAX_CHARS = 4_000;
+export const DEFAULT_MAX_CHARS = 24_000;
 
 export const DEFAULT_TOOL_OUTPUT_BUDGET: ToolOutputBudget = {
-  maxLines: 60,
+  maxLines: 400,
   maxChars: DEFAULT_MAX_CHARS,
-  headChars: 1_500,
-  tailChars: 1_500,
-  maxBytes: 4_000,
+  headChars: 9_000,
+  tailChars: 9_000,
+  maxBytes: 24_000,
   headLines: 40,
   tailLines: 40,
   strategy: "head-tail",
@@ -131,6 +132,9 @@ export function toolOutputBudget(
 ): ToolOutputBudget {
   const base = toolName && FILE_CONTENT_TOOLS.has(toolName) ? READ_TOOL_OUTPUT_BUDGET : DEFAULT_TOOL_OUTPUT_BUDGET;
   const setting = resolveToolOutputChars(env);
+  // 默认路径直接返回各自档位的常量：DEFAULT_MAX_CHARS 只定义「常规工具」的额度，
+  // 不能把 read 的 4000/3000/1000 档位按比例放大（那会让 read 从 120 行变成 720 行）。
+  if (setting.source === "default") return base;
   return withCharsLimit(base, setting.maxChars);
 }
 
@@ -149,7 +153,7 @@ export function truncationNotice(totalLines: number, budget: ToolOutputBudget, o
 
 /** 要求的续读引导。只在本工具输出被截断时出现，稳态零 token 成本。 */
 export const TRUNCATION_HINT =
-  "不要逐条续读：用一次 codemode 脚本批量 grep/sed 多处，或用 tool_history_get 按 offset/limit 翻页。";
+  "不要逐条续读：用一次 codemode 脚本批量 grep/sed 多处，一次取完；或用 tool_history_get 按 offset/limit 翻页。";
 
 export interface ToolOutputTruncation {
   /** 交给模型的文本（未截断时与入参完全一致）。 */
@@ -183,6 +187,10 @@ export function truncateToolOutput(
   budget: ToolOutputBudget = DEFAULT_TOOL_OUTPUT_BUDGET,
 ): ToolOutputTruncation {
   const totalLines = countTextLines(text);
+  // 幂等：已裁剪过的输出不再二次裁剪，否则说明块会一层层叠加。
+  if (text.includes(TRUNCATION_HINT)) {
+    return { text, truncated: true, totalLines, keptLines: totalLines, truncatedBy: null };
+  }
   if (text.length <= budget.maxChars && totalLines <= budget.maxLines) {
     return {
       text,
