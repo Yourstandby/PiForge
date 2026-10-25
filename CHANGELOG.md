@@ -29,6 +29,11 @@
 - **提示词**：`BATCHING_RULES` 增补「同一批并行 ≤ 8」「重型命令显式传 `timeout`」，探索改成
   「先 `rg -l` 拿文件名再定向 `read`」。仍是静态常量，前缀 +26 字符。
 - **度量**：`npm run measure:prefix -- --summary` 只打 ≤10 行决策数字。
+- **打包版 Host 不加载扩展（严重）**：单文件 bundle 漏了 Pi SDK 的 `PI_BUNDLED_NODE` define，
+  SDK 以为自己在跑未打包的 dist 树，按 bundle 路径算 alias 加载 `~/.pi/agent/extensions/*`，
+  失败被吞掉——Host 就绪、RPC 全通，但用户扩展一条不生效（v0.9.2 起）。已修并加
+  `smoke:extension-ui-bundled` 护栏；`dist` / `pack` 也补上 `smoke-packaged-standalone`
+  （之前只有 macOS 跑）。
 
 ### 默认行为变没变
 

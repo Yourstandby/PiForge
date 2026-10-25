@@ -55,7 +55,10 @@ test("packaging and release scripts call build:static + build:standalone", () =>
   // dist uses the NSIS launcher (preloads the Windows Job Object workaround)
   // and still finishes with the packaged smoke.
   assert.match(pkg.scripts.dist, /node scripts\/build-installer\.mjs/);
-  assert.match(pkg.scripts.dist, /&& node scripts\/smoke-packaged-static\.mjs$/);
+  // 打包冒烟必须包含 standalone（Host 扩展加载）这一条：它只在 mac 的 dist 脚本里
+  // 跑过，于是 v0.9.2 起的 bundle 扩展回归在 Windows / Linux 上一直是绿的。
+  assert.match(pkg.scripts.dist, /&& node scripts\/smoke-packaged-standalone\.mjs$/);
+  assert.match(pkg.scripts.pack, /&& node scripts\/smoke-packaged-standalone\.mjs$/);
   assert.match(pkg.scripts["pack:mac"], /electron-builder --mac --universal --dir/);
   assert.match(pkg.scripts["dist:mac"], /electron-builder --mac --universal --publish never/);
   for (const scriptName of ["pack:mac", "dist:mac"]) {
