@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { resetToolClocks, settleToolMs, toolClockFor } from "./tool-clock.ts";
+import { markToolEnded, resetToolClocks, settleToolMs, toolClockFor } from "./tool-clock.ts";
 
 test("同一键重复取用返回同一个 clock：重挂载不会重置起点", () => {
   resetToolClocks();
@@ -27,6 +27,29 @@ test("没有起点（历史加载的卡片）不凭空报耗时", () => {
   clock.endedAt = 5000;
   assert.equal(settleToolMs(undefined, clock), undefined);
   assert.equal(settleToolMs(undefined, undefined), undefined);
+});
+
+test("markToolEnded 冻结秒表：事件流到了就不再等 toolResult 消息", () => {
+  resetToolClocks();
+  const clock = toolClockFor("call-4");
+  clock.startedAt = 1000;
+  const before = Date.now();
+  markToolEnded("call-4", 2500);
+  assert.ok(clock.endedAt !== undefined && clock.endedAt >= before);
+  assert.equal(clock.durationMs, 2500);
+  // 消息里的 durationMs 缺失时，退到事件流报告的耗时，而不是继续数下去
+  assert.equal(settleToolMs(undefined, clock), 2500);
+  // 重复上报不重置结束时刻
+  const endedAt = clock.endedAt;
+  markToolEnded("call-4");
+  assert.equal(clock.endedAt, endedAt);
+  assert.equal(clock.durationMs, 2500);
+});
+
+test("markToolEnded 忽略空 id", () => {
+  resetToolClocks();
+  markToolEnded(undefined, 10);
+  assert.equal(toolClockFor("undefined").endedAt, undefined);
 });
 
 test("注册表超上限时整体清空，不无限增长", () => {

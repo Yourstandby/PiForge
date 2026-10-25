@@ -50,6 +50,7 @@ import type { ContextBudget } from "@/lib/pi-types";
 import { sendAgentCommand } from "@/lib/agent-client";
 import { reconcileOrAppendPendingUserMessage } from "./agent-session/user-message-reconciliation";
 import { normalizeUserTextForMatch } from "../lib/image-dimension-note";
+import { markToolEnded } from "@/lib/tool-clock";
 
 export type { ThinkingLevelOption, AttachedImage, ChatInputHandle };
 
@@ -470,6 +471,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         }));
       }
       if (event.type === "tool_execution_end") {
+        // 卡片秒表以事件流为准：消息里不一定有能匹配上的 toolResult，只信它会一直数下去。
+        markToolEnded(event.toolCallId, event.durationMs);
         const finishedName = event.toolName;
         if (finishedName) {
           setLiveToolOutput((previous) => {

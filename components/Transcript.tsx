@@ -1072,18 +1072,22 @@ function ToolCallCard({
   const rawSummary = toolSummary(input);
   /** 执行中：参数摘要和日志用打字机逐字刷出（结束后立刻补齐）。 */
   /** 有结果就算跑完：完成卡不再挂运行态样式，也不再走秒表。 */
-  const running = Boolean(streaming) && !result;
+  /**
+   * 秒表起止挂在模块级 Map（键为 toolCallId）。
+   * 回退键用 `rawSummary` 而不是打字机效果的 `summary`：后者逐字变化会让键不断漂移。
+   */
+  const clockKey = toolCallId ?? stateKey ?? `${name}:${rawSummary}`;
+  const clock = streaming || result ? toolClockFor(clockKey) : undefined;
+  /**
+   * 有结果就算跑完；事件流里的 `tool_execution_end` 先到也算跑完。
+   * 只信 result 的话，消息里匹配不到 toolResult 的旧卡片会一直跟着最新那张一起数下去。
+   */
+  const running = Boolean(streaming) && !result && clock?.endedAt === undefined;
   const typingLog = running;
   const summary = useTypedText(rawSummary, typingLog, 10);
   const typedLiveOutput = useTypedText(liveOutput ?? "", typingLog, 24);
   const hasArgs = Object.keys(input).length > 0;
   const hasDetails = hasArgs || Boolean(result);
-  /**
-   * 秒表只在「首次看到这行在跑」时起算，并把起点留在模块级 Map：
-   * 重挂载不会归零，完成后冻结成真实耗时（后端 durationMs 优先）。
-   */
-  const clockKey = toolCallId ?? stateKey ?? `${name}:${summary}`;
-  const clock = running || result ? toolClockFor(clockKey) : undefined;
   const [nowMs, setNowMs] = useState(0);
   const [settledMs, setSettledMs] = useState<number | undefined>(undefined);
   /** 只在真正跑起来时起表；历史加载的卡片没有起点，不会凭空报个耗时长。 */
@@ -1097,12 +1101,13 @@ function ToolCallCard({
     const timer = window.setInterval(() => setNowMs(Date.now()), 200);
     return () => window.clearInterval(timer);
   }, [running]);
-  /** 完成那一刻冻结耗时：后端给了 durationMs 就用它，否则用自测的起止差。 */
+  /** 停止那一刻冻结耗时：后端 durationMs（消息或事件流）优先，否则用自测的起止差。 */
   useEffect(() => {
-    if (!result) return;
-    if (clock && clock.endedAt === undefined) clock.endedAt = Date.now();
-    setSettledMs((prev) => (prev === undefined ? settleToolMs(result.durationMs, clock) : prev));
-  }, [result, clock]);
+    if (running || settledMs !== undefined || !clock) return;
+    if (result && clock.endedAt === undefined) clock.endedAt = Date.now();
+    if (clock.endedAt === undefined) return;
+    setSettledMs(settleToolMs(result?.durationMs ?? clock.durationMs, clock));
+  }, [running, result, clock, settledMs]);
   const liveElapsedMs = clock?.startedAt !== undefined && nowMs > 0 ? nowMs - clock.startedAt : 0;
   const duration = formatDuration(settledMs);
   /**

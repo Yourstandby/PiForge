@@ -6,6 +6,8 @@
 export interface ToolClock {
   startedAt?: number;
   endedAt?: number;
+  /** 事件流 `tool_execution_end.durationMs`：消息里没有 toolResult 时用它冻结耗时。 */
+  durationMs?: number;
 }
 
 const TOOL_CLOCK_LIMIT = 2000;
@@ -26,11 +28,28 @@ export function settleToolMs(
   durationMs: number | undefined,
   clock: ToolClock | undefined,
 ): number | undefined {
-  if (typeof durationMs === "number" && Number.isFinite(durationMs) && durationMs >= 0) {
-    return durationMs;
-  }
+  const reported =
+    typeof durationMs === "number" && Number.isFinite(durationMs) && durationMs >= 0
+      ? durationMs
+      : clock?.durationMs;
+  if (typeof reported === "number" && Number.isFinite(reported) && reported >= 0) return reported;
   if (clock?.startedAt === undefined || clock.endedAt === undefined) return undefined;
   return Math.max(0, clock.endedAt - clock.startedAt);
+}
+
+/**
+ * 事件流报告某次调用已结束：立刻停止这张卡的秒表。
+ *
+ * 不能只等消息里的 `toolResult`：并行/批量调用时它未必会落到 transcript 能匹配的位置，
+ * 卡片就会一直挂在运行态、跟着最新那张一起数下去，显示的不是它自己的结束时间。
+ */
+export function markToolEnded(toolCallId: string | undefined, durationMs?: number): void {
+  if (!toolCallId) return;
+  const clock = toolClockFor(toolCallId);
+  if (clock.endedAt === undefined) clock.endedAt = Date.now();
+  if (typeof durationMs === "number" && Number.isFinite(durationMs) && durationMs >= 0) {
+    clock.durationMs = durationMs;
+  }
 }
 
 /** 仅供测试：清空注册表。 */
