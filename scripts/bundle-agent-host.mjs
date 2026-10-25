@@ -63,6 +63,17 @@ const result = await build({
   // 依赖一律打进单文件：留下任何 bare import 都会把 ESM 图重新引回来。
   packages: "bundle",
   /**
+   * Pi SDK 用它判断「当前是不是打包过的 Node 发行版」（`config.ts` 的
+   * `isBundledNode = typeof PI_BUNDLED_NODE !== "undefined" && PI_BUNDLED_NODE`）。
+   * 不 define 的话它当自己是未打包的 dist 树，按 `import.meta.url`（= bundle 自己）
+   * 算 alias 去加载**扩展**，加载失败被吞成一句 session 级报错
+   * —— 表现就是「Host 起来了、RPC 全通，但用户扩展一条都不生效」
+   * （v0.9.2 打 bundle 起就有，2026-10-25 由 macOS 打包冒烟的
+   * extension_ui_request 超时抓出来；Windows/Linux 的 dist 没跑这条冒烟所以一直绿）。
+   * 定义了之后走 SDK 预设的 embedded 路径：jiti/static + virtualModules。
+   */
+  define: { PI_BUNDLED_NODE: "true" },
+  /**
    * ESM 输出里 esbuild 的 `__require` 需要外层有 `require` 才能工作，
    * 否则 CJS 依赖（cross-spawn → require("child_process")）会直接抛
    * "Dynamic require of \"child_process\" is not supported"。esbuild 生成的

@@ -60,7 +60,7 @@
     "check:electron-deps": "node lib/electron-updater-runtime-deps.mjs --check",
     "check:sdk-imports": "node scripts/check-sdk-imports.mjs",
     "check:pi-updates": "node scripts/check-pi-updates.mjs",
-    "dist": "npm run build:static && npm run build:standalone && npm run build:electron && npm run icons && node scripts/check-app-icon.mjs && node scripts/build-installer.mjs && node scripts/smoke-packaged-layout.mjs && node scripts/smoke-packaged-static.mjs",
+    "dist": "npm run build:static && npm run build:standalone && npm run build:electron && npm run icons && node scripts/check-app-icon.mjs && node scripts/build-installer.mjs && node scripts/smoke-packaged-layout.mjs && node scripts/smoke-packaged-static.mjs && node scripts/smoke-packaged-standalone.mjs",
     "build:agent-host": "node scripts/generate-api-routes.mjs && tsc -p agent-host/tsconfig.json && node scripts/bundle-agent-host.mjs",
     "bundle:agent-host": "node scripts/bundle-agent-host.mjs",
     "bench:startup": "python bench/startup_stats.py",
@@ -72,11 +72,12 @@
     "release": "npm version patch --no-git-tag-version && npm run build:standalone && npm publish --access public",
     "build:electron": "tsc -p electron/tsconfig.json && npm run build:agent-host && node -e \"const fs=require('fs'); fs.copyFileSync('electron/startup.html', 'electron/dist/startup.html'); fs.copyFileSync('electron/startup.js', 'electron/dist/startup.js')\"",
     "dev:electron": "npm run build:electron && node scripts/run-electron.mjs",
-    "pack": "npm run build:static && npm run build:standalone && npm run build:electron && npm run icons && node scripts/check-app-icon.mjs && npx electron-builder --dir && node scripts/smoke-packaged-layout.mjs && node scripts/smoke-packaged-static.mjs",
+    "pack": "npm run build:static && npm run build:standalone && npm run build:electron && npm run icons && node scripts/check-app-icon.mjs && npx electron-builder --dir && node scripts/smoke-packaged-layout.mjs && node scripts/smoke-packaged-static.mjs && node scripts/smoke-packaged-standalone.mjs",
     "pack:mac": "npm run build:static && npm run build:standalone && npm run build:electron && npm run icons && node scripts/check-app-icon.mjs --mac && npx electron-builder --mac --universal --dir && node scripts/smoke-packaged-layout.mjs && node scripts/smoke-packaged-static.mjs && node scripts/smoke-packaged-standalone.mjs",
     "dist:mac": "npm run build:static && npm run build:standalone && npm run build:electron && npm run icons && node scripts/check-app-icon.mjs --mac && npx electron-builder --mac --universal --publish never && node scripts/smoke-packaged-layout.mjs && node scripts/smoke-packaged-static.mjs && node scripts/smoke-packaged-standalone.mjs",
     "smoke:agent-isolation": "node scripts/smoke-agent-isolation.mjs",
     "smoke:extension-ui": "node scripts/smoke-extension-ui-bridge.mjs",
+    "smoke:extension-ui-bundled": "node scripts/smoke-extension-ui-bundled.mjs",
     "smoke:host-reconnect": "node scripts/smoke-host-reconnect.mjs"
   },
   "build": {

@@ -73,6 +73,13 @@ jobs:
       - name: Build agent host
         run: npm run build:agent-host
 
+      # 打包版 Host 默认跑单文件 bundle；Pi SDK 靠 `PI_BUNDLED_NODE` define 判断
+      # “自己被打包过”，否则按 bundle 路径算 alias 加载用户扩展会静默失败。
+      # 这条在 2026-10-25 之前只由 macOS 的 dist 脚本覆盖，这里提前到 CI。
+      - name: Extension UI bridge on bundled host
+        timeout-minutes: 5
+        run: npm run bundle:agent-host && npm run smoke:extension-ui-bundled
+
       # 静态前缀 ≤7200、稳定段命中率 ≥90%、每轮新增 token 中位数 ≤200、
       # transcript 字段白名单、按需域激活 + 前缀棘轮（两种配置）。
       - name: Prefix / cache / transcript guards
