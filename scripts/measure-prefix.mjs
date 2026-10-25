@@ -293,19 +293,34 @@ function waitForReady(child, logs) {
   });
 }
 
-function createClient(endpoint) {
+function createClient(endpoint, hostChild) {
   return new Promise((resolve, reject) => {
     const socket = connect(endpoint);
     let buffer = "";
     const pending = [];
     const waiters = [];
+    /**
+     * host 退出 / 连接断开后置位。此后等帧一律**立即 reject**：帧再也不会来了，
+     * 继续等只是在白等硬期限（`withDeadline`），调用方看到的仍是「卡了 60 s」。
+     */
+    let fatal = null;
+    const fail = (error) => {
+      if (fatal) return;
+      fatal = error;
+      for (const waiter of waiters.splice(0)) waiter.reject(error);
+      try {
+        socket.destroy();
+      } catch {
+        /* 已经断了 */
+      }
+    };
     const deliver = (frame) => {
       if (frame.kind === "ping") {
         socket.write(`${JSON.stringify({ kind: "pong", nonce: frame.nonce })}\n`);
         return;
       }
       const waiter = waiters.shift();
-      if (waiter) waiter(frame);
+      if (waiter) waiter.resolve(frame);
       else pending.push(frame);
     };
     socket.on("data", (chunk) => {
@@ -326,9 +341,22 @@ function createClient(endpoint) {
     });
     const next = () => {
       if (pending.length > 0) return Promise.resolve(pending.shift());
-      return new Promise((done) => waiters.push(done));
+      if (fatal) return Promise.reject(fatal);
+      return new Promise((done, failed) => waiters.push({ resolve: done, reject: failed }));
     };
-    socket.once("error", reject);
+    socket.once("error", (error) => {
+      fail(error);
+      reject(error);
+    });
+    socket.once("close", () => fail(new Error("与 host 的连接已关闭")));
+    if (hostChild) {
+      const exited = () =>
+        fail(new Error(`host 已退出（code=${hostChild.exitCode ?? hostChild.signalCode}），后续帧不会再到达`));
+      // exitCode 已定 = 握手前就死了，不用等事件。
+      if (hostChild.exitCode !== null || hostChild.signalCode !== null) exited();
+      else hostChild.once("exit", exited);
+      hostChild.once("error", (error) => fail(error));
+    }
     socket.once("connect", () =>
       resolve({
         send: (frame) => socket.write(`${JSON.stringify(frame)}\n`),
@@ -381,7 +409,7 @@ async function measureHost(recorder) {
 
   try {
     await waitForReady(child, logs);
-    const client = await createClient(endpoint);
+    const client = await createClient(endpoint, child);
     client.send({
       kind: "hello",
       protocolVersion: 1,
