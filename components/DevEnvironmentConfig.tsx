@@ -45,28 +45,28 @@ function Switch({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <div className="flex items-start justify-between gap-3 rounded-lg border border-border bg-white px-3 py-2.5">
-      <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="text-[12.5px] font-medium text-ink">{label}</span>
-        <span className="text-[11px] leading-4 text-ink-faint">{hint}</span>
-      </div>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        aria-label={label}
-        disabled={disabled}
-        onClick={() => onChange(!checked)}
-        className={`relative mt-0.5 h-5 w-9 shrink-0 rounded-full border transition-colors duration-150 disabled:opacity-50 ${
-          checked ? "border-accent bg-accent" : "border-[#D9DDE5] bg-[#ECEEF2]"
-        }`}
-      >
-        <span
-          className={`absolute top-0.5 h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform duration-150 ${
-            checked ? "translate-x-[18px]" : "translate-x-0.5"
+    <div className="flex flex-col gap-1 rounded-lg border border-border bg-white px-3 py-2.5">
+      <div className="flex items-center justify-between gap-3">
+        <span className="min-w-0 truncate text-[12.5px] font-medium text-ink">{label}</span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={checked}
+          aria-label={label}
+          disabled={disabled}
+          onClick={() => onChange(!checked)}
+          className={`relative h-5 w-9 shrink-0 rounded-full border transition-colors duration-150 disabled:opacity-50 ${
+            checked ? "border-accent bg-accent" : "border-[#D9DDE5] bg-[#ECEEF2]"
           }`}
-        />
-      </button>
+        >
+          <span
+            className={`absolute top-0.5 h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform duration-150 ${
+              checked ? "translate-x-[18px]" : "translate-x-0.5"
+            }`}
+          />
+        </button>
+      </div>
+      <span className="text-[11px] leading-4 text-ink-faint">{hint}</span>
     </div>
   );
 }

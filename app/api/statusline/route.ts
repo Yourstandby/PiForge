@@ -135,7 +135,7 @@ export async function GET(req: Request) {
   }
 
   try {
-    await authorizeHostPath(cwd, "list");
+    await authorizeHostPath(cwd, "list", cwd);
   } catch {
     return jsonError(req, 403, "cwd not in allowed roots");
   }

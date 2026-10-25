@@ -33,7 +33,7 @@ export async function POST(req: Request) {
       case "start": {
         if (!body.cwd || !body.command) return jsonError(req, 400, "Missing cwd or command");
         try {
-          await authorizeHostPath(body.cwd, "list");
+          await authorizeHostPath(body.cwd, "list", body.cwd);
         } catch (error) {
           return hostFileAccessError(req, error, "/api/processes", "POST");
         }

@@ -212,7 +212,7 @@ describe("AgentEventsManager", () => {
     }
   });
 
-  test("stops reconnecting and transitions to failed after 5 consecutive errors", () => {
+  test("仍会重连但不再永久放弃：超限只标记 failed，后台继续退避重试", () => {
     mock.timers.enable({ apis: ["setTimeout"] });
     try {
       const manager = new AgentEventsManager(5); // 5ms base delay
@@ -239,9 +239,61 @@ describe("AgentEventsManager", () => {
       assert.equal(manager.getStatus(), "failed");
       assert.equal(manager.getReconnectAttempts(), 6);
 
-      // Advance well past any would-be delay to verify no more connections
-      mock.timers.tick(100);
-      assert.equal(MockEventSource.instances.length, 6); // Still 6
+      // 关键行为变更：failed 只代表"该提示用户了"，不代表停止重连。
+      // 放弃重连会把"流断了"变成"永远静默"（界面一直显示正在思考）。
+      mock.timers.tick(30000 + 10);
+      assert.equal(MockEventSource.instances.length, 7);
+
+      manager.cleanup();
+    } finally {
+      mock.timers.reset();
+    }
+  });
+
+  test("retryNow() 在 failed 后能立即重连并清零退避", () => {
+    mock.timers.enable({ apis: ["setTimeout"] });
+    try {
+      const manager = new AgentEventsManager(5);
+      manager.setAgentRunning(true);
+      manager.connect("session-123");
+
+      for (let i = 0; i < 6; i++) {
+        MockEventSource.instances[i].onerror!();
+        // 最后一次不推进时钟：看清 failed。
+        if (i < 5) mock.timers.tick(5 * Math.pow(2, i) + 10);
+      }
+      assert.equal(manager.getStatus(), "failed");
+      const before = MockEventSource.instances.length;
+
+      manager.retryNow();
+      assert.equal(MockEventSource.instances.length, before + 1);
+      assert.equal(manager.getStatus(), "connecting");
+      assert.equal(manager.getReconnectAttempts(), 0);
+      assert.equal(MockEventSource.instances.at(-1)!.closed, false);
+
+      manager.cleanup();
+    } finally {
+      mock.timers.reset();
+    }
+  });
+
+  test("getLastEventAt() 只在收到真实事件时更新（heartbeat 不算）", () => {
+    mock.timers.enable({ apis: ["setTimeout", "Date"] });
+    try {
+      mock.timers.tick(1000);
+      const manager = new AgentEventsManager();
+      manager.connect("session-123");
+      const connectedAt = manager.getLastEventAt();
+      assert.ok(connectedAt > 0);
+
+      // 服务端 15s 一次 heartbeat 註释帧：EventSource 不触发 onmessage，时间戳不动。
+      mock.timers.tick(15_000);
+      assert.equal(manager.getLastEventAt(), connectedAt);
+
+      mock.timers.tick(500);
+      MockEventSource.instances[0].onmessage!({ data: JSON.stringify({ type: "agent_start" }) });
+      assert.equal(manager.getLastEventAt(), Date.now());
+      assert.notEqual(manager.getLastEventAt(), connectedAt);
 
       manager.cleanup();
     } finally {

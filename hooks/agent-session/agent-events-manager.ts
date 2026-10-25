@@ -78,16 +78,28 @@ export type AgentEvent =
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "failed";
 
+/**
+ * 快速重连阶段的上限。超过之后不再"放弃"，而是把状态标成 failed 并继续以 30s
+ * 上限重连 —— 放弃重连等于把"流断了"变成"永远静默"：界面停在「正在思考…」，
+ * 用户只能靠点停止触发 agent_end→reloadSession 才看见已经产出的内容。
+ */
+const MAX_FAST_RECONNECT_ATTEMPTS = 5;
+const MAX_RECONNECT_DELAY_MS = 30_000;
+
 export class AgentEventsManager {
   private eventSource: EventSource | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private agentRunning = false;
   private handleAgentEvent: ((event: AgentEvent) => void) | null = null;
-  private statusChangeHandler: ((status: ConnectionStatus) => void) | null = null;
+  private statusChangeHandler:
+    | ((status: ConnectionStatus, reconnectAttempts: number) => void)
+    | null = null;
   private sid: string | null = null;
   private reconnectDelay: number;
   private reconnectAttempts = 0;
   private status: ConnectionStatus = "disconnected";
+  /** 最近一次真正收到事件的时间戳；heartbeat 注释帧不更新它。 */
+  private lastEventAt = 0;
 
   constructor(reconnectDelay = 1000) {
     this.reconnectDelay = reconnectDelay;
@@ -95,11 +107,32 @@ export class AgentEventsManager {
 
   private setStatus(newStatus: ConnectionStatus) {
     this.status = newStatus;
-    this.statusChangeHandler?.(newStatus);
+    this.statusChangeHandler?.(newStatus, this.reconnectAttempts);
   }
 
-  setStatusChangeHandler(handler: ((status: ConnectionStatus) => void) | null) {
+  setStatusChangeHandler(
+    handler: ((status: ConnectionStatus, reconnectAttempts: number) => void) | null
+  ) {
     this.statusChangeHandler = handler;
+  }
+
+  /** 最近一次收到真实增量事件的时间戳（用于"连上了但一个字节都没来"的卡死判定）。 */
+  getLastEventAt() {
+    return this.lastEventAt;
+  }
+
+  /**
+   * 立刻重连并清零退避计数。断流提示上的「立即重连」按钮、以及 agentRunning
+   * 期间的外部看护都会调它。重连后 host 会从自己最后投递的序号续发，不丢增量。
+   */
+  retryNow() {
+    if (!this.sid) return;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.lastEventAt = Date.now();
+    this.connect(this.sid, true, this.agentRunning);
   }
 
   getStatus(): ConnectionStatus {
@@ -143,6 +176,7 @@ export class AgentEventsManager {
     if (expectRunning !== undefined) this.agentRunning = expectRunning;
     this.disconnect();
     this.setStatus("connecting");
+    this.lastEventAt = Date.now();
 
     const es = new EventSource(`/api/agent/${encodeURIComponent(sid)}/events`);
     this.eventSource = es;
@@ -157,6 +191,7 @@ export class AgentEventsManager {
     es.onmessage = (e) => {
       try {
         const event = JSON.parse(e.data) as AgentEvent;
+        this.lastEventAt = Date.now();
         // 开发期流式诊断：确认 SSE 是"一小块一小块"到达的。
         // F12 → Network → EventStream 应能与这里的日志一一对应。
         if (process.env.NODE_ENV !== "production" && event.type === "message_update") {
@@ -179,27 +214,30 @@ export class AgentEventsManager {
     };
 
     es.onerror = () => {
-      if (this.eventSource === es && this.agentRunning) {
-        this.disconnect();
-        this.reconnectAttempts++;
-        if (this.reconnectAttempts > 5) {
-          this.setStatus("failed");
-          return;
-        }
-
-        this.setStatus("connecting");
-        // Exponential backoff: 1s, 2s, 4s, 8s, 16s, up to 30s max
-        const delay = Math.min(30000, this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1));
-        this.reconnectTimer = setTimeout(() => {
-          this.reconnectTimer = null;
-          if (this.agentRunning && this.sid) {
-            this.connect(this.sid, false);
-          }
-        }, delay);
-      } else if (this.eventSource === es) {
+      if (this.eventSource !== es) return;
+      if (!this.agentRunning) {
         this.disconnect();
         this.setStatus("disconnected");
+        return;
       }
+
+      this.disconnect();
+      this.reconnectAttempts++;
+      // 超过快速阶段后状态标 failed（UI 会提示可点「立即重连」），但后台继续重连。
+      this.setStatus(
+        this.reconnectAttempts > MAX_FAST_RECONNECT_ATTEMPTS ? "failed" : "connecting"
+      );
+      // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 之后固定 30s。
+      const delay = Math.min(
+        MAX_RECONNECT_DELAY_MS,
+        this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1)
+      );
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null;
+        if (this.agentRunning && this.sid) {
+          this.connect(this.sid, false);
+        }
+      }, delay);
     };
   }
 
@@ -219,5 +257,4 @@ export class AgentEventsManager {
     this.sid = null;
     this.handleAgentEvent = null;
     this.setStatus("disconnected");
-  }
-}
+  }}

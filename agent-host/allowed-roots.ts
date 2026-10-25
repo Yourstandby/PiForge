@@ -9,7 +9,8 @@
 import { readdir, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
-import { SessionManager } from "./sdk-adapter.ts";
+import { SessionManager, getAgentDir } from "./sdk-adapter.ts";
+import { readDesktopSettings } from "../lib/desktop-settings.ts";
 import { validateAgentCwd, validateWritablePath } from "../lib/path-policy.ts";
 import { isWindowsAbsolutePath } from "../lib/path-text.ts";
 
@@ -23,9 +24,44 @@ export class AccessDeniedError extends Error {
 }
 
 const ALLOWED_ROOTS_TTL_MS = 5_000;
+/** 项目隔离开关的缓存：改设置后几秒内生效，省掉每个请求一次读盘。 */
+const ISOLATION_TTL_MS = 2_000;
 
 let cachedRoots: { roots: Set<string>; expiresAt: number } | null = null;
 const extraRoots = new Set<string>();
+
+/** 「当前项目」：Next 侧切换活动会话时上报，隔离开启时它就是唯一允许的根。 */
+let activeScope: string | null = null;
+
+let isolationCache: { value: boolean; expiresAt: number } | null = null;
+
+export function setActiveScope(cwd: string | null): void {
+  activeScope = typeof cwd === "string" && cwd.trim() ? cwd.trim() : null;
+}
+
+export function getActiveScope(): string | null {
+  return activeScope;
+}
+
+/** 项目隔离是否开启（desktop-settings.json，默认关）。 */
+export function isProjectIsolationEnabled(): boolean {
+  const now = Date.now();
+  if (isolationCache && isolationCache.expiresAt > now) return isolationCache.value;
+  let value = false;
+  try {
+    value = readDesktopSettings(getAgentDir()).projectIsolation === true;
+  } catch {
+    value = false;
+  }
+  isolationCache = { value, expiresAt: now + ISOLATION_TTL_MS };
+  return value;
+}
+
+/** 测试用：丢掉缓存值。 */
+export function resetIsolationCache(): void {
+  isolationCache = null;
+  activeScope = null;
+}
 
 /**
  * `realpath` removes symlinks and resolves macOS `/var` → `/private/var`.
@@ -122,8 +158,15 @@ export function isPathAllowed(target: string, allowedRoots: Set<string>): boolea
  * - read/list: the target must exist and its realpath must be inside a root.
  * - write: the target may be new; its parent must resolve inside a root, and
  *   the existing writable-path policy (.git, .env, node_modules) applies.
+ * - 项目隔离开启时，除了上面的全局根，路径还必须落在「当前项目」内
+ *   （`scope` 优先，其次 Next 上报的 activeScope）。没有范围就拒绝：隔离
+ *   失败时必须 fail-closed，不能回落成「全世界可读」。
  */
-export async function authorizePath(target: string, op: FileAccessOp): Promise<string> {
+export async function authorizePath(
+  target: string,
+  op: FileAccessOp,
+  scope?: string | null,
+): Promise<string> {
   let realPath: string;
 
   if (op === "write") {
@@ -151,6 +194,17 @@ export async function authorizePath(target: string, op: FileAccessOp): Promise<s
   const roots = await getAllowedRoots();
   if (!isPathAllowed(realPath, roots)) {
     throw new AccessDeniedError("Path is outside the allowed roots");
+  }
+
+  if (isProjectIsolationEnabled()) {
+    const effective = (typeof scope === "string" && scope.trim() ? scope.trim() : null) ?? activeScope;
+    if (!effective) {
+      throw new AccessDeniedError("Project isolation is on but no current project is known");
+    }
+    const scopedRoot = await canonicalRoot(effective);
+    if (!isPathAllowed(realPath, new Set([scopedRoot]))) {
+      throw new AccessDeniedError("Project isolation is on: path is outside the current project");
+    }
   }
   return realPath;
 }

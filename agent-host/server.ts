@@ -57,6 +57,8 @@ import {
   addAllowedRoot,
   authorizePath,
   getAllowedRoots,
+  getActiveScope,
+  setActiveScope,
 } from "./allowed-roots.ts";
 import {
   pushBrowserSnapshot,
@@ -1946,6 +1948,17 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
           });
         return;
       }
+      case "files.setScope": {
+        // Next 在活动会话切换时上报「当前项目」；隔离开启时它就是唯一允许的根。
+        const cwd = params.cwd;
+        if (cwd !== null && cwd !== undefined && typeof cwd !== "string") {
+          fail(state, frame.id, "E_INVALID_PARAMS", "cwd must be a string or null");
+          return;
+        }
+        setActiveScope(typeof cwd === "string" ? cwd : null);
+        result(state, frame.id, { cwd: getActiveScope() });
+        return;
+      }
       case "files.authorize": {
         const target = readString(params, "path");
         const op = params.op;
@@ -1953,7 +1966,8 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
           fail(state, frame.id, "E_INVALID_PARAMS", "path and op (read|write|list) are required");
           return;
         }
-        void authorizePath(target, op)
+        const scope = typeof params.scope === "string" ? params.scope : null;
+        void authorizePath(target, op, scope)
           .then((realPath) => result(state, frame.id, { realPath }))
           .catch((error: unknown) => {
             if (error instanceof AccessDeniedError) {

@@ -41,10 +41,11 @@ const MAX_SCALE = 8;
 const ZOOM_STEP = 1.25;
 
 /**
- * 附件的可显示地址：**优先 previewUrl（原始文件的 object URL）**。
- * `data` 是发给模型的降采样版本（长边 1568），拿它看大图会糊。
+ * 附件的可显示地址：**优先 fullUrl（降采样后的整图）**，其次 previewUrl（缩略图），
+ * 最后才回退 `data` —— base64 里存的同样是降采样版本，只是解字符串更贵。
  */
 export function attachmentSrc(image: AttachedImage): string {
+  if (image.fullUrl) return image.fullUrl;
   if (image.previewUrl) return image.previewUrl;
   if (image.mimeType && image.data) return `data:${image.mimeType};base64,${image.data}`;
   return image.previewUrl;

@@ -188,9 +188,11 @@ export function GeneralSettingsModal({
   /** 实际生效的按需域（环境变量 > 设置项 > 默认）与来源。 */
   const [onDemand, setOnDemand] = useState<{
     domains: string[];
-    source: OnDemandSource;
     saved: string[];
+    source: OnDemandSource;
   } | null>(null);
+  // desktop-settings 里的项目隔离（默认关）：开启后一个项目不能随手读别的项目。
+  const [projectIsolation, setProjectIsolation] = useState(false);
   const [saving, setSaving] = useState(false);
   const [reloading, setReloading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -233,8 +235,10 @@ export function GeneralSettingsModal({
           data: {
             onDemandDomains?: string[] | null;
             onDemandEffective?: { domains: string[]; source: OnDemandSource };
+            projectIsolation?: boolean;
           } | null,
         ) => {
+          if (typeof data?.projectIsolation === "boolean") setProjectIsolation(data.projectIsolation);
           if (!data?.onDemandEffective) return;
           setOnDemand({
             domains: data.onDemandEffective.domains,
@@ -244,6 +248,20 @@ export function GeneralSettingsModal({
         },
       )
       .catch(() => {});
+  }, []);
+
+  /** 项目隔离：乐观更新 + PUT desktop-settings（Host 读同一个文件，几秒内生效）。 */
+  const saveProjectIsolation = useCallback(async (next: boolean) => {
+    setProjectIsolation(next);
+    try {
+      await fetch("/api/desktop-settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ projectIsolation: next }),
+      });
+    } catch {
+      /* 乐观更新；下次打开重新读 */
+    }
   }, []);
 
   const saveOnDemand = useCallback(async (next: string[]) => {
@@ -574,6 +592,15 @@ export function GeneralSettingsModal({
             <Toggle
               checked={settings?.enableSkillCommands ?? false}
               onChange={(next) => void update({ enableSkillCommands: next })}
+            />
+          </Row>
+          <Row
+            label="项目隔离"
+            hint="开启后当前项目只能读写自己目录内的文件，别的项目一律拒绝（默认关）"
+          >
+            <Toggle
+              checked={projectIsolation}
+              onChange={(next) => void saveProjectIsolation(next)}
             />
           </Row>
         </section>

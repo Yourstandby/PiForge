@@ -36,8 +36,12 @@ function filesHostClient(): AgentHostClient {
   return globalThis.__piforgeFilesHostClient;
 }
 
-export async function authorizeHostPath(target: string, op: FileAccessOp): Promise<string> {
-  const params = { path: target, op };
+export async function authorizeHostPath(
+  target: string,
+  op: FileAccessOp,
+  scope?: string | null,
+): Promise<string> {
+  const params = scope ? { path: target, op, scope } : { path: target, op };
   try {
     const result = await filesHostClient().call("files.authorize", params);
     return result.realPath;
@@ -58,6 +62,19 @@ export async function authorizeHostPath(target: string, op: FileAccessOp): Promi
 
 export function isHostAccessDenied(error: unknown): boolean {
   return error instanceof AgentHostError && error.code === "ACCESS_DENIED";
+}
+
+/**
+ * 上报「当前项目」：项目隔离开启时，Host 只放行这个目录内的文件访问。
+ * 失败不抛：上报不上最多退回旧行为，不能因此卡住 UI。
+ */
+export async function setHostActiveScope(cwd: string | null): Promise<boolean> {
+  try {
+    await filesHostClient().call("files.setScope", { cwd });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Map a host authorization failure onto the HTTP error contract. */

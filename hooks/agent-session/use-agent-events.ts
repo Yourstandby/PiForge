@@ -13,6 +13,7 @@ export function useAgentEvents({ agentRunning }: UseAgentEventsOptions) {
   const managerRef = useRef<AgentEventsManager | null>(null);
   const handleAgentEventRef = useRef<((event: AgentEvent) => void) | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("disconnected");
+  const [reconnectAttempts, setReconnectAttempts] = useState(0);
 
   if (!managerRef.current) {
     managerRef.current = new AgentEventsManager();
@@ -28,7 +29,10 @@ export function useAgentEvents({ agentRunning }: UseAgentEventsOptions) {
     manager.setEventHandler((event) => {
       handleAgentEventRef.current?.(event);
     });
-    manager.setStatusChangeHandler(setConnectionStatus);
+    manager.setStatusChangeHandler((status, attempts) => {
+      setConnectionStatus(status);
+      setReconnectAttempts(attempts);
+    });
     return () => {
       manager.setStatusChangeHandler(null);
       manager.cleanup();
@@ -42,9 +46,22 @@ export function useAgentEvents({ agentRunning }: UseAgentEventsOptions) {
     managerRef.current?.connect(sid, true, true);
   }, []);
 
+  /** 手动重连（断流提示里的「立即重连」）。host 会从最后投递的序号续发。 */
+  const reconnectEvents = useCallback(() => {
+    managerRef.current?.retryNow();
+  }, []);
+
+  /** 读实时时间戳的取值器：不走 state，避免每个 token 都触发一次渲染。 */
+  const getLastAgentEventAt = useCallback(() => {
+    return managerRef.current?.getLastEventAt() ?? 0;
+  }, []);
+
   return {
     handleAgentEventRef,
     connectEvents,
+    reconnectEvents,
+    getLastAgentEventAt,
     connectionStatus,
+    reconnectAttempts,
   };
 }

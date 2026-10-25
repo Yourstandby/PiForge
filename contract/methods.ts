@@ -535,8 +535,13 @@ export interface AgentHostMethods {
     result: { roots: string[] };
   };
   "files.authorize": {
-    params: { path: string; op: "read" | "write" | "list" };
+    params: { path: string; op: "read" | "write" | "list"; scope?: string };
     result: { realPath: string };
+  };
+  /** 上报「当前项目」：项目隔离（默认关）开启时它就是唯一放行的目录。 */
+  "files.setScope": {
+    params: { cwd: string | null };
+    result: { cwd: string | null };
   };
   "files.applyCode": {
     params: { path: string; content: string; mode: "overwrite" | "append" };
@@ -686,6 +691,7 @@ export const IMPLEMENTED_HOST_METHODS = [
   "sessions.delete",
   "files.allowedRoots",
   "files.authorize",
+  "files.setScope",
   "files.applyCode",
   "browser.poll",
   "browser.pushSnapshot",
