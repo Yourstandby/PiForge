@@ -52,6 +52,7 @@ import {
 import { desktopOutputStyleInlineExtension } from "./desktop-output-style-extension.ts";
 import { desktopBrowserInlineExtension } from "./desktop-browser-extension.ts";
 import { desktopTerminalInlineExtension } from "./desktop-terminal-extension.ts";
+import { desktopCodemodeObserverInlineExtension } from "./desktop-codemode-observer-extension.ts";
 import { desktopImageInlineExtension } from "./desktop-image-extension.ts";
 import { desktopDecisionInlineExtension } from "./desktop-decision-extension.ts";
 import { desktopToolOutputInlineExtension } from "./desktop-tool-output-extension.ts";
@@ -1323,6 +1324,8 @@ export async function startRpcSession(
         }),
         desktopBrowserInlineExtension(),
         desktopTerminalInlineExtension({ getCwd: () => cwd }),
+        // codemode 超时后槽位可能仍被占：从错误文案推断一行日志（只读，不改结果）。
+        desktopCodemodeObserverInlineExtension(),
         desktopImageInlineExtension(),
         desktopDecisionInlineExtension(),
         desktopToolOutputInlineExtension(),
