@@ -58,18 +58,18 @@ test("brief ask forbids tool calls and caps the reply at one short sentence", ()
   // 深度诊断保留原有长提示词（允许模型去核实状态）。
   assert.equal(
     buildInterventionMessage("ask", "bash"),
-    `你之前在 bash 之后似乎卡住了，请分析原因并给出新的执行方案。${CONTINUE_AFTER_INTERVENTION}`,
+    `[系统提示] 你之前在 bash 之后似乎卡住了，请分析原因并给出新的执行方案。${CONTINUE_AFTER_INTERVENTION}`,
   );
 });
 
 test("ask message names the last successful action, falling back gracefully", () => {
   assert.equal(
     buildAskMessage("bash"),
-    `你之前在 bash 之后似乎卡住了，请分析原因并给出新的执行方案。${CONTINUE_AFTER_INTERVENTION}`,
+    `[系统提示] 你之前在 bash 之后似乎卡住了，请分析原因并给出新的执行方案。${CONTINUE_AFTER_INTERVENTION}`,
   );
   assert.equal(
     buildAskMessage(null),
-    `你之前在 ${ASK_FALLBACK_STEP} 之后似乎卡住了，请分析原因并给出新的执行方案。${CONTINUE_AFTER_INTERVENTION}`,
+    `[系统提示] 你之前在 ${ASK_FALLBACK_STEP} 之后似乎卡住了，请分析原因并给出新的执行方案。${CONTINUE_AFTER_INTERVENTION}`,
   );
   assert.equal(buildAskMessage("   ").includes(ASK_FALLBACK_STEP), true);
 });

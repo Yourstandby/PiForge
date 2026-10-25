@@ -10,6 +10,7 @@
  *   - 没有任何模型直连：不 import SDK、不调 `prompt()`。
  */
 import type { WatchdogTaskStatus } from "../contract/domains/watchdog.ts";
+import { INTERVENTION_PREFIX } from "../contract/intervention-marker.ts";
 
 /**
  * 介入动作：`skip` = 强制跳过；`ask` 与 `ask_brief` 都是追问，只差提示词强度。
@@ -36,7 +37,7 @@ export const CONTINUE_AFTER_INTERVENTION =
 
 /** Skip：最高优先级系统指令，要求模型放弃当前卡住的工具，用别的办法做完同一件事。 */
 export const SKIP_INSTRUCTION =
-  `[系统提示] 当前工具执行因无进展被系统强制跳过。请放弃这个卡住的工具，改用其他方式继续完成同一个目标，不要跳过任务本身。${CONTINUE_AFTER_INTERVENTION}`;
+  `${INTERVENTION_PREFIX} 当前工具执行因无进展被系统强制跳过。请放弃这个卡住的工具，改用其他方式继续完成同一个目标，不要跳过任务本身。${CONTINUE_AFTER_INTERVENTION}`;
 
 /** Ask（深度诊断）：普通用户口吻的追问（`last_success_action` 未知时的兜底说法）。 */
 export const ASK_FALLBACK_STEP = "上一步";
@@ -50,11 +51,12 @@ export const ASK_FALLBACK_STEP = "上一步";
  *   3. 只问两个可回答的问题：卡在哪个工具、要不要跳过。
  */
 export const BRIEF_ASK_INSTRUCTION =
-  `[系统提示] 看门狗发现当前工具已超时无输出，请勿执行任何新工具核实。请直接用一句话（20字以内）告诉我：你卡在哪个工具了，是否需要我帮你跳过？${CONTINUE_AFTER_INTERVENTION}`;
+  `${INTERVENTION_PREFIX} 看门狗发现当前工具已超时无输出，请勿执行任何新工具核实。请直接用一句话（20字以内）告诉我：你卡在哪个工具了，是否需要我帮你跳过？${CONTINUE_AFTER_INTERVENTION}`;
 
 export function buildAskMessage(lastSuccessAction: string | null | undefined): string {
   const step = lastSuccessAction?.trim() || ASK_FALLBACK_STEP;
-  return `你之前在 ${step} 之后似乎卡住了，请分析原因并给出新的执行方案。${CONTINUE_AFTER_INTERVENTION}`;
+  // 前缀不能省：前端靠它把介入文本渲染成「系统提示」而不是用户自己的提问。
+  return `${INTERVENTION_PREFIX} 你之前在 ${step} 之后似乎卡住了，请分析原因并给出新的执行方案。${CONTINUE_AFTER_INTERVENTION}`;
 }
 
 export function buildInterventionMessage(
