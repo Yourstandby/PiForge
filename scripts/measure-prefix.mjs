@@ -24,7 +24,7 @@
  *
  * 退出码：0 正常；1 环境/运行问题；2 超出 --max-prefix 预算。
  */
-import { spawn } from "node:child_process";
+import { spawnNodeHost } from "./lib/host-spawn.mjs";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
@@ -391,17 +391,13 @@ async function measureHost(recorder) {
   let state = null;
   const captured = () => recorder.requests.slice(start).map((entry) => entry.body);
 
-  const child = spawn(process.execPath, [hostEntry], {
+  const child = spawnNodeHost({
+    entry: hostEntry,
     cwd: repoRoot,
     stdio: ["ignore", "pipe", "pipe"],
     env: {
-      ...process.env,
       PI_CODING_AGENT_DIR: agentDir,
-      // stdio[0] 是 "ignore"：父进程若带 PIFORGE_HOST_STDIN_CONTROL=1（在 PiForge
-      // 自己的终端里跑度量就会继承），host 把 stdin EOF 当"父进程死了"，握手阶段退出，
-      // 而这里的 client.waitFor 没有超时 —— 表现是整个 measure/smoke 静默挂死。
-      PIFORGE_HOST_STDIN_CONTROL: "0",
-      PIFORGE_AGENT_ENDPOINT: endpoint,
+                  PIFORGE_AGENT_ENDPOINT: endpoint,
       PIFORGE_AGENT_TOKEN: token,
       ...(languageInMessage ? { PIFORGE_LANGUAGE_IN_MESSAGE: "1" } : {}),
     },

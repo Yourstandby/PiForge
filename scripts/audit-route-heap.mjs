@@ -15,7 +15,7 @@
  * POST-only 路由无法安全地"空跑"，只从静态图谱（audit-route-deps）里取字节数，
  * heapDelta 记为 null 并在输出里标注。
  */
-import { spawn } from "node:child_process";
+import { spawnNodeHost } from "./lib/host-spawn.mjs";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -48,21 +48,16 @@ const BS = String.fromCharCode(92);
 const endpoint = `${BS}${BS}.${BS}pipe${BS}piforge-heap-${process.pid}`;
 const token = "h".repeat(32);
 
-const child = spawn(process.execPath, ["--expose-gc", entry], {
+const child = spawnNodeHost({
+  nodeArgs: ["--expose-gc"],
+  entry: entry,
   env: {
-    ...process.env,
     PIFORGE_AGENT_ENDPOINT: endpoint,
     PIFORGE_AGENT_TOKEN: token,
     // 让 Host 在 api.request 的返回里带上自己的 heapUsed（见 agent-host/server.ts）。
     PIFORGE_HEAP_PROBE: "1",
   },
   stdio: ["ignore", "pipe", "pipe"],
-  env: {
-    ...process.env,
-      // stdio[0] 是 "ignore"：别让继承来的 PIFORGE_HOST_STDIN_CONTROL=1
-      // 让 host 把 stdin EOF 当成父进程死了（scripts/host-spawn-stdin.test.mjs）。
-      PIFORGE_HOST_STDIN_CONTROL: "0",
-  },
 });
 child.stdout.on("data", () => {});
 child.stderr.on("data", () => {});

@@ -7,8 +7,8 @@
  * back to "ready" and re-registers its subscription (receives a fresh
  * snapshot) without the caller doing anything.
  */
+import { spawnNodeHost } from "./lib/host-spawn.mjs";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -40,14 +40,11 @@ process.env.PIFORGE_AGENT_ENDPOINT = endpoint;
 process.env.PIFORGE_AGENT_TOKEN = token;
 
 function startHost() {
-  const child = spawn(process.execPath, [hostEntry], {
+  const child = spawnNodeHost({
+    entry: hostEntry,
     cwd: repoRoot,
     stdio: ["ignore", "pipe", "pipe"],
     env: {
-      ...process.env,
-      // stdio[0] 是 "ignore"：父进程若带 PIFORGE_HOST_STDIN_CONTROL=1（在 PiForge
-      // 自己的终端里跑回归就会继承），host 会把 stdin EOF 当成"父进程死了"直接退出。
-      PIFORGE_HOST_STDIN_CONTROL: "0",
       PIFORGE_AGENT_ENDPOINT: endpoint,
       PIFORGE_AGENT_TOKEN: token,
     },
