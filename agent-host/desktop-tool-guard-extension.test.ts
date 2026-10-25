@@ -23,19 +23,19 @@ const CONFIG: ToolGuardConfig = { ...DEFAULT_TOOL_GUARD };
 test("a shell call without timeout gets a default instead of running forever", () => {
   const input: Record<string, unknown> = { command: "grep -rn foo ." };
   const outcome = guardShellTimeout(input, CONFIG);
-  assert.deepEqual(outcome, { seconds: 120, action: "defaulted" });
-  assert.equal(input.timeout, 120);
+  assert.deepEqual(outcome, { seconds: 45, action: "defaulted" });
+  assert.equal(input.timeout, 45);
 });
 
 test("heavy commands get enough runway but still have a ceiling", () => {
   const input: Record<string, unknown> = { command: "npm run dist" };
   const outcome = guardShellTimeout(input, CONFIG);
-  assert.deepEqual(outcome, { seconds: 900, action: "defaulted" });
-  assert.equal(input.timeout, 900);
+  assert.deepEqual(outcome, { seconds: 300, action: "defaulted" });
+  assert.equal(input.timeout, 300);
 
   const huge: Record<string, unknown> = { command: "npm run test", timeout: 100_000 };
-  assert.deepEqual(guardShellTimeout(huge, CONFIG), { seconds: 900, action: "clamped" });
-  assert.equal(huge.timeout, 900);
+  assert.deepEqual(guardShellTimeout(huge, CONFIG), { seconds: 300, action: "clamped" });
+  assert.equal(huge.timeout, 300);
 });
 
 test("an explicit reasonable timeout is kept verbatim", () => {
@@ -46,8 +46,8 @@ test("an explicit reasonable timeout is kept verbatim", () => {
 
 test("over-long timeouts are clamped, so one hang cannot hold a batch for minutes", () => {
   const input: Record<string, unknown> = { command: "grep -rn foo .", timeout: 5000 };
-  assert.deepEqual(guardShellTimeout(input, CONFIG), { seconds: 600, action: "clamped" });
-  assert.equal(input.timeout, 600);
+  assert.deepEqual(guardShellTimeout(input, CONFIG), { seconds: 300, action: "clamped" });
+  assert.equal(input.timeout, 300);
 });
 
 test("invalid timeout values are repaired rather than making pi throw", () => {
@@ -55,7 +55,7 @@ test("invalid timeout values are repaired rather than making pi throw", () => {
     const input: Record<string, unknown> = { command: "ls", timeout: raw };
     const outcome = guardShellTimeout(input, CONFIG);
     assert.equal(outcome?.action, "repaired", `raw=${String(raw)}`);
-    assert.equal(input.timeout, 120);
+    assert.equal(input.timeout, 45);
   }
 });
 
@@ -127,11 +127,11 @@ test("the extension patches timeout in place and leaves the input otherwise unto
   const hooks = hookInto();
   const input: Record<string, unknown> = { command: "git status --short", timeout: undefined };
   hooks.call({ toolName: "bash", toolCallId: "c1", input });
-  assert.equal(input.timeout, 120);
+  assert.equal(input.timeout, 45);
 
   const noTimeout: Record<string, unknown> = { command: "pwsh -c 'ls'" };
   hooks.call({ toolName: "powershell", toolCallId: "c2", input: noTimeout });
-  assert.equal(noTimeout.timeout, 120);
+  assert.equal(noTimeout.timeout, 45);
 
   // 非 shell 工具不动任何参数。
   const readInput: Record<string, unknown> = { path: "a.ts" };

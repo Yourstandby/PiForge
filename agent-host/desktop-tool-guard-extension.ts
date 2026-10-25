@@ -37,9 +37,9 @@ export interface ToolGuardConfig {
 
 export const DEFAULT_TOOL_GUARD: ToolGuardConfig = {
   enabled: true,
-  defaultSeconds: 120,
-  maxSeconds: 600,
-  heavySeconds: 900,
+  defaultSeconds: 45,
+  maxSeconds: 300,
+  heavySeconds: 300,
   maxParallel: 8,
 };
 
