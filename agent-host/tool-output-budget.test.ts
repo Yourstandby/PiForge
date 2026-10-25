@@ -19,9 +19,9 @@ function lines(count: number): string {
 }
 
 test("budgets are the documented hard caps", () => {
-  assert.equal(DEFAULT_TOOL_OUTPUT_BUDGET.maxChars, 4_000);
-  assert.equal(DEFAULT_TOOL_OUTPUT_BUDGET.headChars, 1_500);
-  assert.equal(DEFAULT_TOOL_OUTPUT_BUDGET.tailChars, 1_500);
+  assert.equal(DEFAULT_TOOL_OUTPUT_BUDGET.maxChars, 24_000);
+  assert.equal(DEFAULT_TOOL_OUTPUT_BUDGET.headChars, 9_000);
+  assert.equal(DEFAULT_TOOL_OUTPUT_BUDGET.tailChars, 9_000);
   assert.equal(READ_TOOL_OUTPUT_BUDGET.maxChars, 4_000);
   assert.equal(READ_TOOL_OUTPUT_BUDGET.headChars, 3_000);
   assert.equal(toolOutputBudget("read"), READ_TOOL_OUTPUT_BUDGET);
@@ -45,16 +45,16 @@ test("text under the budget is returned untouched", () => {
 });
 
 test("over-long output keeps head and tail and states the real total", () => {
-  const text = lines(1_000);
+  const text = lines(10_000);
   const result = truncateToolOutput(text);
   assert.equal(result.truncated, true);
   assert.equal(result.truncatedBy, "chars");
-  assert.equal(result.totalLines, 1_000);
+  assert.equal(result.totalLines, 10_000);
   assert.match(result.text, /^line 1\n/);
-  assert.match(result.text, /\[\.\.\.已截断 1000 行/);
+  assert.match(result.text, /\[\.\.\.已截断 10000 行/);
   assert.ok(result.text.includes(TRUNCATION_HINT), "必须带上批量续读的引导");
-  assert.match(result.text, /line 1000$/);
-  assert.doesNotMatch(result.text, /line 500/);
+  assert.match(result.text, /line 10000$/);
+  assert.doesNotMatch(result.text, /line 5000/);
   assert.ok(
     Buffer.byteLength(result.text, "utf8") < Buffer.byteLength(text, "utf8") / 2,
     "截断后应显著小于原文",
@@ -107,14 +107,14 @@ test("truncation is idempotent", () => {
 
 test("exceedsToolOutputBudget mirrors the two limits", () => {
   assert.equal(exceedsToolOutputBudget(lines(59)), false);
-  assert.equal(exceedsToolOutputBudget(lines(61)), true);
-  assert.equal(exceedsToolOutputBudget("y".repeat(4_001)), true);
+  assert.equal(exceedsToolOutputBudget(lines(401)), true);
+  assert.equal(exceedsToolOutputBudget("y".repeat(24_001)), true);
 });
 
 test("truncation notice wording is stable", () => {
   assert.equal(
     truncationNotice(1_234, DEFAULT_TOOL_OUTPUT_BUDGET),
-    "[...已截断 1234 行...]（已保留前 1500 字符 + 后 1500 字符）",
+    "[...已截断 1234 行...]（已保留前 9000 字符 + 后 9000 字符）",
   );
   assert.equal(
     truncationNotice(1_234, READ_TOOL_OUTPUT_BUDGET, 900),
@@ -130,9 +130,9 @@ test("truncation notice wording is stable", () => {
 // L-D 实验开关（PIFORGE_TOOL_OUTPUT_CHARS）
 // ---------------------------------------------------------------------------
 
-test("resolveToolOutputChars: 未设置 → 默认 4000，source=default", () => {
+test("resolveToolOutputChars: 未设置 → 默认 24000，source=default", () => {
   const setting = resolveToolOutputChars({});
-  assert.equal(setting.maxChars, 4_000);
+  assert.equal(setting.maxChars, 24_000);
   assert.equal(setting.source, "default");
 });
 
@@ -141,7 +141,7 @@ test("resolveToolOutputChars: 2000 生效；非法值（字符/null/NaN/越界�
   assert.equal(resolveToolOutputChars({ PIFORGE_TOOL_OUTPUT_CHARS: "2000" }).source, "env");
   for (const raw of ["abc", "0", "-100", "10", "999999", "NaN"]) {
     const setting = resolveToolOutputChars({ PIFORGE_TOOL_OUTPUT_CHARS: raw });
-    assert.equal(setting.maxChars, 4_000, raw);
+    assert.equal(setting.maxChars, 24_000, raw);
     assert.equal(setting.source, "env_invalid", raw);
     assert.match(setting.reason, /保留默认/);
   }
@@ -170,7 +170,7 @@ test("withCharsLimit: 头/尾/行数按比例缩放，且不超过新上限", ()
   assert.equal(scaled.maxBytes, 2_000);
   assert.equal(scaled.headChars, 750);
   assert.equal(scaled.tailChars, 750);
-  assert.equal(scaled.maxLines, 30);
+  assert.equal(scaled.maxLines, 33);
   assert.ok(scaled.headChars + scaled.tailChars <= scaled.maxChars);
 });
 
@@ -178,9 +178,9 @@ test("withCharsLimit: 上限不变时原样返回同一对象", () => {
   assert.equal(withCharsLimit(DEFAULT_TOOL_OUTPUT_BUDGET, DEFAULT_TOOL_OUTPUT_BUDGET.maxChars), DEFAULT_TOOL_OUTPUT_BUDGET);
 });
 
-test("shouldPersistToolOutput: 默认阈值不变；开关打开后 2000 字符就落盘", () => {
-  assert.equal(shouldPersistToolOutput("x".repeat(3_999)), false);
-  assert.equal(shouldPersistToolOutput("x".repeat(4_001)), true);
+test("shouldPersistToolOutput: 默认阈值 24000；开关打开后 2000 字符就落盘", () => {
+  assert.equal(shouldPersistToolOutput("x".repeat(23_999)), false);
+  assert.equal(shouldPersistToolOutput("x".repeat(24_001)), true);
   // 走 env 的那条路径（默认参数会读 process.env，这里显式传预算，避免测试受环境影响）
   const tight = toolOutputBudget(undefined, { PIFORGE_TOOL_OUTPUT_CHARS: "2000" });
   assert.equal(shouldPersistToolOutput("x".repeat(2_001), undefined, tight), true);
