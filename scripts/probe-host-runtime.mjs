@@ -172,6 +172,9 @@ async function measure({ label, command, args, env, cwd }) {
     env: {
       ...process.env,
       ...env,
+      // stdio[0] 是 "ignore"：别让继承来的 PIFORGE_HOST_STDIN_CONTROL=1
+      // 让 host 把 stdin EOF 当成父进程死了（scripts/host-spawn-stdin.test.mjs）。
+      PIFORGE_HOST_STDIN_CONTROL: "0",
       PI_CODING_AGENT_DIR: agentDir,
       PIFORGE_AGENT_ENDPOINT: endpoint,
       PIFORGE_AGENT_TOKEN: token,

@@ -41,6 +41,12 @@ const child = spawn(process.execPath, [entry], {
   // 打包版从 standalone 目录解析依赖（与 Electron utilityProcess 的 cwd 一致）。
   cwd: entry.includes(`${BS}standalone${BS}`) ? path.dirname(path.dirname(entry)) : process.cwd(),
   stdio: ["ignore", "pipe", "pipe"],
+  env: {
+    ...process.env,
+    // stdio[0] 是 "ignore"：别让继承来的 PIFORGE_HOST_STDIN_CONTROL=1
+    // 让 host 把 stdin EOF 当成父进程死了（scripts/host-spawn-stdin.test.mjs）。
+    PIFORGE_HOST_STDIN_CONTROL: "0",
+  },
 });
 
 let readyAt = null;

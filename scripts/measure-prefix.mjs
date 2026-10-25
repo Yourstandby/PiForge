@@ -349,6 +349,10 @@ async function measureHost(recorder) {
     env: {
       ...process.env,
       PI_CODING_AGENT_DIR: agentDir,
+      // stdio[0] 是 "ignore"：父进程若带 PIFORGE_HOST_STDIN_CONTROL=1（在 PiForge
+      // 自己的终端里跑度量就会继承），host 把 stdin EOF 当"父进程死了"，握手阶段退出，
+      // 而这里的 client.waitFor 没有超时 —— 表现是整个 measure/smoke 静默挂死。
+      PIFORGE_HOST_STDIN_CONTROL: "0",
       PIFORGE_AGENT_ENDPOINT: endpoint,
       PIFORGE_AGENT_TOKEN: token,
       ...(languageInMessage ? { PIFORGE_LANGUAGE_IN_MESSAGE: "1" } : {}),

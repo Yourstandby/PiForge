@@ -79,6 +79,9 @@ function startHost() {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
+      // stdio[0] 是 "ignore"：别让继承来的 PIFORGE_HOST_STDIN_CONTROL=1
+      // 让 host 把 stdin EOF 当成父进程死了（scripts/host-spawn-stdin.test.mjs）。
+      PIFORGE_HOST_STDIN_CONTROL: "0",
       PIFORGE_AGENT_ENDPOINT: endpoint,
       PIFORGE_AGENT_TOKEN: token,
     },

@@ -45,7 +45,9 @@ test("applyCodemodeWorkerPool writes the env the SDK reads on every script", () 
     assert.equal(process.env[CODEMODE_WORKERS_ENV], "4");
 
     // 设置被清掉（null）且环境变量也没值时，回到默认 2。
-    const afterClear = applyCodemodeWorkerPool({ setting: null });
+    // 必须显式传 `env: {}`：不传就按模块加载时的启动快照解析，而在 PiForge 自己的
+    // Host 子进程里 PI_CODEMODE_MAX_WORKERS=2 是继承来的，source 会是 env 而不是 default。
+    const afterClear = applyCodemodeWorkerPool({ setting: null, env: {} });
     assert.deepEqual(afterClear, { value: DEFAULT_CODEMODE_MAX_WORKERS, source: "default" });
     assert.equal(process.env[CODEMODE_WORKERS_ENV], String(DEFAULT_CODEMODE_MAX_WORKERS));
   } finally {
