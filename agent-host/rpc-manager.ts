@@ -62,6 +62,7 @@ import { desktopPluginInlineExtension } from "./desktop-plugin-extension.ts";
 import { desktopOrchestratorInlineExtension } from "./desktop-orchestrator-extension.ts";
 import { desktopCompactionInlineExtension } from "./desktop-compaction-extension.ts";
 import { compactionSummaryInstructions } from "./compaction-plan.ts";
+import { compactSkipReason, compactSkipReasonFromError } from "./compaction-gate.ts";
 import { describeContextBudget } from "./context-budget.ts";
 import { auxToolAvailability } from "./aux-models.ts";
 import { loadDesktopMcpConfig } from "../lib/mcp-config.ts";
@@ -890,31 +891,34 @@ export class AgentSessionWrapper {
         // aborts the running loop as a side effect. The UI hides the compact
         // button while streaming; this is the server-side backstop.
         if (this.inner.isStreaming) throw new Error("Session is streaming");
-        // pi's compact() does not guard against empty messagesToSummarize — use findCutPoint
-        // to pre-check and throw a clean error instead of generating a useless empty summary.
-        const { findCutPoint, DEFAULT_COMPACTION_SETTINGS } = await import("./sdk-adapter.ts");
-        const pathEntries = this.inner.sessionManager.getBranch() as Array<{ type: string }>;
-        const settings = { ...DEFAULT_COMPACTION_SETTINGS, ...this.inner.settingsManager.getCompactionSettings() };
-        let prevCompactionIndex = -1;
-        for (let i = pathEntries.length - 1; i >= 0; i--) {
-          if (pathEntries[i].type === "compaction") { prevCompactionIndex = i; break; }
-        }
-        const boundaryStart = prevCompactionIndex + 1;
-        const cutPoint = findCutPoint(pathEntries as never, boundaryStart, pathEntries.length, settings.keepRecentTokens);
-        const historyEnd = cutPoint.isSplitTurn ? cutPoint.turnStartIndex : cutPoint.firstKeptEntryIndex;
-        if (historyEnd <= boundaryStart) {
-          throw new Error("Conversation too short to compact");
-        }
+        // pi's compact() does not guard against empty messagesToSummarize — pre-check with
+        // the same gate pi uses internally instead of generating a useless empty summary.
+        const { DEFAULT_COMPACTION_SETTINGS } = await import("./sdk-adapter.ts");
+        const pathEntries = this.inner.sessionManager.getBranch();
+        const settings = {
+          ...DEFAULT_COMPACTION_SETTINGS,
+          ...this.inner.settingsManager.getCompactionSettings(this.inner.model ?? undefined),
+        };
+        // 能不能压由 pi 的投影口径决定；不能压时回原因码（`{ skipped: true }`），
+        // 不再抛 pi 的英文原文当失败——刚自动压缩过的会话点压缩就是这个场景。
+        const skipReason = compactSkipReason(pathEntries, settings);
+        if (skipReason) return { skipped: true, reason: skipReason };
         // Best-effort LTM observe of branch text before compaction rewrites context.
         void safeLtmPreCompactObserve({
           sessionId: this.sessionId,
           cwd: this.inner.sessionManager.getHeader()?.cwd ?? process.cwd(),
-          messagesText: branchEntriesToMessagesText(pathEntries),
+          messagesText: branchEntriesToMessagesText(pathEntries as never),
         });
-        const result = await this.inner.compact(
-          (command.customInstructions as string | undefined) ?? compactionSummaryInstructions(),
-        );
-        return result;
+        try {
+          return await this.inner.compact(
+            (command.customInstructions as string | undefined) ?? compactionSummaryInstructions(),
+          );
+        } catch (err) {
+          // 预检和这次调用之间分支可能被上一轮的 agent_settled 加了压缩条目。
+          const reason = compactSkipReasonFromError(err instanceof Error ? err.message : String(err));
+          if (reason) return { skipped: true, reason };
+          throw err;
+        }
       }
 
       case "set_auto_compaction": {

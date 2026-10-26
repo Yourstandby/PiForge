@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, ArrowDown, CheckCircle2, ListTodo } from "lucide-react";
+import { AlertCircle, ArrowDown, CheckCircle2, Info, ListTodo } from "lucide-react";
 import type { AgentMessage, SessionInfo, SessionTreeNode } from "@/lib/types";
 import type { ContextBudget } from "@/lib/pi-types";
 import { useAgentSession } from "@/hooks/useAgentSession";
@@ -239,7 +239,7 @@ function ChatSession({
   const autoRetryRef = useRef(0);
 
   // 全局瞬时提示（压缩结果 / 引擎掉线 / 发送失败共用）。
-  const [compactToast, setCompactToast] = useState<{ ok: boolean; text: string } | null>(null);
+  const [compactToast, setCompactToast] = useState<{ ok: boolean; info?: boolean; text: string } | null>(null);
 
   const chat = useAgentSession({
     session,
@@ -445,6 +445,11 @@ function ChatSession({
   const runCompact = useCallback(async () => {
     setCompactConfirmOpen(false);
     const outcome = await chat.handleCompact();
+    if (outcome.ok && outcome.skipped) {
+      // 无可压缩内容不是失败：给中性提示，不要红色报错。
+      setCompactToast({ ok: true, info: true, text: outcome.message });
+      return;
+    }
     if (outcome.ok) {
       const saved =
         outcome.tokensBefore != null && outcome.tokensAfter != null
@@ -1561,7 +1566,11 @@ function ChatSession({
           }`}
         >
           {compactToast.ok ? (
-            <CheckCircle2 size={13} strokeWidth={2} className="shrink-0 text-accent" aria-hidden="true" />
+            compactToast.info ? (
+              <Info size={13} strokeWidth={2} className="shrink-0 text-ink-soft" aria-hidden="true" />
+            ) : (
+              <CheckCircle2 size={13} strokeWidth={2} className="shrink-0 text-accent" aria-hidden="true" />
+            )
           ) : (
             <AlertCircle size={13} strokeWidth={2} className="shrink-0" aria-hidden="true" />
           )}
