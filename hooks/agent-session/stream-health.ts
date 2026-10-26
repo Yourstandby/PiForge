@@ -11,10 +11,11 @@ import type { ConnectionStatus } from "./agent-events-manager";
 /**
  * 运行中多久没收到任何真实增量就算「疑似卡住」。
  *
- * 30s 是折中：正常流式每几百毫秒就有 message_update；但有些 provider 不走流式、
- * 攒完一次性返回，甚至长思考阶段也不吐 thinking 增量，阈值太小会误报。
+ * 120s：正常流式每几百毫秒就有 message_update，但长 bash 工具（tsc / build / 测试）
+ * 在跑的时候本来就不吐事件，30s 会把「工具在正常干活」误报成卡死；
+ * provider 攒完一次性返回、长思考阶段不出增量同理。2 分钟是可容忍的上限。
  */
-export const STREAM_STALL_MS = 30_000;
+export const STREAM_STALL_MS = 120_000;
 
 export type StreamHealth =
   | { kind: "ok" }
