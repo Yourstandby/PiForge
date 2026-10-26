@@ -13,18 +13,22 @@ test("output style guidelines are static: no timestamps, ids or interpolation", 
 });
 
 test("batching rules are static, independent of the output-style switch", () => {
-  assert.equal(BATCHING_RULES.length, 7);
+  assert.equal(BATCHING_RULES.length, 8);
   for (const line of BATCHING_RULES) {
     assert.doesNotMatch(line, /\$\{|\d{4}-\d{2}-\d{2}|[0-9a-f]{8}-[0-9a-f]{4}/i, `动态内容会破坏 prompt cache: ${line}`);
   }
-  // 预算写死：简单 ≤4、普通 ≤8、调研 ≤10；第 4 次必须中途自检，到顶先交付再问。
-  assert.match(BATCHING_RULES.join("\n"), /简单任务 ≤4 次调用/);
-  assert.match(BATCHING_RULES.join("\n"), /调研 \/ 多文件梳理 ≤10 次/);
-  assert.match(BATCHING_RULES.join("\n"), /中途自检/);
-  assert.match(BATCHING_RULES.join("\n"), /先交付可验证的结论/);
-  // 并行上限、大目录红线与输出摘要必须写死（硬护栏在 desktop-tool-guard-extension）。
-  assert.match(BATCHING_RULES.join("\n"), /并行不超过 8/);
-  assert.match(BATCHING_RULES.join("\n"), /timeout 30/);
+  // 预算按批次计：简单 1 批、普通 2–3 批、调研 3–4 批；单批 ≤12；每批后自检，到顶先交付再问。
+  const joined = BATCHING_RULES.join("\n");
+  assert.match(joined, /简单任务 1 批/);
+  assert.match(joined, /调研 \/ 多文件梳理 3–4 批/);
+  assert.match(joined, /每批自检/);
+  assert.match(joined, /先交付可验证的结论/);
+  // 合并调用是加速的第一手段；写操作不得与读取混批。
+  assert.match(joined, /同一条助手消息里的多个工具调用是并行执行的/);
+  assert.match(joined, /写操作不混批/);
+  // 单批并行上限、大目录红线与输出摘要必须写死（硬护栏在 desktop-tool-guard-extension）。
+  assert.match(joined, /单批并行 ≤12/);
+  assert.match(joined, /timeout 30/);
   assert.match(BATCHING_RULES.join("\n"), /head \/ uniq/);
   assert.match(BATCHING_RULES.join("\n"), /一次 codemode 脚本/);
 });

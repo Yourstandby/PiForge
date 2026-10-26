@@ -220,15 +220,16 @@ test("stats start empty and the advisory text names the actual numbers", () => {
   assert.match(parallelAdvisory(25, 8), /codemode/);
 });
 
-test("the turn budget self-checks at the 4th call and closes the line at the 8th", () => {
+test("the turn budget self-checks after one full batch and closes the line after two", () => {
   const tracker = createTurnBudgetTracker();
-  assert.equal(TURN_BUDGET.hardLimit, 8);
+  assert.equal(TURN_BUDGET.softLimit, 12);
+  assert.equal(TURN_BUDGET.hardLimit, 24);
   const hints: (string | undefined)[] = [];
-  for (let i = 0; i < 9; i += 1) hints.push(tracker.use(false));
-  assert.equal(hints[3], TURN_SELF_CHECK_HINT);
-  assert.equal(hints[7], TURN_BUDGET_EXHAUSTED_HINT);
-  assert.equal(hints[8], TURN_BUDGET_EXHAUSTED_HINT, "超预算后每次都要提醒，而不是只提醒一次");
-  assert.equal(hints[0] ?? hints[1] ?? hints[2], undefined);
+  for (let i = 0; i < 25; i += 1) hints.push(tracker.use(false));
+  assert.equal(hints[11], TURN_SELF_CHECK_HINT);
+  assert.equal(hints[23], TURN_BUDGET_EXHAUSTED_HINT);
+  assert.equal(hints[24], TURN_BUDGET_EXHAUSTED_HINT, "超预算后每次都要提醒，而不是只提醒一次");
+  assert.equal(hints.slice(0, 11).find(Boolean), undefined);
 
   // 新用户轮重新计数。
   tracker.reset();
@@ -240,23 +241,23 @@ test("the turn budget self-checks at the 4th call and closes the line at the 8th
 test("the extension appends the self-check and exhaustion hints to tool results", () => {
   const hooks = hookInto();
   let hint: unknown;
-  for (let i = 1; i <= 8; i += 1) {
+  for (let i = 1; i <= 24; i += 1) {
     const id = `t${i}`;
     hooks.call({ toolName: "read", toolCallId: id, input: {} });
     hint = hooks.result({ toolCallId: id, content: [{ type: "text", text: "ok" }], isError: false });
   }
   const text = (hint as { content: { text: string }[] }).content.map((b) => b.text).join("\n");
-  assert.match(text, /8 次调用预算已用完/);
+  assert.match(text, /24 次调用已用完/);
 
   const second = hookInto();
   second.start();
-  for (let i = 1; i <= 3; i += 1) {
+  for (let i = 1; i <= 11; i += 1) {
     second.call({ toolName: "read", toolCallId: `s${i}`, input: {} });
     assert.equal(second.result({ toolCallId: `s${i}`, content: [], isError: false }), undefined);
   }
-  second.call({ toolName: "read", toolCallId: "s4", input: {} });
-  const fourth = second.result({ toolCallId: "s4", content: [], isError: false }) as {
+  second.call({ toolName: "read", toolCallId: "s12", input: {} });
+  const twelfth = second.result({ toolCallId: "s12", content: [], isError: false }) as {
     content: { text: string }[];
   };
-  assert.match(fourth.content.map((b) => b.text).join("\n"), /中途自检/);
+  assert.match(twelfth.content.map((b) => b.text).join("\n"), /批后自检/);
 });

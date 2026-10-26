@@ -40,7 +40,7 @@ export const DEFAULT_TOOL_GUARD: ToolGuardConfig = {
   defaultSeconds: 45,
   maxSeconds: 300,
   heavySeconds: 300,
-  maxParallel: 8,
+  maxParallel: 12,
 };
 
 /**
@@ -139,17 +139,18 @@ export function parallelAdvisory(parallel: number, maxParallel: number): string 
 }
 
 /**
- * 每个用户轮的工具调用预算：**写死 <8 次**，并在第 4 次后要求中途自检。
+ * 每个用户轮的工具调用预算是**批次口径**：单批并行 ≤12，2–3 批是普通改动的正常量，
+ * 所以硬顶放到 24（≈2 个满载批次），第 12 次（≈1 批满载）要求自检。
  * 只统计顶层调用（codemode 脚本内的嵌套调用不重复计），与并行计数口径一致。
  */
-export const TURN_BUDGET = { softLimit: 4, hardLimit: 8 } as const;
+export const TURN_BUDGET = { softLimit: 12, hardLimit: 24 } as const;
 
 export const TURN_SELF_CHECK_HINT =
-  "[tool-guard] 本轮已用 4/8 次调用 —— 中途自检：现有输出是否已经够直接交付？" +
-  "够就停手写结论，不要再补探针；不够就把剩余调用压到 8 次以内。";
+  "[tool-guard] 本轮已用 12/24 次调用（约一个满载批次）—— 批后自检：现有输出是否已经够直接交付？" +
+  "够就停手写结论，不要再补探针；不够就把剩余工作并成一批发完。";
 
 export const TURN_BUDGET_EXHAUSTED_HINT =
-  "[tool-guard] 本轮 8 次调用预算已用完：停止新的探测，先交付可验证的结论与剩余待办，留给下一轮继续。";
+  "[tool-guard] 本轮 24 次调用已用完（约两个满载批次）：停止新的探测，先交付可验证的结论与剩余待办，留给下一轮继续。";
 
 /** 每用户轮计数：`use` 返回该次调用结束后应追加的提醒，`reset` 在新用户轮开始时调用。 */
 export function createTurnBudgetTracker(

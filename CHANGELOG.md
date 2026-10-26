@@ -3,6 +3,30 @@
 迁移条目按「改了什么 / 默认行为变没变 / 开关怎么用」组织。详细数据见 `docs/measurements/`
 （三个口径：记录型 provider、真实 deepseek 会话、重复场景 A/B，三者不要混读）。
 
+## Unreleased — 调用预算从「次数」改成「批次」
+
+主题：**合并调用才是加速手段**。pi 同一条助手消息里的多个 tool call 本就并行执行，
+墙钟时间由往返次数决定；按调用次数卡预算只会逼模型在批次中途停下、重开一轮重发全量上下文。
+
+### 改了什么
+
+- **提示词**（`agent-host/prompts/output-style.ts`，`BATCHING_RULES` 7 → 8 条）：新增
+  「合并调用（第一优先）」与「写操作不混批」；「调用预算（写死）」改为批次口径（简单 1 批 /
+  普通 2–3 批 / 调研 3–4 批，单批并行 ≤12）；「第 4 次自检」改为「每批自检」。
+- **运行时护栏**（`agent-host/desktop-tool-guard-extension.ts`）：`TURN_BUDGET` 4/8 → 12/24
+  （≈1 个满载批次后自检、≈2 个满载批次后收口），`DEFAULT_TOOL_GUARD.maxParallel` 8 → 12，
+  两条提醒文案同步改批次口径。
+
+### 默认行为变没变
+
+- 软约束不变：仍是「到顶先交付可验证结论、剩余待办留给下一轮」，只是阈值按批次量级放大。
+- 无新开关；`PIFORGE_TOOL_MAX_PARALLEL` 仍可覆盖单批并行上限。
+
+### 验证
+
+- `node --test --test-force-exit agent-host/desktop-tool-guard-extension.test.ts agent-host/desktop-output-style-extension.test.ts` → 21/21
+- `npx eslint`（四个改动文件）→ 无输出
+
 ## v0.11.1 — 贴图卡顿 / 秒表 / 流健康 / 项目隔离（默认关）
 
 主题：**修 0.11.0 漏掉的三处「看着像卡死」**，并补一个默认关闭的项目级文件隔离。
