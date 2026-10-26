@@ -3,7 +3,11 @@ import { resolveSessionPath, getHeaderAsync } from "../../../../lib/session-read
 import { getAgentHostClient, AgentHostError } from "../../../../lib/agent-host-client.ts";
 import { jsonAgentHostError } from "../../../../lib/agent-host-http.ts";
 import { jsonError } from "../../../../lib/api-error.ts";
-import { validateAgentCommand } from "../../../../lib/agent-commands.ts";
+import {
+  AGENT_ENSURE_TIMEOUT_MS,
+  agentCommandTimeoutMs,
+  validateAgentCommand,
+} from "../../../../lib/agent-commands.ts";
 
 // POST /api/agent/[id] - Send a command to an existing session
 export async function POST(
@@ -21,8 +25,10 @@ export async function POST(
     }
 
     const client = getAgentHostClient();
+    // 压缩/分叉/重载扩展会等一次模型往返，几分钟都正常 —— 不能套 15s 默认超时。
+    const timeoutMs = agentCommandTimeoutMs(body);
     try {
-      const result = await client.call("agent.command", { sessionId: id, command: body });
+      const result = await client.call("agent.command", { sessionId: id, command: body }, { timeoutMs });
       return NextResponse.json({ success: true, data: result.data });
     } catch (error) {
       if (!(error instanceof AgentHostError) || error.code !== "SESSION_NOT_FOUND") {
@@ -45,8 +51,8 @@ export async function POST(
       return NextResponse.json(trustGate.payload, { status: 409 });
     }
 
-    await client.call("agent.ensure", { sessionId: id, filePath, cwd });
-    const result = await client.call("agent.command", { sessionId: id, command: body });
+    await client.call("agent.ensure", { sessionId: id, filePath, cwd }, { timeoutMs: AGENT_ENSURE_TIMEOUT_MS });
+    const result = await client.call("agent.command", { sessionId: id, command: body }, { timeoutMs });
     return NextResponse.json({ success: true, data: result.data });
   } catch (error) {
     return jsonAgentHostError(req, error, { route: "/api/agent/[id]", method: "POST" });

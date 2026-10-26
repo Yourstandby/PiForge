@@ -3,6 +3,7 @@ import type { HostSubscription } from "../../../../../contract/client.ts";
 import { getAgentHostClient } from "../../../../../lib/agent-host-client.ts";
 import { jsonAgentHostError } from "../../../../../lib/agent-host-http.ts";
 import { getRequestId, jsonError, logApiError } from "../../../../../lib/api-error.ts";
+import { AGENT_ENSURE_TIMEOUT_MS } from "../../../../../lib/agent-commands.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -39,7 +40,11 @@ export async function GET(
       });
     }
 
-    await client.call("agent.ensure", { sessionId: id, filePath, cwd });
+    await client.call(
+      "agent.ensure",
+      { sessionId: id, filePath, cwd },
+      { timeoutMs: AGENT_ENSURE_TIMEOUT_MS },
+    );
   } catch (error) {
     logApiError({
       route: "/api/agent/[id]/events",
