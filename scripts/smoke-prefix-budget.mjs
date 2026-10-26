@@ -91,7 +91,10 @@ function run(args, env = {}) {
 }
 
 // 脚本专用形态（`only`）：声明集合只有 codemode + tool_search。
-// 7433 tok 是现网实测值（sys 4313 + tools 3120），留 ~2% 余量；涨过 7600 就是真回归。
+// CI(Linux) 实测：7433 tok（次数口径）→ 7585 tok（批次口径，BATCHING_RULES 改成
+// 「合并调用 + 每批预算」后，压缩措辞把净增量压到 ~-0）。阈值取 7660 = 实测 + ~1% 余量，
+// 涨过就是真回归。注意本地 Windows 的 sys 段比 CI 高约 430 tok（平台/路径描述），
+// 本地直接跑这条会红，以 CI 数字为准。
 // 应用默认已改为 `on`，所以这里必须显式传 `--codemode only` 才能保住这个基线。
 const budget = await run([
   "--mode",
@@ -99,7 +102,7 @@ const budget = await run([
   "--codemode",
   "only",
   "--max-prefix",
-  "7600",
+  "7660",
   "--assert-hit-rate",
   "90",
   "--max-median-input",
