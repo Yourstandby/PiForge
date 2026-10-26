@@ -12,6 +12,7 @@ import { stripImageDimensionNotes } from "@/lib/image-dimension-note";
 import { buildWithTurnCache, type TurnCacheEntry } from "@/lib/transcript-turn-cache";
 import { isInterventionText } from "@/contract/intervention-marker";
 import { estimateTokens } from "@/lib/live-usage";
+import { billableTokens, inputUnitPrice } from "@/lib/usage-billing";
 import type { BranchSwitchInfo } from "@/lib/session-branches-view";
 import { isEditToolName, toolDiffPath, toolDiffRows } from "@/lib/tool-diff";
 import { settleToolMs, toolClockFor } from "@/lib/tool-clock";
@@ -933,17 +934,24 @@ function timeLabel(timestamp: number | undefined): string | null {
   return sameDay ? clock : `${date.getMonth() + 1}/${date.getDate()} ${clock}`;
 }
 
-/** Token 数量：超过 1 万就缩写（zh: 123.4万 / en: 1.2M），避免一长串数字吓人。 */
+/**
+ * Token 数量：**一律取到整数位**。
+ *
+ * 「计费 tokens」是费用 ÷ 单价折出来的，天然带一长串小数（如 7,215.6383），
+ * 直接 toLocaleString 会把小数一起印到界面上；这里先取整再格式化。
+ * 百万以内给精确整数（带千分位），只有到 M 量级才缩写成 1.2M，避免一串数字吓人。
+ */
 function formatTokenCount(value: number, locale: string): string {
   if (!Number.isFinite(value) || value <= 0) return "0";
-  if (value < 10_000) return value.toLocaleString();
+  const tokens = Math.round(value);
+  if (tokens < 1_000_000) return tokens.toLocaleString();
   try {
     return new Intl.NumberFormat(locale.startsWith("zh") ? "zh-CN" : "en-US", {
       notation: "compact",
       maximumFractionDigits: 1,
-    }).format(value);
+    }).format(tokens);
   } catch {
-    return `${Math.round(value / 1000)}k`;
+    return `${Math.round(tokens / 1000)}k`;
   }
 }
 
@@ -2250,14 +2258,20 @@ function LazyTurnBody({ pin = false, children }: { pin?: boolean; children: Reac
   );
 }
 
-/** 单条回复的用量小结：灰线 = 本次输出的真实消耗；蓝线 = 本轮叠加。 */
+/**
+ * 用量小结。主行统一为「计费 tokens」：`费用 ÷ 未缓存输入单价`，缓存/输出按各自价
+ * 折算进同一量纲，所以同一模型下 计费tokens × 单价 = 费用，灰蓝两行可以直接相除。
+ * 灰线 = 最后一条回复那次请求；蓝线 = 整轮所有请求之和。
+ */
 function TurnUsage({
   usage,
   currencySymbol = "$",
   tokens: tokensOverride,
   cost: costOverride,
   breakdown,
-  label = "本次新增",
+  billable,
+  requests,
+  label = "本次请求",
   tone = "muted",
   /** 与同一块里另一行对齐的小数位（不传则按月金额大小自适应）。 */
   decimals,
@@ -2270,6 +2284,10 @@ function TurnUsage({
   cost?: number;
   /** 输入 / 缓存 / 输出的明细（整轮聚合值）。 */
   breakdown?: { input: number; output: number; cacheRead: number; cacheWrite: number };
+  /** 计费 tokens（未缓存输入等价量）；拿不到时回退到 input + output。 */
+  billable?: number | null;
+  /** 本轮的模型请求次数，用来解释蓝色行为什么比灰色行大。 */
+  requests?: number;
   label?: string;
   /** muted = 灰色（单条真实消耗）；round = 蓝色（本轮叠加）。 */
   tone?: "muted" | "round";
@@ -2283,7 +2301,7 @@ function TurnUsage({
     cacheRead: usage?.cacheRead ?? 0,
     cacheWrite: usage?.cacheWrite ?? 0,
   };
-  /** 主行只显示"新增"：input + output，不含缓存读写。 */
+  /** 回退口径（计费 tokens 拿不到时）：input + output，不含缓存读写。 */
   const added = parts.input + parts.output;
   /** 悬浮里给出全量口径（含缓存 / 历史上下文）。 */
   const total = tokensOverride ?? added + parts.cacheRead + parts.cacheWrite;
@@ -2291,18 +2309,24 @@ function TurnUsage({
   const cost = costOverride ?? usage?.cost?.total ?? 0;
   const money = decimals === undefined ? formatMoney(cost, currencySymbol) : formatMoneyFixed(cost, currencySymbol, decimals);
   const cache = parts.cacheRead + parts.cacheWrite;
-  const scope = tone === "round" ? "本轮全部模型调用（含思考与工具轮次）" : "这一条回复";
+  const scope = tone === "round" ? "本轮全部模型请求（含思考与工具轮次）" : "最后一条回复那一次请求";
+  const billed = billable && billable > 0 ? billable : null;
+  const unit = inputUnitPrice(usage);
   const detail = [
-    `新增 ${fmt(added)}（输入 ${fmt(parts.input)} + 输出 ${fmt(parts.output)}）`,
-    `全量 ${fmt(total)}（缓存命中 ${fmt(cache)}）`,
-    `口径：新增 = 本轮新送入 + 新生成；全量 = 含历史上下文与缓存命中；统计范围 = ${scope}`,
+    `计费 ${billed === null ? "不可用" : fmt(billed)} = 费用 ÷ 未缓存输入单价` +
+      (unit === null ? "" : `（${unit.toFixed(8)}/token）`) +
+      "；缓存读/写与输出已按各自单价折入。",
+    `实际新增 ${fmt(added)}（输入 ${fmt(parts.input)} + 输出 ${fmt(parts.output)}）· 全量 ${fmt(total)}（缓存命中 ${fmt(cache)}）`,
+    `统计范围 = ${scope}${requests ? `，共 ${requests} 次请求` : ""}`,
   ].join(" · ");
   return (
     <p
       className={`text-right text-[11px] tabular-nums ${tone === "round" ? "mt-0.5 text-[#2563EB]" : "mt-1.5 text-gray-400"}`}
       title={detail}
     >
-      {label}: {formatTokenCount(added, locale)} tokens
+      {label}
+      {requests ? `（${requests} 次请求）` : ""}: {formatTokenCount(billed ?? added, locale)}{" "}
+      {billed === null ? "tokens" : "计费 tokens"}
       {money ? ` · ${money}` : ""}
     </p>
   );
@@ -2313,8 +2337,8 @@ function TurnUsage({
 }
 
 /**
- * 两行用量：灰色 = 本次输出真实消耗（自己的真实小数位），蓝色 = 本轮叠加（与之对齐）。
- * 纯渲染计算（一次 log10 + 两次 toFixed），不产生任何模型调用。
+ * 两行用量：灰色 = 最后一次请求，蓝色 = 整轮合计（含请求次数）。两行同为计费 tokens
+ * 口径，相除就是请求次数的倍数。纯渲染计算，不产生任何模型调用。
  */
 function TurnUsagePair({
   usage,
@@ -2332,7 +2356,13 @@ function TurnUsagePair({
   const digits = Math.max(moneyDecimals(thisCost), moneyDecimals(totals?.cost ?? 0));
   return (
     <>
-      <TurnUsage usage={usage} currencySymbol={currencySymbol} decimals={digits} locale={locale} />
+      <TurnUsage
+        usage={usage}
+        currencySymbol={currencySymbol}
+        billable={billableTokens(usage)}
+        decimals={digits}
+        locale={locale}
+      />
       {totals && (
         <TurnUsage
           usage={usage}
@@ -2345,7 +2375,9 @@ function TurnUsagePair({
             cacheRead: totals.cacheRead,
             cacheWrite: totals.cacheWrite,
           }}
-          label="本轮对话新增"
+          billable={totals.billable}
+          requests={totals.requests}
+          label="本轮合计"
           tone="round"
           decimals={digits}
           locale={locale}
@@ -2470,7 +2502,7 @@ function buildTranscriptTurn(
 /* -------------------------------------------------------------------------- */
 
 /**
- * 一轮对话的用量合计（输入 + 输出 + 缓存读 + 缓存写，跨本轮所有 assistant 消息）。
+ * 一轮对话的用量合计（跨本轮所有 assistant 消息）。
  * 父级按 `roundKey` 记忆化，历史轮的引用保持不变，末条才拿到它。
  */
 interface RoundTotals {
@@ -2480,6 +2512,10 @@ interface RoundTotals {
   output: number;
   cacheRead: number;
   cacheWrite: number;
+  /** 计费 tokens 合计（未缓存输入等价量），与 cost 严格成正比。 */
+  billable: number;
+  /** 本轮的模型请求次数（= assistant usage 条数）。 */
+  requests: number;
 }
 
 /** 「复制这段内容」的目标文本：用户取原文，AI 取全部文本块。 */
@@ -2748,7 +2784,7 @@ function TurnRowImpl({
         </div>
       )}
       </LazyTurnBody>
-      {/* 用量两行：灰色 = 本次输出真实消耗；蓝色 = 本轮叠加（小数位对齐灰行）。 */}
+      {/* 用量两行：灰色 = 最后一次请求；蓝色 = 本轮合计（同口径的计费 tokens）。 */}
       {turn.role !== "user" && (
         <TurnUsagePair usage={usage} totals={usageTotals} currencySymbol={currencySymbol} locale={locale} />
       )}
@@ -3281,7 +3317,10 @@ export function Transcript({
         output: 0,
         cacheRead: 0,
         cacheWrite: 0,
+        billable: 0,
+        requests: 0,
       };
+      const usages: NonNullable<AssistantMessage["usage"]>[] = [];
       for (let messageIndex = range.from; messageIndex < range.to; messageIndex += 1) {
         const message = messages[messageIndex] as
           | { role?: string; usage?: AssistantMessage["usage"] }
@@ -3295,6 +3334,14 @@ export function Transcript({
         value.tokens +=
           (usage.input ?? 0) + (usage.output ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
         value.cost += usage.cost?.total ?? 0;
+        usages.push(usage);
+      }
+      value.requests = usages.length;
+      // 逐条按各自单价折算（分档计价时不歪）；全缓存命中的请求退回本轮首个有效单价。
+      const fallbackUnit =
+        usages.map((usage) => inputUnitPrice(usage)).find((unit): unit is number => unit !== null) ?? null;
+      for (const usage of usages) {
+        value.billable += billableTokens(usage, fallbackUnit) ?? 0;
       }
       totals.set(range.key, value);
       nextTotalsCache.set(range.key, { from: range.from, to: range.to, last, value });

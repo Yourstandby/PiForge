@@ -2,6 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   AGENT_COMMAND_TYPES,
+  AGENT_ENSURE_TIMEOUT_MS,
+  LONG_RUNNING_AGENT_COMMAND_TIMEOUT_MS,
+  agentCommandTimeoutMs,
   validateAgentCommand,
 } from "./agent-commands.ts";
 
@@ -89,4 +92,24 @@ test("error message echoes the offending type for triage", () => {
   // Useful when scanning logs — the bad value is visible without re-reading the body.
   const err = validateAgentCommand({ type: "DROP TABLE" })!;
   assert.ok(err.includes("DROP TABLE"));
+});
+
+test("压缩/分叉/重载扩展拿到长超时，其余命令走默认 15s", () => {
+  for (const type of ["compact", "fork", "reload_resources"]) {
+    assert.equal(
+      agentCommandTimeoutMs({ type }),
+      LONG_RUNNING_AGENT_COMMAND_TIMEOUT_MS,
+      `${type} 不该套默认 15s`,
+    );
+  }
+  for (const type of ["prompt", "abort", "get_state", "set_model", "set_thinking_level"]) {
+    assert.equal(agentCommandTimeoutMs({ type }), undefined, `${type} 应走默认值`);
+  }
+  assert.equal(agentCommandTimeoutMs(null), undefined);
+  assert.equal(agentCommandTimeoutMs("compact"), undefined);
+});
+
+test("长超时确实远大于默认值", () => {
+  assert.ok(LONG_RUNNING_AGENT_COMMAND_TIMEOUT_MS >= 5 * 60_000);
+  assert.ok(AGENT_ENSURE_TIMEOUT_MS >= 60_000);
 });

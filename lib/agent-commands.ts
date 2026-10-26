@@ -36,6 +36,32 @@ export const AGENT_COMMAND_TYPES: ReadonlySet<AgentCommandType> = new Set(
 );
 
 /**
+ * RPC 默认超时是 15s（lib/agent-host-client.ts），只够一次快速往返。
+ * 下面这些命令要等一次真实模型往返或重建整个 AgentSession，几分钟很正常：
+ * 用默认超时会把「压缩还在跑」误报成 `agent.command timed out after 15000ms`，
+ * 用户再点一次又撞上 Host 的 `Session is streaming`。
+ */
+export const LONG_RUNNING_AGENT_COMMAND_TIMEOUT_MS = 10 * 60_000;
+
+/** 冷启动大会话（几百 MB jsonl + 扩展加载）同样可能超过 15s。 */
+export const AGENT_ENSURE_TIMEOUT_MS = 5 * 60_000;
+
+const LONG_RUNNING_AGENT_COMMANDS: ReadonlySet<string> = new Set([
+  "compact",
+  "fork",
+  "reload_resources",
+]);
+
+/** 给 `agent.command` 选一个 RPC 超时；`undefined` 表示走客户端默认值。 */
+export function agentCommandTimeoutMs(body: unknown): number | undefined {
+  const type = (body as { type?: unknown } | null | undefined)?.type;
+  if (typeof type !== "string") return undefined;
+  return LONG_RUNNING_AGENT_COMMANDS.has(type)
+    ? LONG_RUNNING_AGENT_COMMAND_TIMEOUT_MS
+    : undefined;
+}
+
+/**
  * Minimal structural validation for an incoming agent command.
  * Returns an error message string if invalid, null if valid.
  *

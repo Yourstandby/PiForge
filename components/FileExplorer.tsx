@@ -40,6 +40,206 @@ interface GitMark {
 
 type GitStatusMap = Record<string, GitMark>;
 
+function parentDirOf(filePath: string): string {
+  const index = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
+  return index > 0 ? filePath.slice(0, index) : filePath;
+}
+
+interface MenuItemSpec {
+  label: string;
+  run: () => void;
+  danger?: boolean;
+}
+
+/** 文件树右键菜单：固定定位浮层，点空白处关闭。 */
+function ContextMenu({
+  x,
+  y,
+  items,
+  onClose,
+}: {
+  x: number;
+  y: number;
+  items: MenuItemSpec[];
+  onClose: () => void;
+}) {
+  const [hovered, setHovered] = useState<string | null>(null);
+  const [viewport, setViewport] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setViewport({ width: window.innerWidth, height: window.innerHeight });
+  }, []);
+
+  const width = 188;
+  const height = items.length * 27 + 8;
+  const left = Math.max(6, Math.min(x, (viewport.width || 1440) - width - 8));
+  const top = Math.max(6, Math.min(y, (viewport.height || 900) - height - 8));
+
+  return (
+    <div
+      style={{ position: "fixed", inset: 0, zIndex: 90 }}
+      onMouseDown={onClose}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
+    >
+      <div
+        onMouseDown={(event) => event.stopPropagation()}
+        style={{
+          position: "absolute",
+          left,
+          top,
+          width,
+          padding: 4,
+          background: "var(--bg-elevated)",
+          border: "1px solid var(--border)",
+          borderRadius: 8,
+          boxShadow: "0 10px 28px rgba(15, 23, 42, 0.16)",
+        }}
+      >
+        {items.map((item) => (
+          <button
+            key={item.label}
+            type="button"
+            onMouseEnter={() => setHovered(item.label)}
+            onMouseLeave={() => setHovered(null)}
+            onClick={item.run}
+            style={{
+              display: "block",
+              width: "100%",
+              padding: "5px 10px",
+              border: "none",
+              borderRadius: 5,
+              background: hovered === item.label ? "var(--bg-hover)" : "transparent",
+              color: item.danger ? "var(--danger)" : "var(--text)",
+              fontSize: 12,
+              textAlign: "left",
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** 重命名 / 新建 的少量文本输入：Electron 里没有 window.prompt，只能自带弹层。 */
+function FileOpPrompt({
+  title,
+  value,
+  busy,
+  error,
+  onChange,
+  onCancel,
+  onSubmit,
+}: {
+  title: string;
+  value: string;
+  busy: boolean;
+  error: string | null;
+  onChange: (value: string) => void;
+  onCancel: () => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 95,
+        background: "rgba(15, 23, 42, 0.18)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+      onMouseDown={onCancel}
+    >
+      <div
+        onMouseDown={(event) => event.stopPropagation()}
+        style={{
+          width: 300,
+          padding: 14,
+          background: "var(--bg-elevated)",
+          border: "1px solid var(--border)",
+          borderRadius: 10,
+          boxShadow: "0 16px 40px rgba(15, 23, 42, 0.2)",
+        }}
+      >
+        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", marginBottom: 8 }}>{title}</div>
+        <input
+          autoFocus
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              onSubmit();
+            }
+            if (event.key === "Escape") {
+              event.preventDefault();
+              onCancel();
+            }
+          }}
+          style={{
+            width: "100%",
+            height: 28,
+            padding: "0 8px",
+            fontSize: 12,
+            color: "var(--text)",
+            background: "var(--bg)",
+            border: "1px solid var(--border)",
+            borderRadius: 6,
+            outline: "none",
+          }}
+        />
+        {error && <div style={{ marginTop: 6, fontSize: 11, color: "var(--danger)" }}>{error}</div>}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 6, marginTop: 10 }}>
+          <button
+            type="button"
+            onClick={onCancel}
+            style={{
+              height: 26,
+              padding: "0 12px",
+              fontSize: 12,
+              color: "var(--text-secondary)",
+              background: "transparent",
+              border: "1px solid var(--border)",
+              borderRadius: 6,
+              cursor: "pointer",
+            }}
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onSubmit}
+            style={{
+              height: 26,
+              padding: "0 12px",
+              fontSize: 12,
+              fontWeight: 600,
+              color: "#FFFFFF",
+              background: "var(--accent)",
+              border: "none",
+              borderRadius: 6,
+              cursor: busy ? "default" : "pointer",
+              opacity: busy ? 0.6 : 1,
+            }}
+          >
+            {busy ? "处理中…" : "确定"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function changedMark(status: string): { label: string; color: string; title: string } {
   const code = status.replace(/\s+/g, "");
   if (code === "??") {
@@ -91,6 +291,7 @@ function TreeNode({
   onToggleExpanded,
   refreshKey,
   gitStatus,
+  onContextMenuNode,
 }: {
   node: FileNode;
   depth: number;
@@ -102,6 +303,7 @@ function TreeNode({
   onToggleExpanded: (fullPath: string, open: boolean) => void;
   refreshKey?: number;
   gitStatus: GitStatusMap;
+  onContextMenuNode: (node: FileNode, x: number, y: number) => void;
 }) {
   const { t } = useI18n();
   const open = expandedPaths.has(node.fullPath);
@@ -164,6 +366,11 @@ function TreeNode({
           event.dataTransfer.setData(FILE_DRAG_MIME, node.fullPath);
           event.dataTransfer.setData("text/plain", `@${getRelativeFilePath(node.fullPath, cwd)}`);
           event.dataTransfer.effectAllowed = "copy";
+        }}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onContextMenuNode(node, event.clientX, event.clientY);
         }}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
@@ -284,7 +491,7 @@ function TreeNode({
       {node.isDir && open && (
         <div>
           {children.map((child) => (
-            <TreeNode key={child.fullPath} node={child} depth={depth + 1} cwd={cwd} onOpenFile={onOpenFile} onOpenDiff={onOpenDiff} onAtMention={onAtMention} expandedPaths={expandedPaths} onToggleExpanded={onToggleExpanded} refreshKey={refreshKey} gitStatus={gitStatus} />
+            <TreeNode key={child.fullPath} node={child} depth={depth + 1} cwd={cwd} onOpenFile={onOpenFile} onOpenDiff={onOpenDiff} onAtMention={onAtMention} expandedPaths={expandedPaths} onToggleExpanded={onToggleExpanded} refreshKey={refreshKey} gitStatus={gitStatus} onContextMenuNode={onContextMenuNode} />
           ))}
           {children.length === 0 && loaded && (
             <div style={{ paddingLeft: 8 + (depth + 1) * 14, fontSize: 11, color: "var(--text-dim)", height: 22, display: "flex", alignItems: "center" }}>
@@ -307,6 +514,55 @@ export function FileExplorer({ cwd, onOpenFile, onOpenDiff, refreshKey, onAtMent
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
   const [gitStatus, setGitStatus] = useState<GitStatusMap>({});
   const prevCwdRef = useRef<string | null>(null);
+
+  // ---- 文件操作（右键菜单）：复制 / 剪切 / 粘贴 / 重命名 / 删除 / 新建 / 在资源管理器中显示 ----
+  const [menu, setMenu] = useState<{ node: FileNode; x: number; y: number } | null>(null);
+  const [clipboard, setClipboard] = useState<{ path: string; name: string; mode: "copy" | "move" } | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [prompt, setPrompt] = useState<{ kind: "rename" | "newfile" | "newfolder"; target: string; value: string } | null>(null);
+  const [opBusy, setOpBusy] = useState(false);
+  const [opError, setOpError] = useState<string | null>(null);
+  // 菜单操作成功后自己的刷新位（父级 refreshKey 只在 agent 写文件时 bump）
+  const [localRefresh, setLocalRefresh] = useState(0);
+  const treeRefreshKey = (refreshKey ?? 0) + localRefresh;
+
+  const runFileOp = useCallback(async (target: string, body: Record<string, unknown>) => {
+    setOpBusy(true);
+    setOpError(null);
+    try {
+      const res = await fetch(`/api/files/${encodeFilePathForApi(target)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = (await res.json().catch(() => null)) as { error?: string } | null;
+      if (!res.ok) {
+        setOpError(payload?.error ?? `操作失败（HTTP ${res.status}）`);
+        setOpBusy(false);
+        return false;
+      }
+      setOpBusy(false);
+      setMenu(null);
+      setPendingDelete(null);
+      setPrompt(null);
+      setLocalRefresh((tick) => tick + 1);
+      return true;
+    } catch (error) {
+      setOpBusy(false);
+      setOpError(error instanceof Error ? error.message : String(error));
+      return false;
+    }
+  }, []);
+
+  const revealInOs = useCallback((fullPath: string) => {
+    const api = (window as unknown as { electronAPI?: { revealPath?: (target: string) => Promise<unknown> } }).electronAPI;
+    if (api?.revealPath) {
+      void api.revealPath(fullPath);
+      return;
+    }
+    // 浏览器 dev 版没有 shell：退化成复制路径，别静默无反应。
+    void navigator.clipboard?.writeText(fullPath).catch(() => {});
+  }, []);
 
   // Git status poll：每次都要起一个 `git status` 子进程，0.9.0 的 5s 一轮在空闲时
   // 就是持续的后台开销（日志里 /api/git/status 一直在跑）。改成 20s，且只在
@@ -375,7 +631,7 @@ export function FileExplorer({ cwd, onOpenFile, onOpenDiff, refreshKey, onAtMent
       })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false));
-  }, [cwd, refreshKey, retryTick]);
+  }, [cwd, refreshKey, retryTick, localRefresh]);
 
   // 传输层错误（Host 管道未就绪）→ 每 2s 自动重试一次，最多 15 次；
   // 引擎起来后文件树会自己恢复，不需要用户手动刷新。
@@ -448,14 +704,134 @@ export function FileExplorer({ cwd, onOpenFile, onOpenDiff, refreshKey, onAtMent
           onAtMention={onAtMention}
           expandedPaths={expandedPaths}
           onToggleExpanded={handleToggleExpanded}
-          refreshKey={refreshKey}
+          refreshKey={treeRefreshKey}
           gitStatus={gitStatus}
+          onContextMenuNode={(target, x, y) => {
+            setMenu({ node: target, x, y });
+            setPendingDelete(null);
+            setOpError(null);
+          }}
         />
       ))}
       {roots.length === 0 && (
         <div style={{ padding: "8px 12px", fontSize: 11, color: "var(--text-dim)" }}>
           No files found
         </div>
+      )}
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => {
+            setMenu(null);
+            setPendingDelete(null);
+          }}
+          items={[
+            {
+              label: "复制路径",
+              run: () => {
+                void navigator.clipboard?.writeText(menu.node.fullPath).catch(() => {});
+                setMenu(null);
+              },
+            },
+            {
+              label: "复制",
+              run: () => {
+                setClipboard({ path: menu.node.fullPath, name: menu.node.name, mode: "copy" });
+                setMenu(null);
+              },
+            },
+            {
+              label: "剪切",
+              run: () => {
+                setClipboard({ path: menu.node.fullPath, name: menu.node.name, mode: "move" });
+                setMenu(null);
+              },
+            },
+            ...(clipboard && menu.node.isDir && parentDirOf(clipboard.path) !== menu.node.fullPath
+              ? [
+                  {
+                    label: `粘贴「${clipboard.name}」`,
+                    run: () => {
+                      void runFileOp(clipboard.path, { op: clipboard.mode, to: menu.node.fullPath }).then((ok) => {
+                        if (ok) setClipboard(null);
+                      });
+                    },
+                  },
+                ]
+              : []),
+            {
+              label: "在资源管理器中显示",
+              run: () => {
+                revealInOs(menu.node.fullPath);
+                setMenu(null);
+              },
+            },
+            {
+              label: "重命名",
+              run: () => {
+                setPrompt({ kind: "rename", target: menu.node.fullPath, value: menu.node.name });
+                setOpError(null);
+              },
+            },
+            ...(menu.node.isDir
+              ? [
+                  {
+                    label: "新建文件",
+                    run: () => {
+                      setPrompt({ kind: "newfile", target: menu.node.fullPath, value: "" });
+                      setOpError(null);
+                    },
+                  },
+                  {
+                    label: "新建文件夹",
+                    run: () => {
+                      setPrompt({ kind: "newfolder", target: menu.node.fullPath, value: "" });
+                      setOpError(null);
+                    },
+                  },
+                ]
+              : []),
+            pendingDelete === menu.node.fullPath
+              ? {
+                  label: "确认删除（不可撤销）",
+                  danger: true,
+                  run: () => {
+                    void runFileOp(menu.node.fullPath, { op: "delete" });
+                  },
+                }
+              : {
+                  label: "删除",
+                  danger: true,
+                  run: () => setPendingDelete(menu.node.fullPath),
+                },
+          ]}
+        />
+      )}
+      {prompt && (
+        <FileOpPrompt
+          title={prompt.kind === "rename" ? "重命名" : prompt.kind === "newfile" ? "新建文件" : "新建文件夹"}
+          value={prompt.value}
+          busy={opBusy}
+          error={opError}
+          onChange={(value) => setPrompt((prev) => (prev ? { ...prev, value } : prev))}
+          onCancel={() => {
+            setPrompt(null);
+            setOpError(null);
+          }}
+          onSubmit={() => {
+            const name = prompt.value.trim();
+            if (!name) {
+              setOpError("名字不能为空");
+              return;
+            }
+            const body =
+              prompt.kind === "rename"
+                ? { op: "rename", name }
+                : { op: prompt.kind === "newfile" ? "touch" : "mkdir", name };
+            void runFileOp(prompt.target, body);
+          }}
+        />
       )}
     </div>
   );

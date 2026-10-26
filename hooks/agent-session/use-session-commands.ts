@@ -194,7 +194,9 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
           message: COMPACT_SKIP_TEXT[result.reason ?? ""] ?? "暂无新的历史可压缩",
         };
       }
-      await loadSession(sid, true);
+      // 压缩成功后刷新失败（大会话的 loadSession 有 15s deadline）不能算压缩失败：
+      // 上下文已经在 Host 侧压完了，compaction_end 事件还会再触发 reloadSession。
+      await loadSession(sid, true).catch(() => {});
       return {
         ok: true,
         tokensBefore: typeof result?.tokensBefore === "number" ? result.tokensBefore : null,

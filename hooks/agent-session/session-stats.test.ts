@@ -52,6 +52,8 @@ test("sums assistant usage and cost and calculates cacheHitRate", () => {
     tokens: { input: 11, output: 22, cacheRead: 33, cacheWrite: 44, total: 110 },
     cacheHitRate: 37.5,
     cost: 11,
+    costUsd: 11,
+    costCny: 0,
   });
 });
 
@@ -78,6 +80,8 @@ test("sums reasoning tokens separately without adding them to total", () => {
     tokens: { input: 10, output: 20, cacheRead: 0, cacheWrite: 0, reasoning: 8, total: 30 },
     cacheHitRate: 0,
     cost: 3,
+    costUsd: 3,
+    costCny: 0,
   });
 });
 
@@ -130,4 +134,51 @@ test("calculateSessionActivity is zeroed out for an empty transcript", () => {
     turns: 0,
     toolCalls: { total: 0, byTool: [] },
   });
+});
+
+import { registerModelCurrencies } from "./session-stats.ts";
+
+test("keeps CNY-priced models in their own bucket instead of converting them again", () => {
+  registerModelCurrencies({ "deepseek/deepseek-flash": "CNY" });
+  const messages: AgentMessage[] = [
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "ok" }],
+      model: "deepseek-flash",
+      provider: "deepseek",
+      usage: {
+        input: 1000,
+        output: 1000,
+        cacheRead: 0,
+        cacheWrite: 0,
+        cost: { input: 0.3, output: 1.2, cacheRead: 0, cacheWrite: 0, total: 1.5 },
+      },
+    },
+  ];
+  const stats = calculateSessionStats(messages);
+  assert.equal(stats?.costUsd, 0);
+  assert.equal(stats?.costCny, 1.5);
+  assert.equal(stats?.cost, 1.5);
+  registerModelCurrencies(null);
+});
+
+test("usage.cost.currency wins over the model registry", () => {
+  registerModelCurrencies(null);
+  const messages: AgentMessage[] = [
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "ok" }],
+      model: "deepseek-flash",
+      provider: "deepseek",
+      usage: {
+        input: 1,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 2, currency: "CNY" },
+      },
+    },
+  ];
+  assert.equal(calculateSessionStats(messages)?.costCny, 2);
+  assert.equal(calculateSessionStats(messages)?.costUsd, 0);
 });

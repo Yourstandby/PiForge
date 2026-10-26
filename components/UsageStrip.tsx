@@ -23,10 +23,11 @@ export interface UsageStripProps {
   onRefresh?: () => void;
 }
 
+/** Token 数一律取整：1_048_576 → "1M"，不再出现 "1.0M" 这种小数。 */
 function compactTokens(value: number): string {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000_000) return `${Math.round(value / 1_000_000)}M`;
   if (value >= 1000) return `${Math.round(value / 1000)}k`;
-  return String(value);
+  return String(Math.round(value));
 }
 
 /**
@@ -49,34 +50,42 @@ export const UsageStrip = React.memo(function UsageStrip({
   onRefresh,
 }: UsageStripProps) {
   const { t } = useI18n();
-  const { format4: formatMoney4 } = useCurrency();
+  const { formatCost } = useCurrency();
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
   const costRef = useRef<HTMLSpanElement>(null);
 
   const tks = sessionStats?.tokens;
-  const cost = sessionStats?.cost ?? 0;
+  // 会话成本按币种分桶：USD 桶按实盘汇率折算，CNY 桶原样计入。
+  const costUsd = sessionStats?.costUsd ?? sessionStats?.cost ?? 0;
+  const costCny = sessionStats?.costCny ?? 0;
 
   /**
    * 汇率格式化函数每次渲染都是新引用：放进 ref，避免 effect 在流式期间
    * 每次渲染都退订重订（订阅抖动会让数字短暂回跳）。
    */
-  const moneyRef = useRef(formatMoney4);
-  moneyRef.current = formatMoney4;
+  const moneyRef = useRef(formatCost);
+  moneyRef.current = formatCost;
+  const costUsdRef = useRef(costUsd);
+  costUsdRef.current = costUsd;
+  const costCnyRef = useRef(costCny);
+  costCnyRef.current = costCny;
 
   useEffect(() => {
     const setText = (el: HTMLSpanElement | null, text: string) => {
       if (!el || el.textContent === text) return;
       el.textContent = text;
     };
-    const render = (value: number) =>
-      setText(costRef.current, value > 0 ? moneyRef.current(value) : moneyRef.current(0));
-    render(cost);
+    const render = (usd: number, cny: number) => {
+      const hasAny = usd > 0 || cny > 0;
+      setText(costRef.current, moneyRef.current({ usd: hasAny ? usd : 0, cny: hasAny ? cny : 0 }));
+    };
+    render(costUsd, costCny);
     return subscribeLiveUsage((live) => {
-      render(cost + (live?.cost ?? 0));
+      render(costUsdRef.current + (live?.cost ?? 0), costCnyRef.current);
     });
-  }, [cost]);
+  }, [costUsd, costCny]);
 
   const toggle = useCallback(() => {
     if (containerRef.current) {
@@ -149,7 +158,7 @@ export const UsageStrip = React.memo(function UsageStrip({
           <span className="flex shrink-0 items-center gap-1">
             <span>{t("usage.strip.cost")}</span>
             <span ref={costRef} className="font-medium text-ink">
-              {formatMoney4(cost)}
+              {formatCost({ usd: costUsd, cny: costCny })}
             </span>
           </span>
         )}

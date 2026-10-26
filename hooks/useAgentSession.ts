@@ -15,6 +15,7 @@ import { formatCodemodeProgressFromResult } from "@/lib/codemode-progress";
 import {
   calculateSessionActivity,
   calculateSessionStats,
+  registerModelCurrencies,
   type SessionStats,
 } from "./agent-session/session-stats";
 import { type AgentPhase } from "./agent-session/agent-phase";
@@ -378,9 +379,25 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           : currentModel,
     [autoRouting, isNew, newSessionModel, currentModel],
   );
+  // 计价方案（每个模型的计价币种）随模型配置变化，版本号变化时重算会话成本。
+  const [pricingVersion, setPricingVersion] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/model-pricing")
+      .then((res) => (res.ok ? (res.json() as Promise<{ currencies?: Record<string, string> }>) : null))
+      .then((data) => {
+        if (cancelled) return;
+        registerModelCurrencies(data?.currencies ?? null);
+        setPricingVersion((v) => v + 1);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const calculatedSessionStats = useMemo(
     () => calculateSessionStats(messages),
-    [messages],
+    [messages, pricingVersion],
   );
   const contextChars = useMemo(
     () =>

@@ -7,6 +7,13 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { spawn, spawnSync } from "child_process";
 import net from "net";
 import { createTray } from "./tray";
+import {
+  CLOSE_PREFERENCE_FILENAME,
+  isCloseAction,
+  readClosePreference,
+  writeClosePreference,
+  type CloseAction,
+} from "./close-preference";
 import { waitForNextServerReady } from "./server-wait";
 import { killProcessDescendants, killProcessTree } from "./process-tree";
 import { childProcessEnv } from "./env-filter";
@@ -1027,13 +1034,32 @@ function createWindow(options: { initialPath?: string; showStartup?: boolean } =
     lastFocusedWindow = window;
   });
 
-  // The primary window hides to the tray (tray app behaviour). Extra project
-  // windows close normally so they do not accumulate as invisible windows.
+  // 主窗口点关闭走「最小化到托盘 / 退出程序」询问（记住的选择存在
+  // `<userData>/close-preference.json`，托盘菜单也能改）。额外的项目窗口正常关闭，
+  // 免得堆一堆看不见的窗口。
   window.on("close", (e) => {
-    if (!isQuitting && window === mainWindow) {
+    if (isQuitting || window !== mainWindow) return;
+    const remembered = getClosePreference();
+    if (remembered === "minimize") {
       e.preventDefault();
+      logInfo("close window -> hide to tray (remembered)");
       window.hide();
+      return;
     }
+    if (remembered === "quit") {
+      // 走正常退出流程（before-quit → Host 排空 → 回收子进程树），
+      // 不要 app.exit(0)：那会跳过 Host 的进程树回收，留下孤儿 dev server。
+      e.preventDefault();
+      logInfo("close window -> quit (remembered)");
+      requestQuit("window-close");
+      return;
+    }
+    e.preventDefault();
+    if (closePromptOpen) return;
+    closePromptOpen = true;
+    void promptCloseAction(window).finally(() => {
+      closePromptOpen = false;
+    });
   });
 
   window.on("closed", () => {
@@ -1048,6 +1074,77 @@ function createWindow(options: { initialPath?: string; showStartup?: boolean } =
   });
 
   return window;
+}
+
+// ---------------------------------------------------------------------------
+// Close-to-tray preference & prompt
+// ---------------------------------------------------------------------------
+let closePromptOpen = false;
+/** 偏好缓存：点关闭是同步事件，每次读盘没必要，但托盘菜单改了要同步回来。 */
+let cachedClosePreference: CloseAction | null = null;
+
+function closePreferencePath(): string {
+  return path.join(app.getPath("userData"), CLOSE_PREFERENCE_FILENAME);
+}
+
+function getClosePreference(): CloseAction {
+  if (!cachedClosePreference) {
+    cachedClosePreference = readClosePreference(closePreferencePath());
+  }
+  return cachedClosePreference;
+}
+
+function setClosePreference(action: CloseAction): void {
+  const next: CloseAction = isCloseAction(action) ? action : "ask";
+  cachedClosePreference = next;
+  try {
+    writeClosePreference(closePreferencePath(), next);
+    logInfo("close preference saved", { action: next });
+  } catch (err) {
+    logError("close preference write failed", {
+      action: next,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+function requestQuit(reason: string): void {
+  logInfo("quit requested", { reason });
+  setQuitting(true);
+  app.quit();
+}
+
+async function promptCloseAction(window: BrowserWindow): Promise<void> {
+  if (window.isDestroyed()) return;
+  let result: Electron.MessageBoxReturnValue;
+  try {
+    result = await dialog.showMessageBox(window, {
+      type: "question",
+      title: "关闭 PiForge",
+      message: "要最小化到托盘，还是退出程序？",
+      detail:
+        "最小化到托盘：窗口隐藏，Agent Host 与后台任务继续运行，可从托盘图标恢复。\n" +
+        "退出程序：先结束所有子进程（Agent Host、后台服务、开发服务器），再关闭程序。",
+      buttons: ["最小化到托盘", "退出程序"],
+      defaultId: 0,
+      // Esc / 直接叉掉询问框 = 最小化，绝不因为误触把进程全杀光。
+      cancelId: 0,
+      noLink: true,
+      checkboxLabel: "记住我的选择（下次不再询问）",
+      checkboxChecked: false,
+    });
+  } catch (err) {
+    logError("close dialog failed", { error: err instanceof Error ? err.message : String(err) });
+    return;
+  }
+  const action: CloseAction = result.response === 1 ? "quit" : "minimize";
+  logInfo("close dialog response", { action, remember: result.checkboxChecked });
+  if (result.checkboxChecked) setClosePreference(action);
+  if (action === "quit") {
+    requestQuit("close-dialog");
+  } else if (!window.isDestroyed()) {
+    window.hide();
+  }
 }
 
 async function loadAppUrl(window: BrowserWindow, port: number, appPath: string): Promise<void> {
@@ -1503,6 +1600,19 @@ function registerIpcHandlers() {
     return result.canceled ? null : (result.filePaths[0] ?? null);
   });
 
+  /**
+   * 文件树右键菜单「在资源管理器中显示」。
+   * 只做定位（showItemInFolder），不接受 shell.openPath —— 那等于给渲染层
+   * 一个能执行任意路径的开关。
+   */
+  ipcMain.handle("files:reveal", async (_event, target: unknown) => {
+    if (typeof target !== "string" || !target.trim()) {
+      return { ok: false, error: "invalid path" };
+    }
+    shell.showItemInFolder(target);
+    return { ok: true };
+  });
+
   ipcMain.handle("new-window", async (_event, requestedPath: unknown) => {
     openNewWindow(normalizeWindowPath(requestedPath));
     return { ok: true };
@@ -1793,7 +1903,10 @@ app.whenReady().then(async () => {
     serverState = "starting";
     createWindow();
     logStartupTiming("window created");
-    createTray(mainWindow!, { onNewWindow: () => { openNewWindow(); } });
+    createTray(mainWindow!, {
+      onNewWindow: () => { openNewWindow(); },
+      closePreference: { get: getClosePreference, set: setClosePreference },
+    });
     startupUiReady = true;
 
     if (USE_NEXT_SERVER) {

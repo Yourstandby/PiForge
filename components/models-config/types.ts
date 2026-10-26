@@ -24,6 +24,27 @@ export type OAuthLoginState =
   | { phase: "success" }
   | { phase: "error"; message: string };
 
+export type ModelCostCurrency = "USD" | "CNY";
+
+/** 分档：单次请求输入超过 inputTokensAbove 后，整单改用该档单价（pi 的 calculateCost 应用）。 */
+export interface ModelCostTier {
+  inputTokensAbove: number;
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+}
+
+/** 计价方案：单价按「每百万 tokens」；currency 缺省 USD（pi schema 的默认语义）。 */
+export interface ModelCost {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  currency?: ModelCostCurrency;
+  tiers?: ModelCostTier[];
+}
+
 export interface ModelEntry {
   id: string;
   name?: string;
@@ -33,7 +54,7 @@ export interface ModelEntry {
   input?: string[];
   contextWindow?: number;
   maxTokens?: number;
-  cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
+  cost?: ModelCost;
   compat?: Record<string, unknown>;
 }
 
