@@ -38,6 +38,15 @@ const runtimeAssets = [
    * 所有超限图片被 "[Image omitted: could not be resized…]" 吃掉。
    */
   ["node_modules/@earendil-works/pi-coding-agent/node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm", "photon_rs_bg.wasm"],
+  /**
+   * codemode 的 QuickJS worker 入口。SDK 在 `PI_BUNDLED_NODE` 为真时走
+   * `resolveCodemodeWorkerSpecifier` 的 bundled-node 分支：
+   * `new URL("./codemode-worker.js", import.meta.url)`（见 pi-coding-agent/dist/config.js）。
+   * bundle 之后 import.meta.url 就是 host.mjs，所以必须把这个 chunk 复制到 bundle 旁边，
+   * 否则 codemode 工具整体不可用（报 ENOENT .../agent-host/codemode-worker.js，
+   * 打包版 0.11.x 中招，2026-10-26 修）。
+   */
+  ["node_modules/@earendil-works/pi-coding-agent/dist/bundle/chunks/codemode-worker.js", "codemode-worker.js"],
 ];
 
 if (!existsSync(entry)) {
