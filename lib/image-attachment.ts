@@ -5,13 +5,19 @@
  *   1. **看得清**：视觉模型的输入分辨率上限就在 1568px 长边（再大也会被服务端
  *      缩回去）。与其让服务端缩，不如在本地先缩到上限 —— 模型看到的信息完全
  *      一样，网络上传的体积和计费 token 却按 4~10 倍下降。
- *   2. **不卡**：解码/缩放走 `createImageBitmap` + `OffscreenCanvas`（合成线程
- *      上跑），主线程只等一次 Promise；任何一步不可用都退回原始文件读取，
- *      绝不因为优化让图片贴不进去。
+ *   2. **不卡**：`createImageBitmap` 只解码一次，缩放只走一遍 canvas 绘制；
+ *      输入框的占位缩略图由 Composer 用原文件 object URL 先行显示（粘贴当帧
+ *      就可见）。任何一步不可用都退回原始文件读取，绝不因为优化让图片贴不进去。
  *
  * 纯计算部分（`estimateImageTokens` / `shouldDownscale` / `imageExtensionForMime`）
  * 单独导出，方便单测。
+ *
+ * 实际的重活（解码 / 缩放 / 编码 / base64）默认在 `lib/image-worker.ts` 的
+ * OffscreenCanvas worker 里跑；主线程只留 `URL.createObjectURL` 与 setState。
+ * worker 不可用时自动回落到本文件里那条主线程实现。
  */
+import { processImageOffThread } from "./image-worker.ts";
+import type { ImageWorkerOptions } from "./image-worker.ts";
 
 /** 视觉模型的长边上限：超过就被服务端缩，本地先缩省下的是白花的钱。 */
 export const MAX_IMAGE_EDGE = 1568;
@@ -26,6 +32,13 @@ export const MAX_IMAGE_PIXELS = 1_150_000;
 
 /** 小于这个边长、且体积不大的图没必要重编码（重编码本身要时间）。 */
 export const SKIP_DOWNSCALE_BYTES = 400 * 1024;
+
+/**
+ * 尺寸已在像素预算内时，不超过这个体积就**原样发送**：重编码既不省 token
+ * （像素没变），又要多付一次 draw + JPEG 编码的时间，还会把清晰度换掉。
+ * 只有超大的图才为了上传/存档体积退回 JPEG。
+ */
+export const RAW_PASSTHROUGH_MAX_BYTES = 6 * 1024 * 1024;
 
 /** 为什么先缩再发是"免费"的：超过这个边长服务端也会缩回去。 */
 export const SCHEDULE_HINT =
@@ -48,8 +61,11 @@ export interface ProcessedImage {
   originalBytes: number;
   /** 缩略图 object URL（≤THUMB_EDGE）：贴图条用它，避免为 56px 预览解码整张原图。 */
   previewUrl: string;
-  /** 降采样后的整图 object URL（给大图查看器看，别拿 base64 那串糊图）。 */
-  fullUrl: string;
+  /**
+   * **原始文件**（未重编码）的 object URL：查看器 / 下载 / 复制用它。
+   * 发给模型的那份为了省 token 降过采样，但「点开看大图」必须还是原图。
+   */
+  originalUrl: string;
 }
 
 /** 缩略图长边：贴图条只显示 56px，没必要为它解码一张 4K 原图。 */
@@ -57,6 +73,16 @@ export const THUMB_EDGE = 160;
 
 /** 缩略图 JPEG 质量（这么小的图，0.75 看不出差别）。 */
 const THUMB_QUALITY = 0.75;
+
+/** worker 侧需要与主线程完全一致的口径，漏一个就会出现「贴图和发送不等价」。 */
+const WORKER_OPTIONS: ImageWorkerOptions = {
+  maxEdge: MAX_IMAGE_EDGE,
+  maxPixels: MAX_IMAGE_PIXELS,
+  passthroughBytes: RAW_PASSTHROUGH_MAX_BYTES,
+  thumbEdge: THUMB_EDGE,
+  thumbQuality: THUMB_QUALITY,
+  jpegQuality: JPEG_QUALITY,
+};
 
 /** 这些格式重编码会丢东西（GIF 动画、SVG 矢量），一律原样发送。 */
 const NO_REENCODE = /^image\/(gif|svg\+xml)$/i;
@@ -122,9 +148,11 @@ export function fitWithin(
   const edgeRatio = Math.min(1, maxEdge / Math.max(width, height));
   const pixelRatio = Math.min(1, Math.sqrt(maxPixels / (width * height)));
   const ratio = Math.min(edgeRatio, pixelRatio);
+  // floor 而不是 round：4000×3000 按像素预算算出的 1238.5px 一四舍五入就多出
+  // 102 像素（1150102 > 1150000），刚好把自己踢出预算（真机 smoke 拓到的）。
   return {
-    width: Math.max(1, Math.round(width * ratio)),
-    height: Math.max(1, Math.round(height * ratio)),
+    width: Math.max(1, Math.floor(width * ratio)),
+    height: Math.max(1, Math.floor(height * ratio)),
   };
 }
 
@@ -156,37 +184,6 @@ function canvasToBlob(
       resolve(null);
     }
   });
-}
-
-/**
- * 缩放解码：`createImageBitmap` 的 resize 选项在**工作线程**里完成解码 + 重采样，
- * 主线程拿到的已经是一张目标尺寸的小图。贴图时的卡顿原先就出在主线程
- * `drawImage(4K 原图, 0, 0, 1568, ...)` 这一下。
- */
-async function decodeResized(
-  file: File,
-  target: { width: number; height: number },
-): Promise<Decoded | null> {
-  if (typeof createImageBitmap !== "function") return null;
-  try {
-    const bitmap = await createImageBitmap(file, {
-      resizeWidth: target.width,
-      resizeHeight: target.height,
-      resizeQuality: "high",
-    });
-    if (!bitmap.width || !bitmap.height) {
-      bitmap.close?.();
-      return null;
-    }
-    return {
-      width: bitmap.width,
-      height: bitmap.height,
-      draw: bitmap,
-      release: () => bitmap.close?.(),
-    };
-  } catch {
-    return null;
-  }
 }
 
 async function decodeSize(file: File): Promise<Decoded | null> {
@@ -233,7 +230,7 @@ function rawAttachment(
   dataUrl: string,
   file: File,
   originalBytes: number,
-): Omit<ProcessedImage, "previewUrl" | "fullUrl"> {
+): Omit<ProcessedImage, "previewUrl" | "originalUrl"> {
   const comma = dataUrl.indexOf(",");
   const meta = comma >= 0 ? dataUrl.slice(0, comma) : "";
   const mimeType =
@@ -251,15 +248,34 @@ function rawAttachment(
 /**
  * 把用户贴进来 / 拖进来的图片处理成附件。
  *
- * 顺序：解码（`createImageBitmap` 带 resize，缩放跑在工作线程）→ 按「长边 + 像素
- * 预算」定目标尺寸 → DOM canvas 重编码（`toBlob` 在 Electron / 浏览器里最稳）→
- * base64，同时生成一张小缩略图 URL。任何一步失败都退回原始字节：宁可贵一点，
- * 也不能让图片贴不进去。
+ * 顺序：解码一次（`createImageBitmap`）→ 按「长边 + 像素预算」定目标尺寸 →
+ * DOM canvas 缩放 + 重编码（`toBlob` 在 Electron / 浏览器里最稳）→ base64，
+ * 同时生成一张小缩略图 URL。任何一步失败都退回原始字节：宁可贵一点，也不能
+ * 让图片贴不进去。
  *
  * 为什不默认 PNG：截图都是 `image/png` 且名字不叫 screenshot，PNG 编码一张
  * 1.5MP 的图要一两百毫秒且发生在主线程上；除非探测到真有透明像素，一律用 JPEG。
  */
 export async function processImageFile(file: File): Promise<ProcessedImage> {
+  const offThread = await processImageOffThread(file, WORKER_OPTIONS).catch(() => null);
+  if (offThread) {
+    // 原图 URL 由主线程创建：查看器 / 下载 / 复制都拿这一份（未降采样的原文件）。
+    const originalUrl = URL.createObjectURL(file);
+    return {
+      data: offThread.data,
+      mimeType: offThread.mimeType,
+      width: offThread.width,
+      height: offThread.height,
+      bytes: offThread.bytes,
+      originalBytes: offThread.originalBytes,
+      previewUrl: offThread.thumbnail ? URL.createObjectURL(offThread.thumbnail) : originalUrl,
+      originalUrl,
+    };
+  }
+  return processImageOnMainThread(file);
+}
+
+export async function processImageOnMainThread(file: File): Promise<ProcessedImage> {
   const originalBytes = file.size;
 
   if (NO_REENCODE.test(file.type || "")) return rawProcessed(file, originalBytes);
@@ -270,15 +286,21 @@ export async function processImageFile(file: File): Promise<ProcessedImage> {
       const target = fitWithin(original.width, original.height);
       const sameSize = target.width === original.width && target.height === original.height;
 
-      // 已经够小：不重编码，直接发原始字节（省一次编解码）。
-      if (sameSize && !shouldDownscale(original.width, original.height, originalBytes)) {
+      // 像素已达标：直接发原始字节。省一次 draw + 编码，也保住 PNG 的无损清晰度。
+      if (sameSize && originalBytes <= RAW_PASSTHROUGH_MAX_BYTES) {
         try {
-          const raw = rawAttachment(await readAsDataUrl(file), file, originalBytes);
-          const thumbnail = await makeThumbnail(original.draw, original.width, original.height, false);
+          const originalUrl = URL.createObjectURL(file);
+          // base64 与缩略图并行：两条链都只读源位图，没有先后依赖。
+          const [raw, thumbnail] = await Promise.all([
+            readAsDataUrl(file).then((dataUrl) => rawAttachment(dataUrl, file, originalBytes)),
+            makeThumbnail(original.draw, original.width, original.height, false),
+          ]);
           return {
             ...raw,
-            previewUrl: thumbnail ?? URL.createObjectURL(file),
-            fullUrl: URL.createObjectURL(file),
+            width: original.width,
+            height: original.height,
+            previewUrl: thumbnail ?? originalUrl,
+            originalUrl,
           };
         } catch {
           /* 落到下面的重编码路径 */
@@ -286,8 +308,10 @@ export async function processImageFile(file: File): Promise<ProcessedImage> {
       }
 
       if (target.width > 0 && target.height > 0) {
-        const resized = sameSize ? null : await decodeResized(file, target);
-        const source = resized ?? original;
+        // 只解码一次：再调一次 `createImageBitmap(…, {resizeQuality: "high"})`
+        // 在 4K 截图上要多花 100~200ms。canvas 的 drawImage + high 平滑质量
+        // 画到目标尺寸，肉眼一致，却省掉整条重复解码。
+        const source = original;
         const alpha = hasTransparency(source.draw);
         const mimeType = alpha ? "image/png" : "image/jpeg";
         const canvas = typeof document !== "undefined" ? document.createElement("canvas") : null;
@@ -303,12 +327,15 @@ export async function processImageFile(file: File): Promise<ProcessedImage> {
               context.fillRect(0, 0, target.width, target.height);
             }
             context.drawImage(source.draw, 0, 0, target.width, target.height);
-            const blob = await canvasToBlob(canvas, mimeType);
+            // 整图编码与缩略图编码并行（以前是串行：一次 JPEG 编码等完才开始画缩略图）。
+            const [blob, thumbnail] = await Promise.all([
+              canvasToBlob(canvas, mimeType),
+              makeThumbnail(source.draw, source.width, source.height, alpha),
+            ]);
             if (blob && blob.size > 0) {
+              // 原图 URL 指向原始文件：查看器拿到的永远是没降采样的那张。
+              const originalUrl = URL.createObjectURL(file);
               const data = await blobToBase64(blob);
-              const fullUrl = URL.createObjectURL(blob);
-              const previewUrl =
-                (await makeThumbnail(source.draw, source.width, source.height, alpha)) ?? fullUrl;
               return {
                 data,
                 mimeType,
@@ -316,13 +343,12 @@ export async function processImageFile(file: File): Promise<ProcessedImage> {
                 height: target.height,
                 bytes: blob.size,
                 originalBytes,
-                previewUrl,
-                fullUrl,
+                previewUrl: thumbnail ?? originalUrl,
+                originalUrl,
               };
             }
           }
         }
-        resized?.release();
       }
     } finally {
       original.release();
@@ -336,7 +362,7 @@ export async function processImageFile(file: File): Promise<ProcessedImage> {
 async function rawProcessed(file: File, originalBytes: number): Promise<ProcessedImage> {
   const raw = rawAttachment(await readAsDataUrl(file), file, originalBytes);
   const url = URL.createObjectURL(file);
-  return { ...raw, previewUrl: url, fullUrl: url };
+  return { ...raw, previewUrl: url, originalUrl: url };
 }
 
 /**

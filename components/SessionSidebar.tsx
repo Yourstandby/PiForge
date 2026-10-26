@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo, type ReactNode } from "react";
 import type { SessionInfo } from "@/lib/types";
 import { SidebarHeader } from "./session-sidebar/SidebarHeader";
 import { SessionTreeItem } from "./session-sidebar/SessionTree";
 import { ProjectGroup } from "./session-sidebar/ProjectGroup";
 import { SidebarIcon } from "./session-sidebar/SidebarIcon";
-import { groupProjects, projectKey, searchProjects, sortProjects } from "./session-sidebar/projects";
+import { groupProjects, partitionProjects, projectExpanded, projectKey, recentProjectKeys, searchProjects, sortProjects, type SidebarProject } from "./session-sidebar/projects";
 import { groupSessionNodesByDate } from "./session-sidebar/date-groups";
 import { SortableProjects } from "./session-sidebar/SortableProjects";
 import { useSidebarPreferences } from "./session-sidebar/useSidebarPreferences";
@@ -155,6 +155,14 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const visibleProjects = useMemo(() => searchProjects(sortedProjects, searchQuery), [sortedProjects, searchQuery]);
   const searching = !!searchQuery.trim();
   const activeProjectKey = selectedCwd ? projectKey(selectedCwd) : null;
+  /** 最近活跃的 N 个项目默认展开，其余收进「其他项目」收纳盒。 */
+  const recentKeys = useMemo(() => recentProjectKeys(sortedProjects), [sortedProjects]);
+  const projectPartition = useMemo(() => partitionProjects(visibleProjects, {
+    recentKeys, activeKey: activeProjectKey, expanded: preferences.expanded, autoCollapse: preferences.autoCollapse,
+  }), [visibleProjects, recentKeys, activeProjectKey, preferences.expanded, preferences.autoCollapse]);
+  const isExpanded = useCallback((key: string) => projectExpanded(key, {
+    expanded: preferences.expanded, activeKey: activeProjectKey, recentKeys, searching, autoCollapse: preferences.autoCollapse,
+  }), [preferences.expanded, preferences.autoCollapse, activeProjectKey, recentKeys, searching]);
   // 滚动到底部时用 IntersectionObserver 懒加载：哨兵元素进入视口才拉下一批，
   // 回调里只做一次异步请求，不参与滚动帧。
   const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
@@ -238,6 +246,27 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     }
   }, [projects, preferences.expanded, selectedSessionId]);
 
+  /** 项目行渲染：常规区和「其他项目」收纳盒共用，避免两处行为分叉。 */
+  const renderProject = (project: SidebarProject, dragHandle: ReactNode, dragging: boolean) => (
+    <ProjectGroup project={project} dragHandle={dragHandle} dragging={dragging} expanded={isExpanded(project.key)} active={project.key === activeProjectKey} duplicateName={projects.some((other) => other.key !== project.key && other.name === project.name)} onToggle={(expanded) => {
+      if (searching) setSearchQuery("");
+      setExpanded(project.key, expanded);
+    }} onNewSession={() => newSession(project.cwd)}>
+      {project.sessions.length === 0 && <button className="sidebar-empty-project" onClick={() => newSession(project.cwd)}>{t("sidebar.startFirstSession")}<SidebarIcon name="plus" size={13} /></button>}
+      {groupSessionNodesByDate(project.tree).map((group) => <div key={group.bucket} className="sidebar-date-group-wrap">
+        <div className="sidebar-date-group">{t(`sidebar.date.${group.bucket}`)}</div>
+        {group.nodes.map((node) => <SessionTreeItem key={node.session.id} node={node} selectedSessionId={selectedSessionId} onSelectSession={onSelectSession} onRenamed={() => {
+              invalidateSessions();
+              void loadSessions(false, true);
+            }} onSessionDeleted={(id) => {
+              onSessionDeleted?.(id);
+              invalidateSessions();
+              void loadSessions(false, true);
+            }} onBranchSession={onBranchSession} onCloneSession={onCloneSession} onExportSession={onExportSession} depth={0} searching={searching} openSessionIds={openSessionIds} />)}
+      </div>)}
+    </ProjectGroup>
+  );
+
   useEffect(() => () => {
     if (sessionRefreshTimerRef.current) clearTimeout(sessionRefreshTimerRef.current);
   }, []);
@@ -268,27 +297,28 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         )}
         {!loading && visibleProjects.length === 0 && <div className="sidebar-empty" role="status">{t(searching ? "sidebar.noSearchResults" : "sidebar.noProjects")}</div>}
         <SidebarErrorBoundary onRetry={() => void loadSessions()}>
-        <SortableProjects projects={visibleProjects} disabled={searching || loading} animateChanges={animateProjectSorting && !searching} listRef={projectListRef} onReorder={(projectOrder) => {
-          setPreferences((previous) => ({ ...previous, sortMode: "manual", projectOrder }));
-        }} renderProject={(project, dragHandle, dragging) => (
-          <ProjectGroup project={project} dragHandle={dragHandle} dragging={dragging} expanded={searching || (preferences.expanded[project.key] ?? project.key === activeProjectKey)} active={project.key === activeProjectKey} duplicateName={projects.some((other) => other.key !== project.key && other.name === project.name)} onToggle={(expanded) => {
-            if (searching) setSearchQuery("");
-            setExpanded(project.key, expanded);
-          }} onNewSession={() => newSession(project.cwd)}>
-            {project.sessions.length === 0 && <button className="sidebar-empty-project" onClick={() => newSession(project.cwd)}>{t("sidebar.startFirstSession")}<SidebarIcon name="plus" size={13} /></button>}
-            {groupSessionNodesByDate(project.tree).map((group) => <div key={group.bucket} className="sidebar-date-group-wrap">
-              <div className="sidebar-date-group">{t(`sidebar.date.${group.bucket}`)}</div>
-              {group.nodes.map((node) => <SessionTreeItem key={node.session.id} node={node} selectedSessionId={selectedSessionId} onSelectSession={onSelectSession} onRenamed={() => {
-                    invalidateSessions();
-                    void loadSessions(false, true);
-                  }} onSessionDeleted={(id) => {
-                    onSessionDeleted?.(id);
-                    invalidateSessions();
-                    void loadSessions(false, true);
-                  }} onBranchSession={onBranchSession} onCloneSession={onCloneSession} onExportSession={onExportSession} depth={0} searching={searching} openSessionIds={openSessionIds} />)}
-            </div>)}
-          </ProjectGroup>
-        )} />
+        <SortableProjects projects={projectPartition.main} disabled={searching || loading} animateChanges={animateProjectSorting && !searching} listRef={projectListRef} onReorder={(order) => {
+          // 收纳盒里的项目不参与拖拽，排完接回末尾，避免手动排序丢掉它们的键。
+          const asideKeys = projectPartition.aside.map((project) => project.key);
+          setPreferences((previous) => ({ ...previous, sortMode: "manual", projectOrder: [...order, ...asideKeys] }));
+        }} renderProject={renderProject} />
+        {projectPartition.aside.length > 0 && (
+          <div className="sidebar-project-aside">
+            <button
+              type="button"
+              className="sidebar-date-group sidebar-aside-toggle"
+              aria-expanded={preferences.projectAsideOpen}
+              onClick={() => setPreferences((previous) => ({ ...previous, projectAsideOpen: !previous.projectAsideOpen }))}
+            >
+              <SidebarIcon name="chevron" size={10} className="sidebar-project-chevron" style={{ transform: preferences.projectAsideOpen ? "rotate(90deg)" : undefined }} />
+              <span>{t("sidebar.otherProjects")}</span>
+              <span className="sidebar-project-count">{projectPartition.aside.length}</span>
+            </button>
+            {preferences.projectAsideOpen && projectPartition.aside.map((project) => (
+              <div key={project.key} className="sidebar-project-aside-item">{renderProject(project, null, false)}</div>
+            ))}
+          </div>
+        )}
         </SidebarErrorBoundary>
         {hasMore && !searching && !loading && (
           <button

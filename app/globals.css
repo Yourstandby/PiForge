@@ -463,17 +463,29 @@ span.linenumber {
 }
 
 .sidebar-project {
-  margin-bottom: 2px;
+  margin-bottom: 10px;
 }
 
 .sidebar-project-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 4px;
-  height: 32px;
+  height: 34px;
   padding: 0 4px 0 2px;
   border-radius: 7px;
   color: var(--text-muted);
+}
+/* 当前项目：左侧竖条 + 文字加深，避免整行只靠颜色区分 */
+.sidebar-project-row[data-active]::before {
+  content: "";
+  position: absolute;
+  left: 1px;
+  top: 7px;
+  bottom: 7px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--accent);
 }
 .sidebar-project-row:hover {
   background: var(--bg-hover);
@@ -506,13 +518,38 @@ span.linenumber {
   color: var(--accent);
   opacity: 0.75;
 }
+/* 「其他项目」收纳盒：与日期分组同款小标题，可点击展开。 */
+.sidebar-aside-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  margin: 6px 0 0;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.sidebar-aside-toggle:hover {
+  opacity: 0.75;
+}
+.sidebar-aside-toggle .sidebar-project-chevron {
+  flex: none;
+}
+.sidebar-project-aside-item {
+  opacity: 0.9;
+}
 .sidebar-date-group {
-  padding: 6px 10px 2px 22px;
+  padding: 6px 10px 2px 2px;
   font-size: 10px;
   font-weight: 500;
   letter-spacing: 0.02em;
   color: var(--text-dim);
   user-select: none;
+}
+/* 「其他项目」收纳盒不在缩进容器里，单独补回左内边距 */
+.sidebar-project-aside .sidebar-aside-toggle {
+  padding-left: 8px;
 }
 
 .sidebar-project-name {
@@ -521,9 +558,9 @@ span.linenumber {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
-  color: var(--text-muted);
+  color: var(--text);
 }
 .sidebar-project-row[data-active] .sidebar-project-name {
   color: var(--accent);
@@ -583,7 +620,9 @@ span.linenumber {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  padding: 2px 0 4px;
+  margin-left: 15px;
+  padding: 2px 0 4px 8px;
+  border-left: 1px solid var(--border);
 }
 
 .sidebar-empty-project {

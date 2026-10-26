@@ -64,8 +64,20 @@ export type AgentEvent =
   | { type: "auto_retry_end" }
   | { type: "auto_compaction_start" }
   | { type: "compaction_start" }
-  | { type: "auto_compaction_end"; errorMessage?: string; aborted?: boolean }
-  | { type: "compaction_end"; errorMessage?: string; aborted?: boolean }
+  | {
+      type: "auto_compaction_end";
+      errorMessage?: string;
+      aborted?: boolean;
+      reason?: CompactionTriggerReason;
+      result?: CompactionResultView;
+    }
+  | {
+      type: "compaction_end";
+      errorMessage?: string;
+      aborted?: boolean;
+      reason?: CompactionTriggerReason;
+      result?: CompactionResultView;
+    }
   | { type: "queue_update"; steering: readonly string[]; followUp: readonly string[] }
   | { type: "session_info_changed"; name?: string }
   | {
@@ -78,6 +90,16 @@ export type AgentEvent =
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "failed";
 
+export type CompactionTriggerReason = "manual" | "threshold" | "overflow";
+
+/**
+ * pi 在 `compaction_end.result` 里给出的两个数字（Host 原样转发）。
+ * 只取「压前 / 压后估算」用于提示，其它字段不参与前端逻辑。
+ */
+export interface CompactionResultView {
+  tokensBefore?: number;
+  estimatedTokensAfter?: number;
+}
 /**
  * 快速重连阶段的上限。超过之后不再"放弃"，而是把状态标成 failed 并继续以 30s
  * 上限重连 —— 放弃重连等于把"流断了"变成"永远静默"：界面停在「正在思考…」，

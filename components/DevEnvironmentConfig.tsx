@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   CheckCircle2,
   Globe,
@@ -45,29 +45,34 @@ function Switch({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <div className="flex flex-col gap-1 rounded-lg border border-border bg-white px-3 py-2.5">
-      <div className="flex items-center justify-between gap-3">
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className="flex w-full flex-col gap-1 rounded-lg border border-border bg-white px-3 py-2.5 text-left transition-colors hover:bg-[#FBFBFD] disabled:opacity-50"
+    >
+      <span className="flex w-full items-center justify-between gap-3">
         <span className="min-w-0 truncate text-[12.5px] font-medium text-ink">{label}</span>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={checked}
-          aria-label={label}
-          disabled={disabled}
-          onClick={() => onChange(!checked)}
-          className={`relative h-5 w-9 shrink-0 rounded-full border transition-colors duration-150 disabled:opacity-50 ${
+        {/* 轨道：显式 left 定位，不依赖绝对定位元素的静态位置（button 的 text-align:center
+            会把 left:auto 的滑块推到中线，导致滑块居中而不是贴边）。 */}
+        <span
+          aria-hidden="true"
+          className={`relative h-5 w-9 shrink-0 rounded-full border transition-colors duration-150 ${
             checked ? "border-accent bg-accent" : "border-[#D9DDE5] bg-[#ECEEF2]"
           }`}
         >
           <span
-            className={`absolute top-0.5 h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform duration-150 ${
-              checked ? "translate-x-[18px]" : "translate-x-0.5"
+            className={`absolute top-0.5 h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-all duration-150 ${
+              checked ? "left-[24px]" : "left-0.5"
             }`}
           />
-        </button>
-      </div>
+        </span>
+      </span>
       <span className="text-[11px] leading-4 text-ink-faint">{hint}</span>
-    </div>
+    </button>
   );
 }
 
@@ -88,8 +93,17 @@ export function DevEnvironmentConfig({ onClose }: { onClose: () => void }) {
   const [browserRead, setBrowserRead] = useState(false);
   const [browserInteract, setBrowserInteract] = useState(false);
   const [permissionsLoaded, setPermissionsLoaded] = useState(false);
-  const [savingPermissions, setSavingPermissions] = useState(false);
   const [permissionsSaved, setPermissionsSaved] = useState(false);
+  /** 串行化保存：连点时只保留最后一次的值，避免「保存中按钮被禁用 → 点击被吞」。 */
+  const pendingPermissionsRef = useRef<{ read: boolean; interact: boolean } | null>(null);
+  const savingPermissionsRef = useRef(false);
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+    };
+  }, []);
 
   const loadEnvironment = useCallback(async (refresh = false) => {
     if (refresh) setRefreshing(true);
@@ -133,25 +147,36 @@ export function DevEnvironmentConfig({ onClose }: { onClose: () => void }) {
   }, []);
 
   const savePermissions = useCallback(async (read: boolean, interact: boolean) => {
-    setSavingPermissions(true);
-    setError(null);
+    pendingPermissionsRef.current = { read, interact };
+    if (savingPermissionsRef.current) return;
+    savingPermissionsRef.current = true;
     try {
-      const res = await fetch("/api/desktop-settings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          browserReadEnabled: read,
-          browserInteractEnabled: interact,
-        }),
-      });
-      const data = (await res.json()) as { error?: string };
-      if (!res.ok || data.error) throw new Error(data.error ?? `HTTP ${res.status}`);
+      while (pendingPermissionsRef.current) {
+        const next = pendingPermissionsRef.current;
+        pendingPermissionsRef.current = null;
+        setError(null);
+        const res = await fetch("/api/desktop-settings", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            browserReadEnabled: next.read,
+            browserInteractEnabled: next.interact,
+          }),
+        });
+        const data = (await res.json()) as { error?: string };
+        if (!res.ok || data.error) throw new Error(data.error ?? `HTTP ${res.status}`);
+      }
       setPermissionsSaved(true);
-      setTimeout(() => setPermissionsSaved(false), 1800);
+      if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+      savedTimerRef.current = setTimeout(() => {
+        setPermissionsSaved(false);
+        savedTimerRef.current = null;
+      }, 1800);
     } catch (e: unknown) {
+      pendingPermissionsRef.current = null;
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setSavingPermissions(false);
+      savingPermissionsRef.current = false;
     }
   }, []);
 
@@ -301,14 +326,14 @@ export function DevEnvironmentConfig({ onClose }: { onClose: () => void }) {
               label="只读：读取网页文本 / 截图"
               hint="允许 Agent 通过 web_preview 读取当前页面文本，或截取可视区域截图。"
               checked={browserRead}
-              disabled={!permissionsLoaded || savingPermissions}
+              disabled={!permissionsLoaded}
               onChange={changeBrowserRead}
             />
             <Switch
               label="允许交互：打开 / 导航浏览器"
               hint="允许 Agent 在内置浏览器中打开 URL（例如本地 dev server）。输入与点击等写操作仍由用户执行。"
               checked={browserInteract}
-              disabled={!permissionsLoaded || savingPermissions}
+              disabled={!permissionsLoaded}
               onChange={changeBrowserInteract}
             />
             <div className="flex items-center gap-2 rounded-lg bg-[#F7F8FA] px-3 py-2 text-[11px] text-ink-faint">

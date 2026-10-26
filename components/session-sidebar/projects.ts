@@ -82,13 +82,71 @@ export interface SidebarPreferences {
   explorerOpen: boolean;
   sortMode: ProjectSortMode;
   projectOrder: string[];
+  /** 最近活跃的几个项目自动展开，其余收进「其他项目」收纳盒。缺省开启。 */
+  autoCollapse: boolean;
+  /** 「其他项目」收纳盒是否展开。 */
+  projectAsideOpen: boolean;
 }
+
+/** 自动展开的最近项目数量。 */
+export const AUTO_EXPAND_RECENT = 3;
 
 export type ProjectSortMode = "name" | "recent" | "manual";
 
 export const defaultSidebarPreferences: SidebarPreferences = {
   paths: [], expanded: {}, explorerOpen: true, sortMode: "name", projectOrder: [],
+  autoCollapse: true, projectAsideOpen: false,
 };
+
+/** 最近活跃的项目 key（按 modified 降序取前 N 个）。 */
+export function recentProjectKeys(projects: SidebarProject[], limit = AUTO_EXPAND_RECENT): Set<string> {
+  return new Set([...projects]
+    .sort((a, b) => b.modified.localeCompare(a.modified))
+    .slice(0, Math.max(0, limit))
+    .map((project) => project.key));
+}
+
+/**
+ * 某个项目当前是否展开。
+ * 优先级：搜索（全展开）> 用户手动展开/收起 > 当前项目 / 最近 N 个。
+ * 手动的记录在 preferences.expanded 里，一旦写过就以它为谁，避免刷新后被自动策略改回去。
+ */
+export function projectExpanded(key: string, options: {
+  expanded: Record<string, boolean>;
+  activeKey: string | null;
+  recentKeys: ReadonlySet<string>;
+  searching: boolean;
+  autoCollapse: boolean;
+}): boolean {
+  if (options.searching) return true;
+  const manual = options.expanded[key];
+  if (typeof manual === "boolean") return manual;
+  if (!options.autoCollapse) return key === options.activeKey;
+  return key === options.activeKey || options.recentKeys.has(key);
+}
+
+/**
+ * 把项目列表拆成「常规区」和「收纳盒」。
+ * 只有最近 N 个、当前项目、用户手动展开过的留在常规区；其余进收纳盒。
+ * 关闭 autoCollapse 时原样返回（等价于旧行为）。
+ */
+export function partitionProjects(projects: SidebarProject[], options: {
+  recentKeys: ReadonlySet<string>;
+  activeKey: string | null;
+  expanded: Record<string, boolean>;
+  autoCollapse: boolean;
+}): { main: SidebarProject[]; aside: SidebarProject[] } {
+  if (!options.autoCollapse) return { main: projects, aside: [] };
+  const main: SidebarProject[] = [];
+  const aside: SidebarProject[] = [];
+  for (const project of projects) {
+    const pinned = options.expanded[project.key] === true
+      || project.key === options.activeKey
+      || options.recentKeys.has(project.key);
+    (pinned ? main : aside).push(project);
+  }
+  return { main, aside };
+}
 
 export function sortProjects(projects: SidebarProject[], mode: ProjectSortMode, order: string[] = [], locale = "en"): SidebarProject[] {
   const collator = new Intl.Collator(locale, { numeric: true, sensitivity: "base" });
@@ -127,6 +185,8 @@ export function parseSidebarPreferences(value: string | null): SidebarPreference
       sortMode: saved.sortMode === "recent" || saved.sortMode === "manual" ? saved.sortMode : "name",
       projectOrder: Array.isArray(saved.projectOrder)
         ? [...new Set(saved.projectOrder.filter((key): key is string => typeof key === "string"))] : [],
+      autoCollapse: typeof saved.autoCollapse === "boolean" ? saved.autoCollapse : true,
+      projectAsideOpen: saved.projectAsideOpen === true,
     };
   } catch {
     return defaultSidebarPreferences;

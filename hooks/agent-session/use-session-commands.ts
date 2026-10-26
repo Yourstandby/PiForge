@@ -25,8 +25,20 @@ export type { AttachedImage };
 
 /** Result handed back to the UI so it can toast the reclaimed token count. */
 export type CompactOutcome =
-  | { ok: true; tokensBefore: number | null; tokensAfter: number | null }
+  | { ok: true; skipped?: false; tokensBefore: number | null; tokensAfter: number | null }
+  /** 无可压缩内容（刚压过 / 历史还太短）：不是失败，用中性提示。 */
+  | { ok: true; skipped: true; message: string }
   | { ok: false; error: string };
+
+/**
+ * Host 返回 `{ skipped: true, reason }` 时的用户话术。
+ * 旧行为是把 pi 的内部判断抛成 `Conversation too short to compact`，
+ * 于是「会话刚自动压缩过」再点压缩就会显示成刺眼的「压缩失败」。
+ */
+const COMPACT_SKIP_TEXT: Record<string, string> = {
+  already_compacted: "这个会话刚压缩过，暂无新的历史可压缩（继续几轮后再压）",
+  too_short: "可压缩的历史还不够（最近几轮原文要留着），继续几轮后再压",
+};
 
 /**
  * Extra guidance for pi's own compaction prompt (we do not summarise history
@@ -167,8 +179,21 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
     setCompactError(null);
     try {
       const result = await sendAgentCommand<
-        { tokensBefore?: number; estimatedTokensAfter?: number } | null
+        | {
+            tokensBefore?: number;
+            estimatedTokensAfter?: number;
+            skipped?: boolean;
+            reason?: string;
+          }
+        | null
       >(sid, { type: "compact", customInstructions: COMPACT_INSTRUCTIONS });
+      if (result?.skipped) {
+        return {
+          ok: true,
+          skipped: true,
+          message: COMPACT_SKIP_TEXT[result.reason ?? ""] ?? "暂无新的历史可压缩",
+        };
+      }
       await loadSession(sid, true);
       return {
         ok: true,

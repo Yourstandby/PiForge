@@ -25,6 +25,16 @@ export type AgentEventSideEffect =
   | { type: "onAgentEnd" }
   | { type: "reloadSession" }
   | { type: "fetchAgentState" }
+  /**
+   * 「压缩完毕」的一次性可见反馈。自动压缩跑在 `agent_settled`（用户没点任何按钮），
+   * 不给提示的话历史就是院然消失：上下文从 497k 变成 31k，用户只看到 号变了。
+   */
+  | {
+      type: "compactionNotice";
+      reason: string;
+      tokensBefore: number | null;
+      tokensAfter: number | null;
+    }
   | { type: "consoleError"; message: string }
   | { type: "extensionUiRequest"; request: import("./agent-events-manager").ExtensionUiRequestEvent }
   | { type: "extensionUiNotify"; message: string; notifyType: "info" | "warning" | "error" };
@@ -51,6 +61,11 @@ export type ApplyAgentEventOptions = {
   /** Injected clock for deterministic agent_error timestamps in tests. */
   now?: number;
 };
+
+/** pi 给的 token 数可能是 undefined / 0 / NaN：能显示才返回，否则 null。 */
+function tokenCount(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value) : null;
+}
 
 /**
  * Map one server SSE event into UI state patches and deferred side effects.
@@ -185,6 +200,15 @@ export function applyAgentEvent(
         result.compactError = event.errorMessage;
       } else if (!event.aborted) {
         effects.push({ type: "reloadSession" });
+        // 压缩改了上下文预算，必须重取 agent state：否则底部「上下文 x%」和
+        // token 护栏会继续拿压缩前的数字说话（实际 31k 却提示重发 ≈100k）。
+        effects.push({ type: "fetchAgentState" });
+        effects.push({
+          type: "compactionNotice",
+          reason: event.reason ?? (event.type === "auto_compaction_end" ? "threshold" : "manual"),
+          tokensBefore: tokenCount(event.result?.tokensBefore),
+          tokensAfter: tokenCount(event.result?.estimatedTokensAfter),
+        });
       }
       return result;
     }

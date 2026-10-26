@@ -183,6 +183,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [forkingEntryId, setForkingEntryId] = useState<string | null>(null);
   const [isCompacting, setIsCompacting] = useState(false);
   const [compactError, setCompactError] = useState<string | null>(null);
+  /**
+   * 「刚刚压缩完毕」的一次性通知（自动压缩也会发）。
+   * 由 ChatSurface 消费后调 `clearCompactionNotice()` 清掉，避免重复弹。
+   */
+  const [compactionNotice, setCompactionNotice] = useState<{
+    reason: string;
+    tokensBefore: number | null;
+    tokensAfter: number | null;
+  } | null>(null);
   const [agentPhase, setAgentPhase] = useState<AgentPhase>(null);
   const [agentMode, setAgentMode] = useState<AgentMode>(DEFAULT_AGENT_MODE);
   const [canExecutePlan, setCanExecutePlan] = useState(false);
@@ -659,6 +668,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
               notifyType: effect.notifyType,
             });
             break;
+          case "compactionNotice":
+            setCompactionNotice({
+              reason: effect.reason,
+              tokensBefore: effect.tokensBefore,
+              tokensAfter: effect.tokensAfter,
+            });
+            break;
         }
       }
     },
@@ -949,6 +965,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     return () => clearTimeout(t);
   }, [extensionUiNotify]);
 
+  const clearCompactionNotice = useCallback(() => setCompactionNotice(null), []);
+
   return {
     // State
     loading,
@@ -979,6 +997,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     forkingEntryId,
     isCompacting,
     compactError,
+    compactionNotice,
+    clearCompactionNotice,
     displayModel,
     sessionStats,
     sessionActivity,

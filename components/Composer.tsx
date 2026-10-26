@@ -58,7 +58,7 @@ async function fileToAttachment(file: File): Promise<AttachedImage> {
     mimeType: processed.mimeType,
     // 缩略图用处理后的小图，不再把整张原图塞给 <img> 解码（这是贴图卡顿的另一半）。
     previewUrl: processed.previewUrl,
-    fullUrl: processed.fullUrl,
+    originalUrl: processed.originalUrl,
     width: processed.width,
     height: processed.height,
     bytes: processed.bytes,
@@ -66,18 +66,34 @@ async function fileToAttachment(file: File): Promise<AttachedImage> {
   };
 }
 
-/** 释放附件的两个 object URL（缩略图 + 整图）。 */
+/** 释放附件的两个 object URL（缩略图 + 原图）。 */
 function revokeAttachment(image: AttachedImage): void {
   URL.revokeObjectURL(image.previewUrl);
-  if (image.fullUrl && image.fullUrl !== image.previewUrl) URL.revokeObjectURL(image.fullUrl);
+  if (image.originalUrl && image.originalUrl !== image.previewUrl) {
+    URL.revokeObjectURL(image.originalUrl);
+  }
 }
 
-/** 让出一帧：多张图连拍时，每处理完一张就让 UI 重绘一次。 */
+/** 让出一帧：先把占位缩略图画出来，再开始吃 CPU 的编解码。 */
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => {
     if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => resolve());
     else setTimeout(resolve, 0);
   });
+}
+
+/** 下一帧再释放 object URL：让 React 先把用它的节点从 DOM 里摘掉，否则会闪破图。 */
+function releaseObjectUrlLater(url: string): void {
+  const release = () => URL.revokeObjectURL(url);
+  if (typeof requestAnimationFrame === "function") requestAnimationFrame(release);
+  else setTimeout(release, 0);
+}
+
+/** 处理中的贴图：持有原文件的 object URL，让缩略图在粘贴当帧就可见。 */
+interface PendingImage {
+  id: number;
+  previewUrl: string;
+  name: string;
 }
 
 /** Drag payload carries files (not a reorder drag of the follow-up queue). */
@@ -155,8 +171,10 @@ export function Composer({
   const [images, setImages] = useState<AttachedImage[]>([]);
   const imagesRef = useRef<AttachedImage[]>([]);
   imagesRef.current = images;
-  // 正在处理的贴图：只占位不可发，让粘贴动作立刻有视觉反馈。
-  const [pendingImages, setPendingImages] = useState<{ id: number }[]>([]);
+  // 正在处理的贴图：原图 object URL 立刻占位，重编码 / base64 在后台补。
+  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
+  const pendingImagesRef = useRef<PendingImage[]>([]);
+  pendingImagesRef.current = pendingImages;
   const pendingSeq = useRef(0);
   const [dragActive, setDragActive] = useState(false);
   // dragenter/leave fire for every child element; count them instead of
@@ -204,6 +222,7 @@ export function Composer({
   useEffect(() => {
     return () => {
       imagesRef.current.forEach(revokeAttachment);
+      for (const item of pendingImagesRef.current) URL.revokeObjectURL(item.previewUrl);
     };
   }, []);
 
@@ -324,22 +343,37 @@ export function Composer({
   const addFiles = useCallback(async (files: FileList | File[]) => {
     const picked = Array.from(files).filter((file) => isImageFileLike(file.name, file.type));
     if (picked.length === 0) return;
-    // 先同步占位：贴图后立即出现「处理中」芯片，而不是等编解码完成后才出现。
-    const pending = picked.map(() => ({ id: ++pendingSeq.current }));
+    // 立刻可见：object URL 是同步生成的，<img> 解码在合成线程上、按显示尺寸懒解码，
+    // 所以预览不必等「解码 → 重编码 → base64」那条重链。
+    const pending: PendingImage[] = picked.map((file) => ({
+      id: ++pendingSeq.current,
+      previewUrl: URL.createObjectURL(file),
+      name: file.name,
+    }));
     setPendingImages((current) => [...current, ...pending]);
-    for (let i = 0; i < picked.length; i += 1) {
-      const id = pending[i].id;
-      try {
-        const attachment = await fileToAttachment(picked[i]);
-        setImages((current) => [...current, attachment]);
-      } catch {
-        // Silent: an unreadable image should not block typing.
-      } finally {
-        setPendingImages((current) => current.filter((item) => item.id !== id));
+    await nextFrame();
+    // 并发处理（同时最多 2 张）：编解码在浏览器后台线程，串行只会把多图等待拉长；
+    // 限并发是为了不把主线程的 canvas 绘制一次全堆在一帧里。
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < picked.length) {
+        const i = cursor;
+        cursor += 1;
+        const item = pending[i];
+        try {
+          const attachment = await fileToAttachment(picked[i]);
+          setImages((current) => [...current, attachment]);
+        } catch {
+          // Silent: an unreadable image should not block typing.
+        } finally {
+          setPendingImages((current) => current.filter((entry) => entry.id !== item.id));
+          releaseObjectUrlLater(item.previewUrl);
+        }
       }
-      // 串行 + 让帧：一次贴多张图时不会把所有重活堆在同一帧里。
-      if (i < picked.length - 1) await nextFrame();
-    }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(2, picked.length) }, () => worker()),
+    );
   }, []);
 
   /** Append `@path` references for non-image files. */
@@ -607,9 +641,19 @@ export function Composer({
               {pendingImages.map((item) => (
                 <div
                   key={item.id}
-                  className="flex h-14 w-14 items-center justify-center rounded-md border border-black/[0.08] bg-[#F5F7FA]"
+                  title={`${item.name} · 处理中`}
+                  className="relative h-14 w-14 overflow-hidden rounded-md border border-black/[0.08] bg-[#F5F7FA]"
                 >
-                  <span className="h-3.5 w-3.5 animate-spin rounded-full border-[1.5px] border-accent/25 border-t-accent" />
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={item.previewUrl}
+                    alt=""
+                    draggable={false}
+                    className="h-full w-full object-cover"
+                  />
+                  <span className="absolute right-1 top-1 flex items-center justify-center">
+                    <span className="h-3 w-3 animate-spin rounded-full border-[1.5px] border-white/40 border-t-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]" />
+                  </span>
                 </div>
               ))}
             </div>

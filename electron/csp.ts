@@ -13,6 +13,7 @@ export function buildElectronCspHeader(port: ElectronCspPort): string {
     `connect-src 'self' http://127.0.0.1:${port} ws://127.0.0.1:${port}`,
     "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
     "style-src 'self' 'unsafe-inline'",
+    "worker-src 'self' blob:",
     "img-src 'self' data: blob:",
     "font-src 'self' data:",
     // Keep in sync with lib/csp.ts — the built-in browser frames live pages.
@@ -34,6 +35,7 @@ export function buildStaticAppCspHeader(): string {
     "connect-src 'self' piforge:",
     "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
     "style-src 'self' 'unsafe-inline'",
+    "worker-src 'self' blob:",
     "img-src 'self' data: blob:",
     "font-src 'self' data:",
     // Keep in sync with lib/csp.ts — the built-in browser frames live pages.
