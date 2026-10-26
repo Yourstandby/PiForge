@@ -726,6 +726,8 @@ function ChatSession({
    * 解除点只有一个：measure 里真正距底 < 40px。
    */
   const wheelUpRef = useRef(false);
+  /** 最近一次 wheel 事件的时间戳：用于区分「滚轮引起的滚动」和「拖拽/键盘引起的滚动」。 */
+  const wheelAtRef = useRef(0);
   /** 输入时保持贴底：仅当用户当前在底部附近（手动上翻后不打扰）。 */
   const stickToBottomIfNear = useCallback(() => {
     if (userPausedRef.current || wheelUpRef.current || !isNearBottomRef.current) return;
@@ -733,9 +735,14 @@ function ChatSession({
     if (el) el.scrollTop = el.scrollHeight;
   }, []);
 
-  /** 新一轮开始（发送后）：强制跟随——用户刚发消息，期望看到后续回复。 */
+  /**
+   * 新一轮开始：只在用户没接管时贴底。
+   * 运行中 agentRunning 会随工具轮次抖动（false→true），无条件复位会把
+   * 刚上翻的用户按回底部，所以接管状态必须优先。
+   */
   useEffect(() => {
     if (!chat.agentRunning) return;
+    if (userPausedRef.current || wheelUpRef.current) return;
     userPausedRef.current = false;
     followOutputRef.current = true;
     isNearBottomRef.current = true;
@@ -757,7 +764,9 @@ function ChatSession({
     const el = scrollRef.current;
     if (!el) return;
     const onWheel = (event: WheelEvent) => {
+      wheelAtRef.current = performance.now();
       if (event.deltaY < 0) {
+        // 任何向上的位移都算接管，哪怕只有 1px：用户推一点点就不许再贴边。
         wheelUpRef.current = true;
         userPausedRef.current = true;
         followOutputRef.current = false;
@@ -769,6 +778,19 @@ function ChatSession({
         // 取消进行中的平滑滚动，避免惯性把用户拽回底部。
         // 写同名 scrollTop 取消不掉 scrollTo({behavior:"smooth"}) 的动画，必须显式 instant。
         el.scrollTo({ top: el.scrollTop, behavior: "instant" });
+        return;
+      }
+      // 向下滚：只有真的快回到最底部才恢复跟随。中途停下不会被吸到底。
+      if (event.deltaY > 0 && wheelUpRef.current) {
+        const node = scrollRef.current;
+        if (!node) return;
+        const distance = node.scrollHeight - node.scrollTop - node.clientHeight;
+        if (distance < 150) {
+          userPausedRef.current = false;
+          wheelUpRef.current = false;
+          followOutputRef.current = true;
+          isNearBottomRef.current = true;
+        }
       }
     };
     el.addEventListener("wheel", onWheel, { passive: true });
@@ -1261,8 +1283,12 @@ function ChatSession({
       // 已经上翻（wheelUp）就不要在这里重新武装跟随：哨兵只有 120px 容差，
       // 这个 150px 的判定会把刚上翻的用户重新按回底部，滚一下被按回一次。
       if (near && !wheelUpRef.current) followOutputRef.current = true;
-      // 真正滚回底部才解除「用户接管」，点击/微滚动不会误恢复。
-      if (distance < 40) {
+      // 真正滚回底部才解除「用户接管」。
+      // 滚轮刚动过（200ms 内）不在几何判定里解除：上推一点点只走 20~30px，
+      // distance 依旧 < 40，若在这里复位就会被立刻按回底部 —— 看起来就是
+      // 「推一点根本脱不开」。滚轮方向交给 onWheel，几何判定只服务拖拽/键盘。
+      const wheelRecent = performance.now() - wheelAtRef.current < 200;
+      if (distance < 40 && !wheelRecent) {
         userPausedRef.current = false;
         wheelUpRef.current = false;
       }
