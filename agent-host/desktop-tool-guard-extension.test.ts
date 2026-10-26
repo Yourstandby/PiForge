@@ -3,8 +3,12 @@ import test from "node:test";
 import {
   DEFAULT_TOOL_GUARD,
   TIMEOUT_HINT,
+  TURN_BUDGET,
+  TURN_BUDGET_EXHAUSTED_HINT,
+  TURN_SELF_CHECK_HINT,
   createDesktopToolGuardFactory,
   createParallelTracker,
+  createTurnBudgetTracker,
   emptyToolGuardStats,
   guardShellTimeout,
   isHeavyCommand,
@@ -19,19 +23,19 @@ const CONFIG: ToolGuardConfig = { ...DEFAULT_TOOL_GUARD };
 test("a shell call without timeout gets a default instead of running forever", () => {
   const input: Record<string, unknown> = { command: "grep -rn foo ." };
   const outcome = guardShellTimeout(input, CONFIG);
-  assert.deepEqual(outcome, { seconds: 120, action: "defaulted" });
-  assert.equal(input.timeout, 120);
+  assert.deepEqual(outcome, { seconds: 45, action: "defaulted" });
+  assert.equal(input.timeout, 45);
 });
 
 test("heavy commands get enough runway but still have a ceiling", () => {
   const input: Record<string, unknown> = { command: "npm run dist" };
   const outcome = guardShellTimeout(input, CONFIG);
-  assert.deepEqual(outcome, { seconds: 900, action: "defaulted" });
-  assert.equal(input.timeout, 900);
+  assert.deepEqual(outcome, { seconds: 300, action: "defaulted" });
+  assert.equal(input.timeout, 300);
 
   const huge: Record<string, unknown> = { command: "npm run test", timeout: 100_000 };
-  assert.deepEqual(guardShellTimeout(huge, CONFIG), { seconds: 900, action: "clamped" });
-  assert.equal(huge.timeout, 900);
+  assert.deepEqual(guardShellTimeout(huge, CONFIG), { seconds: 300, action: "clamped" });
+  assert.equal(huge.timeout, 300);
 });
 
 test("an explicit reasonable timeout is kept verbatim", () => {
@@ -42,8 +46,8 @@ test("an explicit reasonable timeout is kept verbatim", () => {
 
 test("over-long timeouts are clamped, so one hang cannot hold a batch for minutes", () => {
   const input: Record<string, unknown> = { command: "grep -rn foo .", timeout: 5000 };
-  assert.deepEqual(guardShellTimeout(input, CONFIG), { seconds: 600, action: "clamped" });
-  assert.equal(input.timeout, 600);
+  assert.deepEqual(guardShellTimeout(input, CONFIG), { seconds: 300, action: "clamped" });
+  assert.equal(input.timeout, 300);
 });
 
 test("invalid timeout values are repaired rather than making pi throw", () => {
@@ -51,7 +55,7 @@ test("invalid timeout values are repaired rather than making pi throw", () => {
     const input: Record<string, unknown> = { command: "ls", timeout: raw };
     const outcome = guardShellTimeout(input, CONFIG);
     assert.equal(outcome?.action, "repaired", `raw=${String(raw)}`);
-    assert.equal(input.timeout, 120);
+    assert.equal(input.timeout, 45);
   }
 });
 
@@ -113,6 +117,7 @@ function hookInto(options?: { enabled?: () => boolean; env?: Record<string, stri
   };
   createDesktopToolGuardFactory(options)(pi as never);
   return {
+    start: () => handlers.before_agent_start?.({}),
     call: (event: unknown) => handlers.tool_call?.(event),
     result: (event: unknown) => handlers.tool_result?.(event),
   };
@@ -122,11 +127,11 @@ test("the extension patches timeout in place and leaves the input otherwise unto
   const hooks = hookInto();
   const input: Record<string, unknown> = { command: "git status --short", timeout: undefined };
   hooks.call({ toolName: "bash", toolCallId: "c1", input });
-  assert.equal(input.timeout, 120);
+  assert.equal(input.timeout, 45);
 
   const noTimeout: Record<string, unknown> = { command: "pwsh -c 'ls'" };
   hooks.call({ toolName: "powershell", toolCallId: "c2", input: noTimeout });
-  assert.equal(noTimeout.timeout, 120);
+  assert.equal(noTimeout.timeout, 45);
 
   // 非 shell 工具不动任何参数。
   const readInput: Record<string, unknown> = { path: "a.ts" };
@@ -208,7 +213,51 @@ test("stats start empty and the advisory text names the actual numbers", () => {
     advisories: 0,
     timeoutHints: 0,
     peakParallel: 0,
+    turnSelfChecks: 0,
+    turnBudgetHits: 0,
   });
   assert.match(parallelAdvisory(25, 8), /并行 25 个调用（建议 ≤8）/);
   assert.match(parallelAdvisory(25, 8), /codemode/);
+});
+
+test("the turn budget self-checks after one full batch and closes the line after two", () => {
+  const tracker = createTurnBudgetTracker();
+  assert.equal(TURN_BUDGET.softLimit, 12);
+  assert.equal(TURN_BUDGET.hardLimit, 24);
+  const hints: (string | undefined)[] = [];
+  for (let i = 0; i < 25; i += 1) hints.push(tracker.use(false));
+  assert.equal(hints[11], TURN_SELF_CHECK_HINT);
+  assert.equal(hints[23], TURN_BUDGET_EXHAUSTED_HINT);
+  assert.equal(hints[24], TURN_BUDGET_EXHAUSTED_HINT, "超预算后每次都要提醒，而不是只提醒一次");
+  assert.equal(hints.slice(0, 11).find(Boolean), undefined);
+
+  // 新用户轮重新计数。
+  tracker.reset();
+  assert.equal(tracker.used, 0);
+  assert.equal(tracker.use(true), undefined, "codemode 嵌套调用不重复计数");
+  assert.equal(tracker.used, 0);
+});
+
+test("the extension appends the self-check and exhaustion hints to tool results", () => {
+  const hooks = hookInto();
+  let hint: unknown;
+  for (let i = 1; i <= 24; i += 1) {
+    const id = `t${i}`;
+    hooks.call({ toolName: "read", toolCallId: id, input: {} });
+    hint = hooks.result({ toolCallId: id, content: [{ type: "text", text: "ok" }], isError: false });
+  }
+  const text = (hint as { content: { text: string }[] }).content.map((b) => b.text).join("\n");
+  assert.match(text, /24 次调用已用完/);
+
+  const second = hookInto();
+  second.start();
+  for (let i = 1; i <= 11; i += 1) {
+    second.call({ toolName: "read", toolCallId: `s${i}`, input: {} });
+    assert.equal(second.result({ toolCallId: `s${i}`, content: [], isError: false }), undefined);
+  }
+  second.call({ toolName: "read", toolCallId: "s12", input: {} });
+  const twelfth = second.result({ toolCallId: "s12", content: [], isError: false }) as {
+    content: { text: string }[];
+  };
+  assert.match(twelfth.content.map((b) => b.text).join("\n"), /批后自检/);
 });

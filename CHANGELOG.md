@@ -3,6 +3,103 @@
 迁移条目按「改了什么 / 默认行为变没变 / 开关怎么用」组织。详细数据见 `docs/measurements/`
 （三个口径：记录型 provider、真实 deepseek 会话、重复场景 A/B，三者不要混读）。
 
+## Unreleased — 调用预算从「次数」改成「批次」
+
+主题：**合并调用才是加速手段**。pi 同一条助手消息里的多个 tool call 本就并行执行，
+墙钟时间由往返次数决定；按调用次数卡预算只会逼模型在批次中途停下、重开一轮重发全量上下文。
+
+### 改了什么
+
+- **提示词**（`agent-host/prompts/output-style.ts`，`BATCHING_RULES` 7 → 8 条）：新增
+  「合并调用（第一优先）」与「写操作不混批」；「调用预算（写死）」改为批次口径（简单 1 批 /
+  普通 2–3 批 / 调研 3–4 批，单批并行 ≤12）；「第 4 次自检」改为「每批自检」。
+- **运行时护栏**（`agent-host/desktop-tool-guard-extension.ts`）：`TURN_BUDGET` 4/8 → 12/24
+  （≈1 个满载批次后自检、≈2 个满载批次后收口），`DEFAULT_TOOL_GUARD.maxParallel` 8 → 12，
+  两条提醒文案同步改批次口径。
+
+### 默认行为变没变
+
+- 软约束不变：仍是「到顶先交付可验证结论、剩余待办留给下一轮」，只是阈值按批次量级放大。
+- 无新开关；`PIFORGE_TOOL_MAX_PARALLEL` 仍可覆盖单批并行上限。
+
+- **前缀预算**（`scripts/smoke-prefix-budget.mjs`）：`--max-prefix` 7600 → 7660。第 1 版措辞
+  把前缀顶到 CI 实测 7774（token guards 红），压缩后回到 7585；7660 = 实测 + ~1% 余量。
+  注意本地 Windows 的 sys 段比 CI 高约 430 tok，这个 smoke 本地跑会红，以 CI 数字为准。
+
+### 验证
+
+- `node --test --test-force-exit agent-host/desktop-tool-guard-extension.test.ts agent-host/desktop-output-style-extension.test.ts` → 21/21
+- `npx eslint`（四个改动文件）→ 无输出
+
+## v0.11.1 — 贴图卡顿 / 秒表 / 流健康 / 项目隔离（默认关）
+
+主题：**修 0.11.0 漏掉的三处「看着像卡死」**，并补一个默认关闭的项目级文件隔离。
+不涉及调用预算与工具默认值；`v0.11.0` 的内容通过合并 `v0.11.0` tag 一并保留。
+
+### 改了什么
+
+- **贴图不再卡主线程**（`lib/image-attachment.ts`）：缩放改走 `createImageBitmap` 的 resize
+  选项（解码 + 重采样在工作线程），主线程只搬小图；24×24 抽样探测透明，只有真透明才 PNG
+  （其余 JPEG 0.92），GIF/SVG 原样发送；额外生成 160px 缩略图 `previewUrl` 与降采样整图
+  `fullUrl`，`ImageBitmap` 显式 `close()`。
+- **贴图交互**（`components/Composer.tsx`）：粘贴后先同步插入「处理中」占位，多图串行 + 每张让
+  一帧；处理中禁止发送；移除/发送/卸载时两个 object URL 一并 revoke。
+- **工具卡秒表**（`lib/tool-clock.ts` / `components/Transcript.tsx`）：耗时以 `tool_execution_end`
+  为准完成即冻结，不再跟着最新调用一直数。
+- **流健康**（`hooks/agent-session/stream-health.ts` + `components/StreamHealthBanner.tsx`）：区分
+  `reconnecting` / `failed` / `stalled`（30 s 无真实增量），事件流断了明确告知，不再停在
+  「PiForge 正在思考…」。
+- **项目隔离**（新开关，默认关）：`desktop-settings.json` 的 `projectIsolation`；Host 的
+  `authorizePath(target, op, scope?)` 在开启时要求路径落在当前项目内，无当前项目即 fail-closed；
+  新增 RPC `files.setScope` + Next 路由 `/api/files/scope`（Workbench 上报活动 cwd），
+  `file-index` / `git` / `statusline` / `processes` 各自把 cwd 当 scope。
+
+### 默认行为变没变
+
+只有一处新开关，且**默认关**：不打开「项目隔离」时文件授权行为与 0.11.0 完全一致。
+
+## v0.11.0 — 调用预算与卡顿收口（工具开销 / codemode / 界面计时 / 冒烟脚本）
+
+主题：**把「卡住」变成看得见的数字**。每用户轮工具调用预算写死（<8 次，第 4 次自检），
+工具固定开销整体压缩，codemode 恢复逐条声明并回传脚本内进度；界面修掉「点了没反应」
+「一上翻被拽回」「工具卡一直跳秒」；度量与冒烟脚本不再静默挂死。
+
+### 改了什么
+
+- **调用预算**：`BATCHING_RULES` 拆出「调用预算（写死）」与「中途自检」（简单 ≤4 / 普通 ≤8 /
+  调研 ≤10、第 4 次自检、禁 `du -sh` 与全量 `grep -r`、`timeout 30`）；tool-guard 新增
+  `TURN_BUDGET` + `createTurnBudgetTracker()`，第 4/8 次在结果尾部追加提醒，`before_agent_start`
+  复位，codemode 嵌套调用不重复计数。
+- **工具开销**：输出预算默认 4000→24000 字符（头尾各 9000、400 行，`read` 档位不缩放，
+  二次裁剪幂等）；超时默认 120/900→45/300 s；调度器重型 4/2→6/4。
+- **codemode**：池上限可配（设置页 > `PI_CODEMODE_MAX_WORKERS` > 2）；默认模式 `only`→`on`；
+  脚本内调用进度折成一行经 liveOutput 回传；超时/取消时观察扩展推断 `slot held (pool=N)` 日志；
+  附 `scripts/hotfix/hotfix-codemode.{ps1,sh}` 打包版热修复脚本。
+- **界面**：工具卡耗时完成即冻结（`lib/tool-clock.ts`，`toolCallId` 模块级 Map，优先 pi 的
+  `durationMs`）；标签切换/侧栏会话点击改为同步提交（去掉被流式更新打断的 `startTransition`）；
+  滚动监听 deps 补 `showTranscript`、取消平滑滚动改 `behavior:'instant'`；介入文本加 `[系统提示]`
+  前缀，渲染为灰色系统卡、不进回合导航。
+- **会话侧栏**：首屏给每个项目补一条最新会话并返回 `nextOffset` 游标，历史项目分组不再整块消失。
+- **脚本不再静默挂死**：等帧 60 s 硬期限、host 退出/断连立即 reject 并把退出码并入错误
+  （`HOST_EXIT_GRACE_MS=700`）；新增 `scripts/lib/host-spawn.mjs`（`spawnNodeHost` / `hostChildEnv`），
+  12 个脚本改走工厂，stdin 护栏只写一处；`smoke:prefix-budget` 每步输出进度 + 硬超时
+  （`PIFORGE_SMOKE_STEP_TIMEOUT_MS`，Windows 用 `taskkill /F /T`）。
+
+### 默认行为变没变
+
+变了，五处：codemode 默认 `on`（工具逐条声明）；无 `timeout` 的 shell 调用 45 s（重型 300 s）
+被打断；输出预算 24000 字符；每用户轮软上限 4 / 硬上限 8（仅结果尾部追加提醒，不拦截）；
+调度器重型配额 6 / 4。
+
+### 开关怎么用
+
+- 输出预算 `PIFORGE_TOOL_OUTPUT_CHARS`；超时 `PIFORGE_TOOL_GUARD=0` 或 `PIFORGE_TOOL_TIMEOUT_*`；
+  调度器 `PIFORGE_TOOL_SCHEDULER=0` 或 `PIFORGE_SCHED_*`。
+- codemode 模式与 worker 池上限在设置页「扩展与 MCP → Codemode」（后者也可用
+  `PI_CODEMODE_MAX_WORKERS`）。
+- 调试日志 `PIFORGE_DEBUG_TOOL_GUARD=1` / `PIFORGE_DEBUG_TOOL_SCHEDULER=1`。
+- 完整说明见 [`docs/releases/v0.11.0.md`](docs/releases/v0.11.0.md)。
+
 ## v0.10.0 — 边界收口（分支 / 排队 / 看门狗 / 工具调度与超时）
 
 主题：**点了要有反应**。前端把「点了没反应」「点了要等」逐个拆掉；Host 侧新增工具执行

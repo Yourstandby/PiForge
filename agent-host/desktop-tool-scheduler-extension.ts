@@ -43,9 +43,9 @@ export interface SchedulerConfig {
 
 export const DEFAULT_SCHEDULER: SchedulerConfig = {
   enabled: true,
-  globalHeavy: 4,
+  globalHeavy: 6,
   globalLight: 12,
-  sessionHeavy: 2,
+  sessionHeavy: 4,
   sessionLight: 6,
   maxWaitMs: 60_000,
   queueHintMs: 1_500,

@@ -37,10 +37,10 @@ export interface ToolGuardConfig {
 
 export const DEFAULT_TOOL_GUARD: ToolGuardConfig = {
   enabled: true,
-  defaultSeconds: 120,
-  maxSeconds: 600,
-  heavySeconds: 900,
-  maxParallel: 8,
+  defaultSeconds: 45,
+  maxSeconds: 300,
+  heavySeconds: 300,
+  maxParallel: 12,
 };
 
 /**
@@ -138,6 +138,43 @@ export function parallelAdvisory(parallel: number, maxParallel: number): string 
   );
 }
 
+/**
+ * 每个用户轮的工具调用预算是**批次口径**：单批并行 ≤12，2–3 批是普通改动的正常量，
+ * 所以硬顶放到 24（≈2 个满载批次），第 12 次（≈1 批满载）要求自检。
+ * 只统计顶层调用（codemode 脚本内的嵌套调用不重复计），与并行计数口径一致。
+ */
+export const TURN_BUDGET = { softLimit: 12, hardLimit: 24 } as const;
+
+export const TURN_SELF_CHECK_HINT =
+  "[tool-guard] 本轮已用 12/24 次调用（约一个满载批次）—— 批后自检：现有输出是否已经够直接交付？" +
+  "够就停手写结论，不要再补探针；不够就把剩余工作并成一批发完。";
+
+export const TURN_BUDGET_EXHAUSTED_HINT =
+  "[tool-guard] 本轮 24 次调用已用完（约两个满载批次）：停止新的探测，先交付可验证的结论与剩余待办，留给下一轮继续。";
+
+/** 每用户轮计数：`use` 返回该次调用结束后应追加的提醒，`reset` 在新用户轮开始时调用。 */
+export function createTurnBudgetTracker(
+  softLimit: number = TURN_BUDGET.softLimit,
+  hardLimit: number = TURN_BUDGET.hardLimit,
+) {
+  let used = 0;
+  return {
+    use(nested: boolean): string | undefined {
+      if (nested) return undefined;
+      used += 1;
+      if (used === softLimit) return TURN_SELF_CHECK_HINT;
+      if (used >= hardLimit) return TURN_BUDGET_EXHAUSTED_HINT;
+      return undefined;
+    },
+    reset(): void {
+      used = 0;
+    },
+    get used(): number {
+      return used;
+    },
+  };
+}
+
 export interface ToolGuardStats {
   defaulted: number;
   clamped: number;
@@ -145,10 +182,21 @@ export interface ToolGuardStats {
   advisories: number;
   timeoutHints: number;
   peakParallel: number;
+  turnSelfChecks: number;
+  turnBudgetHits: number;
 }
 
 export function emptyToolGuardStats(): ToolGuardStats {
-  return { defaulted: 0, clamped: 0, repaired: 0, advisories: 0, timeoutHints: 0, peakParallel: 0 };
+  return {
+    defaulted: 0,
+    clamped: 0,
+    repaired: 0,
+    advisories: 0,
+    timeoutHints: 0,
+    peakParallel: 0,
+    turnSelfChecks: 0,
+    turnBudgetHits: 0,
+  };
 }
 
 /**
@@ -205,9 +253,21 @@ export function createDesktopToolGuardFactory(
 
   return (pi: ExtensionAPI) => {
     const tracker = createParallelTracker(config.maxParallel);
+    const turnBudget = createTurnBudgetTracker();
     const stats = emptyToolGuardStats();
-    /** toolCallId → 待追加到该条结果尾部的提示（并行提醒）。 */
-    const pendingAdvisory = new Map<string, string>();
+    /** toolCallId → 待追加到该条结果尾部的提示（并行提醒 / 轮预算提醒）。 */
+    const pendingAdvisory = new Map<string, string[]>();
+
+    const appendAdvisory = (toolCallId: string, text: string): void => {
+      const list = pendingAdvisory.get(toolCallId);
+      if (list) list.push(text);
+      else pendingAdvisory.set(toolCallId, [text]);
+    };
+
+    // 每用户轮开始复位预算计数；工具结果触发的继续循环不会重置。
+    pi.on("before_agent_start", () => {
+      turnBudget.reset();
+    });
 
     pi.on("tool_call", (event) => {
       if (!isEnabled()) return;
@@ -219,9 +279,16 @@ export function createDesktopToolGuardFactory(
         else if (outcome?.action === "repaired") stats.repaired += 1;
       }
 
+      const budgetHint = turnBudget.use(Boolean(event.parentToolCallId));
+      if (budgetHint) {
+        appendAdvisory(event.toolCallId, budgetHint);
+        if (budgetHint === TURN_SELF_CHECK_HINT) stats.turnSelfChecks += 1;
+        else stats.turnBudgetHits += 1;
+      }
+
       const advisory = tracker.begin(event.toolCallId, Boolean(event.parentToolCallId));
       if (advisory) {
-        pendingAdvisory.set(event.toolCallId, advisory);
+        appendAdvisory(event.toolCallId, advisory);
         stats.advisories += 1;
       }
     });
@@ -232,10 +299,10 @@ export function createDesktopToolGuardFactory(
       if (!isEnabled()) return;
 
       const extra: string[] = [];
-      const advisory = pendingAdvisory.get(event.toolCallId);
-      if (advisory) {
+      const advisories = pendingAdvisory.get(event.toolCallId);
+      if (advisories) {
         pendingAdvisory.delete(event.toolCallId);
-        extra.push(advisory);
+        extra.push(...advisories);
       }
       if (event.isError && isTimeoutError(textOf(event.content))) {
         extra.push(TIMEOUT_HINT);
