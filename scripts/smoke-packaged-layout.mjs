@@ -10,7 +10,10 @@
  *   2. resources/standalone/agent-host/index.js 存在（Host 入口进包）；
  *   3. resources/standalone/node_modules/@earendil-works/pi-coding-agent 存在
  *      （Host 的 Pi SDK 依赖进包）；
- *   4. resources/standalone/server.js **不存在**（Next 服务已删除，零内部端口）。
+ *   4. resources/standalone/server.js **不存在**（Next 服务已删除，零内部端口）；
+ *   5. bundle 旁边的 runtime assets 齐全（codemode-worker.js / image-resize-worker.js /
+ *      photon_rs_bg.wasm）—— 它们的路径由 SDK 用 `new URL(..., import.meta.url)` 算，
+ *      打包后就是 host.mjs 的同目录，少一个就是工具静默失效（见 scripts/bundle-agent-host.mjs）。
  *
  * 背景：`build:static` 会清掉 `.next/standalone`，所以 pack/dist 的顺序必须是
  * static → standalone。顺序写反时应用会"壳能打开、引擎起不来"，这个脚本让
@@ -35,6 +38,24 @@ const checks = [
   {
     label: "Pi SDK 依赖",
     file: path.join(resourcesDir, "standalone", "node_modules", "@earendil-works", "pi-coding-agent"),
+    mustExist: true,
+  },
+  // bundle 旁边的 runtime assets：SDK 用 `new URL(..., import.meta.url)` 定位，
+  // 打包后 import.meta.url 是 host.mjs，所以这些文件必须和它在同一目录。
+  // 0.11.x 漏了 codemode-worker.js，表现是「Host 起得来、RPC 全通，但 codemode 直接 ENOENT」。
+  {
+    label: "codemode worker（Host bundle 旁）",
+    file: path.join(resourcesDir, "standalone", "agent-host", "codemode-worker.js"),
+    mustExist: true,
+  },
+  {
+    label: "image-resize worker（Host bundle 旁）",
+    file: path.join(resourcesDir, "standalone", "agent-host", "image-resize-worker.js"),
+    mustExist: true,
+  },
+  {
+    label: "photon wasm（Host bundle 旁）",
+    file: path.join(resourcesDir, "standalone", "agent-host", "photon_rs_bg.wasm"),
     mustExist: true,
   },
   { label: "Next standalone server.js（应已删除）", file: path.join(resourcesDir, "standalone", "server.js"), mustExist: false },
