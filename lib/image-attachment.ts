@@ -5,9 +5,9 @@
  *   1. **看得清**：视觉模型的输入分辨率上限就在 1568px 长边（再大也会被服务端
  *      缩回去）。与其让服务端缩，不如在本地先缩到上限 —— 模型看到的信息完全
  *      一样，网络上传的体积和计费 token 却按 4~10 倍下降。
- *   2. **不卡**：解码/缩放走 `createImageBitmap` + `OffscreenCanvas`（合成线程
- *      上跑），主线程只等一次 Promise；任何一步不可用都退回原始文件读取，
- *      绝不因为优化让图片贴不进去。
+ *   2. **不卡**：`createImageBitmap` 只解码一次，缩放只走一遍 canvas 绘制；
+ *      输入框的占位缩略图由 Composer 用原文件 object URL 先行显示（粘贴当帧
+ *      就可见）。任何一步不可用都退回原始文件读取，绝不因为优化让图片贴不进去。
  *
  * 纯计算部分（`estimateImageTokens` / `shouldDownscale` / `imageExtensionForMime`）
  * 单独导出，方便单测。
@@ -158,37 +158,6 @@ function canvasToBlob(
   });
 }
 
-/**
- * 缩放解码：`createImageBitmap` 的 resize 选项在**工作线程**里完成解码 + 重采样，
- * 主线程拿到的已经是一张目标尺寸的小图。贴图时的卡顿原先就出在主线程
- * `drawImage(4K 原图, 0, 0, 1568, ...)` 这一下。
- */
-async function decodeResized(
-  file: File,
-  target: { width: number; height: number },
-): Promise<Decoded | null> {
-  if (typeof createImageBitmap !== "function") return null;
-  try {
-    const bitmap = await createImageBitmap(file, {
-      resizeWidth: target.width,
-      resizeHeight: target.height,
-      resizeQuality: "high",
-    });
-    if (!bitmap.width || !bitmap.height) {
-      bitmap.close?.();
-      return null;
-    }
-    return {
-      width: bitmap.width,
-      height: bitmap.height,
-      draw: bitmap,
-      release: () => bitmap.close?.(),
-    };
-  } catch {
-    return null;
-  }
-}
-
 async function decodeSize(file: File): Promise<Decoded | null> {
   if (typeof createImageBitmap === "function") {
     try {
@@ -251,10 +220,10 @@ function rawAttachment(
 /**
  * 把用户贴进来 / 拖进来的图片处理成附件。
  *
- * 顺序：解码（`createImageBitmap` 带 resize，缩放跑在工作线程）→ 按「长边 + 像素
- * 预算」定目标尺寸 → DOM canvas 重编码（`toBlob` 在 Electron / 浏览器里最稳）→
- * base64，同时生成一张小缩略图 URL。任何一步失败都退回原始字节：宁可贵一点，
- * 也不能让图片贴不进去。
+ * 顺序：解码一次（`createImageBitmap`）→ 按「长边 + 像素预算」定目标尺寸 →
+ * DOM canvas 缩放 + 重编码（`toBlob` 在 Electron / 浏览器里最稳）→ base64，
+ * 同时生成一张小缩略图 URL。任何一步失败都退回原始字节：宁可贵一点，也不能
+ * 让图片贴不进去。
  *
  * 为什不默认 PNG：截图都是 `image/png` 且名字不叫 screenshot，PNG 编码一张
  * 1.5MP 的图要一两百毫秒且发生在主线程上；除非探测到真有透明像素，一律用 JPEG。
@@ -286,8 +255,10 @@ export async function processImageFile(file: File): Promise<ProcessedImage> {
       }
 
       if (target.width > 0 && target.height > 0) {
-        const resized = sameSize ? null : await decodeResized(file, target);
-        const source = resized ?? original;
+        // 只解码一次：再调一次 `createImageBitmap(…, {resizeQuality: "high"})`
+        // 在 4K 截图上要多花 100~200ms。canvas 的 drawImage + high 平滑质量
+        // 画到目标尺寸，肉眼一致，却省掉整条重复解码。
+        const source = original;
         const alpha = hasTransparency(source.draw);
         const mimeType = alpha ? "image/png" : "image/jpeg";
         const canvas = typeof document !== "undefined" ? document.createElement("canvas") : null;
@@ -322,7 +293,6 @@ export async function processImageFile(file: File): Promise<ProcessedImage> {
             }
           }
         }
-        resized?.release();
       }
     } finally {
       original.release();
