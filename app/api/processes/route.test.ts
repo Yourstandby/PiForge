@@ -2,19 +2,39 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { POST } from "./route.ts";
 
+type GlobalShim = {
+  __piforgeAgentHostClient?: unknown;
+  __piforgeFilesHostClient?: unknown;
+};
+
+/**
+ * 同时 stub 主连接与文件授权连接：`files.authorize` 走的是 lib/host-files.ts 的
+ * 独立 socket（globalThis.__piforgeFilesHostClient）。只 stub 主连接时，本机有真
+ * Host 在跑的情形会真的去问 policy，`/project` 被拒 → 403，测试就假红。
+ */
 function stubClient(handler: (method: string, params: Record<string, unknown>) => unknown) {
-  const previous = globalThis.__piforgeAgentHostClient;
+  const shim = globalThis as unknown as GlobalShim;
+  const previous = shim.__piforgeAgentHostClient;
+  const previousFiles = shim.__piforgeFilesHostClient;
   const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
-  globalThis.__piforgeAgentHostClient = {
+  shim.__piforgeAgentHostClient = {
     call: async (method: string, params: Record<string, unknown>) => {
       calls.push({ method, params });
       return handler(method, params);
     },
-  } as unknown as typeof previous;
+  };
+  shim.__piforgeFilesHostClient = {
+    call: async (method: string, params: Record<string, unknown>) => {
+      calls.push({ method, params });
+      if (method === "files.authorize") return { realPath: params.path };
+      return handler(method, params);
+    },
+  };
   return {
     calls,
     restore: () => {
-      globalThis.__piforgeAgentHostClient = previous;
+      shim.__piforgeAgentHostClient = previous;
+      shim.__piforgeFilesHostClient = previousFiles;
     },
   };
 }
