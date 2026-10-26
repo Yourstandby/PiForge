@@ -1600,6 +1600,19 @@ function registerIpcHandlers() {
     return result.canceled ? null : (result.filePaths[0] ?? null);
   });
 
+  /**
+   * 文件树右键菜单「在资源管理器中显示」。
+   * 只做定位（showItemInFolder），不接受 shell.openPath —— 那等于给渲染层
+   * 一个能执行任意路径的开关。
+   */
+  ipcMain.handle("files:reveal", async (_event, target: unknown) => {
+    if (typeof target !== "string" || !target.trim()) {
+      return { ok: false, error: "invalid path" };
+    }
+    shell.showItemInFolder(target);
+    return { ok: true };
+  });
+
   ipcMain.handle("new-window", async (_event, requestedPath: unknown) => {
     openNewWindow(normalizeWindowPath(requestedPath));
     return { ok: true };

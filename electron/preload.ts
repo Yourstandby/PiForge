@@ -41,6 +41,8 @@ function syncWindowHidden() {
 
 contextBridge.exposeInMainWorld("electronAPI", {
   selectDirectory: () => ipcRenderer.invoke("select-directory"),
+  /** 文件树右键菜单「在资源管理器中显示」；浏览器 dev 版没有这个 bridge。 */
+  revealPath: (target: string) => ipcRenderer.invoke("files:reveal", target),
   /** Resolve a drag-dropped File to its absolute filesystem path (Electron only). */
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
   onUpdateAvailable: (callback: (info: { version: string }) => void) => {

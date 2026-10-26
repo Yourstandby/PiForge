@@ -411,3 +411,126 @@ export async function PUT(
     return jsonError(request, 500, errorMessage(error));
   }
 }
+
+/** 文件名白名单：不允许包含路径分隔符与 Windows 非法字符。 */
+const FILE_OP_NAME_RE = /^[^/\\:*?"<>|]+$/;
+const FILE_OPS = ["rename", "move", "copy", "delete", "mkdir", "touch"] as const;
+type FileOp = (typeof FILE_OPS)[number];
+
+function isFileOp(value: string): value is FileOp {
+  return (FILE_OPS as readonly string[]).includes(value);
+}
+
+/**
+ * 文件操作（文件树右键菜单）：rename / move / copy / delete / mkdir / touch。
+ *
+ * 策略仍然只归 Host：源路径与目标目录各跑一次 `files.authorize`，Next 只拿到
+ * realpath 之后才落盘；`validateWritablePath` 继续挡住 .git / node_modules / .env。
+ */
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> }
+) {
+  const requestId = getRequestId(request);
+  try {
+    const { path: segments } = await params;
+    const filePath = filePathFromSegments(segments);
+    const body = (await request.json().catch(() => null)) as
+      | { op?: unknown; name?: unknown; to?: unknown }
+      | null;
+    const op = typeof body?.op === "string" ? body.op : "";
+    if (!isFileOp(op)) {
+      return jsonError(request, 400, "op must be one of rename|move|copy|delete|mkdir|touch");
+    }
+
+    // 1) 源路径授权：复制只需要读权限，其余（删除 / 改名 / 移动）都要写权限。
+    let sourcePath: string;
+    try {
+      sourcePath = await authorizeHostPath(filePath, op === "copy" ? "read" : "write");
+    } catch (error) {
+      return fileAccessError(request, error, "PATCH");
+    }
+
+    if (op !== "copy") {
+      const sourcePolicyError = validateWritablePath(sourcePath);
+      if (sourcePolicyError) return jsonError(request, 403, sourcePolicyError);
+    }
+
+    // 2) 目标路径（mkdir / touch 的 path 就是父目录本身）
+    let destPath: string | null = null;
+    if (op === "rename" || op === "mkdir" || op === "touch") {
+      const name = typeof body?.name === "string" ? body.name.trim() : "";
+      if (!name || !FILE_OP_NAME_RE.test(name) || name === "." || name === "..") {
+        return jsonError(request, 400, "name 不合法");
+      }
+      destPath = op === "rename" ? path.join(path.dirname(sourcePath), name) : path.join(sourcePath, name);
+    } else if (op === "move" || op === "copy") {
+      const to = typeof body?.to === "string" && body.to ? body.to : "";
+      if (!to) return jsonError(request, 400, "to（目标目录）必填");
+      let destDir: string;
+      try {
+        destDir = await authorizeHostPath(to, "write");
+      } catch (error) {
+        return fileAccessError(request, error, "PATCH");
+      }
+      destPath = path.join(destDir, path.basename(sourcePath));
+    }
+
+    if (destPath) {
+      const destPolicyError = validateWritablePath(destPath);
+      if (destPolicyError) return jsonError(request, 403, destPolicyError);
+      if (path.resolve(destPath) === path.resolve(sourcePath)) {
+        return jsonError(request, 400, "源路径与目标路径相同");
+      }
+      // 目录自嵌套（把 A 复制/移动到 A 的子目录）会让 cp/rm 无限递归。
+      // mkdir / touch 的 dest 本来就在源目录（父目录）内部，不适用这条。
+      if (op === "copy" || op === "move") {
+        const sourcePrefix = path.resolve(sourcePath) + path.sep;
+        if (path.resolve(destPath).startsWith(sourcePrefix)) {
+          return jsonError(request, 400, "目标路径不能在源目录内部");
+        }
+      }
+    }
+
+    // 3) 落盘
+    switch (op) {
+      case "mkdir":
+        await fs.promises.mkdir(destPath as string);
+        break;
+      case "touch": {
+        const handle = await fs.promises.open(destPath as string, "wx");
+        await handle.close();
+        break;
+      }
+      case "rename":
+      case "move": {
+        const target = destPath as string;
+        if (fs.existsSync(target)) return jsonError(request, 409, "目标已存在");
+        try {
+          await fs.promises.rename(sourcePath, target);
+        } catch (error) {
+          // Windows 上跨盘 rename 报 EPERM / EXDEV：退化成 复制 + 删除。
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code !== "EXDEV" && code !== "EPERM") throw error;
+          await fs.promises.cp(sourcePath, target, { recursive: true, errorOnExist: true, force: false });
+          await fs.promises.rm(sourcePath, { recursive: true, force: true });
+        }
+        break;
+      }
+      case "copy":
+        await fs.promises.cp(sourcePath, destPath as string, { recursive: true, errorOnExist: true, force: false });
+        break;
+      case "delete":
+        await fs.promises.rm(sourcePath, { recursive: true, force: false });
+        break;
+    }
+
+    return NextResponse.json({ success: true, path: destPath ?? sourcePath });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code === "EEXIST") return jsonError(request, 409, "目标已存在");
+    if (code === "ENOENT") return jsonError(request, 404, "Not found");
+    logApiError({ route: "/api/files/[...path]", method: "PATCH", requestId, error });
+    return jsonError(request, 500, errorMessage(error));
+  }
+}
