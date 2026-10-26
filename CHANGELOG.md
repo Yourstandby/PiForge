@@ -3,6 +3,33 @@
 迁移条目按「改了什么 / 默认行为变没变 / 开关怎么用」组织。详细数据见 `docs/measurements/`
 （三个口径：记录型 provider、真实 deepseek 会话、重复场景 A/B，三者不要混读）。
 
+## Unreleased — 关闭窗口先问「最小化到托盘 / 退出程序」
+
+### 改了什么
+
+- **主窗口关闭**（`electron/main.ts`）：点 X 不再静默隐藏，改为原生询问框 ——
+  「最小化到托盘 / 退出程序」，勾选「记住我的选择」后不再询问；Esc / 关掉询问框
+  一律按最小化处理，不会误触杀进程。
+- **偏好文件**（`electron/close-preference.ts`）：`<userData>/close-preference.json`，
+  取值为 `ask | minimize | quit`，损坏或非法值回落 `ask`。与
+  `agentDir/desktop-settings.json` 分开存 —— 打包后 Main 只有 `electron/dist`，不能
+  import `lib/`。
+- **托盘菜单**（`electron/tray.ts`）：「关闭窗口时」单选项（每次询问 / 最小化到托盘 /
+  退出程序），可随时改回来，不必手删 json。
+
+### 默认行为变没变
+
+- 首次运行（无偏好文件）→ 每次点关闭都询问，与 0.9.x 的「静默隐藏」不同。
+- 选「退出程序」走正常退出流程（`before-quit` → Host 排空 → 回收子进程树），
+  不是 `app.exit(0)`，所以不会有孤儿 dev server。
+- 托盘图标的「退出」仍然直接退出，不询问。
+
+### 验证
+
+- `npx tsc -p electron/tsconfig.json --noEmit` 通过；
+- `node --test electron/close-preference.test.ts` 6/6 通过；
+- `npx eslint electron/{main,tray,close-preference}.ts` 无告警。
+
 ## Unreleased — 调用预算从「次数」改成「批次」
 
 主题：**合并调用才是加速手段**。pi 同一条助手消息里的多个 tool call 本就并行执行，
