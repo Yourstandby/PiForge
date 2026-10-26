@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SessionInfo } from "../../lib/types";
-import { defaultSidebarPreferences, groupProjects, moveProject, parseSidebarPreferences, projectKey, searchProjects, sortProjects } from "./projects.ts";
+import { defaultSidebarPreferences, groupProjects, moveProject, parseSidebarPreferences, partitionProjects, projectExpanded, projectKey, recentProjectKeys, searchProjects, sortProjects } from "./projects.ts";
 
 function session(id: string, cwd: string, name = id, parentSessionId?: string): SessionInfo {
   return { id, cwd, name, parentSessionId, path: id + ".jsonl", created: "2026-10-01T00:00:00Z", modified: "2026-10-15T00:00:00Z", firstMessage: "", messageCount: 2 };
@@ -67,7 +67,39 @@ test("preferences recover from invalid storage and keep only valid presentation 
   assert.deepEqual(parseSidebarPreferences("broken"), defaultSidebarPreferences);
   assert.deepEqual(parseSidebarPreferences(JSON.stringify({ paths: ["D:/Pi", null, 3, ""], expanded: { "d:/pi": false, invalid: 4 }, explorerOpen: false, token: "ignored" })), {
     paths: ["D:/Pi"], expanded: { "d:/pi": false }, explorerOpen: false, sortMode: "name", projectOrder: [],
+    autoCollapse: true, projectAsideOpen: false,
   });
+});
+
+test("recent three projects stay expanded and the rest go to the aside container", () => {
+  const sessions = [1, 2, 3, 4, 5].map((index) => {
+    const item = session(`s${index}`, `D:/P${index}`);
+    item.modified = `2026-10-1${index}T00:00:00Z`;
+    return item;
+  });
+  const projects = groupProjects(sessions);
+  const recent = recentProjectKeys(projects);
+  assert.deepEqual([...recent].sort(), ["d:/p3", "d:/p4", "d:/p5"]);
+  const partition = partitionProjects(projects, { recentKeys: recent, activeKey: null, expanded: {}, autoCollapse: true });
+  assert.deepEqual(partition.main.map((project) => project.key).sort(), ["d:/p3", "d:/p4", "d:/p5"]);
+  assert.deepEqual(partition.aside.map((project) => project.key).sort(), ["d:/p1", "d:/p2"]);
+  // 手动展开过的旧项目回到常规区；手动收起的最近项目留在常规区（只是收起，不丢位置）。
+  const overridden = partitionProjects(projects, { recentKeys: recent, activeKey: null, expanded: { "d:/p1": true, "d:/p5": false }, autoCollapse: true });
+  assert.ok(overridden.main.some((project) => project.key === "d:/p1"));
+  assert.ok(overridden.main.some((project) => project.key === "d:/p5"));
+  // 关闭自动收纳时与旧行为一致。
+  assert.equal(partitionProjects(projects, { recentKeys: recent, activeKey: null, expanded: {}, autoCollapse: false }).aside.length, 0);
+});
+
+test("project expansion prefers manual choice, then 搜索, then recent three", () => {
+  const base = { expanded: {}, activeKey: null, recentKeys: new Set(["d:/a"]), searching: false, autoCollapse: true };
+  assert.equal(projectExpanded("d:/a", base), true);
+  assert.equal(projectExpanded("d:/b", base), false);
+  assert.equal(projectExpanded("d:/b", { ...base, activeKey: "d:/b" }), true);
+  assert.equal(projectExpanded("d:/b", { ...base, searching: true }), true);
+  assert.equal(projectExpanded("d:/a", { ...base, expanded: { "d:/a": false } }), false);
+  assert.equal(projectExpanded("d:/b", { ...base, autoCollapse: false, activeKey: "d:/b" }), true);
+  assert.equal(projectExpanded("d:/b", { ...base, autoCollapse: false }), false);
 });
 
 test("name ordering is natural, deterministic and leaves conversation trees untouched", () => {

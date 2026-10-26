@@ -506,6 +506,27 @@ span.linenumber {
   color: var(--accent);
   opacity: 0.75;
 }
+/* 「其他项目」收纳盒：与日期分组同款小标题，可点击展开。 */
+.sidebar-aside-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  margin: 6px 0 0;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.sidebar-aside-toggle:hover {
+  opacity: 0.75;
+}
+.sidebar-aside-toggle .sidebar-project-chevron {
+  flex: none;
+}
+.sidebar-project-aside-item {
+  opacity: 0.9;
+}
 .sidebar-date-group {
   padding: 6px 10px 2px 22px;
   font-size: 10px;
