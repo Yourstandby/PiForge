@@ -9,6 +9,7 @@ import { useSmoothTypewriter } from "@/hooks/useSmoothTypewriter";
 import { useAudio } from "@/hooks/useAudio";
 import { useHostHealth } from "@/hooks/useHostHealth";
 import { estimateContextTokens, resolveTokenGuards, type TokenGuardKind } from "@/lib/token-guard";
+import { compactionNoticeText } from "@/lib/compaction-notice";
 import { TokenGuardBanner } from "./TokenGuardBanner";
 import { StreamHealthBanner } from "./StreamHealthBanner";
 import { evaluateStreamHealth, type StreamHealth } from "@/hooks/agent-session/stream-health";
@@ -673,6 +674,21 @@ function ChatSession({
     if (!chat.agentRunning) return;
     setDismissedGuards((prev) => (prev.includes("resume-cost") ? prev : [...prev, "resume-cost"]));
   }, [chat.agentRunning]);
+
+  /**
+   * 自动压缩（阈值 / 溢出，跑在 agent_settled）结束后的提示。
+   * 手动压缩自己已经有 toast，遇到 `reason === "manual"` 直接吞掉，别覆盖。
+   * 同时压掉「恢复将重发 ≈N tok」：刚压完的真实上下文已经小了，
+   * 那条用的还是压缩前的数字，留着就是误导。
+   */
+  const { compactionNotice, clearCompactionNotice } = chat;
+  useEffect(() => {
+    if (!compactionNotice) return;
+    clearCompactionNotice();
+    if (compactionNotice.reason === "manual") return;
+    setCompactToast({ ok: true, info: true, text: compactionNoticeText(compactionNotice) });
+    setDismissedGuards((prev) => (prev.includes("resume-cost") ? prev : [...prev, "resume-cost"]));
+  }, [compactionNotice, clearCompactionNotice]);
 
   // Reconcile with the server when the run ends without us seeing agent_end.
   useEffect(() => {
