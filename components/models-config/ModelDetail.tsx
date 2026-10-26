@@ -1,10 +1,18 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import type { ProviderEntry, ModelEntry, ModelTestState } from "./types";
+import type {
+  ModelCostCurrency,
+  ModelCostTier,
+  ModelEntry,
+  ModelTestState,
+  ProviderEntry,
+} from "./types";
 import { SectionTitle, Field, TextInput, NumInput, Select, Check, API_OPTIONS } from "./FormControls";
 import { ThinkingLevelMapEditor } from "./ThinkingLevelMapEditor";
 import { useI18n } from "../I18nProvider";
+
+type CostRateKey = "input" | "output" | "cacheRead" | "cacheWrite";
 
 const DEEPSEEK_COMPAT = {
   thinkingFormat: "deepseek",
@@ -42,11 +50,19 @@ export function ModelDetail({
   const { t } = useI18n();
   const [testState, setTestState] = useState<ModelTestState>({ phase: "idle" });
   const set = <K extends keyof ModelEntry>(k: K, v: ModelEntry[K]) => onChange({ ...model, [k]: v });
-  const costVal = (k: keyof NonNullable<ModelEntry["cost"]>) => model.cost?.[k] !== undefined ? String(model.cost[k]) : "";
-  const setCost = (k: keyof NonNullable<ModelEntry["cost"]>, v: string) => {
+  const costVal = (k: CostRateKey) => model.cost?.[k] !== undefined ? String(model.cost[k]) : "";
+  const setCost = (k: CostRateKey, v: string) => {
     const n = parseFloat(v);
     onChange({ ...model, cost: { ...(model.cost ?? {}), [k]: isNaN(n) ? undefined : n } });
   };
+  const costCurrency: ModelCostCurrency = model.cost?.currency ?? "USD";
+  const setCostCurrency = (currency: ModelCostCurrency) =>
+    onChange({ ...model, cost: { ...(model.cost ?? {}), currency } });
+  const tiers = model.cost?.tiers ?? [];
+  const setTiers = (next: ModelCostTier[]) =>
+    onChange({ ...model, cost: { ...(model.cost ?? {}), tiers: next.length ? next : undefined } });
+  const updateTier = (index: number, patchValue: Partial<ModelCostTier>) =>
+    setTiers(tiers.map((tier, i) => (i === index ? { ...tier, ...patchValue } : tier)));
   const testSummary = (() => {
     if (testState.phase === "idle") return null;
     if (testState.phase === "testing") return t("provider.testing");
@@ -216,12 +232,88 @@ export function ModelDetail({
       </div>
 
       <div>
-        <SectionTitle>{t("provider.cost")}</SectionTitle>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <SectionTitle>{t("provider.cost")}</SectionTitle>
+          <span style={{ fontSize: 10, color: "var(--text-dim)" }}>
+            {costCurrency === "CNY" ? "人民币 / 百万 tokens" : "USD / 百万 tokens"}
+          </span>
+        </div>
+        <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+          {(["USD", "CNY"] as const).map((cur) => {
+            const active = costCurrency === cur;
+            return (
+              <button
+                key={cur}
+                onClick={() => setCostCurrency(cur)}
+                style={{
+                  fontSize: 10,
+                  padding: "3px 9px",
+                  borderRadius: 4,
+                  cursor: "pointer",
+                  border: "1px solid " + (active ? "var(--accent)" : "var(--border)"),
+                  background: active ? "var(--accent)" : "none",
+                  color: active ? "#fff" : "var(--text-dim)",
+                }}
+              >
+                {cur}
+              </button>
+            );
+          })}
+        </div>
         <div style={{ marginTop: 8, display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
           {(["input", "output", "cacheRead", "cacheWrite"] as const).map((k) => (
             <Field key={k} label={k}>
               <NumInput value={costVal(k)} onChange={(v) => setCost(k, v)} placeholder="0" />
             </Field>
+          ))}
+        </div>
+        <div style={{ marginTop: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+            <span style={{ fontSize: 10, color: "var(--text-dim)" }}>
+              {costCurrency === "CNY"
+                ? "分档计价：单次请求输入超过阈值后，整单改用该档单价"
+                : "Tiered pricing: the whole request switches tier once its input exceeds the threshold"}
+            </span>
+            <button
+              onClick={() =>
+                setTiers([
+                  ...tiers,
+                  {
+                    inputTokensAbove: 128000,
+                    input: model.cost?.input,
+                    output: model.cost?.output,
+                    cacheRead: model.cost?.cacheRead,
+                    cacheWrite: model.cost?.cacheWrite,
+                  },
+                ])
+              }
+              style={{ fontSize: 11, padding: "2px 8px", background: "none", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text-dim)", cursor: "pointer" }}
+            >
+              +
+            </button>
+          </div>
+          {tiers.map((tier, index) => (
+            <div key={index} style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr 1fr 1fr auto", gap: 6, marginBottom: 6 }}>
+              <NumInput
+                value={String(tier.inputTokensAbove ?? "")}
+                onChange={(v) => updateTier(index, { inputTokensAbove: v ? parseInt(v) : 0 })}
+                placeholder="128000"
+              />
+              {(["input", "output", "cacheRead", "cacheWrite"] as const).map((k) => (
+                <NumInput
+                  key={k}
+                  value={tier[k] !== undefined ? String(tier[k]) : ""}
+                  onChange={(v) => updateTier(index, { [k]: v ? parseFloat(v) : undefined } as Partial<ModelCostTier>)}
+                  placeholder={k}
+                />
+              ))}
+              <button
+                onClick={() => setTiers(tiers.filter((_, i) => i !== index))}
+                style={{ fontSize: 11, padding: "2px 8px", background: "none", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text-dim)", cursor: "pointer" }}
+              >
+                ×
+              </button>
+            </div>
           ))}
         </div>
       </div>

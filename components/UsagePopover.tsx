@@ -38,7 +38,7 @@ export function UsagePopover({
   onRefresh,
 }: UsagePopoverProps) {
   const { t, locale } = useI18n();
-  const { format4: formatMoney4 } = useCurrency();
+  const { format4: formatMoney4, formatCost } = useCurrency();
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -58,8 +58,10 @@ export function UsagePopover({
   const maxH = Math.min(520, Math.max(160, anchorRect.top - 18));
 
   const tks = sessionStats?.tokens;
-  const c = sessionStats?.cost ?? 0;
-  const costStr = c > 0 ? formatMoney4(c) : formatMoney4(0);
+  // 分币种：USD 桶按汇率折算，CNY 桶原样计入（币种来自模型 cost.currency）。
+  const costUsd = sessionStats?.costUsd ?? sessionStats?.cost ?? 0;
+  const costCny = sessionStats?.costCny ?? 0;
+  const costStr = formatCost({ usd: costUsd, cny: costCny });
   const hitRate =
     sessionStats?.cacheHitRate != null && Number.isFinite(sessionStats.cacheHitRate)
       ? `${sessionStats.cacheHitRate.toFixed(1)}%`

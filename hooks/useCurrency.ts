@@ -67,5 +67,29 @@ export function useCurrency() {
     return `$${usd.toFixed(4)}`;
   };
 
-  return { currency, rate, format, format4, isCny };
+  const symbol = currency === "CNY" ? "¥" : "$";
+
+  /**
+   * 混合币种金额 → 显示币种数值。
+   * USD 桶按实盘汇率折算；CNY 桶原样计入（模型按人民币报价时 pi 算出的数字
+   * 本来就是人民币，再乘一次汇率就是重复换算）。
+   */
+  const toDisplayAmount = (usd: number, cny = 0): number => {
+    const safeUsd = Number.isFinite(usd) ? usd : 0;
+    const safeCny = Number.isFinite(cny) ? cny : 0;
+    if (currency === "CNY" && rate !== null) return safeUsd * rate + safeCny;
+    if (currency === "USD" && rate !== null) return safeUsd + safeCny / rate;
+    return safeUsd + safeCny;
+  };
+
+  /** 会话成本（分币种分桶）的展示口径：不做 <0.01 截断，固定小数位。 */
+  const formatCost = (cost: { usd?: number; cny?: number } | number, digits = 4): string => {
+    const usd = typeof cost === "number" ? cost : cost.usd ?? 0;
+    const cny = typeof cost === "number" ? 0 : cost.cny ?? 0;
+    const value = toDisplayAmount(usd, cny);
+    if (!Number.isFinite(value)) return symbol + "0.0000";
+    return symbol + value.toFixed(digits);
+  };
+
+  return { currency, rate, symbol, format, format4, formatCost, toDisplayAmount, isCny };
 }

@@ -76,6 +76,8 @@ export interface AssistantMessage {
       cacheRead: number;
       cacheWrite: number;
       total: number;
+      /** 计价币种（缺省 USD）：由模型 cost.currency 决定，避免人民币报价被二次换算。 */
+      currency?: "USD" | "CNY";
     };
   };
 }
