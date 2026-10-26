@@ -11,7 +11,13 @@
  *
  * 纯计算部分（`estimateImageTokens` / `shouldDownscale` / `imageExtensionForMime`）
  * 单独导出，方便单测。
+ *
+ * 实际的重活（解码 / 缩放 / 编码 / base64）默认在 `lib/image-worker.ts` 的
+ * OffscreenCanvas worker 里跑；主线程只留 `URL.createObjectURL` 与 setState。
+ * worker 不可用时自动回落到本文件里那条主线程实现。
  */
+import { processImageOffThread } from "./image-worker.ts";
+import type { ImageWorkerOptions } from "./image-worker.ts";
 
 /** 视觉模型的长边上限：超过就被服务端缩，本地先缩省下的是白花的钱。 */
 export const MAX_IMAGE_EDGE = 1568;
@@ -67,6 +73,16 @@ export const THUMB_EDGE = 160;
 
 /** 缩略图 JPEG 质量（这么小的图，0.75 看不出差别）。 */
 const THUMB_QUALITY = 0.75;
+
+/** worker 侧需要与主线程完全一致的口径，漏一个就会出现「贴图和发送不等价」。 */
+const WORKER_OPTIONS: ImageWorkerOptions = {
+  maxEdge: MAX_IMAGE_EDGE,
+  maxPixels: MAX_IMAGE_PIXELS,
+  passthroughBytes: RAW_PASSTHROUGH_MAX_BYTES,
+  thumbEdge: THUMB_EDGE,
+  thumbQuality: THUMB_QUALITY,
+  jpegQuality: JPEG_QUALITY,
+};
 
 /** 这些格式重编码会丢东西（GIF 动画、SVG 矢量），一律原样发送。 */
 const NO_REENCODE = /^image\/(gif|svg\+xml)$/i;
@@ -132,9 +148,11 @@ export function fitWithin(
   const edgeRatio = Math.min(1, maxEdge / Math.max(width, height));
   const pixelRatio = Math.min(1, Math.sqrt(maxPixels / (width * height)));
   const ratio = Math.min(edgeRatio, pixelRatio);
+  // floor 而不是 round：4000×3000 按像素预算算出的 1238.5px 一四舍五入就多出
+  // 102 像素（1150102 > 1150000），刚好把自己踢出预算（真机 smoke 拓到的）。
   return {
-    width: Math.max(1, Math.round(width * ratio)),
-    height: Math.max(1, Math.round(height * ratio)),
+    width: Math.max(1, Math.floor(width * ratio)),
+    height: Math.max(1, Math.floor(height * ratio)),
   };
 }
 
@@ -239,6 +257,25 @@ function rawAttachment(
  * 1.5MP 的图要一两百毫秒且发生在主线程上；除非探测到真有透明像素，一律用 JPEG。
  */
 export async function processImageFile(file: File): Promise<ProcessedImage> {
+  const offThread = await processImageOffThread(file, WORKER_OPTIONS).catch(() => null);
+  if (offThread) {
+    // 原图 URL 由主线程创建：查看器 / 下载 / 复制都拿这一份（未降采样的原文件）。
+    const originalUrl = URL.createObjectURL(file);
+    return {
+      data: offThread.data,
+      mimeType: offThread.mimeType,
+      width: offThread.width,
+      height: offThread.height,
+      bytes: offThread.bytes,
+      originalBytes: offThread.originalBytes,
+      previewUrl: offThread.thumbnail ? URL.createObjectURL(offThread.thumbnail) : originalUrl,
+      originalUrl,
+    };
+  }
+  return processImageOnMainThread(file);
+}
+
+export async function processImageOnMainThread(file: File): Promise<ProcessedImage> {
   const originalBytes = file.size;
 
   if (NO_REENCODE.test(file.type || "")) return rawProcessed(file, originalBytes);

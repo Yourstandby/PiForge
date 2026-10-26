@@ -59,3 +59,14 @@ test("imageExtensionForMime maps the common screenshot formats", () => {
 test("SCHEDULE_HINT documents why downscaling is free quality-wise", () => {
   assert.ok(SCHEDULE_HINT.includes(String(MAX_IMAGE_EDGE)));
 });
+
+// 回归：以前用 round 算目标尺寸，4000×3000 会算出 1239×929 = 1151031 像素，
+// 刚好比 1.15MP 预算多一点（真机冒烟里 4K 图就是这样“越缩越超”的）。
+test("fitWithin never overshoots the pixel budget", () => {
+  for (const [w, h] of [[4000, 3000], [3840, 2160], [5120, 2880], [2000, 1287]]) {
+    const fit = fitWithin(w, h);
+    assert.ok(fit.width * fit.height <= MAX_IMAGE_PIXELS, `${w}x${h} -> ${fit.width}x${fit.height}`);
+    assert.ok(Math.max(fit.width, fit.height) <= MAX_IMAGE_EDGE, `${w}x${h} edge over cap`);
+    assert.ok(fit.width * fit.height > MAX_IMAGE_PIXELS * 0.9, `${w}x${h} wasted budget`);
+  }
+});

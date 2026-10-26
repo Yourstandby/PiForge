@@ -65,6 +65,7 @@
     "bundle:agent-host": "node scripts/bundle-agent-host.mjs",
     "bench:startup": "python bench/startup_stats.py",
     "smoke:agent-host": "node scripts/smoke-agent-host.mjs",
+    "smoke:image-worker": "node scripts/run-image-worker-smoke.mjs",
     "sync:wiki-pages": "node scripts/sync-github-pages-wiki.mjs",
     "test": "node --test --test-force-exit \"lib/**/*.test.ts\" \"agent-host/**/*.test.ts\" \"lib/**/*.test.mjs\" \"electron/**/*.test.ts\" \"app/**/*.test.ts\" \"app/api/sessions/[[]id]/routes.test.ts\" \"hooks/**/*.test.ts\" \"components/**/*.test.ts\" \"scripts/**/*.test.mjs\" \"package.test.ts\" \"middleware.test.ts\"",
     "test:windows": "node --test --test-force-exit \"electron/**/*.test.ts\" \"agent-host/**/*.test.ts\" \"lib/file-paths.test.ts\" \"lib/path-policy.test.ts\" \"lib/session-lock.test.ts\" \"lib/session-path-cache.test.ts\" \"lib/file-browser.test.ts\" \"lib/git-worktree.test.ts\" \"app/api/sessions/[[]id]/routes.test.ts\" \"lib/electron-*.test.mjs\" \"lib/installer-script.test.mjs\" \"lib/electron-builder-config.test.mjs\" \"package.test.ts\"",

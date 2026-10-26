@@ -11,6 +11,7 @@ const BASE_DIRECTIVES: readonly string[] = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
   "style-src 'self' 'unsafe-inline'",
+  "worker-src 'self' blob:",
   "img-src 'self' data: blob:",
   "font-src 'self' data:",
   // The right-panel built-in browser embeds live pages (webview / iframe fallback).
@@ -55,6 +56,7 @@ export function requiredBaseDirectivePrefixes(): readonly string[] {
     "default-src 'self'",
     "script-src 'self'",
     "style-src 'self'",
+    "worker-src 'self' blob:",
     "img-src 'self' data: blob:",
     "font-src 'self'",
     "frame-src 'self' http: https:",
