@@ -41,11 +41,11 @@ const MAX_SCALE = 8;
 const ZOOM_STEP = 1.25;
 
 /**
- * 附件的可显示地址：**优先 fullUrl（降采样后的整图）**，其次 previewUrl（缩略图），
- * 最后才回退 `data` —— base64 里存的同样是降采样版本，只是解字符串更贵。
+ * 附件的可显示地址：**优先 originalUrl（原始文件）**，其次 previewUrl（缩略图），
+ * 最后才回退 `data` —— base64 里存的是降采样版（省 token 用），当大图看会糊。
  */
 export function attachmentSrc(image: AttachedImage): string {
-  if (image.fullUrl) return image.fullUrl;
+  if (image.originalUrl) return image.originalUrl;
   if (image.previewUrl) return image.previewUrl;
   if (image.mimeType && image.data) return `data:${image.mimeType};base64,${image.data}`;
   return image.previewUrl;
@@ -85,6 +85,9 @@ async function toPngBlob(src: string): Promise<Blob> {
 export function ImageLightbox({ images, index, onIndexChange, onClose }: ImageLightboxProps) {
   const { t } = useI18n();
   const image = images[index];
+  const src = image ? attachmentSrc(image) : "";
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => setLoaded(false), [src]);
   const imgRef = useRef<HTMLImageElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const scaleRef = useRef(1);
@@ -414,15 +417,29 @@ export function ImageLightbox({ images, index, onIndexChange, onClose }: ImageLi
           if (event.target === event.currentTarget) onClose();
         }}
       >
+        {/* 渐进加载：先拿缩略图占位（同帧可见），原图解码完再淡入 —— 打开大图不再白屏，
+            也不会为了「快」而降清晰度：最终显示的一直是 originalUrl 的原图。 */}
+        {image.previewUrl && image.previewUrl !== src && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={image.previewUrl}
+            alt=""
+            aria-hidden
+            draggable={false}
+            className="pointer-events-none absolute max-h-full max-w-full select-none opacity-90 blur-[2px] transition-opacity duration-150"
+            style={{ opacity: loaded ? 0 : 0.9 }}
+          />
+        )}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           ref={imgRef}
-          src={attachmentSrc(image)}
+          src={src}
           alt={fileName}
           draggable={false}
           decoding="async"
-          className="max-h-full max-w-full select-none shadow-[0_10px_40px_rgba(0,0,0,0.5)]"
+          className="relative max-h-full max-w-full select-none shadow-[0_10px_40px_rgba(0,0,0,0.5)] transition-opacity duration-150"
           style={{
+            opacity: loaded ? 1 : 0,
             // transform 由 applyTransform 直接写入 DOM；这里不能出现 transform，
             // 否则任何一次 state 更新都会把它重置回 rotate(0deg)（缩放/平移会回弹）。
             transformOrigin: "center center",
@@ -431,6 +448,7 @@ export function ImageLightbox({ images, index, onIndexChange, onClose }: ImageLi
           }}
           onLoad={(event) => {
             const node = event.currentTarget;
+            setLoaded(true);
             if (node.naturalWidth > 0) {
               setDimensions({ width: node.naturalWidth, height: node.naturalHeight });
             }

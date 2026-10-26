@@ -58,7 +58,7 @@ async function fileToAttachment(file: File): Promise<AttachedImage> {
     mimeType: processed.mimeType,
     // 缩略图用处理后的小图，不再把整张原图塞给 <img> 解码（这是贴图卡顿的另一半）。
     previewUrl: processed.previewUrl,
-    fullUrl: processed.fullUrl,
+    originalUrl: processed.originalUrl,
     width: processed.width,
     height: processed.height,
     bytes: processed.bytes,
@@ -66,10 +66,12 @@ async function fileToAttachment(file: File): Promise<AttachedImage> {
   };
 }
 
-/** 释放附件的两个 object URL（缩略图 + 整图）。 */
+/** 释放附件的两个 object URL（缩略图 + 原图）。 */
 function revokeAttachment(image: AttachedImage): void {
   URL.revokeObjectURL(image.previewUrl);
-  if (image.fullUrl && image.fullUrl !== image.previewUrl) URL.revokeObjectURL(image.fullUrl);
+  if (image.originalUrl && image.originalUrl !== image.previewUrl) {
+    URL.revokeObjectURL(image.originalUrl);
+  }
 }
 
 /** 让出一帧：先把占位缩略图画出来，再开始吃 CPU 的编解码。 */
@@ -350,20 +352,28 @@ export function Composer({
     }));
     setPendingImages((current) => [...current, ...pending]);
     await nextFrame();
-    for (let i = 0; i < picked.length; i += 1) {
-      const item = pending[i];
-      try {
-        const attachment = await fileToAttachment(picked[i]);
-        setImages((current) => [...current, attachment]);
-      } catch {
-        // Silent: an unreadable image should not block typing.
-      } finally {
-        setPendingImages((current) => current.filter((entry) => entry.id !== item.id));
-        releaseObjectUrlLater(item.previewUrl);
+    // 并发处理（同时最多 2 张）：编解码在浏览器后台线程，串行只会把多图等待拉长；
+    // 限并发是为了不把主线程的 canvas 绘制一次全堆在一帧里。
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < picked.length) {
+        const i = cursor;
+        cursor += 1;
+        const item = pending[i];
+        try {
+          const attachment = await fileToAttachment(picked[i]);
+          setImages((current) => [...current, attachment]);
+        } catch {
+          // Silent: an unreadable image should not block typing.
+        } finally {
+          setPendingImages((current) => current.filter((entry) => entry.id !== item.id));
+          releaseObjectUrlLater(item.previewUrl);
+        }
       }
-      // 串行 + 让帧：一次贴多张图时不会把所有重活堆在同一帧里。
-      if (i < picked.length - 1) await nextFrame();
-    }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(2, picked.length) }, () => worker()),
+    );
   }, []);
 
   /** Append `@path` references for non-image files. */
@@ -639,10 +649,10 @@ export function Composer({
                     src={item.previewUrl}
                     alt=""
                     draggable={false}
-                    className="h-full w-full object-cover opacity-60"
+                    className="h-full w-full object-cover"
                   />
-                  <span className="absolute inset-0 flex items-center justify-center">
-                    <span className="h-3.5 w-3.5 animate-spin rounded-full border-[1.5px] border-accent/25 border-t-accent" />
+                  <span className="absolute right-1 top-1 flex items-center justify-center">
+                    <span className="h-3 w-3 animate-spin rounded-full border-[1.5px] border-white/40 border-t-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]" />
                   </span>
                 </div>
               ))}

@@ -27,6 +27,13 @@ export const MAX_IMAGE_PIXELS = 1_150_000;
 /** 小于这个边长、且体积不大的图没必要重编码（重编码本身要时间）。 */
 export const SKIP_DOWNSCALE_BYTES = 400 * 1024;
 
+/**
+ * 尺寸已在像素预算内时，不超过这个体积就**原样发送**：重编码既不省 token
+ * （像素没变），又要多付一次 draw + JPEG 编码的时间，还会把清晰度换掉。
+ * 只有超大的图才为了上传/存档体积退回 JPEG。
+ */
+export const RAW_PASSTHROUGH_MAX_BYTES = 6 * 1024 * 1024;
+
 /** 为什么先缩再发是"免费"的：超过这个边长服务端也会缩回去。 */
 export const SCHEDULE_HINT =
   `Images longer than ${MAX_IMAGE_EDGE}px are downscaled before they reach the model; ` +
@@ -48,8 +55,11 @@ export interface ProcessedImage {
   originalBytes: number;
   /** 缩略图 object URL（≤THUMB_EDGE）：贴图条用它，避免为 56px 预览解码整张原图。 */
   previewUrl: string;
-  /** 降采样后的整图 object URL（给大图查看器看，别拿 base64 那串糊图）。 */
-  fullUrl: string;
+  /**
+   * **原始文件**（未重编码）的 object URL：查看器 / 下载 / 复制用它。
+   * 发给模型的那份为了省 token 降过采样，但「点开看大图」必须还是原图。
+   */
+  originalUrl: string;
 }
 
 /** 缩略图长边：贴图条只显示 56px，没必要为它解码一张 4K 原图。 */
@@ -202,7 +212,7 @@ function rawAttachment(
   dataUrl: string,
   file: File,
   originalBytes: number,
-): Omit<ProcessedImage, "previewUrl" | "fullUrl"> {
+): Omit<ProcessedImage, "previewUrl" | "originalUrl"> {
   const comma = dataUrl.indexOf(",");
   const meta = comma >= 0 ? dataUrl.slice(0, comma) : "";
   const mimeType =
@@ -239,15 +249,21 @@ export async function processImageFile(file: File): Promise<ProcessedImage> {
       const target = fitWithin(original.width, original.height);
       const sameSize = target.width === original.width && target.height === original.height;
 
-      // 已经够小：不重编码，直接发原始字节（省一次编解码）。
-      if (sameSize && !shouldDownscale(original.width, original.height, originalBytes)) {
+      // 像素已达标：直接发原始字节。省一次 draw + 编码，也保住 PNG 的无损清晰度。
+      if (sameSize && originalBytes <= RAW_PASSTHROUGH_MAX_BYTES) {
         try {
-          const raw = rawAttachment(await readAsDataUrl(file), file, originalBytes);
-          const thumbnail = await makeThumbnail(original.draw, original.width, original.height, false);
+          const originalUrl = URL.createObjectURL(file);
+          // base64 与缩略图并行：两条链都只读源位图，没有先后依赖。
+          const [raw, thumbnail] = await Promise.all([
+            readAsDataUrl(file).then((dataUrl) => rawAttachment(dataUrl, file, originalBytes)),
+            makeThumbnail(original.draw, original.width, original.height, false),
+          ]);
           return {
             ...raw,
-            previewUrl: thumbnail ?? URL.createObjectURL(file),
-            fullUrl: URL.createObjectURL(file),
+            width: original.width,
+            height: original.height,
+            previewUrl: thumbnail ?? originalUrl,
+            originalUrl,
           };
         } catch {
           /* 落到下面的重编码路径 */
@@ -274,12 +290,15 @@ export async function processImageFile(file: File): Promise<ProcessedImage> {
               context.fillRect(0, 0, target.width, target.height);
             }
             context.drawImage(source.draw, 0, 0, target.width, target.height);
-            const blob = await canvasToBlob(canvas, mimeType);
+            // 整图编码与缩略图编码并行（以前是串行：一次 JPEG 编码等完才开始画缩略图）。
+            const [blob, thumbnail] = await Promise.all([
+              canvasToBlob(canvas, mimeType),
+              makeThumbnail(source.draw, source.width, source.height, alpha),
+            ]);
             if (blob && blob.size > 0) {
+              // 原图 URL 指向原始文件：查看器拿到的永远是没降采样的那张。
+              const originalUrl = URL.createObjectURL(file);
               const data = await blobToBase64(blob);
-              const fullUrl = URL.createObjectURL(blob);
-              const previewUrl =
-                (await makeThumbnail(source.draw, source.width, source.height, alpha)) ?? fullUrl;
               return {
                 data,
                 mimeType,
@@ -287,8 +306,8 @@ export async function processImageFile(file: File): Promise<ProcessedImage> {
                 height: target.height,
                 bytes: blob.size,
                 originalBytes,
-                previewUrl,
-                fullUrl,
+                previewUrl: thumbnail ?? originalUrl,
+                originalUrl,
               };
             }
           }
@@ -306,7 +325,7 @@ export async function processImageFile(file: File): Promise<ProcessedImage> {
 async function rawProcessed(file: File, originalBytes: number): Promise<ProcessedImage> {
   const raw = rawAttachment(await readAsDataUrl(file), file, originalBytes);
   const url = URL.createObjectURL(file);
-  return { ...raw, previewUrl: url, fullUrl: url };
+  return { ...raw, previewUrl: url, originalUrl: url };
 }
 
 /**
