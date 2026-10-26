@@ -113,15 +113,13 @@ function navPreview(message: AgentMessage): string {
 const LIVE_COST_PER_TOKEN = 0.000004;
 
 /** 右侧导航的刻度数量上限：永远是 9 个（DeepSeek 式「动态滚动窗口」）。 */
-/** 上下文徽章：120_000 → "120.0k"，窗口整千不补小数。 */
+/** 上下文徽章：120_000 → "120k"；token 数一律取整，不再出现 120.0k 这种小数。 */
 function formatContextTokens(tokens: number): string {
-  return tokens >= 1_000 ? `${(tokens / 1_000).toFixed(1)}k` : String(tokens);
+  return tokens >= 1_000 ? `${Math.round(tokens / 1_000)}k` : String(Math.round(tokens));
 }
 
 function formatContextCeiling(ceiling: number): string {
-  if (ceiling < 1_000) return String(ceiling);
-  const k = ceiling / 1_000;
-  return `${Number.isInteger(k) ? k : k.toFixed(1)}k`;
+  return formatContextTokens(ceiling);
 }
 
 /** 环形描边色：同一份阈值，只换颜色不换判定。 */

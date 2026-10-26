@@ -23,10 +23,11 @@ export interface UsageStripProps {
   onRefresh?: () => void;
 }
 
+/** Token 数一律取整：1_048_576 → "1M"，不再出现 "1.0M" 这种小数。 */
 function compactTokens(value: number): string {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000_000) return `${Math.round(value / 1_000_000)}M`;
   if (value >= 1000) return `${Math.round(value / 1000)}k`;
-  return String(value);
+  return String(Math.round(value));
 }
 
 /**

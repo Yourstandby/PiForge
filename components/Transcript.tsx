@@ -934,17 +934,24 @@ function timeLabel(timestamp: number | undefined): string | null {
   return sameDay ? clock : `${date.getMonth() + 1}/${date.getDate()} ${clock}`;
 }
 
-/** Token 数量：超过 1 万就缩写（zh: 123.4万 / en: 1.2M），避免一长串数字吓人。 */
+/**
+ * Token 数量：**一律取到整数位**。
+ *
+ * 「计费 tokens」是费用 ÷ 单价折出来的，天然带一长串小数（如 7,215.6383），
+ * 直接 toLocaleString 会把小数一起印到界面上；这里先取整再格式化。
+ * 百万以内给精确整数（带千分位），只有到 M 量级才缩写成 1.2M，避免一串数字吓人。
+ */
 function formatTokenCount(value: number, locale: string): string {
   if (!Number.isFinite(value) || value <= 0) return "0";
-  if (value < 10_000) return value.toLocaleString();
+  const tokens = Math.round(value);
+  if (tokens < 1_000_000) return tokens.toLocaleString();
   try {
     return new Intl.NumberFormat(locale.startsWith("zh") ? "zh-CN" : "en-US", {
       notation: "compact",
       maximumFractionDigits: 1,
-    }).format(value);
+    }).format(tokens);
   } catch {
-    return `${Math.round(value / 1000)}k`;
+    return `${Math.round(tokens / 1000)}k`;
   }
 }
 
