@@ -1292,7 +1292,9 @@ function ChatSession({
         userPausedRef.current = false;
         wheelUpRef.current = false;
       }
-      const away = distance > 120;
+      // 用户接管后推 1px 就要看到「回到最新」徽章；没接管时仍用 120px，
+      // 避免流式渲染的亚像素抖动闪出按钮。
+      const away = distance > (userPausedRef.current || wheelUpRef.current ? 1 : 120);
       if (away !== lastAway) {
         lastAway = away;
         awayFromBottomRef.current = away;
