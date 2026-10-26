@@ -175,7 +175,7 @@ export function SessionTabBar({
                 if (event.button === 1) onClose(tab.key);
               }}
               title={[project, tab.cwd, tab.title].filter(Boolean).join(" · ")}
-              className={`group flex h-8 max-w-[268px] min-w-[112px] shrink-0 cursor-pointer items-center gap-1.5 overflow-hidden whitespace-nowrap rounded-sm pl-2 pr-1 text-[12.5px] transition-[background-color,color,box-shadow] duration-150 ease-out ${
+              className={`group flex h-8 max-w-[268px] min-w-[112px] shrink-0 cursor-pointer items-center gap-1.5 overflow-hidden whitespace-nowrap rounded-sm pl-2 pr-1 text-[11.5px] transition-[background-color,color,box-shadow] duration-150 ease-out ${
                 active
                   ? "font-semibold text-[#1F2937] shadow-[inset_0_-2px_0_#2563EB]"
                   : "text-[#6B7280] hover:bg-[#EFEFF2] hover:text-[#374151]"
@@ -183,7 +183,7 @@ export function SessionTabBar({
             >
               {/* 极简面包屑：项目名（暗）+ 分隔斜杠 + 会话标题；只用字重与明度区分活动标签 */}
               {tab.cwd && (
-                <span className="flex shrink-0 items-center gap-1 text-[11.5px] font-normal text-[#9CA3AF]">
+                <span className="flex shrink-0 items-center gap-1 text-[10.5px] font-normal text-[#9CA3AF]">
                   <ProjectTintDot cwd={tab.cwd} />
                   {project && <span className="max-w-[96px] truncate">{project}</span>}
                   {project && <span className="opacity-60">/</span>}
