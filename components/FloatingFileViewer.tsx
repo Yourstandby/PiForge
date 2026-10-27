@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Eye, EyeOff, Loader2, Pencil, Save, WrapText, X } from "lucide-react";
+import { Eye, EyeOff, FolderTree, Loader2, Pencil, Save, WrapText, X } from "lucide-react";
 import { syntaxThemeFor } from "@/lib/syntax-theme";
 import { encodeFilePathForApi, getFileName, getRelativeFilePath } from "@/lib/file-paths";
 import { ErrorNotice } from "./ErrorNotice";
@@ -125,12 +125,15 @@ export function FloatingFileViewer({
   target,
   cwd,
   refreshKey = 0,
+  onRevealInTree,
   onClose,
 }: {
   target: FloatingFileTarget;
   cwd?: string | null;
   /** Bumped after an external write (e.g. applying a code block) to refetch. */
   refreshKey?: number;
+  /** 收起浮层预览，改为在右侧文件树里定位这个文件。 */
+  onRevealInTree?: (filePath: string) => void;
   onClose: () => void;
 }) {
   const [data, setData] = useState<FileData | null>(null);
@@ -278,6 +281,17 @@ export function FloatingFileViewer({
           </>
         )}
         <span className="flex-1" />
+        {onRevealInTree && (
+          <button
+            type="button"
+            onClick={() => onRevealInTree(target.filePath)}
+            title="在文件树中定位"
+            aria-label="在文件树中定位"
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-ink-faint transition-colors hover:bg-[#ECECEF] hover:text-ink"
+          >
+            <FolderTree size={12} strokeWidth={1.9} aria-hidden="true" />
+          </button>
+        )}
         {isTextEditable && !target.diff && !editing && (
           <button
             type="button"

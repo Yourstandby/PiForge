@@ -158,6 +158,8 @@ export function Workbench() {
     target: FloatingFileTarget;
   } | null>(null);
   const [gitTabSignal, setGitTabSignal] = useState(0);
+  /** 聊天里的文件链接：右栏打开文件的同时把文件树定位过去（nonce 让同路径重复点击也生效）。 */
+  const [fileReveal, setFileReveal] = useState<{ path: string; nonce: number } | null>(null);
   // Bumped when the models modal closes so a freshly added provider shows up
   // in the model picker without remounting the session.
   const [modelsVersion, setModelsVersion] = useState(0);
@@ -762,10 +764,19 @@ ${fenced}`
     [closeTab, loadSessions],
   );
 
-  /** File links in any transcript always land in the right panel. */
+  /** 键盘/浮层按钮：收起浮层预览，只把文件树定位到该文件。 */
+  const handleRevealFileInTree = useCallback((filePath: string) => {
+    setRightPanelOpen(true);
+    setOpenFile(null);
+    setFileReveal((prev) => ({ path: filePath, nonce: (prev?.nonce ?? 0) + 1 }));
+  }, []);
+
+  /** File links in any transcript always land in the right panel — and the tree follows. */
   const handleOpenChatFile = useCallback(
     (filePath: string, fileName: string, line?: number) => {
       handleOpenFile(filePath, fileName, line);
+      // 树里同步展开父目录并高亮：浮层会盖住树，收起浮层时位置已经在那儿了。
+      setFileReveal((prev) => ({ path: filePath, nonce: (prev?.nonce ?? 0) + 1 }));
     },
     [handleOpenFile],
   );
@@ -1276,6 +1287,8 @@ ${fenced}`
               viewerRefreshKey={fileViewerRefreshKey}
               openFile={openFile}
               gitOpenSignal={gitTabSignal}
+              fileReveal={fileReveal}
+              onRevealInTree={handleRevealFileInTree}
               onOpenFile={handleOpenFile}
               onOpenDiff={handleOpenDiff}
               onCloseFile={handleCloseFile}
