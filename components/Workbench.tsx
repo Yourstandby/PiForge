@@ -11,6 +11,7 @@ import { getElectronApi } from "@/lib/electron-api";
 import { resolveForkedSession } from "@/lib/fork-session-wait";
 import { buildProjectWindowPath, resolveInitialView } from "@/lib/project-window";
 import { useConfigHotReload } from "@/hooks/useConfigHotReload";
+import { useDismissOnOutsideClick } from "@/hooks/useDismissOnOutsideClick";
 import { ChatSurface } from "./ChatSurface";
 import { FilePanel } from "./FilePanel";
 import { ModelsConfig } from "./ModelsConfig";
@@ -286,6 +287,9 @@ export function Workbench() {
   const [exportSessionId, setExportSessionId] = useState<string | null>(null);
   const [projectError, setProjectError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const settingsMenuRef = useRef<HTMLDivElement | null>(null);
+  // 点开设置后，点侧栏别处 / 按 Esc 自动收起（齿轮自身在容器内，仍是切换语义）。
+  useDismissOnOutsideClick(settingsMenuRef, menuOpen, () => setMenuOpen(false));
 
   // ------------------------------------------------------------------ tabs
   const activeTab = useMemo(
@@ -1053,7 +1057,7 @@ ${fenced}`
             }}
           />
           </div>
-          <div className="relative shrink-0 px-2 pb-2 pt-2">
+          <div ref={settingsMenuRef} className="relative shrink-0 px-2 pb-2 pt-2">
             {projectError && (
               <p role="status" className="px-1 pb-1 text-[11px] text-[#c2554e]">
                 {projectError}
@@ -1063,7 +1067,10 @@ ${fenced}`
             <div className="flex items-center justify-evenly gap-1">
               <button
                 type="button"
-                onClick={() => openPanelTab("plugins")}
+                onClick={() => {
+                  setMenuOpen(false);
+                  openPanelTab("plugins");
+                }}
                 title="插件"
                 aria-label="插件"
                 className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-500 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900"
@@ -1072,7 +1079,10 @@ ${fenced}`
               </button>
               <button
                 type="button"
-                onClick={() => openPanelTab("agents")}
+                onClick={() => {
+                  setMenuOpen(false);
+                  openPanelTab("agents");
+                }}
                 title="Agents"
                 aria-label="Agents"
                 className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-500 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900"

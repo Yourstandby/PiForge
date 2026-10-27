@@ -547,6 +547,28 @@ span.linenumber {
   color: var(--text-dim);
   user-select: none;
 }
+/* 日期分组是可折叠的小标题：点一下展开/收起该组会话。 */
+.sidebar-date-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+}
+.sidebar-date-group-toggle:hover {
+  opacity: 0.75;
+}
+.sidebar-date-group-toggle .sidebar-project-chevron {
+  flex: none;
+}
+.sidebar-date-group-count {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
 /* 「其他项目」收纳盒不在缩进容器里，单独补回左内边距 */
 .sidebar-project-aside .sidebar-aside-toggle {
   padding-left: 8px;
@@ -643,6 +665,10 @@ span.linenumber {
 .sidebar-empty-project:hover {
   background: var(--bg-hover);
   color: var(--accent);
+}
+/* 「显示全部 N 条 / 只看最近的」：项目内会话上限的开关。 */
+.sidebar-show-more {
+  font-size: 11.5px;
 }
 
 /* Session rows: one line, never wrap. */

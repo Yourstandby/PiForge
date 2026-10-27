@@ -8,6 +8,7 @@ import { ProjectGroup } from "./session-sidebar/ProjectGroup";
 import { SidebarIcon } from "./session-sidebar/SidebarIcon";
 import { groupProjects, partitionProjects, projectExpanded, projectKey, recentProjectKeys, searchProjects, sortProjects, type SidebarProject } from "./session-sidebar/projects";
 import { groupSessionNodesByDate } from "./session-sidebar/date-groups";
+import { dateGroupContainsSession, dateGroupOpen, dateGroupStateKey, previewSessionGroups, SESSION_PREVIEW_LIMIT } from "./session-sidebar/session-preview";
 import { SortableProjects } from "./session-sidebar/SortableProjects";
 import { useSidebarPreferences } from "./session-sidebar/useSidebarPreferences";
 import { useI18n } from "./I18nProvider";
@@ -65,6 +66,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const projectListRef = useRef<HTMLElement>(null);
   const pendingProjectRef = useRef<string | null>(null);
   const scrolledSessionRef = useRef<string | null>(null);
+  /** 点过「显示全部」的项目：默认每个项目只露最近 SESSION_PREVIEW_LIMIT 条会话。 */
+  const [expandedSessionProjects, setExpandedSessionProjects] = useState<Record<string, boolean>>({});
+  /** 日期分组的展开状态，缺省只展开最新一组（今天以外的组收起来）。 */
+  const [openDateGroups, setOpenDateGroups] = useState<Record<string, boolean>>({});
 
   const loadSessions = useCallback(async (showLoading = false, force = false) => {
     // 只有首屏（列表还是空的）才切到"加载中"占位：刷新时把已有列表整块卸载
@@ -166,10 +171,17 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   // 滚动到底部时用 IntersectionObserver 懒加载：哨兵元素进入视口才拉下一批，
   // 回调里只做一次异步请求，不参与滚动帧。
   const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * 还有项目停在「只露最近 N 条」的预览态时，暂停自动追加历史：
+   * 多拉回来的会话都被上限挡着不显示，只会白刷请求、把列表越拖越长。
+   * 用户点「显示全部」或底部的「加载更多会话」时才继续。
+   */
+  const autoLoadPaused = !searching && projectPartition.main.some((project) =>
+    project.tree.length > SESSION_PREVIEW_LIMIT && expandedSessionProjects[project.key] !== true);
   useEffect(() => {
     const list = projectListRef.current;
     const sentinel = loadMoreSentinelRef.current;
-    if (!list || !sentinel || searching) return;
+    if (!list || !sentinel || searching || autoLoadPaused) return;
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries.some((entry) => entry.isIntersecting)) void loadMoreSessions();
@@ -178,10 +190,25 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [loadMoreSessions, searching, allSessions.length]);
+  }, [loadMoreSessions, searching, allSessions.length, autoLoadPaused]);
 
+  /**
+   * 手风琴式展开：同一时刻只留一个项目展开，切换项目自动收起上一个。
+   * 必须把其余项目显式记成 false —— 只删记录不够：最近活跃的项目缺省就是展开的，
+   * 删掉记录等于让它立刻弹回来。
+   */
   const setExpanded = useCallback((key: string, expanded: boolean) => {
-    setPreferences((previous) => ({ ...previous, expanded: { ...previous.expanded, [key]: expanded } }));
+    setPreferences((previous) => {
+      const next: Record<string, boolean> = {};
+      if (expanded) {
+        for (const other of Object.keys(previous.expanded)) if (other !== key) next[other] = false;
+        next[key] = true;
+      } else {
+        Object.assign(next, previous.expanded);
+        next[key] = false;
+      }
+      return { ...previous, expanded: next };
+    });
   }, [setPreferences]);
 
   const addProject = useCallback((cwd: string) => {
@@ -190,9 +217,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     setPreferences((previous) => ({
       ...previous,
       paths: previous.paths.some((path) => projectKey(path) === key) ? previous.paths : [...previous.paths, cwd],
-      expanded: { ...previous.expanded, [key]: true },
     }));
-  }, [setPreferences]);
+    setExpanded(key, true);
+  }, [setExpanded, setPreferences]);
 
   const newSession = useCallback((cwd: string) => {
     setSearchQuery("");
@@ -247,25 +274,49 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   }, [projects, preferences.expanded, selectedSessionId]);
 
   /** 项目行渲染：常规区和「其他项目」收纳盒共用，避免两处行为分叉。 */
-  const renderProject = (project: SidebarProject, dragHandle: ReactNode, dragging: boolean) => (
-    <ProjectGroup project={project} dragHandle={dragHandle} dragging={dragging} expanded={isExpanded(project.key)} active={project.key === activeProjectKey} duplicateName={projects.some((other) => other.key !== project.key && other.name === project.name)} onToggle={(expanded) => {
-      if (searching) setSearchQuery("");
-      setExpanded(project.key, expanded);
-    }} onNewSession={() => newSession(project.cwd)}>
-      {project.sessions.length === 0 && <button className="sidebar-empty-project" onClick={() => newSession(project.cwd)}>{t("sidebar.startFirstSession")}<SidebarIcon name="plus" size={13} /></button>}
-      {groupSessionNodesByDate(project.tree).map((group) => <div key={group.bucket} className="sidebar-date-group-wrap">
-        <div className="sidebar-date-group">{t(`sidebar.date.${group.bucket}`)}</div>
-        {group.nodes.map((node) => <SessionTreeItem key={node.session.id} node={node} selectedSessionId={selectedSessionId} onSelectSession={onSelectSession} onRenamed={() => {
-              invalidateSessions();
-              void loadSessions(false, true);
-            }} onSessionDeleted={(id) => {
-              onSessionDeleted?.(id);
-              invalidateSessions();
-              void loadSessions(false, true);
-            }} onBranchSession={onBranchSession} onCloneSession={onCloneSession} onExportSession={onExportSession} depth={0} searching={searching} openSessionIds={openSessionIds} />)}
-      </div>)}
-    </ProjectGroup>
-  );
+  const renderProject = (project: SidebarProject, dragHandle: ReactNode, dragging: boolean) => {
+    const dateGroups = groupSessionNodesByDate(project.tree);
+    // 选中项在这个项目里就整组铺开：被上限裁掉的会话不能连选中行一起消失。
+    const expandedAll = searching || expandedSessionProjects[project.key] === true
+      || dateGroupContainsSession(project.tree, selectedSessionId);
+    const preview = previewSessionGroups(dateGroups, { expanded: expandedAll });
+    const showAllToggle = !searching && preview.totalCount > SESSION_PREVIEW_LIMIT;
+    return (
+      <ProjectGroup project={project} dragHandle={dragHandle} dragging={dragging} expanded={isExpanded(project.key)} active={project.key === activeProjectKey} duplicateName={projects.some((other) => other.key !== project.key && other.name === project.name)} onToggle={(expanded) => {
+        if (searching) setSearchQuery("");
+        setExpanded(project.key, expanded);
+      }} onNewSession={() => newSession(project.cwd)}>
+        {project.sessions.length === 0 && <button className="sidebar-empty-project" onClick={() => newSession(project.cwd)}>{t("sidebar.startFirstSession")}<SidebarIcon name="plus" size={13} /></button>}
+        {preview.groups.map((group, index) => {
+          // 搜索、最新一组、选中项所在组一律展开；其余的看用户点没点过。
+          const open = searching || index === 0
+            || dateGroupContainsSession(group.nodes, selectedSessionId)
+            || dateGroupOpen(openDateGroups, project.key, group.bucket, false);
+          return (
+            <div key={group.bucket} className="sidebar-date-group-wrap">
+              <button type="button" className="sidebar-date-group sidebar-date-group-toggle" aria-expanded={open} onClick={() => setOpenDateGroups((previous) => ({ ...previous, [dateGroupStateKey(project.key, group.bucket)]: !open }))}>
+                <SidebarIcon name="chevron" size={9} className="sidebar-project-chevron" style={{ transform: open ? "rotate(90deg)" : undefined }} />
+                <span>{t(`sidebar.date.${group.bucket}`)}</span>
+                <span className="sidebar-date-group-count">{group.nodes.length}</span>
+              </button>
+              {open && group.nodes.map((node) => <SessionTreeItem key={node.session.id} node={node} selectedSessionId={selectedSessionId} onSelectSession={onSelectSession} onRenamed={() => {
+                    invalidateSessions();
+                    void loadSessions(false, true);
+                  }} onSessionDeleted={(id) => {
+                    onSessionDeleted?.(id);
+                    invalidateSessions();
+                    void loadSessions(false, true);
+                  }} onBranchSession={onBranchSession} onCloneSession={onCloneSession} onExportSession={onExportSession} depth={0} searching={searching} openSessionIds={openSessionIds} />)}
+            </div>
+          );
+        })}
+        {showAllToggle && <button type="button" className="sidebar-empty-project sidebar-show-more" onClick={() => setExpandedSessionProjects((previous) => ({ ...previous, [project.key]: !expandedAll }))}>
+          <span>{expandedAll ? t("sidebar.showFewerSessions") : t("sidebar.showAllSessions", { count: preview.totalCount })}</span>
+          <SidebarIcon name="chevron" size={11} style={{ transform: expandedAll ? "rotate(-90deg)" : "rotate(90deg)" }} />
+        </button>}
+      </ProjectGroup>
+    );
+  };
 
   useEffect(() => () => {
     if (sessionRefreshTimerRef.current) clearTimeout(sessionRefreshTimerRef.current);
