@@ -94,11 +94,22 @@ export function ImageLightbox({ images, index, onIndexChange, onClose }: ImageLi
   const offsetRef = useRef({ x: 0, y: 0 });
   const rotationRef = useRef(0);
   const frameRef = useRef<number | null>(null);
-  const dragRef = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
-  const [scaleLabel, setScaleLabel] = useState(1);
+  // 缩放百分比直接写 DOM（textContent），不进 React 状态：
+  // 手势期间每帧一次 setState 会让整个查看器（含几百像素的图片节点）重渲染一次，
+  // 这是拖动/缩放「明显延迟」的主因。
+  const scaleTextRef = useRef<HTMLSpanElement | null>(null);
+  const scaleTextValueRef = useRef(1);
   const [dimensions, setDimensions] = useState<{ width: number; height: number } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+
+  const paintScaleLabel = useCallback(() => {
+    const value = scaleRef.current;
+    if (value === scaleTextValueRef.current) return;
+    scaleTextValueRef.current = value;
+    const node = scaleTextRef.current;
+    if (node) node.textContent = `${Math.round(value * 100)}%`;
+  }, []);
 
   const applyTransform = useCallback(() => {
     if (frameRef.current !== null) return;
@@ -108,9 +119,9 @@ export function ImageLightbox({ images, index, onIndexChange, onClose }: ImageLi
       if (!node) return;
       const { x, y } = offsetRef.current;
       node.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scaleRef.current}) rotate(${rotationRef.current}deg)`;
-      setScaleLabel(scaleRef.current);
+      paintScaleLabel();
     });
-  }, []);
+  }, [paintScaleLabel]);
 
   const resetView = useCallback(() => {
     scaleRef.current = 1;
@@ -248,56 +259,79 @@ export function ImageLightbox({ images, index, onIndexChange, onClose }: ImageLi
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [go, menu, onClose, resetView, rotate, zoomBy]);
 
-  if (!image || typeof document === "undefined") return null;
-
-  const onWheel = (event: React.WheelEvent<HTMLDivElement>) => {
-    event.preventDefault();
+  // 手势热路径（滚轮缩放 / 拖动平移）走原生监听：
+  //   - wheel 必须是非 passive，否则 preventDefault 无效（React 根部注册的 wheel 是 passive）；
+  //   - pointermove 一帧最多写一次 transform，全程不触发 React 重渲染；
+  //   - 光标用 imperative 写法，省掉一次重渲染。
+  useEffect(() => {
     const stage = stageRef.current;
-    const factor = event.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
-    const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scaleRef.current * factor));
-    const ratio = next / scaleRef.current;
-    if (stage && ratio !== 1) {
-      // 以光标为锚点：放大时光标下的像素不动。
-      const rect = stage.getBoundingClientRect();
-      const cx = event.clientX - rect.left;
-      const cy = event.clientY - rect.top;
-      offsetRef.current = {
-        x: cx - (cx - offsetRef.current.x) * ratio,
-        y: cy - (cy - offsetRef.current.y) * ratio,
+    if (!stage) return;
+    stage.style.cursor = "grab";
+
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const factor = event.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
+      const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scaleRef.current * factor));
+      const ratio = next / scaleRef.current;
+      if (ratio !== 1) {
+        // 以光标为锚点：放大时光标下的像素不动。
+        const rect = stage.getBoundingClientRect();
+        const cx = event.clientX - rect.left;
+        const cy = event.clientY - rect.top;
+        offsetRef.current = {
+          x: cx - (cx - offsetRef.current.x) * ratio,
+          y: cy - (cy - offsetRef.current.y) * ratio,
+        };
+      }
+      scaleRef.current = next;
+      applyTransform();
+    };
+
+    let drag: { x: number; y: number; ox: number; oy: number } | null = null;
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button !== 0) return;
+      stage.setPointerCapture(event.pointerId);
+      drag = {
+        x: event.clientX,
+        y: event.clientY,
+        ox: offsetRef.current.x,
+        oy: offsetRef.current.y,
       };
-    }
-    scaleRef.current = next;
-    applyTransform();
-  };
-
-  const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
-    event.currentTarget.setPointerCapture(event.pointerId);
-    dragRef.current = {
-      x: event.clientX,
-      y: event.clientY,
-      ox: offsetRef.current.x,
-      oy: offsetRef.current.y,
+      stage.style.cursor = "grabbing";
     };
-  };
 
-  const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    const drag = dragRef.current;
-    if (!drag) return;
-    offsetRef.current = {
-      x: drag.ox + (event.clientX - drag.x),
-      y: drag.oy + (event.clientY - drag.y),
+    const onPointerMove = (event: PointerEvent) => {
+      if (!drag) return;
+      offsetRef.current = {
+        x: drag.ox + (event.clientX - drag.x),
+        y: drag.oy + (event.clientY - drag.y),
+      };
+      applyTransform();
     };
-    applyTransform();
-  };
 
-  const endDrag = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!dragRef.current) return;
-    dragRef.current = null;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-  };
+    const endDrag = (event: PointerEvent) => {
+      if (!drag) return;
+      drag = null;
+      stage.style.cursor = "grab";
+      if (stage.hasPointerCapture(event.pointerId)) stage.releasePointerCapture(event.pointerId);
+    };
+
+    stage.addEventListener("wheel", onWheel, { passive: false });
+    stage.addEventListener("pointerdown", onPointerDown);
+    stage.addEventListener("pointermove", onPointerMove);
+    stage.addEventListener("pointerup", endDrag);
+    stage.addEventListener("pointercancel", endDrag);
+    return () => {
+      stage.removeEventListener("wheel", onWheel);
+      stage.removeEventListener("pointerdown", onPointerDown);
+      stage.removeEventListener("pointermove", onPointerMove);
+      stage.removeEventListener("pointerup", endDrag);
+      stage.removeEventListener("pointercancel", endDrag);
+    };
+  }, [applyTransform, src]);
+
+  if (!image || typeof document === "undefined") return null;
 
   const toggleZoom = () => {
     if (scaleRef.current > 1.01) resetView();
@@ -336,12 +370,13 @@ export function ImageLightbox({ images, index, onIndexChange, onClose }: ImageLi
     { label: t("common.close"), icon: <X size={13} strokeWidth={2} />, run: onClose },
   ];
 
+  // 遮罩不用 backdrop-blur：全窗口 backdrop-filter 每次合成都要整屏重采样，纯亏帧。
   return createPortal(
     <div
       role="dialog"
       aria-modal="true"
       aria-label={t("lightbox.title")}
-      className="fixed inset-0 z-[1300] flex flex-col bg-black/85 backdrop-blur-[2px]"
+      className="fixed inset-0 z-[1300] flex flex-col bg-black/85"
       onClick={(event) => {
         if (menu) {
           setMenu(null);
@@ -372,8 +407,8 @@ export function ImageLightbox({ images, index, onIndexChange, onClose }: ImageLi
           <button type="button" className={toolbarButton} title={t("lightbox.zoomOut")} aria-label={t("lightbox.zoomOut")} onClick={() => zoomBy(1 / ZOOM_STEP)}>
             <ZoomOut size={16} strokeWidth={2} />
           </button>
-          <span className="w-11 shrink-0 text-center tabular-nums text-white/70">
-            {Math.round(scaleLabel * 100)}%
+          <span ref={scaleTextRef} className="w-11 shrink-0 text-center tabular-nums text-white/70">
+            100%
           </span>
           <button type="button" className={toolbarButton} title={t("lightbox.zoomIn")} aria-label={t("lightbox.zoomIn")} onClick={() => zoomBy(ZOOM_STEP)}>
             <ZoomIn size={16} strokeWidth={2} />
@@ -406,12 +441,7 @@ export function ImageLightbox({ images, index, onIndexChange, onClose }: ImageLi
       <div
         ref={stageRef}
         className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden"
-        style={{ cursor: dragRef.current ? "grabbing" : "grab", touchAction: "none" }}
-        onWheel={onWheel}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
+        style={{ touchAction: "none" }}
         onDoubleClick={toggleZoom}
         onClick={(event) => {
           if (event.target === event.currentTarget) onClose();
@@ -419,6 +449,8 @@ export function ImageLightbox({ images, index, onIndexChange, onClose }: ImageLi
       >
         {/* 渐进加载：先拿缩略图占位（同帧可见），原图解码完再淡入 —— 打开大图不再白屏，
             也不会为了「快」而降清晰度：最终显示的一直是 originalUrl 的原图。 */}
+        {/* 原图到位后转 visibility:hidden（不卸载是为了不闪），并去掉 blur ——
+            全屏 blur 图层在拖动时会被反复重采样。 */}
         {image.previewUrl && image.previewUrl !== src && (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -426,8 +458,8 @@ export function ImageLightbox({ images, index, onIndexChange, onClose }: ImageLi
             alt=""
             aria-hidden
             draggable={false}
-            className="pointer-events-none absolute max-h-full max-w-full select-none opacity-90 blur-[2px] transition-opacity duration-150"
-            style={{ opacity: loaded ? 0 : 0.9 }}
+            className="pointer-events-none absolute max-h-full max-w-full select-none transition-opacity duration-150"
+            style={{ opacity: loaded ? 0 : 1, visibility: loaded ? "hidden" : "visible" }}
           />
         )}
         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -437,7 +469,9 @@ export function ImageLightbox({ images, index, onIndexChange, onClose }: ImageLi
           alt={fileName}
           draggable={false}
           decoding="async"
-          className="relative max-h-full max-w-full select-none shadow-[0_10px_40px_rgba(0,0,0,0.5)] transition-opacity duration-150"
+          // 不挂大半径 box-shadow：它会被烘进图片图层，缩放/重栅格化时一起重算；
+          // 遮罩本来就是纯黑，阴影肉眼也看不出来。
+          className="relative max-h-full max-w-full select-none transition-opacity duration-150"
           style={{
             opacity: loaded ? 1 : 0,
             // transform 由 applyTransform 直接写入 DOM；这里不能出现 transform，
