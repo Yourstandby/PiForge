@@ -56,17 +56,18 @@ function Switch({
     >
       <span className="flex w-full items-center justify-between gap-3">
         <span className="min-w-0 truncate text-[12.5px] font-medium text-ink">{label}</span>
-        {/* 轨道：显式 left 定位，不依赖绝对定位元素的静态位置（button 的 text-align:center
-            会把 left:auto 的滑块推到中线，导致滑块居中而不是贴边）。 */}
+        {/* 轨道用 flex 内对齐滑块：绝对定位 + 手算 left 会被 border-box 宽度、
+            字号缩放和 button 的 text-align:center 反复算错（滑块贴边或溢出轨道）。
+            开通时偏移 = 轨道内宽 - 滑块宽（36 - 2(border) - 4(padding) - 14 = 16px）。 */}
         <span
           aria-hidden="true"
-          className={`relative h-5 w-9 shrink-0 rounded-full border transition-colors duration-150 ${
+          className={`inline-flex h-5 w-9 shrink-0 items-center rounded-full border px-0.5 transition-colors duration-150 ${
             checked ? "border-accent bg-accent" : "border-[#D9DDE5] bg-[#ECEEF2]"
           }`}
         >
           <span
-            className={`absolute top-0.5 h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-all duration-150 ${
-              checked ? "left-[24px]" : "left-0.5"
+            className={`h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform duration-150 ${
+              checked ? "translate-x-4" : "translate-x-0"
             }`}
           />
         </span>
