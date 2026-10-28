@@ -133,6 +133,13 @@ function makeTab(session: SessionInfo | null, newSessionCwd: string | null): Cha
 
 /** Memoized so typing in one tab never re-renders the others. */
 const ChatPane = memo(ChatSurface);
+/**
+ * 左栏 / 右栏都是「交互一次才该变」的重组件：打字时 Workbench 每次 keystroke
+ * 都会重渲染，没包 memo 就会连带把侧栏全部会话行、文件树、打开的代码视图
+ * 一起 diff 一遍（这是「打字卡、点会话卡、切面板卡」的共同根因）。
+ */
+const SidebarPane = memo(SessionSidebar);
+const RightPanelPane = memo(FilePanel);
 
 interface PaneHandlers {
   onDraftChange: (value: string) => void;
@@ -148,6 +155,9 @@ export function Workbench() {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const tabsRef = useRef<ChatTab[]>([]);
   const activeKeyRef = useRef<string | null>(null);
+  /** 草稿的实时镜像：给 @ 提及这类稳定回调读取，避免它们因为 drafts 变化而换身份。 */
+  const draftsRef = useRef<Record<string, string>>(drafts);
+  draftsRef.current = drafts;
   const [cwd, setCwd] = useState<string | null>(null);
   const [openFile, setOpenFile] = useState<FloatingFileTarget | null>(null);
   // Bumped after an applied code block so the floating viewer refetches.
@@ -384,14 +394,45 @@ export function Workbench() {
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [cycleTab]);
 
-  const rememberDraft = useCallback((draftKey: string, value: string) => {
-    try {
-      if (value) window.localStorage.setItem(`piforge.draft:${draftKey}`, value);
-      else window.localStorage.removeItem(`piforge.draft:${draftKey}`);
-    } catch {
-      // storage disabled: draft still works for this mount
+  /**
+   * 草稿落盘改成空闲合并写：以前每次 keystroke 都同步 localStorage.setItem
+   * （一次磁盘 IO），输入越快越堵主线程。现在 400ms 内的连续输入只写一次。
+   */
+  const pendingDraftsRef = useRef(new Map<string, string>());
+  const draftFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushDrafts = useCallback(() => {
+    if (draftFlushTimerRef.current) {
+      clearTimeout(draftFlushTimerRef.current);
+      draftFlushTimerRef.current = null;
+    }
+    const pending = pendingDraftsRef.current;
+    if (pending.size === 0) return;
+    pendingDraftsRef.current = new Map();
+    for (const [draftKey, value] of pending) {
+      try {
+        if (value) window.localStorage.setItem(`piforge.draft:${draftKey}`, value);
+        else window.localStorage.removeItem(`piforge.draft:${draftKey}`);
+      } catch {
+        // storage disabled: draft still works for this mount
+      }
     }
   }, []);
+  const rememberDraft = useCallback((draftKey: string, value: string) => {
+    pendingDraftsRef.current.set(draftKey, value);
+    if (draftFlushTimerRef.current) return;
+    draftFlushTimerRef.current = setTimeout(() => {
+      draftFlushTimerRef.current = null;
+      flushDrafts();
+    }, 400);
+  }, [flushDrafts]);
+  useEffect(() => {
+    const flush = () => flushDrafts();
+    window.addEventListener("beforeunload", flush);
+    return () => {
+      window.removeEventListener("beforeunload", flush);
+      flush();
+    };
+  }, [flushDrafts]);
 
   const setDraftForTab = useCallback((key: string, value: string) => {
     setDrafts((prev) => (prev[key] === value ? prev : { ...prev, [key]: value }));
@@ -1001,6 +1042,41 @@ ${fenced}`
     return list;
   }, [tabs, tabActivity, agentDone]);
 
+  /**
+   * 侧栏 / 右栏的回调全部提到组件级并 useCallback 固定身份：
+   * 内联箭头函数会让上面两个 memo() 完全失效（每帧都是新 props）。
+   */
+  const handleSidebarNewSession = useCallback((_sessionId: string, targetCwd: string) => {
+    void handleNewSession(targetCwd);
+  }, [handleNewSession]);
+  const handleSidebarExportSession = useCallback((session: SessionInfo) => {
+    setExportSessionId(session.id);
+  }, []);
+  const handleSidebarCwdChange = useCallback((nextCwd: string | null) => {
+    setCwd(nextCwd);
+    // A not-yet-created tab follows the project the user picked.
+    const key = activeKeyRef.current;
+    if (!key) return;
+    commitTabs(
+      tabsRef.current.map((tab) =>
+        tab.key === key && !tab.session
+          ? { ...tab, newSessionCwd: nextCwd, draftKey: draftKeyFor(null, nextCwd) }
+          : tab,
+      ),
+    );
+  }, [commitTabs]);
+  const handleSidebarCollapse = useCallback(() => setLeftSidebarOpen(false), []);
+  const handleSidebarOpenProjectWindow = useCallback(() => {
+    void handleAddProject();
+  }, [handleAddProject]);
+  const handleSidebarAtMention = useCallback((relativePath: string) => {
+    const key = activeKeyRef.current;
+    if (!key) return;
+    const current = draftsRef.current[key] ?? "";
+    setDraftForTab(key, `${current}${current && !current.endsWith(" ") ? " " : ""}@${relativePath} `);
+  }, [setDraftForTab]);
+  const handleRightPanelCollapse = useCallback(() => setRightPanelOpen(false), []);
+
   // 唯一的活动视图：activeKey 失效时退回到第一个标签
   const visibleKey = useMemo(() => {
     if (activeKey && tabs.some((tab) => tab.key === activeKey)) return activeKey;
@@ -1033,39 +1109,20 @@ ${fenced}`
         >
           <div className="flex h-full w-[260px] flex-col overflow-hidden border-r border-black/[0.06] bg-white">
           <div className="flex min-h-0 flex-1 flex-col">
-          <SessionSidebar
+          <SidebarPane
             selectedSessionId={activeTab?.session?.id ?? null}
             onSelectSession={handleSelect}
-            onNewSession={(_sessionId, targetCwd) => {
-              void handleNewSession(targetCwd);
-            }}
+            onNewSession={handleSidebarNewSession}
             refreshKey={sessionsVersion}
             openSessionIds={openSessionIds}
             onSessionDeleted={handleSessionDeleted}
-            onExportSession={(session) => setExportSessionId(session.id)}
+            onExportSession={handleSidebarExportSession}
             selectedCwd={activeCwd}
-            onCwdChange={(nextCwd) => {
-              setCwd(nextCwd);
-              // A not-yet-created tab follows the project the user picked.
-              const key = activeKeyRef.current;
-              if (!key) return;
-              commitTabs(
-                tabsRef.current.map((tab) =>
-                  tab.key === key && !tab.session
-                    ? { ...tab, newSessionCwd: nextCwd, draftKey: draftKeyFor(null, nextCwd) }
-                    : tab,
-                ),
-              );
-            }}
-            onOpenFile={(filePath, fileName) => handleOpenFile(filePath, fileName)}
-            onCollapse={() => setLeftSidebarOpen(false)}
-            onOpenProjectWindow={() => { void handleAddProject(); }}
-            onAtMention={(relativePath) => {
-              const key = activeKeyRef.current;
-              if (!key) return;
-              const current = drafts[key] ?? "";
-              setDraftForTab(key, `${current}${current && !current.endsWith(" ") ? " " : ""}@${relativePath} `);
-            }}
+            onCwdChange={handleSidebarCwdChange}
+            onOpenFile={handleOpenFile}
+            onCollapse={handleSidebarCollapse}
+            onOpenProjectWindow={handleSidebarOpenProjectWindow}
+            onAtMention={handleSidebarAtMention}
           />
           </div>
           <div ref={settingsMenuRef} className="relative shrink-0 px-2 pb-2 pt-2">
@@ -1280,7 +1337,7 @@ ${fenced}`
             className="h-full"
             style={{ width: compact ? compactRightPanelWidth : rightPanelWidth }}
           >
-            <FilePanel
+            <RightPanelPane
               cwd={activeCwd}
               sessionId={activeTab?.session?.id ?? null}
               explorerRefreshKey={explorerRefreshKey}
@@ -1292,7 +1349,7 @@ ${fenced}`
               onOpenFile={handleOpenFile}
               onOpenDiff={handleOpenDiff}
               onCloseFile={handleCloseFile}
-              onCollapse={() => setRightPanelOpen(false)}
+              onCollapse={handleRightPanelCollapse}
               onOpenSession={openSessionById}
               onAgentDone={handleAgentDone}
             />
