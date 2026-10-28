@@ -3,6 +3,35 @@
 迁移条目按「改了什么 / 默认行为变没变 / 开关怎么用」组织。详细数据见 `docs/measurements/`
 （三个口径：记录型 provider、真实 deepseek 会话、重复场景 A/B，三者不要混读）。
 
+## v0.11.2 — 会话按时间分桶（计数与内容同源）
+
+主题：**点开就能看见，数字先说真话**。侧栏会话不再靠「显示全部 / 加载更多」逐段揭示，
+改成按时间分桶收纳，折叠头显示的就是点开后的真实条数。
+
+### 改了什么
+
+- **首屏一次取满**（`lib/sessions-cache.ts`）：`SESSION_PAGE_SIZE` 20 → 200（服务端单次上限）。
+  分页退回只兜「会话总数超过一页」的极端情况，不再驱动滚动加载。
+- **时间分桶**（`components/session-sidebar/date-groups.ts` 重写）：今天 / 昨天 / 过去 7 天按天，
+  12 个月内按自然月（`2026年10月`），更早按自然年（`2025年`）；无法解析时间的归「时间未知」
+  并排在最后。`older` 垃圾桶取消 —— 月 / 年维度不再在数据层就被抹掉。
+- **计数只数根会话**：`SessionDateGroup.count` 与 `nodes` 同源，分支子会话不重复计数。
+- **默认只展开今天 / 昨天**，其余桶收起；点开是纯 `setState`，不发请求、不会空。
+- **删掉三处互相打架的旧机制**：`autoLoadPaused`（只要还有项目停在预览态就静默停掉滚动加载，
+  于是滚到底什么都不会发生）、滚动哨兵、「显示全部 N 条」按钮。
+
+### 默认行为变没变
+
+默认可见会话数从「每项目 5 条」变成一页上限内的全部，且折叠即可见 —— 这是**有意改变的默认**。
+会话总数超过一页时底部才出现「加载更早的会话」；它不显示数字，因为服务端的 `total` 含
+`%TEMP%` 下的 piforge-probe / ab-control 临时会话，显示出来会是假数字。
+
+### 验证
+
+- `npx tsc --noEmit` 通过；`npm run lint` 通过；
+- `node --test components/session-sidebar/*.test.ts lib/session-reader.paging.test.ts lib/sessions-cache.test.ts` → 27/27；
+- 实测 `/api/sessions?limit=200`：冷启动约 400ms，info 缓存命中后 23ms。
+
 ## Unreleased — 关闭窗口先问「最小化到托盘 / 退出程序」
 
 ### 改了什么
