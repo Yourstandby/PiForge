@@ -49,8 +49,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
-  /** 服务端报告的总会话数：只用来显示「还有 N 条更早」，不参与渲染推算。 */
-  const [totalSessions, setTotalSessions] = useState(0);
   const loadingMoreRef = useRef(false);
   /** 已加载到的条数：刷新时按它补齐，避免用户补进来的更早历史被缩回去。 */
   const loadedDepthRef = useRef(0);
@@ -93,7 +91,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       nextOffsetRef.current = cursor;
       hasMoreRef.current = hasMore;
       setHasMore(hasMore);
-      setTotalSessions(page.total);
       setAllSessions((previous) => mergeSessionList(previous, sessions));
       // 右栏 Agents 用这份快照显示 `项目 › 会话标题`，避免再拉一次会话列表。
       rememberSessionTitles(sessions);
@@ -344,9 +341,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             disabled={loadingMore}
             className="sidebar-empty-project"
           >
-            {loadingMore
-              ? t("common.loading")
-              : t("sidebar.loadOlderSessions", { count: Math.max(0, totalSessions - allSessions.length) })}
+            {loadingMore ? t("common.loading") : t("sidebar.loadOlderSessions")}
           </button>
         )}
       </nav>
