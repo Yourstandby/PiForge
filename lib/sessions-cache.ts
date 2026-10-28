@@ -3,9 +3,10 @@
 /**
  * 会话列表的共享客户端缓存（分页）。
  *
- * `/api/sessions` 现在是分页接口：首屏 20 个会话，历史会话在侧栏滚动时才按批
- * （每批 10 个）追加。这里按 offset 缓存每页结果并去重并发请求，避免 Workbench
- * 与 SessionSidebar 各拉一次、也避免滚动回顶部时重新请求。
+ * `/api/sessions` 按 offset 分页，但侧栏首屏直接要满一页（见 SESSION_PAGE_SIZE）：
+ * 分页只用于兜住「会话数超过一页」的极端情况，不再驱动滚动加载。
+ * 这里按 offset 缓存每页结果并去重并发请求，避免 Workbench 与 SessionSidebar
+ * 各拉一次、也避免回到顶部时重新请求。
  *
  * 深链/恢复（`?session=<id>`）用 `keep` 参数保证目标会话一定在第一页里返回，
  * 这样不在最近 20 个之内的会话也能直接打开。
@@ -13,8 +14,14 @@
 import type { SessionInfo } from "@/lib/types";
 
 const TTL_MS = 3000;
-export const SESSION_PAGE_SIZE = 20;
-export const SESSION_PAGE_STEP = 10;
+/**
+ * 侧栏首屏一次要多少条。取服务端单次上限（200）：当前量级下这一个窗口就能覆盖
+ * 全部会话，于是日期分组的计数天然准确、点开必然有内容 ——「点开一定出现」靠的是
+ * 数据已在内存，而不是靠再发一次请求碰运气。
+ */
+export const SESSION_PAGE_SIZE = 200;
+/** 超过一页时手动补齐的步长，与服务端单次上限一致。 */
+export const SESSION_PAGE_STEP = 200;
 
 export interface SessionPage {
   sessions: SessionInfo[];
@@ -104,7 +111,7 @@ export function fetchSessionPage(
  * `offset=20` 的追加请求。
  */
 export async function fetchSessionsUpTo(count: number): Promise<SessionPage | null> {
-  const limit = Math.min(200, Math.max(SESSION_PAGE_SIZE, count));
+  const limit = Math.min(SESSION_PAGE_SIZE, Math.max(1, count));
   try {
     return await request(0, limit);
   } catch {
