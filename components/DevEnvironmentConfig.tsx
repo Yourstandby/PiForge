@@ -56,20 +56,18 @@ function Switch({
     >
       <span className="flex w-full items-center justify-between gap-3">
         <span className="min-w-0 truncate text-[12.5px] font-medium text-ink">{label}</span>
-        {/* 轨道用 flex 内对齐滑块：绝对定位 + 手算 left 会被 border-box 宽度、
-            字号缩放和 button 的 text-align:center 反复算错（滑块贴边或溢出轨道）。
-            开通时偏移 = 轨道内宽 - 滑块宽（36 - 2(border) - 4(padding) - 14 = 16px）。 */}
+        {/* 滑块位置完全交给 flex（justify-start/end + p-0.5），不做任何 px 手算、不用绝对定位：
+            轨道 36×20 减去 1px 边框与 2px 内边距后内宽 30、内高 14，滑块 14×14 恰好落在
+            start/end 的内边距边缘；再加 overflow-hidden 兜底，任何亚像素误差都只会被裁掉而不会溢出。 */}
         <span
           aria-hidden="true"
-          className={`inline-flex h-5 w-9 shrink-0 items-center rounded-full border px-0.5 transition-colors duration-150 ${
-            checked ? "border-accent bg-accent" : "border-[#D9DDE5] bg-[#ECEEF2]"
+          className={`inline-flex h-5 w-9 shrink-0 items-center overflow-hidden rounded-full border p-0.5 transition-colors duration-150 ${
+            checked
+              ? "justify-end border-accent bg-accent"
+              : "justify-start border-[#D9DDE5] bg-[#ECEEF2]"
           }`}
         >
-          <span
-            className={`h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform duration-150 ${
-              checked ? "translate-x-4" : "translate-x-0"
-            }`}
-          />
+          <span className="h-3.5 w-3.5 shrink-0 rounded-full bg-white shadow-sm" />
         </span>
       </span>
       <span className="text-[11px] leading-4 text-ink-faint">{hint}</span>
