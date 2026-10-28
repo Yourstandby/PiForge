@@ -56,18 +56,17 @@ function Switch({
     >
       <span className="flex w-full items-center justify-between gap-3">
         <span className="min-w-0 truncate text-[12.5px] font-medium text-ink">{label}</span>
-        {/* 滑块位置完全交给 flex（justify-start/end + p-0.5），不做任何 px 手算、不用绝对定位：
-            轨道 36×20 减去 1px 边框与 2px 内边距后内宽 30、内高 14，滑块 14×14 恰好落在
-            start/end 的内边距边缘；再加 overflow-hidden 兜底，任何亚像素误差都只会被裁掉而不会溢出。 */}
+        {/* 不放滑块了：任何「圆点 + 圆角轨道」都要靠几何对齐，缩放/字号一偏就露馅。
+            这里直接显示状态胶囊（与 CodemodeConfig 的启用/禁用按钮同构），零几何风险。 */}
         <span
           aria-hidden="true"
-          className={`inline-flex h-5 w-9 shrink-0 items-center overflow-hidden rounded-full border p-0.5 transition-colors duration-150 ${
+          className={`inline-flex shrink-0 items-center rounded-md border px-2 py-0.5 text-[11px] font-medium transition-colors ${
             checked
-              ? "justify-end border-accent bg-accent"
-              : "justify-start border-[#D9DDE5] bg-[#ECEEF2]"
+              ? "border-accent bg-accent text-white"
+              : "border-[#D9DDE5] bg-[#ECEEF2] text-ink-muted"
           }`}
         >
-          <span className="h-3.5 w-3.5 shrink-0 rounded-full bg-white shadow-sm" />
+          {checked ? "已开启" : "已关闭"}
         </span>
       </span>
       <span className="text-[11px] leading-4 text-ink-faint">{hint}</span>
