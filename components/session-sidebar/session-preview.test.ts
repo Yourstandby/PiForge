@@ -1,8 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { SessionTreeNode } from "./helpers.ts";
-import { dateGroupContainsSession, dateGroupOpen, dateGroupStateKey, previewSessionGroups, SESSION_PREVIEW_LIMIT } from "./session-preview.ts";
-import type { SessionDateGroup } from "./date-groups.ts";
+import { dateGroupContainsSession, dateGroupOpen, dateGroupOpenByDefault, dateGroupStateKey } from "./session-preview.ts";
 
 function node(id: string, children: SessionTreeNode[] = []): SessionTreeNode {
   return {
@@ -11,36 +10,6 @@ function node(id: string, children: SessionTreeNode[] = []): SessionTreeNode {
   };
 }
 
-function groups(spec: Array<[string, number]>): SessionDateGroup[] {
-  return spec.map(([bucket, count]) => ({
-    bucket: bucket as SessionDateGroup["bucket"],
-    nodes: Array.from({ length: count }, (_, index) => node(`${bucket}-${index}`)),
-  }));
-}
-
-test("preview keeps the newest sessions and drops empty buckets", () => {
-  const preview = previewSessionGroups(groups([["today", 15], ["yesterday", 4], ["week", 9]]));
-  assert.equal(preview.totalCount, 28);
-  assert.equal(preview.hiddenCount, 28 - SESSION_PREVIEW_LIMIT);
-  assert.deepEqual(preview.groups.map((group) => [group.bucket, group.nodes.length]), [["today", SESSION_PREVIEW_LIMIT]]);
-});
-
-test("preview spills into the next bucket when the first one is short", () => {
-  const preview = previewSessionGroups(groups([["today", 2], ["yesterday", 5]]), { limit: 5 });
-  assert.deepEqual(preview.groups.map((group) => [group.bucket, group.nodes.length]), [["today", 2], ["yesterday", 3]]);
-  assert.equal(preview.hiddenCount, 2);
-});
-
-test("preview leaves short lists and expanded lists untouched", () => {
-  const source = groups([["today", 2], ["older", 1]]);
-  assert.equal(previewSessionGroups(source).groups, source);
-  const long = groups([["today", 20]]);
-  const expanded = previewSessionGroups(long, { expanded: true });
-  assert.equal(expanded.groups, long);
-  assert.equal(expanded.hiddenCount, 0);
-  assert.equal(expanded.totalCount, 20);
-});
-
 test("date group open state prefers user toggles over the default", () => {
   const key = dateGroupStateKey("d:/pi", "yesterday");
   assert.equal(dateGroupOpen({}, "d:/pi", "yesterday", false), false);
@@ -48,6 +17,15 @@ test("date group open state prefers user toggles over the default", () => {
   assert.equal(dateGroupOpen({ [key]: true }, "d:/pi", "yesterday", false), true);
   assert.equal(dateGroupOpen({ [key]: false }, "d:/pi", "yesterday", true), false);
   assert.equal(dateGroupOpen({ [key]: true }, "d:/other", "yesterday", false), false);
+});
+
+test("only today and yesterday open by default", () => {
+  assert.equal(dateGroupOpenByDefault("today"), true);
+  assert.equal(dateGroupOpenByDefault("yesterday"), true);
+  assert.equal(dateGroupOpenByDefault("week"), false);
+  assert.equal(dateGroupOpenByDefault("m:2026-10"), false);
+  assert.equal(dateGroupOpenByDefault("y:2025"), false);
+  assert.equal(dateGroupOpenByDefault("unknown"), false);
 });
 
 test("selected session forces its bucket open, including nested forks", () => {

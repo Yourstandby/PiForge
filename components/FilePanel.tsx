@@ -66,6 +66,8 @@ export function FilePanel({
   gitOpenSignal = 0,
   explorerRefreshKey = 0,
   viewerRefreshKey = 0,
+  fileReveal = null,
+  onRevealInTree,
   onOpenFile,
   onOpenDiff,
   onCloseFile,
@@ -82,6 +84,10 @@ export function FilePanel({
   explorerRefreshKey?: number;
   /** Bumped after an external write so the floating viewer refetches. */
   viewerRefreshKey?: number;
+  /** 聊天里的文件链接：把文件树展开到该文件（nonce 保证重复点击也生效）。 */
+  fileReveal?: { path: string; nonce: number } | null;
+  /** 浮层「在树中定位」：收起浮层，只保留树里的定位。 */
+  onRevealInTree?: (filePath: string) => void;
   onOpenFile?: (filePath: string, fileName: string, line?: number) => void;
   onOpenDiff?: (filePath: string, fileName: string) => void;
   onCloseFile?: () => void;
@@ -150,6 +156,12 @@ export function FilePanel({
   useEffect(() => {
     if (gitOpenSignal > 0) setTab("git");
   }, [gitOpenSignal]);
+
+  // 文件链接定位：先把视图切到「文件」，定位本身由 FileExplorer 完成。
+  const fileRevealNonce = fileReveal?.nonce ?? 0;
+  useEffect(() => {
+    if (fileRevealNonce > 0) setTab("files");
+  }, [fileRevealNonce]);
 
   // The agent navigating the built-in browser should be visible, not hidden
   // behind whichever tab the user is currently on.
@@ -366,6 +378,7 @@ export function FilePanel({
                   key={cwd}
                   cwd={cwd}
                   refreshKey={explorerRefreshKey}
+                  reveal={fileReveal}
                   onOpenFile={handleOpenFile}
                   onOpenDiff={handleOpenDiff}
                 />
@@ -378,6 +391,7 @@ export function FilePanel({
                 target={openFile}
                 cwd={cwd}
                 refreshKey={viewerRefreshKey}
+                onRevealInTree={onRevealInTree}
                 onClose={() => onCloseFile?.()}
               />
             ) : null}

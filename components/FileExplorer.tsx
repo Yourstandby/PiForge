@@ -6,6 +6,7 @@ import { AtSign, ChevronRight, Loader2 } from "lucide-react";
 import { FILE_DRAG_MIME } from "@/lib/file-drag";
 import { getFileIcon, FolderIcon } from "./FileIcons";
 import { encodeFilePathForApi, getRelativeFilePath, joinFilePath } from "@/lib/file-paths";
+import { computeRevealChain } from "@/lib/file-reveal";
 import { useI18n } from "./I18nProvider";
 
 interface FileEntry {
@@ -30,6 +31,8 @@ interface Props {
   onOpenDiff?: (filePath: string, fileName: string) => void;
   refreshKey?: number;
   onAtMention?: (relativePath: string) => void;
+  /** 聊天里的文件链接：展开祖先目录、滚动到该文件并高亮。nonce 变化即触发。 */
+  reveal?: { path: string; nonce: number } | null;
 }
 
 interface GitMark {
@@ -292,6 +295,9 @@ function TreeNode({
   refreshKey,
   gitStatus,
   onContextMenuNode,
+  selectedPath,
+  onSelectPath,
+  registerRow,
 }: {
   node: FileNode;
   depth: number;
@@ -304,6 +310,11 @@ function TreeNode({
   refreshKey?: number;
   gitStatus: GitStatusMap;
   onContextMenuNode: (node: FileNode, x: number, y: number) => void;
+  /** 当前被定位/选中的文件（聊天链接定位时高亮）。 */
+  selectedPath?: string | null;
+  onSelectPath?: (fullPath: string) => void;
+  /** 注册行 DOM，供外部 reveal 时 scrollIntoView。 */
+  registerRow?: (fullPath: string, el: HTMLDivElement | null) => void;
 }) {
   const { t } = useI18n();
   const open = expandedPaths.has(node.fullPath);
@@ -317,6 +328,7 @@ function TreeNode({
     ? Object.keys(gitStatus).some((changed) => changed.startsWith(relativePath + "/"))
     : false;
   const mark = directMark ? changedMark(directMark.status) : null;
+  const isSelected = !!selectedPath && selectedPath === node.fullPath;
 
   const loadChildren = useCallback(async (force = false) => {
     if (loaded && !force) return;
@@ -331,6 +343,21 @@ function TreeNode({
       setLoading(false);
     }
   }, [loaded, node.fullPath]);
+
+  /**
+   * 程序化展开（聊天里的文件链接定位）不走 onClick，所以「open 但还没加载过」
+   * 时自己拉一次子目录；autoLoadRef 保证失败后不会无限重试。
+   */
+  const autoLoadRef = useRef(false);
+  useEffect(() => {
+    if (!open) {
+      autoLoadRef.current = false;
+      return;
+    }
+    if (loaded || autoLoadRef.current) return;
+    autoLoadRef.current = true;
+    void loadChildren();
+  }, [open, loaded, loadChildren]);
 
   // When refreshKey causes a re-render with the same node identity, reload open dirs
   const prevLoadedRef = useRef(loaded);
@@ -352,13 +379,25 @@ function TreeNode({
       onToggleExpanded(node.fullPath, next);
       if (next && !loaded) loadChildren();
     } else {
+      onSelectPath?.(node.fullPath);
       onOpenFile(node.fullPath, node.name);
     }
-  }, [node.isDir, node.fullPath, node.name, loaded, open, loadChildren, onOpenFile, onToggleExpanded]);
+  }, [
+    node.isDir,
+    node.fullPath,
+    node.name,
+    loaded,
+    open,
+    loadChildren,
+    onOpenFile,
+    onToggleExpanded,
+    onSelectPath,
+  ]);
 
   return (
     <div>
       <div
+        ref={(el) => registerRow?.(node.fullPath, el)}
         onClick={handleClick}
         draggable={!node.isDir}
         onDragStart={(event) => {
@@ -383,7 +422,11 @@ function TreeNode({
           paddingRight: 8,
           height: 26,
           cursor: "pointer",
-          background: hovered ? "var(--bg-hover)" : "transparent",
+          background: isSelected
+            ? "#E8EFFB"
+            : hovered
+              ? "var(--bg-hover)"
+              : "transparent",
           borderRadius: "var(--radius-control)",
           userSelect: "none",
         }}
@@ -407,12 +450,12 @@ function TreeNode({
         <span
           style={{
             fontSize: 12,
-            color: "var(--text)",
+            color: isSelected ? "#2563EB" : "var(--text)",
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
             flex: 1,
-            fontWeight: mark ? 600 : 400,
+            fontWeight: mark || isSelected ? 600 : 400,
           }}
           title={node.fullPath}
         >
@@ -491,7 +534,23 @@ function TreeNode({
       {node.isDir && open && (
         <div>
           {children.map((child) => (
-            <TreeNode key={child.fullPath} node={child} depth={depth + 1} cwd={cwd} onOpenFile={onOpenFile} onOpenDiff={onOpenDiff} onAtMention={onAtMention} expandedPaths={expandedPaths} onToggleExpanded={onToggleExpanded} refreshKey={refreshKey} gitStatus={gitStatus} onContextMenuNode={onContextMenuNode} />
+            <TreeNode
+              key={child.fullPath}
+              node={child}
+              depth={depth + 1}
+              cwd={cwd}
+              onOpenFile={onOpenFile}
+              onOpenDiff={onOpenDiff}
+              onAtMention={onAtMention}
+              expandedPaths={expandedPaths}
+              onToggleExpanded={onToggleExpanded}
+              refreshKey={refreshKey}
+              gitStatus={gitStatus}
+              onContextMenuNode={onContextMenuNode}
+              selectedPath={selectedPath}
+              onSelectPath={onSelectPath}
+              registerRow={registerRow}
+            />
           ))}
           {children.length === 0 && loaded && (
             <div style={{ paddingLeft: 8 + (depth + 1) * 14, fontSize: 11, color: "var(--text-dim)", height: 22, display: "flex", alignItems: "center" }}>
@@ -504,7 +563,7 @@ function TreeNode({
   );
 }
 
-export function FileExplorer({ cwd, onOpenFile, onOpenDiff, refreshKey, onAtMention }: Props) {
+export function FileExplorer({ cwd, onOpenFile, onOpenDiff, refreshKey, onAtMention, reveal }: Props) {
   const [roots, setRoots] = useState<FileNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -615,6 +674,56 @@ export function FileExplorer({ cwd, onOpenFile, onOpenDiff, refreshKey, onAtMent
     });
   }, []);
 
+  // ---- 聊天文件链接定位：展开祖先目录 + 滚动 + 高亮 ----
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const registerRow = useCallback((fullPath: string, el: HTMLDivElement | null) => {
+    if (el) rowRefs.current.set(fullPath, el);
+    else rowRefs.current.delete(fullPath);
+  }, []);
+  const revealPath = reveal?.path ?? null;
+  const revealNonce = reveal?.nonce ?? 0;
+
+  useEffect(() => {
+    if (!revealPath || revealNonce === 0) return;
+    // 文件不在当前项目内（其它项目 / 用户目录）：树里没有这个节点，别乱展开。
+    const { ancestors, target } = computeRevealChain(cwd, revealPath);
+    if (!target) {
+      setSelectedPath(null);
+      return;
+    }
+    setSelectedPath(target);
+    setExpandedPaths((prev) => {
+      const next = new Set(prev);
+      for (const dir of ancestors) next.add(dir);
+      return next;
+    });
+  }, [revealPath, revealNonce, cwd]);
+
+  // 懒加载逐层展开，行不是立刻存在：rAF 轮询直到该行挂载再滚动（最多约 1.5s）。
+  useEffect(() => {
+    if (!selectedPath || revealNonce === 0) return;
+    let frame = 0;
+    let attempts = 0;
+    let cancelled = false;
+    const findAndScroll = () => {
+      if (cancelled) return;
+      const row = rowRefs.current.get(selectedPath);
+      if (row) {
+        row.scrollIntoView({ block: "center" });
+        return;
+      }
+      attempts += 1;
+      if (attempts > 90) return;
+      frame = requestAnimationFrame(findAndScroll);
+    };
+    frame = requestAnimationFrame(findAndScroll);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+    };
+  }, [selectedPath, revealNonce]);
+
   useEffect(() => {
     const cwdChanged = prevCwdRef.current !== cwd;
     prevCwdRef.current = cwd;
@@ -706,6 +815,9 @@ export function FileExplorer({ cwd, onOpenFile, onOpenDiff, refreshKey, onAtMent
           onToggleExpanded={handleToggleExpanded}
           refreshKey={treeRefreshKey}
           gitStatus={gitStatus}
+          selectedPath={selectedPath}
+          onSelectPath={setSelectedPath}
+          registerRow={registerRow}
           onContextMenuNode={(target, x, y) => {
             setMenu({ node: target, x, y });
             setPendingDelete(null);
