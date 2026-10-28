@@ -472,7 +472,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     [],
   );
 
-  const handleAgentEvent = useCallback(
+  /**
+   * 低频 / 顺序敏感事件的处理体（原 handleAgentEvent 的全部逻辑）。
+   * 由下面的 handleAgentEvent 按帧合并后再调用。
+   */
+  const applyAgentEventNow = useCallback(
     (event: Parameters<typeof applyAgentEvent>[0]) => {
       if (event.type === "follow_up_queue_update") {
         acceptFollowUpQueue({ revision: event.revision, items: event.items });
@@ -706,6 +710,54 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setEntryIds,
       setCanExecutePlan,
     ],
+  );
+  /**
+   * 高频增量事件按帧合并。
+   *
+   * SSE 是按 chunk 来的：一次生成里 message_update 可能有上百条，
+   * tool_execution_update 在长命令下更密。以前每条都直接 setState，
+   * 等于每条都重渲 ChatSurface + 重解析 Markdown + 整块重绘
+   * （软件合成机器上 GPU 进程能顶到 80%+）。
+   *
+   * 这两类事件携带的都是**全量快照**，同一帧内只保留最后一条即可；
+   * 非增量事件（message_end / agent_end / error / queue 变更…）必须立刻执行，
+   * 且执行前先把队列冲刷干净，避免 end 抢在 update 前面。
+   */
+  const pendingEventsRef = useRef<Array<Parameters<typeof applyAgentEvent>[0]>>([]);
+  const eventFrameRef = useRef<number | null>(null);
+  const handleAgentEvent = useCallback(
+    (event: Parameters<typeof applyAgentEvent>[0]) => {
+      const canAnimate =
+        typeof window !== "undefined" && typeof window.requestAnimationFrame === "function";
+      const drain = () => {
+        const batch = pendingEventsRef.current;
+        pendingEventsRef.current = [];
+        for (const item of batch) applyAgentEventNow(item);
+      };
+      const isIncremental =
+        event.type === "message_update" || event.type === "tool_execution_update";
+      if (!isIncremental || !canAnimate) {
+        // 先冲刷，保证「增量 → 终结」的因果顺序不被打乱。
+        if (eventFrameRef.current !== null) {
+          window.cancelAnimationFrame(eventFrameRef.current);
+          eventFrameRef.current = null;
+        }
+        drain();
+        applyAgentEventNow(event);
+        return;
+      }
+      const queue = pendingEventsRef.current;
+      const last = queue[queue.length - 1];
+      if (last && last.type === event.type) queue[queue.length - 1] = event;
+      else queue.push(event);
+      if (eventFrameRef.current === null) {
+        eventFrameRef.current = window.requestAnimationFrame(() => {
+          eventFrameRef.current = null;
+          drain();
+        });
+      }
+    },
+    [applyAgentEventNow],
   );
   handleAgentEventRef.current = handleAgentEvent;
 

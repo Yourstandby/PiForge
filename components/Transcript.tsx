@@ -15,7 +15,7 @@ import { estimateTokens } from "@/lib/live-usage";
 import { billableTokens, inputUnitPrice } from "@/lib/usage-billing";
 import type { BranchSwitchInfo } from "@/lib/session-branches-view";
 import { isEditToolName, toolDiffPath, toolDiffRows } from "@/lib/tool-diff";
-import { settleToolMs, toolClockFor } from "@/lib/tool-clock";
+import { settleToolMs, toolClockFor, type ToolClock } from "@/lib/tool-clock";
 import { ImageLightbox } from "./chat-input/ImageLightbox";
 import { useI18n } from "./I18nProvider";
 import { useTypedText } from "@/hooks/useSmoothTypewriter";
@@ -788,6 +788,35 @@ function formatDuration(ms: number | undefined): string | null {
   return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)} s`;
 }
 
+/**
+ * 执行中工具卡的秒表：200ms 一跳的重渲染只落在这一小段文字上。
+ * 以前 tick 挂在整张卡里，运行中的卡片（可能带着几千字输出）会被每 200ms
+ * 重渲一次；软件合成机器上这就是持续掉帧的来源。
+ */
+const LiveElapsed = memo(function LiveElapsed({
+  clock,
+  stalled,
+}: {
+  clock: ToolClock | undefined;
+  stalled: boolean;
+}) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 200);
+    return () => window.clearInterval(timer);
+  }, []);
+  const elapsed = clock?.startedAt !== undefined ? Math.max(0, nowMs - clock.startedAt) : 0;
+  return (
+    <span
+      className={`shrink-0 tabular-nums text-[10.5px] ${
+        stalled ? "text-[#B0443C]" : "text-accent-strong"
+      }`}
+    >
+      {formatDuration(elapsed) ?? "0 ms"}
+    </span>
+  );
+});
+
 function resultText(result: ToolResultMessage): string {
   return result.content
     .filter((block): block is { type: "text"; text: string } => block.type === "text")
@@ -1096,19 +1125,12 @@ function ToolCallCard({
   const typedLiveOutput = useTypedText(liveOutput ?? "", typingLog, 24);
   const hasArgs = Object.keys(input).length > 0;
   const hasDetails = hasArgs || Boolean(result);
-  const [nowMs, setNowMs] = useState(0);
   const [settledMs, setSettledMs] = useState<number | undefined>(undefined);
   /** 只在真正跑起来时起表；历史加载的卡片没有起点，不会凭空报个耗时长。 */
   useEffect(() => {
     if (!running || !clock || clock.startedAt !== undefined) return;
     clock.startedAt = Date.now();
   }, [running, clock]);
-  useEffect(() => {
-    if (!running) return;
-    setNowMs(Date.now());
-    const timer = window.setInterval(() => setNowMs(Date.now()), 200);
-    return () => window.clearInterval(timer);
-  }, [running]);
   /** 停止那一刻冻结耗时：后端 durationMs（消息或事件流）优先，否则用自测的起止差。 */
   useEffect(() => {
     if (running || settledMs !== undefined || !clock) return;
@@ -1116,7 +1138,6 @@ function ToolCallCard({
     if (clock.endedAt === undefined) return;
     setSettledMs(settleToolMs(result?.durationMs ?? clock.durationMs, clock));
   }, [running, result, clock, settledMs]);
-  const liveElapsedMs = clock?.startedAt !== undefined && nowMs > 0 ? nowMs - clock.startedAt : 0;
   const duration = formatDuration(settledMs);
   /**
    * 看门狗只读视图：主界面**只**保留「整行微红 + 图标提示」——
@@ -1215,13 +1236,7 @@ function ToolCallCard({
           <span className="shrink-0 text-[10px] text-ink-faint">{nested?.calls.length} 子调用</span>
         )}
         {running ? (
-          <span
-            className={`shrink-0 tabular-nums text-[10.5px] ${
-              stalledRow ? "text-[#B0443C]" : "text-accent-strong"
-            }`}
-          >
-            {formatDuration(liveElapsedMs) ?? "0 ms"}
-          </span>
+          <LiveElapsed clock={clock} stalled={Boolean(stalledRow)} />
         ) : (
           duration && (
             <span className="shrink-0 tabular-nums text-[10.5px] text-ink-faint">{duration}</span>
