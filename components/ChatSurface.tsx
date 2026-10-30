@@ -10,6 +10,7 @@ import { useAudio } from "@/hooks/useAudio";
 import { useHostHealth } from "@/hooks/useHostHealth";
 import { estimateContextTokens, resolveTokenGuards, type TokenGuardKind } from "@/lib/token-guard";
 import { compactionNoticeText } from "@/lib/compaction-notice";
+import { formatTokenCount } from "@/lib/token-format";
 import { TokenGuardBanner } from "./TokenGuardBanner";
 import { StreamHealthBanner } from "./StreamHealthBanner";
 import { evaluateStreamHealth, type StreamHealth } from "@/hooks/agent-session/stream-health";
@@ -1666,7 +1667,7 @@ function ChatSession({
                 className="tabular-nums"
                 title="本轮所有模型调用的输出合计（含思考与工具轮次），不是单次请求的输入"
               >
-                本轮产出 {(turnOutputTokens + liveTokens).toLocaleString()}
+                本轮产出 {formatTokenCount(turnOutputTokens + liveTokens)}
               </span>
               {/* 上下文：一个环就够了——走满=贴满窗口，变红脉冲=已越顶，数字只进 tooltip。 */}
               {chat.contextBudget && (

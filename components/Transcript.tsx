@@ -13,6 +13,7 @@ import { buildWithTurnCache, type TurnCacheEntry } from "@/lib/transcript-turn-c
 import { isInterventionText } from "@/contract/intervention-marker";
 import { estimateTokens } from "@/lib/live-usage";
 import { billableTokens, inputUnitPrice } from "@/lib/usage-billing";
+import { formatTokenCount } from "@/lib/token-format";
 import type { BranchSwitchInfo } from "@/lib/session-branches-view";
 import { isEditToolName, toolDiffPath, toolDiffRows } from "@/lib/tool-diff";
 import { settleToolMs, toolClockFor, type ToolClock } from "@/lib/tool-clock";
@@ -961,27 +962,6 @@ function timeLabel(timestamp: number | undefined): string | null {
     date.getMonth() === now.getMonth() &&
     date.getDate() === now.getDate();
   return sameDay ? clock : `${date.getMonth() + 1}/${date.getDate()} ${clock}`;
-}
-
-/**
- * Token 数量：**一律取到整数位**。
- *
- * 「计费 tokens」是费用 ÷ 单价折出来的，天然带一长串小数（如 7,215.6383），
- * 直接 toLocaleString 会把小数一起印到界面上；这里先取整再格式化。
- * 百万以内给精确整数（带千分位），只有到 M 量级才缩写成 1.2M，避免一串数字吓人。
- */
-function formatTokenCount(value: number, locale: string): string {
-  if (!Number.isFinite(value) || value <= 0) return "0";
-  const tokens = Math.round(value);
-  if (tokens < 1_000_000) return tokens.toLocaleString();
-  try {
-    return new Intl.NumberFormat(locale.startsWith("zh") ? "zh-CN" : "en-US", {
-      notation: "compact",
-      maximumFractionDigits: 1,
-    }).format(tokens);
-  } catch {
-    return `${Math.round(tokens / 1000)}k`;
-  }
 }
 
 /**
@@ -2340,14 +2320,14 @@ function TurnUsage({
       title={detail}
     >
       {label}
-      {requests ? `（${requests} 次请求）` : ""}: {formatTokenCount(billed ?? added, locale)}{" "}
+      {requests ? `（${requests} 次请求）` : ""}: {formatTokenCount(billed ?? added)}{" "}
       {billed === null ? "tokens" : "计费 tokens"}
       {money ? ` · ${money}` : ""}
     </p>
   );
 
   function fmt(value: number): string {
-    return formatTokenCount(value, locale);
+    return formatTokenCount(value);
   }
 }
 
