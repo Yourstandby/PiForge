@@ -109,8 +109,8 @@ export interface DesktopSettings {
    */
   contextFilesEnabled?: boolean;
   /**
-   * 会话接续：把 `HANDOFF.md`（项目根或 docs/ 下）注入系统提示词（默认开）。
-   * 没有该文件时什么都不注入，所以默认开不会改变现有项目的行为。
+   * 会话接续：把 `HANDOFF.md`（项目根或 docs/ 下）注入系统提示词（**默认关**）。
+   * 开与不写都是 undefined，读取侧按 false 处理（见 project-settings.ts）。
    */
   handoffEnabled?: boolean;
 }

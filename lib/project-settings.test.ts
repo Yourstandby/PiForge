@@ -8,6 +8,7 @@ import {
   readProjectSetting,
   readProjectSettings,
   resolveContextFilesEnabled,
+  resolveHandoffEnabled,
   writeProjectSetting,
 } from "./project-settings.ts";
 
@@ -45,6 +46,16 @@ test("生效值优先级：项目级 > 全局 > 默认开", () => {
   assert.equal(resolveContextFilesEnabled(agentDir, cwd, { contextFilesEnabled: false }), true);
   writeProjectSetting(agentDir, cwd, { contextFiles: false });
   assert.equal(resolveContextFilesEnabled(agentDir, cwd, { contextFilesEnabled: true }), false);
+});
+
+test("HANDOFF 默认关，项目级可显式开", () => {
+  const { agentDir, cwd } = box();
+  assert.equal(resolveHandoffEnabled(agentDir, cwd), false);
+  assert.equal(resolveHandoffEnabled(agentDir, cwd, { handoffEnabled: true }), true);
+  writeProjectSetting(agentDir, cwd, { handoff: true });
+  assert.equal(resolveHandoffEnabled(agentDir, cwd, { handoffEnabled: false }), true);
+  writeProjectSetting(agentDir, cwd, { handoff: null });
+  assert.equal(resolveHandoffEnabled(agentDir, cwd, { handoffEnabled: true }), true);
 });
 
 test("目录不存在 / 文件损坏都不抛异常", () => {

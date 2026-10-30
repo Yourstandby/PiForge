@@ -27,7 +27,7 @@ export async function GET(req: Request) {
         contextFiles: project.contextFiles ?? null,
         contextFilesEffective: project.contextFiles ?? desktop.contextFilesEnabled ?? true,
         handoff: project.handoff ?? null,
-        handoffEffective: project.handoff ?? desktop.handoffEnabled ?? true,
+        handoffEffective: project.handoff ?? desktop.handoffEnabled ?? false,
       },
       { headers: { "x-request-id": requestId } },
     );
@@ -67,7 +67,7 @@ export async function PUT(req: Request) {
         contextFiles: saved.contextFiles ?? null,
         contextFilesEffective: saved.contextFiles ?? desktop.contextFilesEnabled ?? true,
         handoff: saved.handoff ?? null,
-        handoffEffective: saved.handoff ?? desktop.handoffEnabled ?? true,
+        handoffEffective: saved.handoff ?? desktop.handoffEnabled ?? false,
       },
       { headers: { "x-request-id": requestId } },
     );

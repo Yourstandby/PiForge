@@ -125,7 +125,10 @@ export function resolveContextFilesEnabled(
   return true;
 }
 
-/** HANDOFF 接续注入：项目级 > 全局 > 默认开（没有交接文件时不会注入任何东西）。 */
+/**
+ * HANDOFF 接续注入：项目级 > 全局 > **默认关**。
+ * 默认关的理由：注入会改写 system prompt 的前缀，对没写交接文件的用户是纯噪音。
+ */
 export function resolveHandoffEnabled(
   agentDir: string,
   cwd: string,
@@ -134,5 +137,5 @@ export function resolveHandoffEnabled(
   const project = readProjectSetting(agentDir, cwd);
   if (typeof project.handoff === "boolean") return project.handoff;
   if (typeof desktop?.handoffEnabled === "boolean") return desktop.handoffEnabled;
-  return true;
+  return false;
 }

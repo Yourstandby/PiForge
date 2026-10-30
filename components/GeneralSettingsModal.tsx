@@ -236,8 +236,8 @@ export function GeneralSettingsModal({
   // 项目级覆盖存在 project-settings.json（按 cwd），null = 跟随全局。
   const [contextFilesEnabled, setContextFilesEnabled] = useState(true);
   const [projectContextFiles, setProjectContextFiles] = useState<boolean | null>(null);
-  // 会话接续（HANDOFF.md 注入）：同样是全局 + 项目级覆盖。
-  const [handoffEnabled, setHandoffEnabled] = useState(true);
+  // 会话接续（HANDOFF.md 注入）：同样是全局 + 项目级覆盖，默认关。
+  const [handoffEnabled, setHandoffEnabled] = useState(false);
   const [projectHandoff, setProjectHandoff] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
   const [reloading, setReloading] = useState(false);
@@ -754,7 +754,7 @@ export function GeneralSettingsModal({
           />
           <Row
             label="接续上次会话"
-            hint="新会话注入项目根或 docs/ 下的 HANDOFF.md；没有该文件时不注入任何东西（默认开）"
+            hint="新会话注入项目根或 docs/ 下的 HANDOFF.md；没有该文件时不注入任何东西（默认关）"
           >
             <Toggle
               checked={handoffEnabled}
