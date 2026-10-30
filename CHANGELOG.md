@@ -32,9 +32,42 @@
 - `node --test components/session-sidebar/*.test.ts lib/session-reader.paging.test.ts lib/sessions-cache.test.ts` → 27/27；
 - 实测 `/api/sessions?limit=200`：冷启动约 400ms，info 缓存命中后 23ms。
 
-## Unreleased — 关闭窗口先问「最小化到托盘 / 退出程序」
+## v0.11.3 — 用量说真话 · 注入与预算收口
+
+主题：**数字先说真话，开关先说默认**。主区修「用量条虚高 / 流式卡顿」，
+设置侧把 prompt 注入收成「全局 + 项目级三态」，并调整了几处默认值。
 
 ### 改了什么
+
+**用量与渲染**
+
+- **费用只报真实 usage 累计**（`lib/live-usage.ts`、`components/UsageStrip.tsx`）：
+  去掉流式阶段的估算叠加，没收到 usage 就不显示数字。
+- **实时用量按会话隔离**（`components/ChatSurface.tsx`）：别的会话在跑，不再累加到
+  当前会话的用量条。
+- **流式事件按帧合并**（`hooks/useAgentSession.ts`、`components/Transcript.tsx`）：
+  同一帧内的增量只提交一次；工具卡秒表 tick 局部化，不再整树重渲染。
+- **重渲染剪枝**（`components/Workbench.tsx`、`SessionSidebar.tsx`、
+  `components/session-sidebar/SessionTree.tsx`）：打字 / 切会话 / 切面板卡顿收口。
+
+**默认值与 prompt 注入**
+
+- **思考等级默认 medium**（`agent-host/settings-defaults.ts`、`lib/thinking-level.ts`）：
+  新会话默认从 low 改为「均衡」。
+- **压缩摘要固定中文且更简洁**（`agent-host/compaction-plan.ts`）：默认只接管摘要正文。
+- **上下文文件注入开关**（`lib/project-settings.ts`、`agent-host/rpc-manager.ts`）：
+  AGENTS.md / CLAUDE.md 可关，全局 + 项目级三态（跟随全局 / 开 / 关），**默认开**。
+- **HANDOFF.md 接续注入**（`lib/handoff.ts`）：项目根或 `docs/` 下的 HANDOFF.md 可注入
+  系统提示词，**默认关**。
+
+**界面**
+
+- **开发环境开关改为状态胶囊**（`components/DevEnvironmentConfig.tsx`）：去掉滑块几何，
+  彻底消除小尺寸下的溢出。
+
+### 关闭窗口先问「最小化到托盘 / 退出程序」
+
+#### 改了什么
 
 - **主窗口关闭**（`electron/main.ts`）：点 X 不再静默隐藏，改为原生询问框 ——
   「最小化到托盘 / 退出程序」，勾选「记住我的选择」后不再询问；Esc / 关掉询问框
@@ -46,25 +79,25 @@
 - **托盘菜单**（`electron/tray.ts`）：「关闭窗口时」单选项（每次询问 / 最小化到托盘 /
   退出程序），可随时改回来，不必手删 json。
 
-### 默认行为变没变
+#### 默认行为变没变
 
 - 首次运行（无偏好文件）→ 每次点关闭都询问，与 0.9.x 的「静默隐藏」不同。
 - 选「退出程序」走正常退出流程（`before-quit` → Host 排空 → 回收子进程树），
   不是 `app.exit(0)`，所以不会有孤儿 dev server。
 - 托盘图标的「退出」仍然直接退出，不询问。
 
-### 验证
+#### 验证
 
 - `npx tsc -p electron/tsconfig.json --noEmit` 通过；
 - `node --test electron/close-preference.test.ts` 6/6 通过；
 - `npx eslint electron/{main,tray,close-preference}.ts` 无告警。
 
-## Unreleased — 调用预算从「次数」改成「批次」
+#### 调用预算从「次数」改成「批次」
 
 主题：**合并调用才是加速手段**。pi 同一条助手消息里的多个 tool call 本就并行执行，
 墙钟时间由往返次数决定；按调用次数卡预算只会逼模型在批次中途停下、重开一轮重发全量上下文。
 
-### 改了什么
+##### 改了什么
 
 - **提示词**（`agent-host/prompts/output-style.ts`，`BATCHING_RULES` 7 → 8 条）：新增
   「合并调用（第一优先）」与「写操作不混批」；「调用预算（写死）」改为批次口径（简单 1 批 /
@@ -73,7 +106,7 @@
   （≈1 个满载批次后自检、≈2 个满载批次后收口），`DEFAULT_TOOL_GUARD.maxParallel` 8 → 12，
   两条提醒文案同步改批次口径。
 
-### 默认行为变没变
+##### 默认行为变没变
 
 - 软约束不变：仍是「到顶先交付可验证结论、剩余待办留给下一轮」，只是阈值按批次量级放大。
 - 无新开关；`PIFORGE_TOOL_MAX_PARALLEL` 仍可覆盖单批并行上限。
@@ -82,7 +115,7 @@
   把前缀顶到 CI 实测 7774（token guards 红），压缩后回到 7585；7660 = 实测 + ~1% 余量。
   注意本地 Windows 的 sys 段比 CI 高约 430 tok，这个 smoke 本地跑会红，以 CI 数字为准。
 
-### 验证
+##### 验证
 
 - `node --test --test-force-exit agent-host/desktop-tool-guard-extension.test.ts agent-host/desktop-output-style-extension.test.ts` → 21/21
 - `npx eslint`（四个改动文件）→ 无输出
