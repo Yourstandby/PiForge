@@ -1303,25 +1303,22 @@ export async function startRpcSession(
         // 跨会话改动署名：别的会话改过的文件，read 时尾部多一行"谁改的"。
         // 必须排在去重之后（去重先判等，署名再追加文本，顺序反了会污染去重哈希）。
         desktopFileOriginInlineExtension(),
-        // 上下文压缩**默认交给 pi 自己的策略**（`shouldCompact` +
-        // `DEFAULT_COMPACTION_SETTINGS`，按模型窗口算，不掺任何绝对 token 硬顶）。
-        // PiForge 自研的窗口 / 预算 / 硬顶触发只在显式打开时接管，用于 A/B：
-        // 代码与单测都保留，但不进默认路径。
-        ...(process.env.PIFORGE_DESKTOP_COMPACTION === "1"
-          ? [
-              desktopCompactionInlineExtension({
-                getEntries: () => (sessionForCompaction?.sessionManager.getBranch() ?? []) as never,
-                getTarget: () => ({
-                  model: sessionForCompaction?.model,
-                  modelRuntime: sessionForCompaction?.modelRuntime as never,
-                }),
-                log:
-                  process.env.PIFORGE_DEBUG_COMPACT === "1"
-                    ? (message, detail) => console.log(message, detail ?? "")
-                    : undefined,
-              }),
-            ]
-          : []),
+        // 上下文压缩：**何时压**仍交给 pi 自己的策略（`shouldCompact` +
+        // `DEFAULT_COMPACTION_SETTINGS`，按模型窗口算），PiForge 只接管**摘要正文**，
+        // 让它固定输出简洁的中文检查点（pi 内置提示词是英文的 Goal/Progress 模板）。
+        // `PIFORGE_DESKTOP_COMPACTION=1` 才连触发策略一起接管（窗口 / 预算 / 硬顶），A/B 用。
+        desktopCompactionInlineExtension({
+          getEntries: () => (sessionForCompaction?.sessionManager.getBranch() ?? []) as never,
+          getTarget: () => ({
+            model: sessionForCompaction?.model,
+            modelRuntime: sessionForCompaction?.modelRuntime as never,
+          }),
+          autoTrigger: process.env.PIFORGE_DESKTOP_COMPACTION === "1",
+          log:
+            process.env.PIFORGE_DEBUG_COMPACT === "1"
+              ? (message, detail) => console.log(message, detail ?? "")
+              : undefined,
+        }),
         desktopLtmInlineExtension({ getCwd: () => cwd }),
         desktopProcessInlineExtension({ getCwd: () => cwd }),
         desktopPowerShellInlineExtension(() => cwd),
