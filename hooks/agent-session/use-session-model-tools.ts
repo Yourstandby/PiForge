@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { sendAgentCommand } from "@/lib/agent-client";
 import {
   getPresetFromTools,
@@ -10,6 +10,7 @@ import {
   type ToolEntry,
 } from "@/lib/tool-presets";
 import type { ThinkingLevelOption } from "./session-lifecycle-reset";
+import { DEFAULT_THINKING_LEVEL, isThinkingLevelOption } from "../../lib/thinking-level.ts";
 import {
   classifyPromptComplexity,
   resolveAutoModel,
@@ -106,7 +107,7 @@ export function useSessionModelTools(opts: UseSessionModelToolsOptions) {
     modelId: string;
   } | null>(null);
   const [toolPreset, setToolPreset] = useState<"none" | "default" | "full">("default");
-  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevelOption>("auto");
+  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevelOption>(DEFAULT_THINKING_LEVEL);
   const [currentModelOverride, setCurrentModelOverride] = useState<{
     provider: string;
     modelId: string;
@@ -167,7 +168,11 @@ export function useSessionModelTools(opts: UseSessionModelToolsOptions) {
     [autoTargets],
   );
 
+  /** 用户手动改过档位后，异步读回的设置不再覆盖它。 */
+  const thinkingTouchedRef = useRef(false);
+
   const handleThinkingLevelChange = useCallback(async (level: ThinkingLevelOption) => {
+    thinkingTouchedRef.current = true;
     setThinkingLevel(level);
     if (level === "auto") return;
     const sid = sessionIdRef.current;
@@ -194,6 +199,29 @@ export function useSessionModelTools(opts: UseSessionModelToolsOptions) {
     },
     [sessionIdRef]
   );
+
+  /**
+   * 新会话的思考档位跟随「常规设置 · 默认思考等级」（pi settings.json 的
+   * defaultThinkingLevel）。不读这一项就会变成：设置里改成高，新会话却按
+   * 内置的均衡跑 —— 双源。读取失败保持 DEFAULT_THINKING_LEVEL（均衡）。
+   */
+  useEffect(() => {
+    if (!isNew) return;
+    let cancelled = false;
+    void fetch("/api/settings")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((settings: { defaultThinkingLevel?: string } | null) => {
+        const level = settings?.defaultThinkingLevel;
+        if (cancelled || thinkingTouchedRef.current) return;
+        if (isThinkingLevelOption(level)) setThinkingLevel(level);
+      })
+      .catch(() => {
+        // 设置读不到就沿用默认档位，不要因此中断会话。
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isNew]);
 
   useEffect(() => {
     // 模型配置变更（ModelsConfig / 切 provider）会 bump modelsRefreshKey，

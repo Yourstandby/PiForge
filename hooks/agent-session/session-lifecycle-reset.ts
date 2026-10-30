@@ -4,20 +4,13 @@
  */
 
 import type { ContextBudget } from "../../lib/pi-types.ts";
+import { DEFAULT_THINKING_LEVEL, type ThinkingLevelOption } from "../../lib/thinking-level.ts";
 
-export type ThinkingLevelOption =
-  | "auto"
-  | "off"
-  | "minimal"
-  | "low"
-  | "medium"
-  | "high"
-  | "xhigh"
-  | "max";
+export type { ThinkingLevelOption };
 
 export type SessionScopedResetPatch = {
   toolPreset: "default";
-  thinkingLevel: "auto";
+  thinkingLevel: ThinkingLevelOption;
   agentRunning: false;
   agentPhase: null;
   retryInfo: null;
@@ -35,7 +28,7 @@ export type SessionScopedResetPatch = {
 export function sessionScopedResetPatch(): SessionScopedResetPatch {
   return {
     toolPreset: "default",
-    thinkingLevel: "auto",
+    thinkingLevel: DEFAULT_THINKING_LEVEL,
     agentRunning: false,
     agentPhase: null,
     retryInfo: null,
@@ -123,7 +116,8 @@ export function loadedAgentStatePatch(input: LoadedAgentStateInput): LoadedAgent
       patch.systemPrompt = agentState.state.systemPrompt ?? null;
     }
     if (agentState.state.thinkingLevel !== undefined) {
-      patch.thinkingLevel = (agentState.state.thinkingLevel as ThinkingLevelOption) ?? "auto";
+      patch.thinkingLevel =
+        (agentState.state.thinkingLevel as ThinkingLevelOption) ?? DEFAULT_THINKING_LEVEL;
     }
   }
 

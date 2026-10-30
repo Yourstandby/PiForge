@@ -13,6 +13,12 @@
  */
 export const THINKING_LEVELS = ["auto", "high", "medium", "low"] as const;
 
+/**
+ * 新会话的默认档位：均衡（medium）。与 `lib/thinking-level.ts` 的
+ * DEFAULT_THINKING_LEVEL 是同一个值，不要另起字面量。
+ */
+export { DEFAULT_THINKING_LEVEL } from "../../lib/thinking-level.ts";
+
 export type CuratedThinkingLevel = (typeof THINKING_LEVELS)[number];
 
 /**

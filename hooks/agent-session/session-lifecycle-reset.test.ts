@@ -8,7 +8,7 @@ import {
 test("sessionScopedResetPatch clears session-scoped fields to safe defaults", () => {
   const p = sessionScopedResetPatch();
   assert.equal(p.toolPreset, "default");
-  assert.equal(p.thinkingLevel, "auto");
+  assert.equal(p.thinkingLevel, "medium");
   assert.equal(p.agentRunning, false);
   assert.equal(p.agentPhase, null);
   assert.equal(p.currentModelOverride, null);
