@@ -193,6 +193,10 @@ export function GeneralSettingsModal({
   } | null>(null);
   // desktop-settings 里的项目隔离（默认关）：开启后一个项目不能随手读别的项目。
   const [projectIsolation, setProjectIsolation] = useState(false);
+  // 上下文文件（AGENTS.md / CLAUDE.md）注入：全局开关在 desktop-settings，
+  // 项目级覆盖存在 project-settings.json（按 cwd），null = 跟随全局。
+  const [contextFilesEnabled, setContextFilesEnabled] = useState(true);
+  const [projectContextFiles, setProjectContextFiles] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
   const [reloading, setReloading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -236,9 +240,11 @@ export function GeneralSettingsModal({
             onDemandDomains?: string[] | null;
             onDemandEffective?: { domains: string[]; source: OnDemandSource };
             projectIsolation?: boolean;
+            contextFilesEnabled?: boolean;
           } | null,
         ) => {
           if (typeof data?.projectIsolation === "boolean") setProjectIsolation(data.projectIsolation);
+          if (typeof data?.contextFilesEnabled === "boolean") setContextFilesEnabled(data.contextFilesEnabled);
           if (!data?.onDemandEffective) return;
           setOnDemand({
             domains: data.onDemandEffective.domains,
@@ -263,6 +269,55 @@ export function GeneralSettingsModal({
       /* 乐观更新；下次打开重新读 */
     }
   }, []);
+
+  /** 全局：上下文文件注入开关。 */
+  const saveContextFilesEnabled = useCallback(async (next: boolean) => {
+    setContextFilesEnabled(next);
+    try {
+      await fetch("/api/desktop-settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ contextFilesEnabled: next }),
+      });
+    } catch {
+      /* 乐观更新；下次打开重新读 */
+    }
+  }, []);
+
+  /** 项目级覆盖；null = 跟随全局。 */
+  const saveProjectContextFiles = useCallback(
+    async (next: boolean | null) => {
+      if (!cwd) return;
+      setProjectContextFiles(next);
+      try {
+        await fetch("/api/project-settings", {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ cwd, contextFiles: next }),
+        });
+      } catch {
+        /* 乐观更新；下次打开重新读 */
+      }
+    },
+    [cwd],
+  );
+
+  useEffect(() => {
+    if (!cwd) {
+      setProjectContextFiles(null);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/project-settings?cwd=${encodeURIComponent(cwd)}`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data: { contextFiles?: boolean | null } | null) => {
+        if (!cancelled && data) setProjectContextFiles(data.contextFiles ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [cwd]);
 
   const saveOnDemand = useCallback(async (next: string[]) => {
     const normalized = normalizeOnDemandSelection(next);
@@ -603,6 +658,47 @@ export function GeneralSettingsModal({
               onChange={(next) => void saveProjectIsolation(next)}
             />
           </Row>
+          <Row
+            label="读取 AGENTS.md"
+            hint="新会话把 AGENTS.md / CLAUDE.md 注进系统提示词；关掉能省掉这段固定 token（默认开）"
+          >
+            <Toggle
+              checked={contextFilesEnabled}
+              onChange={(next) => void saveContextFilesEnabled(next)}
+            />
+          </Row>
+          <Row
+            label="当前项目覆盖"
+            hint={
+              cwd
+                ? "项目级设置优先于上面的全局开关；跟随全局时不给本项目单独设值"
+                : "打开一个项目后可用"
+            }
+          >
+            <Segmented
+              value={
+                projectContextFiles === null
+                  ? "inherit"
+                  : projectContextFiles
+                    ? "on"
+                    : "off"
+              }
+              options={[
+                { label: "跟随全局", value: "inherit" },
+                { label: "开", value: "on" },
+                { label: "关", value: "off" },
+              ]}
+              disabled={!cwd}
+              onChange={(value) =>
+                void saveProjectContextFiles(
+                  value === "inherit" ? null : value === "on",
+                )
+              }
+            />
+          </Row>
+          <p className="px-1 text-[11px] leading-4 text-ink-faint">
+            切换后新会话生效；已有会话维持原上下文。
+          </p>
         </section>
 
         <section className="flex flex-col gap-1">

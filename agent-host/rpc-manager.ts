@@ -26,6 +26,7 @@ import { ExtensionUiBridge } from "./extension-ui-bridge.ts";
 import { desktopApprovalInlineExtension, type AgentModeRef } from "./desktop-approval-extension.ts";
 import { desktopLtmInlineExtension } from "./desktop-ltm-extension.ts";
 import { readDesktopSettings, type CodemodeMode } from "../lib/desktop-settings.ts";
+import { resolveContextFilesEnabled } from "../lib/project-settings.ts";
 import { desktopRuntimeTools } from "./desktop-runtime-tools.ts";
 import { desktopDedupeInlineExtension } from "./desktop-dedupe-extension.ts";
 import { desktopToolGuardInlineExtension } from "./desktop-tool-guard-extension.ts";
@@ -1279,6 +1280,11 @@ export async function startRpcSession(
     const resourceLoader = new DefaultResourceLoader({
       cwd,
       agentDir,
+      /**
+       * 上下文文件（AGENTS.md / CLAUDE.md）注入：项目级 > 全局 > 默认开。
+       * 关掉能省掉 system prompt 里的固定文本；代价是前缀缓存换 key，重启后第一轮全量计费。
+       */
+      noContextFiles: !resolveContextFilesEnabled(agentDir, cwd, desktop),
       extensionFactories: [
         createCodemodeExtension(codemodeOptions),
         createToolSearchExtension(),
