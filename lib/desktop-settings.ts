@@ -108,6 +108,11 @@ export interface DesktopSettings {
    * 项目级可在 `project-settings.json` 里覆盖。
    */
   contextFilesEnabled?: boolean;
+  /**
+   * 会话接续：把 `HANDOFF.md`（项目根或 docs/ 下）注入系统提示词（默认开）。
+   * 没有该文件时什么都不注入，所以默认开不会改变现有项目的行为。
+   */
+  handoffEnabled?: boolean;
 }
 
 const DESKTOP_SETTINGS_FILENAME = "desktop-settings.json";
@@ -192,6 +197,9 @@ export function mergeDesktopSettings(raw: unknown): DesktopSettings {
   if (typeof obj.contextFilesEnabled === "boolean") {
     result.contextFilesEnabled = obj.contextFilesEnabled;
   }
+  if (typeof obj.handoffEnabled === "boolean") {
+    result.handoffEnabled = obj.handoffEnabled;
+  }
   if (Array.isArray(obj.onDemandDomains)) {
     const allowed = new Set(["browser", "shell", "fleet", "memory", "orchestrator", "plugin"]);
     result.onDemandDomains = [...new Set(obj.onDemandDomains.filter(
@@ -256,6 +264,7 @@ export function validateDesktopSettingsBody(body: unknown): string | null {
     "collabGuidelines",
     "projectIsolation",
     "contextFilesEnabled",
+    "handoffEnabled",
   ] as const) {
     if (obj[key] !== undefined && typeof obj[key] !== "boolean") {
       return `${key} must be a boolean`;

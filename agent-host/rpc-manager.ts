@@ -26,7 +26,8 @@ import { ExtensionUiBridge } from "./extension-ui-bridge.ts";
 import { desktopApprovalInlineExtension, type AgentModeRef } from "./desktop-approval-extension.ts";
 import { desktopLtmInlineExtension } from "./desktop-ltm-extension.ts";
 import { readDesktopSettings, type CodemodeMode } from "../lib/desktop-settings.ts";
-import { resolveContextFilesEnabled } from "../lib/project-settings.ts";
+import { resolveContextFilesEnabled, resolveHandoffEnabled } from "../lib/project-settings.ts";
+import { buildHandoffBlock } from "../lib/handoff.ts";
 import { desktopRuntimeTools } from "./desktop-runtime-tools.ts";
 import { desktopDedupeInlineExtension } from "./desktop-dedupe-extension.ts";
 import { desktopToolGuardInlineExtension } from "./desktop-tool-guard-extension.ts";
@@ -1277,6 +1278,9 @@ export async function startRpcSession(
      * 设置页切换后下一条消息就生效。
      */
     const codemodeOptions: { mode: CodemodeMode } = { mode: desktop.codemodeMode ?? "on" };
+    const handoffBlock = resolveHandoffEnabled(agentDir, cwd, desktop)
+      ? buildHandoffBlock(cwd)
+      : null;
     const resourceLoader = new DefaultResourceLoader({
       cwd,
       agentDir,
@@ -1285,6 +1289,11 @@ export async function startRpcSession(
        * 关掉能省掉 system prompt 里的固定文本；代价是前缀缓存换 key，重启后第一轮全量计费。
        */
       noContextFiles: !resolveContextFilesEnabled(agentDir, cwd, desktop),
+      /**
+       * 会话接续：上个会话留下的 HANDOFF.md（没有该文件 → 完全不注入，
+       * 现有项目行为一字不变）。内容全会话不变，落在前缀缓存里。
+       */
+      ...(handoffBlock ? { appendSystemPrompt: [handoffBlock] } : {}),
       extensionFactories: [
         createCodemodeExtension(codemodeOptions),
         createToolSearchExtension(),

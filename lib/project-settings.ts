@@ -9,12 +9,21 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync } from "fs";
 import { join, resolve } from "path";
 import { writeFileAtomic } from "./atomic-write.ts";
-import type { DesktopSettings } from "./desktop-settings.ts";
 
 export interface ProjectSettings {
   /** 上下文文件（AGENTS.md / CLAUDE.md）注入。undefined = 跟随全局。 */
   contextFiles?: boolean;
+  /** HANDOFF.md 接续注入。undefined = 跟随全局。 */
+  handoff?: boolean;
 }
+
+/** 写入补丁：null = 清除该键（回到跟随全局）。 */
+export interface ProjectSwitches {
+  contextFiles?: boolean | null;
+  handoff?: boolean | null;
+}
+
+const PROJECT_SWITCH_KEYS = ["contextFiles", "handoff"] as const;
 
 export type ProjectSettingsMap = Record<string, ProjectSettings>;
 
@@ -42,7 +51,9 @@ function parseProjectSettings(raw: unknown): ProjectSettings {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   const obj = raw as Record<string, unknown>;
   const out: ProjectSettings = {};
-  if (typeof obj.contextFiles === "boolean") out.contextFiles = obj.contextFiles;
+  for (const key of PROJECT_SWITCH_KEYS) {
+    if (typeof obj[key] === "boolean") out[key] = obj[key] as boolean;
+  }
   return out;
 }
 
@@ -76,13 +87,16 @@ export function readProjectSetting(agentDir: string, cwd: string): ProjectSettin
 export function writeProjectSetting(
   agentDir: string,
   cwd: string,
-  patch: { contextFiles?: boolean | null },
+  patch: ProjectSwitches,
 ): ProjectSettings {
   const all = readProjectSettings(agentDir);
   const key = projectSettingsKey(cwd);
   const next: ProjectSettings = { ...(all[key] ?? {}) };
-  if (patch.contextFiles === null) delete next.contextFiles;
-  else if (typeof patch.contextFiles === "boolean") next.contextFiles = patch.contextFiles;
+  for (const field of PROJECT_SWITCH_KEYS) {
+    const value = patch[field];
+    if (value === null) delete next[field];
+    else if (typeof value === "boolean") next[field] = value;
+  }
   if (Object.keys(next).length > 0) all[key] = next;
   else delete all[key];
   const path = projectSettingsPath(agentDir);
@@ -95,13 +109,30 @@ export function writeProjectSetting(
  * 生效值：项目级 > 全局 > 默认开。
  * 全局字段缺省也当开 —— 关掉 AGENTS.md 是要主动做的事，不能因为老配置文件没这个字段就默默失效。
  */
+export interface GlobalSwitches {
+  contextFilesEnabled?: boolean;
+  handoffEnabled?: boolean;
+}
+
 export function resolveContextFilesEnabled(
   agentDir: string,
   cwd: string,
-  desktop?: Pick<DesktopSettings, "contextFilesEnabled">,
+  desktop?: GlobalSwitches,
 ): boolean {
   const project = readProjectSetting(agentDir, cwd);
   if (typeof project.contextFiles === "boolean") return project.contextFiles;
   if (typeof desktop?.contextFilesEnabled === "boolean") return desktop.contextFilesEnabled;
+  return true;
+}
+
+/** HANDOFF 接续注入：项目级 > 全局 > 默认开（没有交接文件时不会注入任何东西）。 */
+export function resolveHandoffEnabled(
+  agentDir: string,
+  cwd: string,
+  desktop?: GlobalSwitches,
+): boolean {
+  const project = readProjectSetting(agentDir, cwd);
+  if (typeof project.handoff === "boolean") return project.handoff;
+  if (typeof desktop?.handoffEnabled === "boolean") return desktop.handoffEnabled;
   return true;
 }

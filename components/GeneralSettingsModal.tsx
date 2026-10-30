@@ -57,6 +57,45 @@ const ENTER_OPTIONS = [
   { label: "排队等待", value: "all" },
 ];
 
+type ProjectSwitchValue = "inherit" | "on" | "off";
+
+const PROJECT_SWITCH_OPTIONS: Array<{ label: string; value: ProjectSwitchValue }> = [
+  { label: "跟随全局", value: "inherit" },
+  { label: "开", value: "on" },
+  { label: "关", value: "off" },
+];
+
+/** 项目级三态覆盖行：null = 跟随全局。 */
+function ProjectOverrideRow({
+  label,
+  value,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  value: boolean | null;
+  disabled?: boolean;
+  onChange: (next: boolean | null) => void;
+}) {
+  return (
+    <Row
+      label={label}
+      hint={
+        disabled
+          ? "打开一个项目后可用"
+          : "项目级设置优先于上面的全局开关；跟随全局时不给本项目单独设值"
+      }
+    >
+      <Segmented<ProjectSwitchValue>
+        value={value === null ? "inherit" : value ? "on" : "off"}
+        options={PROJECT_SWITCH_OPTIONS}
+        disabled={disabled}
+        onChange={(next) => onChange(next === "inherit" ? null : next === "on")}
+      />
+    </Row>
+  );
+}
+
 const CACHE_WARMING_OPTIONS = [
   { label: "关闭", value: "off" },
   { label: "流式期间", value: "streaming" },
@@ -197,6 +236,9 @@ export function GeneralSettingsModal({
   // 项目级覆盖存在 project-settings.json（按 cwd），null = 跟随全局。
   const [contextFilesEnabled, setContextFilesEnabled] = useState(true);
   const [projectContextFiles, setProjectContextFiles] = useState<boolean | null>(null);
+  // 会话接续（HANDOFF.md 注入）：同样是全局 + 项目级覆盖。
+  const [handoffEnabled, setHandoffEnabled] = useState(true);
+  const [projectHandoff, setProjectHandoff] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
   const [reloading, setReloading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -241,10 +283,12 @@ export function GeneralSettingsModal({
             onDemandEffective?: { domains: string[]; source: OnDemandSource };
             projectIsolation?: boolean;
             contextFilesEnabled?: boolean;
+            handoffEnabled?: boolean;
           } | null,
         ) => {
           if (typeof data?.projectIsolation === "boolean") setProjectIsolation(data.projectIsolation);
           if (typeof data?.contextFilesEnabled === "boolean") setContextFilesEnabled(data.contextFilesEnabled);
+          if (typeof data?.handoffEnabled === "boolean") setHandoffEnabled(data.handoffEnabled);
           if (!data?.onDemandEffective) return;
           setOnDemand({
             domains: data.onDemandEffective.domains,
@@ -302,16 +346,51 @@ export function GeneralSettingsModal({
     [cwd],
   );
 
+  /** 全局：HANDOFF.md 接续注入开关。 */
+  const saveHandoffEnabled = useCallback(async (next: boolean) => {
+    setHandoffEnabled(next);
+    try {
+      await fetch("/api/desktop-settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ handoffEnabled: next }),
+      });
+    } catch {
+      /* 乐观更新；下次打开重新读 */
+    }
+  }, []);
+
+  const saveProjectHandoff = useCallback(
+    async (next: boolean | null) => {
+      if (!cwd) return;
+      setProjectHandoff(next);
+      try {
+        await fetch("/api/project-settings", {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ cwd, handoff: next }),
+        });
+      } catch {
+        /* 乐观更新；下次打开重新读 */
+      }
+    },
+    [cwd],
+  );
+
   useEffect(() => {
     if (!cwd) {
       setProjectContextFiles(null);
+      setProjectHandoff(null);
       return;
     }
     let cancelled = false;
     fetch(`/api/project-settings?cwd=${encodeURIComponent(cwd)}`)
       .then((response) => (response.ok ? response.json() : null))
-      .then((data: { contextFiles?: boolean | null } | null) => {
-        if (!cancelled && data) setProjectContextFiles(data.contextFiles ?? null);
+      .then((data: { contextFiles?: boolean | null; handoff?: boolean | null } | null) => {
+        if (!cancelled && data) {
+          setProjectContextFiles(data.contextFiles ?? null);
+          setProjectHandoff(data.handoff ?? null);
+        }
       })
       .catch(() => {});
     return () => {
@@ -667,35 +746,27 @@ export function GeneralSettingsModal({
               onChange={(next) => void saveContextFilesEnabled(next)}
             />
           </Row>
+          <ProjectOverrideRow
+            label="当前项目：AGENTS.md"
+            value={projectContextFiles}
+            disabled={!cwd}
+            onChange={(next) => void saveProjectContextFiles(next)}
+          />
           <Row
-            label="当前项目覆盖"
-            hint={
-              cwd
-                ? "项目级设置优先于上面的全局开关；跟随全局时不给本项目单独设值"
-                : "打开一个项目后可用"
-            }
+            label="接续上次会话"
+            hint="新会话注入项目根或 docs/ 下的 HANDOFF.md；没有该文件时不注入任何东西（默认开）"
           >
-            <Segmented
-              value={
-                projectContextFiles === null
-                  ? "inherit"
-                  : projectContextFiles
-                    ? "on"
-                    : "off"
-              }
-              options={[
-                { label: "跟随全局", value: "inherit" },
-                { label: "开", value: "on" },
-                { label: "关", value: "off" },
-              ]}
-              disabled={!cwd}
-              onChange={(value) =>
-                void saveProjectContextFiles(
-                  value === "inherit" ? null : value === "on",
-                )
-              }
+            <Toggle
+              checked={handoffEnabled}
+              onChange={(next) => void saveHandoffEnabled(next)}
             />
           </Row>
+          <ProjectOverrideRow
+            label="当前项目：接续"
+            value={projectHandoff}
+            disabled={!cwd}
+            onChange={(next) => void saveProjectHandoff(next)}
+          />
           <p className="px-1 text-[11px] leading-4 text-ink-faint">
             切换后新会话生效；已有会话维持原上下文。
           </p>

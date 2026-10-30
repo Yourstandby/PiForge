@@ -5,6 +5,7 @@ import {
   projectSettingsKey,
   readProjectSetting,
   writeProjectSetting,
+  type ProjectSwitches,
 } from "../../../lib/project-settings.ts";
 import { errorMessage, getRequestId, jsonError, logApiError } from "../../../lib/api-error.ts";
 
@@ -24,8 +25,9 @@ export async function GET(req: Request) {
       {
         cwd: projectSettingsKey(cwd),
         contextFiles: project.contextFiles ?? null,
-        contextFilesEffective:
-          project.contextFiles ?? desktop.contextFilesEnabled ?? true,
+        contextFilesEffective: project.contextFiles ?? desktop.contextFilesEnabled ?? true,
+        handoff: project.handoff ?? null,
+        handoffEffective: project.handoff ?? desktop.handoffEnabled ?? true,
       },
       { headers: { "x-request-id": requestId } },
     );
@@ -35,7 +37,7 @@ export async function GET(req: Request) {
   }
 }
 
-/** body: { cwd, contextFiles: boolean | null }，null = 清除覆盖、跟随全局。 */
+/** body: { cwd, contextFiles?, handoff? }；字段为 null 表示清除覆盖、跟随全局。 */
 export async function PUT(req: Request) {
   const requestId = getRequestId(req);
   try {
@@ -47,21 +49,25 @@ export async function PUT(req: Request) {
     if (typeof obj.cwd !== "string" || !obj.cwd.trim()) {
       return jsonError(req, 400, "cwd must be a non-empty string");
     }
-    const value = obj.contextFiles;
-    if (value !== undefined && value !== null && typeof value !== "boolean") {
-      return jsonError(req, 400, "contextFiles must be a boolean or null");
+    const patch: ProjectSwitches = {};
+    for (const key of ["contextFiles", "handoff"] as const) {
+      const value = obj[key];
+      if (value === undefined) continue;
+      if (value !== null && typeof value !== "boolean") {
+        return jsonError(req, 400, `${key} must be a boolean or null`);
+      }
+      patch[key] = value as boolean | null;
     }
     const agentDir = getAgentDir();
-    const saved = writeProjectSetting(agentDir, obj.cwd, {
-      contextFiles: value === undefined ? undefined : (value as boolean | null),
-    });
+    const saved = writeProjectSetting(agentDir, obj.cwd, patch);
     const desktop = readDesktopSettings(agentDir);
     return NextResponse.json(
       {
         cwd: projectSettingsKey(obj.cwd),
         contextFiles: saved.contextFiles ?? null,
-        contextFilesEffective:
-          saved.contextFiles ?? desktop.contextFilesEnabled ?? true,
+        contextFilesEffective: saved.contextFiles ?? desktop.contextFilesEnabled ?? true,
+        handoff: saved.handoff ?? null,
+        handoffEffective: saved.handoff ?? desktop.handoffEnabled ?? true,
       },
       { headers: { "x-request-id": requestId } },
     );
