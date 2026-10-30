@@ -24,7 +24,7 @@ import { visibleErrorMessage } from "@/lib/ui-error";
 import { messageText } from "@/lib/message-content";
 import { collectRunningTools } from "@/lib/running-tools";
 import { useStickyRunningTools } from "@/hooks/useStickyRunningTools";
-import { estimateTokens, setLiveUsage } from "@/lib/live-usage";
+import { clearLiveUsage, estimateTokens, setLiveUsage } from "@/lib/live-usage";
 import { Composer } from "./Composer";
 import { ExtensionUiDialog } from "./ExtensionUiDialog";
 import { ModalSurface } from "./ModalSurface";
@@ -1464,16 +1464,22 @@ function ChatSession({
     ),
   );
 
+  const liveSessionId = session?.id ?? null;
   useEffect(() => {
-    if (chat.agentRunning) {
-      setLiveUsage({ tokens: liveTokens, cost: liveTokens * LIVE_COST_PER_TOKEN });
+    // 实时用量必须打上会话标记：多标签并行时，别的会话在跑不能加到这条上。
+    if (chat.agentRunning && liveSessionId) {
+      setLiveUsage({
+        sessionId: liveSessionId,
+        tokens: liveTokens,
+        cost: liveTokens * LIVE_COST_PER_TOKEN,
+      });
     } else {
-      setLiveUsage(null);
+      clearLiveUsage(liveSessionId);
     }
-  }, [chat.agentRunning, liveTokens]);
+  }, [chat.agentRunning, liveTokens, liveSessionId]);
 
-  // 结束（或切换会话）时清掉残留的实时数字
-  useEffect(() => () => setLiveUsage(null), []);
+  // 结束（或切换会话）时只清自己那条，别把并行会话的实时数字抹掉
+  useEffect(() => () => clearLiveUsage(session?.id ?? null), [session?.id]);
 
   // Ctrl/Cmd + End（或 Cmd/Ctrl + ↓）：一键回到最新对话，输入框聚焦时同样生效
   useEffect(() => {
@@ -1735,6 +1741,7 @@ function ChatSession({
         cwd={session?.cwd ?? newSessionCwd ?? null}
       />
       <UsageStrip
+        sessionId={session?.id ?? null}
         sessionStats={chat.sessionStats}
         contextUsage={chat.contextUsage}
         contextBudget={chat.contextBudget}
