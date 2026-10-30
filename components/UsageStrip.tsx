@@ -5,15 +5,12 @@ import { useI18n } from "./I18nProvider";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useDismissOnOutsideClick } from "@/hooks/useDismissOnOutsideClick";
 import { UsagePopover } from "./UsagePopover";
-import { subscribeLiveUsage } from "@/lib/live-usage";
 
 import type { ContextUsage, SessionActivity, SessionStats } from "./usage-types";
 import type { ContextBudget } from "@/lib/pi-types";
 import type { UpstreamProviderUsage } from "@/lib/upstream-usage/types";
 
 export interface UsageStripProps {
-  /** 本会话 id：实时（流式）用量只认自己这条会话，避免跨标签串味。 */
-  sessionId?: string | null;
   sessionStats?: SessionStats | null;
   contextUsage?: ContextUsage | null;
   /** Host 算好的上下文预算：与对话区那个圆环同源，颜色只看 level。 */
@@ -42,7 +39,6 @@ function compactTokens(value: number): string {
  * 性能：流式期间用 ref 直接改金额文本节点，不 setState，不触发重渲染。
  */
 export const UsageStrip = React.memo(function UsageStrip({
-  sessionId = null,
   sessionStats = null,
   contextUsage = null,
   contextBudget = null,
@@ -85,11 +81,7 @@ export const UsageStrip = React.memo(function UsageStrip({
       setText(costRef.current, moneyRef.current({ usd: hasAny ? usd : 0, cny: hasAny ? cny : 0 }));
     };
     render(costUsd, costCny);
-    // 订阅时先收到当前值（可能属于别的会话 → null），渲染仍是历史累计。
-    return subscribeLiveUsage((live) => {
-      render(costUsdRef.current + (live?.cost ?? 0), costCnyRef.current);
-    }, sessionId);
-  }, [costUsd, costCny, sessionId]);
+  }, [costUsd, costCny]);
 
   const toggle = useCallback(() => {
     if (containerRef.current) {

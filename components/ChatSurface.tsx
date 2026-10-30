@@ -24,7 +24,7 @@ import { visibleErrorMessage } from "@/lib/ui-error";
 import { messageText } from "@/lib/message-content";
 import { collectRunningTools } from "@/lib/running-tools";
 import { useStickyRunningTools } from "@/hooks/useStickyRunningTools";
-import { clearLiveUsage, estimateTokens, setLiveUsage } from "@/lib/live-usage";
+import { estimateTokens } from "@/lib/live-usage";
 import { Composer } from "./Composer";
 import { ExtensionUiDialog } from "./ExtensionUiDialog";
 import { ModalSurface } from "./ModalSurface";
@@ -108,9 +108,6 @@ function navPreview(message: AgentMessage): string {
   // 简略列表单行截断，深色气泡里最多展示 3–4 行
   return text.length > 200 ? `${text.slice(0, 200)}…` : text;
 }
-
-/** 粗估单价（USD / token），只用于流式期间的实时跳动，结算仍以真实 usage 为准。 */
-const LIVE_COST_PER_TOKEN = 0.000004;
 
 /** 右侧导航的刻度数量上限：永远是 9 个（DeepSeek 式「动态滚动窗口」）。 */
 /** 上下文徽章：120_000 → "120k"；token 数一律取整，不再出现 120.0k 这种小数。 */
@@ -1368,7 +1365,10 @@ function ChatSession({
   }, [navAllItems.length, showTranscript]);
 
   // ------------------------------------------------------------------ 实时用量
-  /** 流式期间的文字长度（用于估算 token / 费用），同时广播给状态栏。 */
+  /**
+   * 流式期间的文字长度，只用于「生成速度 tokens/s」与「本轮产出」。
+   * 不入账：费用一律等模型回报真实 usage 后再显示。
+   */
   const liveTokens = useMemo(() => {
     const partial = chat.streamState.streamingMessage as
       | { content?: unknown; usage?: { output?: number } }
@@ -1464,22 +1464,7 @@ function ChatSession({
     ),
   );
 
-  const liveSessionId = session?.id ?? null;
-  useEffect(() => {
-    // 实时用量必须打上会话标记：多标签并行时，别的会话在跑不能加到这条上。
-    if (chat.agentRunning && liveSessionId) {
-      setLiveUsage({
-        sessionId: liveSessionId,
-        tokens: liveTokens,
-        cost: liveTokens * LIVE_COST_PER_TOKEN,
-      });
-    } else {
-      clearLiveUsage(liveSessionId);
-    }
-  }, [chat.agentRunning, liveTokens, liveSessionId]);
 
-  // 结束（或切换会话）时只清自己那条，别把并行会话的实时数字抹掉
-  useEffect(() => () => clearLiveUsage(session?.id ?? null), [session?.id]);
 
   // Ctrl/Cmd + End（或 Cmd/Ctrl + ↓）：一键回到最新对话，输入框聚焦时同样生效
   useEffect(() => {
@@ -1741,7 +1726,6 @@ function ChatSession({
         cwd={session?.cwd ?? newSessionCwd ?? null}
       />
       <UsageStrip
-        sessionId={session?.id ?? null}
         sessionStats={chat.sessionStats}
         contextUsage={chat.contextUsage}
         contextBudget={chat.contextBudget}
