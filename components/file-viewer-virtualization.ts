@@ -1,4 +1,4 @@
-export interface VirtualLineWindowInput {
+interface VirtualLineWindowInput {
   lineCount: number;
   scrollTop: number;
   viewportHeight: number;
@@ -6,7 +6,7 @@ export interface VirtualLineWindowInput {
   overscanRows: number;
 }
 
-export interface VirtualLineWindow {
+interface VirtualLineWindow {
   startIndex: number;
   endIndex: number;
   topPaddingHeight: number;
