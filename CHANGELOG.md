@@ -42,6 +42,16 @@
   的 `clientRegistration` 类型跟随上游放宽到 `"auto" | "dcr" | "cimd"`（该字段不参与 PiForge 自己的
   loopback 登录流程）。
 
+**开发体验**
+
+- **`dev:electron` 前端产物护栏**（`scripts/check-dev-static-freshness.mjs`、
+  `scripts/lib/dev-static-freshness.mjs`，单测 `dev-static-freshness.test.mjs`）：
+  `out/` 比 `app/` `components/` `lib/` `hooks/` `public/` 或根配置旧时直接报错退出，
+  提示 `npm run build:static`。渲染进程加载的是 `piforge://app/` 下的静态导出，
+  `dev:electron` 只重编主进程与 agent-host，不重建导出 —— 不重建就一直在跑旧 UI
+  （本次项目重命名 / 移除就是这样被误判成"功能没做"）。容差 5s，忽略单测、文档、
+  构建产物与依赖；`--warn` 或 `PIFORGE_SKIP_STATIC_FRESHNESS=1` 只警告不拦。
+
 ### 默认行为变没变
 
 - **项目名与可见性**：不变。旧数据没有这两个字段 → 原样显示，除非你自己改名 / 移除。
