@@ -18,8 +18,11 @@ import { existsSync, mkdirSync, readFileSync } from "fs";
 import { dirname, join } from "path";
 import { writeFileAtomic } from "../lib/atomic-write.ts";
 
-/** 推荐值：新会话默认 low（≈2048 thinking 预算），桌面设置里可随时改回 medium/high。 */
-export const RECOMMENDED_DEFAULT_THINKING_LEVEL = "low";
+/**
+ * 推荐值：新会话默认 medium（均衡）——与桌面 UI 的 DEFAULT_THINKING_LEVEL
+ * （`lib/thinking-level.ts`）保持一致，用户可在常规设置里随时改成 low/high。
+ */
+export const RECOMMENDED_DEFAULT_THINKING_LEVEL = "medium";
 
 export interface RecommendedSettingsResult {
   /** 实际写入的键（空数组 = 已经有值，什么都没动）。 */

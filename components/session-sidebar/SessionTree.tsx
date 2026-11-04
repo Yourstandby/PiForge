@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { memo, useState, useCallback, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import type { SessionInfo } from "@/lib/types";
 import { formatRelativeTime, type SessionTreeNode } from "./helpers";
@@ -31,7 +31,7 @@ function containsSession(nodes: SessionTreeNode[], id: string | null): boolean {
   return nodes.some((node) => node.session.id === id || containsSession(node.children, id));
 }
 
-export function SessionTreeItem(props: SessionTreeItemProps) {
+function SessionTreeItemImpl(props: SessionTreeItemProps) {
   const { node, selectedSessionId, depth, searching } = props;
   const [collapsed, setCollapsed] = useState(false);
   const containsSelection = containsSession(node.children, selectedSessionId);
@@ -49,6 +49,12 @@ export function SessionTreeItem(props: SessionTreeItemProps) {
     </div>
   );
 }
+
+/**
+ * 会话行 memo：整栏重渲染（选中变化、键盘输入引起的父级渲染）时，
+ * 内容没变的行直接跳过 —— 否则每行都要重算一次 containsSession（O(n) 递归）。
+ */
+export const SessionTreeItem = memo(SessionTreeItemImpl);
 
 function SessionItem({
   node, selectedSessionId, onSelectSession, onRenamed, onSessionDeleted,

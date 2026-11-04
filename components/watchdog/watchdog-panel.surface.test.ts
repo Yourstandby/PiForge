@@ -119,14 +119,15 @@ test("ask is split into a token-cheap brief ask by default", () => {
 
 test("stall threshold dropdown configures the host at runtime, not via a config file", () => {
   const panel = read("components/watchdog/WatchdogPanel.tsx");
-  assert.match(panel, /STALL_MS_PRESETS\.map/, "下拉框只露出 15/30/60/90 秒预设");
+  assert.match(panel, /STALL_MS_PRESETS\.map/, "下拉框只露出 90/120/300/600 秒预设");
   assert.match(panel, /configureStallMs\(next\)/);
   const hook = read("hooks/useWatchdogStatus.ts");
-  assert.match(hook, /export const STALL_MS_PRESETS = \[15_000, 30_000, 60_000, 90_000\]/);
+  assert.match(hook, /export const STALL_MS_PRESETS = \[90_000, 120_000, 300_000, 600_000\]/);
+  assert.match(hook, /90s 是最低档/, "90 秒是下拉框最低档");
   assert.match(hook, /method: "POST"/);
   const route = read("app/api/watchdog/route.ts");
   assert.match(route, /call\("watchdog\.configure"/, "仍然走 Host RPC，不在 Next 侧维护阈值");
-  assert.equal(hook.includes("writeFile"), false, "阈值不落盘（重启后回落到默认 20s）");
+  assert.equal(hook.includes("writeFile"), false, "阈值不落盘（重启后回落到默认 90s）");
 });
 
 test("interventions go through the local proxy route, not the model", () => {

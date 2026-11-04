@@ -271,10 +271,6 @@ let updateInstallState: UpdateInstallState = createUpdateInstallState();
 export function setQuitting(val: boolean) {
   isQuitting = val;
 }
-export function getQuitting(): boolean {
-  return isQuitting;
-}
-
 // ---------------------------------------------------------------------------
 // Logging
 // ---------------------------------------------------------------------------

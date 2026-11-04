@@ -3,6 +3,205 @@
 迁移条目按「改了什么 / 默认行为变没变 / 开关怎么用」组织。详细数据见 `docs/measurements/`
 （三个口径：记录型 provider、真实 deepseek 会话、重复场景 A/B，三者不要混读）。
 
+## v0.12.0 — 项目归用户管 · 数字与开关说真话
+
+主题：**左栏项目自己做主，用量与看门狗先说真话，注入开关先说默认**。
+
+本版把 v0.11.3 / v0.11.4 两次未公开发布的版本一并带上线（GitHub 上一个公开版本是 v0.11.2），
+逐条记录仍保留在下方同名小节；本节只写本次新增的东西与跨版本汇总。
+
+### 改了什么
+
+**文档与发布**
+
+- **README 全量重写**：Pi 核心版本对齐到 `1.5.0`，新增 v0.12.0 亮点、开关默认值一览、
+  `dev:electron` 静态产物护栏提示与未签名安装包披露，删掉过期数字与旧说法。
+- **新增 `docs/releases/v0.12.0.md`**：CI 的 `desktop-packages.yml` 在没有现成 Release 时
+  用它做 Release Notes，三端安装提示（SmartScreen / Gatekeeper / deb 未签名需 root）写全。
+
+**开发体验**
+
+- **`dev:electron` 前置护栏**（`scripts/check-dev-static-freshness.mjs`、单测
+  `dev-static-freshness.test.mjs`）：`out/` 比 `app/` `components/` `lib/` `hooks/`
+  `public/` 或根配置旧时直接报错，提示先跑 `npm run build:static`。渲染进程加载的是
+  `piforge://app/` 下的静态导出，只重编主进程就会一直跑旧 UI。容差 5s；
+  `--warn` 或 `PIFORGE_SKIP_STATIC_FRESHNESS=1` 只警告不拦。
+
+### 0.11.3 / 0.11.4 一并上线（摘要）
+
+- **用量说真话**：费用只报真实 `usage` 累计，按会话隔离；流式事件按帧合并，工具卡秒表
+  tick 局部化；打字 / 切会话 / 切面板的重渲染剪枝。
+- **注入开关三态**：AGENTS.md / CLAUDE.md 注入可关（默认开），HANDOFF.md 接续注入可选
+  （默认关），均为「全局 + 项目级」三态；压缩摘要固定中文、默认只接管正文。
+- **默认值**：新会话思考等级 low → medium（均衡）；看门狗停滞阈值默认 20s → 90s，
+  且 90s 成为最低档（预设 90 / 120 / 300 / 600 秒）。
+- **项目归用户管**：左栏项目可重命名、可从侧栏移除（只写 `pi-sidebar-projects-v1`
+  本地偏好，不删会话、不碰目录）。
+- **调用预算按批次**：提示词与运行时护栏改「简单 1 批 / 普通 2–3 批 / 调研 3–4 批」，
+  单批并行上限 12；到顶先交付结论。
+- **关闭窗口先问**：「最小化到托盘 / 退出程序」原生询问框，可记住选择；托盘可随时改回。
+- **用量数字缩写**：< 1000 精确，≥ 1000 一位小数（`2.9K` / `69.8K`），≥ 999,950 进位 `1.0M`。
+- **Pi 核心 1.5.0**：三个 `@earendil-works/pi-*` 精确锁定，适配 `clientRegistration` 类型；
+  工具参数校验改由上游 `pi-schema` 执行（我们的工具都是普通 JSON Schema，行为不变）。
+
+### 默认行为变没变
+
+- **变了**（从 0.11.2 直接升级时最明显的五处）：看门狗红灯从约 25s 推到约 100s 且不能再低于
+  90s；新会话思考等级默认均衡；点关闭窗口开始询问；项目可以改名 / 隐藏；用量条只显示真实
+  usage（流式阶段没有数字就是没有数字）。
+- **没变**：三进程边界、零内部端口、文件授权链路、codemode 默认 `only`、主题与布局。
+
+### 验证
+
+- `npm run lint` → 0 error / 8 warning（均为既有的未使用变量与 hook 依赖告警）。
+- `NODE_OPTIONS=--max-old-space-size=6144 npx tsc --noEmit` → 通过。
+- `npm test` → 1599 项，1595 通过 / 0 失败 / 4 跳过。
+
+## v0.11.4 — 项目可改名可移除 · 看门狗看长活
+
+主题：**左栏项目归用户自己管，看门狗别误杀长活**。四件事：项目重命名 / 从侧栏移除、
+看门狗停滞阈值默认 90s 且以 90s 为最低档、用量数字千以上缩写、Pi 核心升到 1.5.0。
+
+### 改了什么
+
+**左栏项目**
+
+- **项目重命名**（`components/session-sidebar/ProjectGroup.tsx`、`components/SessionSidebar.tsx`）：
+  悬停行尾 `⋯` 或右键项目行 →「重命名项目」，行内输入框回车提交、Esc 取消。只改左栏显示名，
+  磁盘目录与会话归属都不动；改成空或改回文件夹原名 = 恢复默认。
+- **从侧栏移除**（同上）：「从侧栏移除」把项目从常规区和「其他项目」收纳盒里一起摘掉。
+  只写一条本地偏好（`pi-sidebar-projects-v1` 的 `hiddenProjects`），不删会话、不碰目录；
+  以后用「新建项目」重新选回同一目录即自动恢复显示。
+- 自定义名称同处持久化（`projectNames`），解析时逐项校验、非法值丢弃
+  （`components/session-sidebar/projects.ts`）。
+
+**看门狗**
+
+- **停滞阈值默认 90s，90s 同时是最低档**（`agent-host/watchdog.ts`）：默认值 20s → 90s，
+  运行期下限 5s → 90s（`watchdog.configure` 传更小的值会被钳到 90s，上限仍 10min）。
+  扫描周期仍 5s、连续 2 次超阈值升级，因此默认约 100s 无有效进展才亮红灯。
+- **下拉框预设改为 90 / 120 / 300 / 600 秒**（`hooks/useWatchdogStatus.ts`）；本地存过的旧值
+  （15/30/60s）读取时钳进新区间，避免面板显示一个 Host 会改写的数字。
+
+**用量**
+
+- 用量两行与「本轮产出」：< 1000 精确整数，≥ 1000 用一位小数缩写（`2.9K` / `69.8K`），
+  ≥ 999,950 进位到 `1.0M`。规则集中到 `lib/token-format.ts`。
+
+**Pi 核心**
+
+- `@earendil-works/pi-*` 1.4.0 → 1.5.0（精确锁定，传递依赖新增 `pi-schema`）。上游破坏性变更
+  （工具参数改由 pi-schema 校验、pi-ai 不再透出 TypeBox）不影响 PiForge：我们没有用
+  `Type.Refine` / `BigInt` / `Undefined` / codec 定义工具参数。唯一适配是 `agent-host/mcp-service.ts`
+  的 `clientRegistration` 类型跟随上游放宽到 `"auto" | "dcr" | "cimd"`（该字段不参与 PiForge 自己的
+  loopback 登录流程）。
+
+**开发体验**
+
+- **`dev:electron` 前端产物护栏**（`scripts/check-dev-static-freshness.mjs`、
+  `scripts/lib/dev-static-freshness.mjs`，单测 `dev-static-freshness.test.mjs`）：
+  `out/` 比 `app/` `components/` `lib/` `hooks/` `public/` 或根配置旧时直接报错退出，
+  提示 `npm run build:static`。渲染进程加载的是 `piforge://app/` 下的静态导出，
+  `dev:electron` 只重编主进程与 agent-host，不重建导出 —— 不重建就一直在跑旧 UI
+  （本次项目重命名 / 移除就是这样被误判成"功能没做"）。容差 5s，忽略单测、文档、
+  构建产物与依赖；`--warn` 或 `PIFORGE_SKIP_STATIC_FRESHNESS=1` 只警告不拦。
+
+### 默认行为变没变
+
+- **项目名与可见性**：不变。旧数据没有这两个字段 → 原样显示，除非你自己改名 / 移除。
+- **看门狗**：变了。默认红灯从约 25s 推到约 100s，且不能再调到 90s 以下。想更迟钝可选
+  120 / 300 / 600 秒。
+- **用量数字**：只换显示，计费口径不变。
+- **Pi 核心**：接口与行为不变；工具参数校验改由 pi-schema 执行（我们全部是普通 JSON Schema 工具）。
+
+## v0.11.3 — 用量说真话 · 注入与预算收口
+
+主题：**数字先说真话，开关先说默认**。主区修「用量条虚高 / 流式卡顿」，
+设置侧把 prompt 注入收成「全局 + 项目级三态」，并调整了几处默认值。
+
+### 改了什么
+
+**用量与渲染**
+
+- **费用只报真实 usage 累计**（`lib/live-usage.ts`、`components/UsageStrip.tsx`）：
+  去掉流式阶段的估算叠加，没收到 usage 就不显示数字。
+- **实时用量按会话隔离**（`components/ChatSurface.tsx`）：别的会话在跑，不再累加到
+  当前会话的用量条。
+- **流式事件按帧合并**（`hooks/useAgentSession.ts`、`components/Transcript.tsx`）：
+  同一帧内的增量只提交一次；工具卡秒表 tick 局部化，不再整树重渲染。
+- **重渲染剪枝**（`components/Workbench.tsx`、`SessionSidebar.tsx`、
+  `components/session-sidebar/SessionTree.tsx`）：打字 / 切会话 / 切面板卡顿收口。
+
+**默认值与 prompt 注入**
+
+- **思考等级默认 medium**（`agent-host/settings-defaults.ts`、`lib/thinking-level.ts`）：
+  新会话默认从 low 改为「均衡」。
+- **压缩摘要固定中文且更简洁**（`agent-host/compaction-plan.ts`）：默认只接管摘要正文。
+- **上下文文件注入开关**（`lib/project-settings.ts`、`agent-host/rpc-manager.ts`）：
+  AGENTS.md / CLAUDE.md 可关，全局 + 项目级三态（跟随全局 / 开 / 关），**默认开**。
+- **HANDOFF.md 接续注入**（`lib/handoff.ts`）：项目根或 `docs/` 下的 HANDOFF.md 可注入
+  系统提示词，**默认关**。
+
+**界面**
+
+- **开发环境开关改为状态胶囊**（`components/DevEnvironmentConfig.tsx`）：去掉滑块几何，
+  彻底消除小尺寸下的溢出。
+
+### 关闭窗口先问「最小化到托盘 / 退出程序」
+
+#### 改了什么
+
+- **主窗口关闭**（`electron/main.ts`）：点 X 不再静默隐藏，改为原生询问框 ——
+  「最小化到托盘 / 退出程序」，勾选「记住我的选择」后不再询问；Esc / 关掉询问框
+  一律按最小化处理，不会误触杀进程。
+- **偏好文件**（`electron/close-preference.ts`）：`<userData>/close-preference.json`，
+  取值为 `ask | minimize | quit`，损坏或非法值回落 `ask`。与
+  `agentDir/desktop-settings.json` 分开存 —— 打包后 Main 只有 `electron/dist`，不能
+  import `lib/`。
+- **托盘菜单**（`electron/tray.ts`）：「关闭窗口时」单选项（每次询问 / 最小化到托盘 /
+  退出程序），可随时改回来，不必手删 json。
+
+#### 默认行为变没变
+
+- 首次运行（无偏好文件）→ 每次点关闭都询问，与 0.9.x 的「静默隐藏」不同。
+- 选「退出程序」走正常退出流程（`before-quit` → Host 排空 → 回收子进程树），
+  不是 `app.exit(0)`，所以不会有孤儿 dev server。
+- 托盘图标的「退出」仍然直接退出，不询问。
+
+#### 验证
+
+- `npx tsc -p electron/tsconfig.json --noEmit` 通过；
+- `node --test electron/close-preference.test.ts` 6/6 通过；
+- `npx eslint electron/{main,tray,close-preference}.ts` 无告警。
+
+#### 调用预算从「次数」改成「批次」
+
+主题：**合并调用才是加速手段**。pi 同一条助手消息里的多个 tool call 本就并行执行，
+墙钟时间由往返次数决定；按调用次数卡预算只会逼模型在批次中途停下、重开一轮重发全量上下文。
+
+##### 改了什么
+
+- **提示词**（`agent-host/prompts/output-style.ts`，`BATCHING_RULES` 7 → 8 条）：新增
+  「合并调用（第一优先）」与「写操作不混批」；「调用预算（写死）」改为批次口径（简单 1 批 /
+  普通 2–3 批 / 调研 3–4 批，单批并行 ≤12）；「第 4 次自检」改为「每批自检」。
+- **运行时护栏**（`agent-host/desktop-tool-guard-extension.ts`）：`TURN_BUDGET` 4/8 → 12/24
+  （≈1 个满载批次后自检、≈2 个满载批次后收口），`DEFAULT_TOOL_GUARD.maxParallel` 8 → 12，
+  两条提醒文案同步改批次口径。
+
+##### 默认行为变没变
+
+- 软约束不变：仍是「到顶先交付可验证结论、剩余待办留给下一轮」，只是阈值按批次量级放大。
+- 无新开关；`PIFORGE_TOOL_MAX_PARALLEL` 仍可覆盖单批并行上限。
+
+- **前缀预算**（`scripts/smoke-prefix-budget.mjs`）：`--max-prefix` 7600 → 7660。第 1 版措辞
+  把前缀顶到 CI 实测 7774（token guards 红），压缩后回到 7585；7660 = 实测 + ~1% 余量。
+  注意本地 Windows 的 sys 段比 CI 高约 430 tok，这个 smoke 本地跑会红，以 CI 数字为准。
+
+##### 验证
+
+- `node --test --test-force-exit agent-host/desktop-tool-guard-extension.test.ts agent-host/desktop-output-style-extension.test.ts` → 21/21
+- `npx eslint`（四个改动文件）→ 无输出
+
 ## v0.11.2 — 会话按时间分桶（计数与内容同源）
 
 主题：**点开就能看见，数字先说真话**。侧栏会话不再靠「显示全部 / 加载更多」逐段揭示，
@@ -31,61 +230,6 @@
 - `npx tsc --noEmit` 通过；`npm run lint` 通过；
 - `node --test components/session-sidebar/*.test.ts lib/session-reader.paging.test.ts lib/sessions-cache.test.ts` → 27/27；
 - 实测 `/api/sessions?limit=200`：冷启动约 400ms，info 缓存命中后 23ms。
-
-## Unreleased — 关闭窗口先问「最小化到托盘 / 退出程序」
-
-### 改了什么
-
-- **主窗口关闭**（`electron/main.ts`）：点 X 不再静默隐藏，改为原生询问框 ——
-  「最小化到托盘 / 退出程序」，勾选「记住我的选择」后不再询问；Esc / 关掉询问框
-  一律按最小化处理，不会误触杀进程。
-- **偏好文件**（`electron/close-preference.ts`）：`<userData>/close-preference.json`，
-  取值为 `ask | minimize | quit`，损坏或非法值回落 `ask`。与
-  `agentDir/desktop-settings.json` 分开存 —— 打包后 Main 只有 `electron/dist`，不能
-  import `lib/`。
-- **托盘菜单**（`electron/tray.ts`）：「关闭窗口时」单选项（每次询问 / 最小化到托盘 /
-  退出程序），可随时改回来，不必手删 json。
-
-### 默认行为变没变
-
-- 首次运行（无偏好文件）→ 每次点关闭都询问，与 0.9.x 的「静默隐藏」不同。
-- 选「退出程序」走正常退出流程（`before-quit` → Host 排空 → 回收子进程树），
-  不是 `app.exit(0)`，所以不会有孤儿 dev server。
-- 托盘图标的「退出」仍然直接退出，不询问。
-
-### 验证
-
-- `npx tsc -p electron/tsconfig.json --noEmit` 通过；
-- `node --test electron/close-preference.test.ts` 6/6 通过；
-- `npx eslint electron/{main,tray,close-preference}.ts` 无告警。
-
-## Unreleased — 调用预算从「次数」改成「批次」
-
-主题：**合并调用才是加速手段**。pi 同一条助手消息里的多个 tool call 本就并行执行，
-墙钟时间由往返次数决定；按调用次数卡预算只会逼模型在批次中途停下、重开一轮重发全量上下文。
-
-### 改了什么
-
-- **提示词**（`agent-host/prompts/output-style.ts`，`BATCHING_RULES` 7 → 8 条）：新增
-  「合并调用（第一优先）」与「写操作不混批」；「调用预算（写死）」改为批次口径（简单 1 批 /
-  普通 2–3 批 / 调研 3–4 批，单批并行 ≤12）；「第 4 次自检」改为「每批自检」。
-- **运行时护栏**（`agent-host/desktop-tool-guard-extension.ts`）：`TURN_BUDGET` 4/8 → 12/24
-  （≈1 个满载批次后自检、≈2 个满载批次后收口），`DEFAULT_TOOL_GUARD.maxParallel` 8 → 12，
-  两条提醒文案同步改批次口径。
-
-### 默认行为变没变
-
-- 软约束不变：仍是「到顶先交付可验证结论、剩余待办留给下一轮」，只是阈值按批次量级放大。
-- 无新开关；`PIFORGE_TOOL_MAX_PARALLEL` 仍可覆盖单批并行上限。
-
-- **前缀预算**（`scripts/smoke-prefix-budget.mjs`）：`--max-prefix` 7600 → 7660。第 1 版措辞
-  把前缀顶到 CI 实测 7774（token guards 红），压缩后回到 7585；7660 = 实测 + ~1% 余量。
-  注意本地 Windows 的 sys 段比 CI 高约 430 tok，这个 smoke 本地跑会红，以 CI 数字为准。
-
-### 验证
-
-- `node --test --test-force-exit agent-host/desktop-tool-guard-extension.test.ts agent-host/desktop-output-style-extension.test.ts` → 21/21
-- `npx eslint`（四个改动文件）→ 无输出
 
 ## v0.11.1 — 贴图卡顿 / 秒表 / 流健康 / 项目隔离（默认关）
 

@@ -299,18 +299,20 @@ export function useWatchdogRefreshOnOpen(open: boolean): void {
 }
 
 /**
- * 停滞阈值预设（毫秒）：与 Host 的 5s ~ 10min 合法区间兼容。
- * 面板下拉框只暴露这四个值，避免用户填出奇怪数字。
+ * 停滞阈值预设（毫秒）：与 Host 的 90s ~ 10min 合法区间一致，90s 是最低档
+ * （再低会把正常的长工具调用当卡顿）。面板下拉框只暴露这四个值。
  */
-export const STALL_MS_PRESETS = [15_000, 30_000, 60_000, 90_000] as const;
+export const STALL_MS_PRESETS = [90_000, 120_000, 300_000, 600_000] as const;
 
 const STALL_MS_KEY = "piforge.watchdog.stallMs";
 
-/** 读上次选择的阈值（Host 重启会回落默认 20s，面板挂载后靠这里回写）。 */
+/** 读上次选择的阈值（Host 重启会回落默认 90s，面板挂载后靠这里回写）。 */
 export function readStoredStallMs(): number | null {
   if (typeof window === "undefined") return null;
   const raw = Number(window.localStorage.getItem(STALL_MS_KEY));
-  return Number.isFinite(raw) && raw > 0 ? raw : null;
+  if (!Number.isFinite(raw) || raw <= 0) return null;
+  // 老版本存过 15/30/60s：钳进预设区间（90s ~ 10min），避免面板显示一个 Host 会改写的值。
+  return Math.min(STALL_MS_PRESETS[STALL_MS_PRESETS.length - 1], Math.max(STALL_MS_PRESETS[0], raw));
 }
 
 /**

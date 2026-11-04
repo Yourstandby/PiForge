@@ -254,7 +254,8 @@ interface OAuthSettings {
   callbackUrl?: string;
   scope?: string;
   clientName?: string;
-  clientRegistration?: "dcr" | "cimd";
+  /** 与上游 `McpOAuthConfig` 对齐：1.5.0 起多了缺省值 `auto`。PiForge 的登录走自己的 loopback + `McpOAuthProvider`，不消费该字段。 */
+  clientRegistration?: "auto" | "dcr" | "cimd";
   authServerMetadataUrl?: URL;
 }
 

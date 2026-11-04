@@ -1,37 +1,13 @@
 /**
- * 实时用量微广播（streaming 期间）。
+ * 流式期间的粗略 Token 估算工具。
  *
- * 流式输出时每来一个增量就更新一次；订阅方（StatsBar）用 **ref 直接改 DOM**，
- * 不 setState，因此不会触发整个界面重渲染 —— 只有那几个数字的文本节点在变。
+ * 这里**不再有实时用量广播**：底部用量条只显示真实 usage 累计（来自 messages
+ * 里每条 assistant 的 usage.cost），流式估算曾被当作费用叠加，既有写死单价
+ * （每 token 0.000004）的失真，也容易让人误以为是账单。费用一律等模型回报真实
+ * usage 后再显示。
+ *
+ * 保留下来的 estimateTokens 只用于「生成速度 tokens/s」这类无金额的量。
  */
-
-export interface LiveUsage {
-  /** 本次流式已经产出的（估算）Token 数。 */
-  tokens: number;
-  /** 这段流式已经累积的（估算）费用，单位美元。 */
-  cost: number;
-}
-
-type Listener = (usage: LiveUsage | null) => void;
-
-let current: LiveUsage | null = null;
-const listeners = new Set<Listener>();
-
-export function setLiveUsage(usage: LiveUsage | null): void {
-  current = usage;
-  for (const listener of listeners) listener(current);
-}
-
-export function getLiveUsage(): LiveUsage | null {
-  return current;
-}
-
-export function subscribeLiveUsage(listener: Listener): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
 
 /** 粗略 Token 估算：CJK 约 1 字/token，其它按 4 字符/token。 */
 export function estimateTokens(text: string): number {

@@ -17,13 +17,13 @@ function withAgentDir(fn: (dir: string) => void): void {
   }
 }
 
-test("缺失的 defaultThinkingLevel 补写成 low", () => {
+test("缺失的 defaultThinkingLevel 补写成 medium（均衡）", () => {
   withAgentDir((dir) => {
     const result = ensureRecommendedPiSettings(dir);
     assert.deepEqual(result.written, ["defaultThinkingLevel"]);
     const written = JSON.parse(readFileSync(join(dir, "settings.json"), "utf-8"));
     assert.equal(written.defaultThinkingLevel, RECOMMENDED_DEFAULT_THINKING_LEVEL);
-    assert.equal(RECOMMENDED_DEFAULT_THINKING_LEVEL, "low");
+    assert.equal(RECOMMENDED_DEFAULT_THINKING_LEVEL, "medium");
   });
 });
 
@@ -48,7 +48,7 @@ test("补写只加一个键，不动用户已有的其它设置", () => {
 
     ensureRecommendedPiSettings(dir);
     const written = JSON.parse(readFileSync(path, "utf-8"));
-    assert.equal(written.defaultThinkingLevel, "low");
+    assert.equal(written.defaultThinkingLevel, "medium");
     assert.deepEqual(written.defaultTools, original.defaultTools);
     assert.deepEqual(written.codemode, original.codemode);
   });

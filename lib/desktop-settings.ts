@@ -102,6 +102,17 @@ export interface DesktopSettings {
    * 别的项目/任意目录一律 AccessDenied —— 一个项目的会话不能随手读另一个项目。
    */
   projectIsolation?: boolean;
+  /**
+   * 上下文文件（AGENTS.md / CLAUDE.md）注入（默认开）。
+   * 关掉后 system prompt 里少这几段固定文本 —— 也是最省 token 的一档。
+   * 项目级可在 `project-settings.json` 里覆盖。
+   */
+  contextFilesEnabled?: boolean;
+  /**
+   * 会话接续：把 `HANDOFF.md`（项目根或 docs/ 下）注入系统提示词（**默认关**）。
+   * 开与不写都是 undefined，读取侧按 false 处理（见 project-settings.ts）。
+   */
+  handoffEnabled?: boolean;
 }
 
 const DESKTOP_SETTINGS_FILENAME = "desktop-settings.json";
@@ -182,6 +193,13 @@ export function mergeDesktopSettings(raw: unknown): DesktopSettings {
   if (typeof obj.projectIsolation === "boolean") {
     result.projectIsolation = obj.projectIsolation;
   }
+  // 默认开：不写就是 undefined，读取侧按 true 处理（见 project-settings.ts）。
+  if (typeof obj.contextFilesEnabled === "boolean") {
+    result.contextFilesEnabled = obj.contextFilesEnabled;
+  }
+  if (typeof obj.handoffEnabled === "boolean") {
+    result.handoffEnabled = obj.handoffEnabled;
+  }
   if (Array.isArray(obj.onDemandDomains)) {
     const allowed = new Set(["browser", "shell", "fleet", "memory", "orchestrator", "plugin"]);
     result.onDemandDomains = [...new Set(obj.onDemandDomains.filter(
@@ -245,6 +263,8 @@ export function validateDesktopSettingsBody(body: unknown): string | null {
     "responseLanguageGuideline",
     "collabGuidelines",
     "projectIsolation",
+    "contextFilesEnabled",
+    "handoffEnabled",
   ] as const) {
     if (obj[key] !== undefined && typeof obj[key] !== "boolean") {
       return `${key} must be a boolean`;

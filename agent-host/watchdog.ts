@@ -55,10 +55,10 @@ export interface WatchdogConfig {
 
 export const DEFAULT_WATCHDOG_CONFIG: WatchdogConfig = {
   enabled: true,
-  // 5s 扫描 + 连续 2 次超阈值 → 默认约 25s 就能亮红灯（旧值 10s×3 次约 40s+，
-  // 用户感知为“看门狗反应慢”）。
+  // 5s 扫描 + 连续 2 次超阈值 → 默认约 100s 亮红灯。90s 是运行期可调的**最低档**：
+  // 再低就会把正常的长工具调用（大文件读写、慢测试）当卡顿，红灯失去意义。
   tickMs: 5_000,
-  stallMs: 20_000,
+  stallMs: 90_000,
   stallScans: 2,
   backoffMs: [30_000, 60_000, 120_000],
   noticeLimit: 50,
@@ -94,8 +94,8 @@ export function resolveWatchdogConfig(
   };
 }
 
-/** 运行期可调阈值区间（UI 下拉框只能落在这个范围内）。 */
-export const WATCHDOG_STALL_MS_MIN = 5_000;
+/** 运行期可调阈值区间（UI 下拉框只能落在这个范围内，90s 为最低档）。 */
+export const WATCHDOG_STALL_MS_MIN = 90_000;
 export const WATCHDOG_STALL_MS_MAX = 600_000;
 
 let config: WatchdogConfig = resolveWatchdogConfig();

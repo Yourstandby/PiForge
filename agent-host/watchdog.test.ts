@@ -285,33 +285,33 @@ test("task completes on agent_end and stops being scanned", () => {
 
 test("config resolves env flags, defaulting to enabled", () => {
   assert.equal(resolveWatchdogConfig({}).enabled, true);
-  assert.equal(resolveWatchdogConfig({}).stallMs, 20_000);
+  assert.equal(resolveWatchdogConfig({}).stallMs, 90_000);
   assert.equal(resolveWatchdogConfig({}).tickMs, 5_000);
   assert.equal(resolveWatchdogConfig({ PIFORGE_WATCHDOG: "0" }).enabled, false);
   assert.equal(resolveWatchdogConfig({ PIFORGE_WATCHDOG: "off" }).enabled, false);
   assert.equal(resolveWatchdogConfig({ PIFORGE_WATCHDOG: "on" }).enabled, true);
   assert.equal(resolveWatchdogConfig({ PIFORGE_WATCHDOG_STALL_MS: "5000" }).stallMs, 5_000);
-  assert.equal(resolveWatchdogConfig({ PIFORGE_WATCHDOG_STALL_MS: "abc" }).stallMs, 20_000);
+  assert.equal(resolveWatchdogConfig({ PIFORGE_WATCHDOG_STALL_MS: "abc" }).stallMs, 90_000);
 });
 
 test("watchdog.configure switches the threshold at runtime and clamps the range", () => {
   const clock = fixedClock();
-  resetWatchdogForTest({ stallMs: 90_000, stallScans: 1, backoffMs: [30_000] });
+  resetWatchdogForTest({ stallMs: 300_000, stallScans: 1, backoffMs: [30_000] });
   setWatchdogClockForTest(clock.now);
   observeAgentEvent(SESSION, { type: "agent_start" });
 
-  clock.advance(30_000);
-  assert.equal(runWatchdogTick(clock.now()).length, 0, "90s 阈值下 30s 不算卡顿");
+  clock.advance(100_000);
+  assert.equal(runWatchdogTick(clock.now()).length, 0, "300s 阈值下 100s 不算卡顿");
 
-  // 阈值下调到 15s → 下一个 tick 立即判 stalled（staleScans 已清零）。
-  assert.equal(setWatchdogStallMs(15_000).stallMs, 15_000);
-  assert.equal(getWatchdogSnapshot().config?.stallMs, 15_000);
+  // 阈值下调到 90s（最低档）→ 下一个 tick 立即判 stalled（staleScans 已清零）。
+  assert.equal(setWatchdogStallMs(90_000).stallMs, 90_000);
+  assert.equal(getWatchdogSnapshot().config?.stallMs, 90_000);
   const notices = runWatchdogTick(clock.now());
   assert.equal(notices.length, 1);
   assert.equal(notices[0].type, "stalled");
 
-  // 越界钳制：太低 → 5s，太高 → 10min；非数字直接抛错。
-  assert.equal(setWatchdogStallMs(1).stallMs, 5_000);
+  // 越界钳制：太低 → 90s（最低档），太高 → 10min；非数字直接抛错。
+  assert.equal(setWatchdogStallMs(1).stallMs, 90_000);
   assert.equal(setWatchdogStallMs(999_999).stallMs, 600_000);
   assert.throws(() => setWatchdogStallMs(Number.NaN), RangeError);
 });

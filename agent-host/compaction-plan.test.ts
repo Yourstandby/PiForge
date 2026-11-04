@@ -255,7 +255,8 @@ test("summary instructions demand the required sections", () => {
   ]) {
     assert.ok(instructions.includes(heading), `缺少必需段落：${heading}`);
   }
-  assert.match(instructions, /800–1500 token/);
+  assert.match(instructions, /300–600 token/);
+  assert.match(instructions, /全程中文/);
   assert.match(instructions, /不要复述大段工具输出/);
 });
 

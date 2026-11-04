@@ -10,6 +10,7 @@ import { useAudio } from "@/hooks/useAudio";
 import { useHostHealth } from "@/hooks/useHostHealth";
 import { estimateContextTokens, resolveTokenGuards, type TokenGuardKind } from "@/lib/token-guard";
 import { compactionNoticeText } from "@/lib/compaction-notice";
+import { formatTokenCount } from "@/lib/token-format";
 import { TokenGuardBanner } from "./TokenGuardBanner";
 import { StreamHealthBanner } from "./StreamHealthBanner";
 import { evaluateStreamHealth, type StreamHealth } from "@/hooks/agent-session/stream-health";
@@ -24,7 +25,7 @@ import { visibleErrorMessage } from "@/lib/ui-error";
 import { messageText } from "@/lib/message-content";
 import { collectRunningTools } from "@/lib/running-tools";
 import { useStickyRunningTools } from "@/hooks/useStickyRunningTools";
-import { estimateTokens, setLiveUsage } from "@/lib/live-usage";
+import { estimateTokens } from "@/lib/live-usage";
 import { Composer } from "./Composer";
 import { ExtensionUiDialog } from "./ExtensionUiDialog";
 import { ModalSurface } from "./ModalSurface";
@@ -108,9 +109,6 @@ function navPreview(message: AgentMessage): string {
   // 简略列表单行截断，深色气泡里最多展示 3–4 行
   return text.length > 200 ? `${text.slice(0, 200)}…` : text;
 }
-
-/** 粗估单价（USD / token），只用于流式期间的实时跳动，结算仍以真实 usage 为准。 */
-const LIVE_COST_PER_TOKEN = 0.000004;
 
 /** 右侧导航的刻度数量上限：永远是 9 个（DeepSeek 式「动态滚动窗口」）。 */
 /** 上下文徽章：120_000 → "120k"；token 数一律取整，不再出现 120.0k 这种小数。 */
@@ -1368,7 +1366,10 @@ function ChatSession({
   }, [navAllItems.length, showTranscript]);
 
   // ------------------------------------------------------------------ 实时用量
-  /** 流式期间的文字长度（用于估算 token / 费用），同时广播给状态栏。 */
+  /**
+   * 流式期间的文字长度，只用于「生成速度 tokens/s」与「本轮产出」。
+   * 不入账：费用一律等模型回报真实 usage 后再显示。
+   */
   const liveTokens = useMemo(() => {
     const partial = chat.streamState.streamingMessage as
       | { content?: unknown; usage?: { output?: number } }
@@ -1464,16 +1465,7 @@ function ChatSession({
     ),
   );
 
-  useEffect(() => {
-    if (chat.agentRunning) {
-      setLiveUsage({ tokens: liveTokens, cost: liveTokens * LIVE_COST_PER_TOKEN });
-    } else {
-      setLiveUsage(null);
-    }
-  }, [chat.agentRunning, liveTokens]);
 
-  // 结束（或切换会话）时清掉残留的实时数字
-  useEffect(() => () => setLiveUsage(null), []);
 
   // Ctrl/Cmd + End（或 Cmd/Ctrl + ↓）：一键回到最新对话，输入框聚焦时同样生效
   useEffect(() => {
@@ -1675,7 +1667,7 @@ function ChatSession({
                 className="tabular-nums"
                 title="本轮所有模型调用的输出合计（含思考与工具轮次），不是单次请求的输入"
               >
-                本轮产出 {(turnOutputTokens + liveTokens).toLocaleString()}
+                本轮产出 {formatTokenCount(turnOutputTokens + liveTokens)}
               </span>
               {/* 上下文：一个环就够了——走满=贴满窗口，变红脉冲=已越顶，数字只进 tooltip。 */}
               {chat.contextBudget && (

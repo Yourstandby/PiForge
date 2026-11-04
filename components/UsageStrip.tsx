@@ -5,7 +5,6 @@ import { useI18n } from "./I18nProvider";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useDismissOnOutsideClick } from "@/hooks/useDismissOnOutsideClick";
 import { UsagePopover } from "./UsagePopover";
-import { subscribeLiveUsage } from "@/lib/live-usage";
 
 import type { ContextUsage, SessionActivity, SessionStats } from "./usage-types";
 import type { ContextBudget } from "@/lib/pi-types";
@@ -82,9 +81,6 @@ export const UsageStrip = React.memo(function UsageStrip({
       setText(costRef.current, moneyRef.current({ usd: hasAny ? usd : 0, cny: hasAny ? cny : 0 }));
     };
     render(costUsd, costCny);
-    return subscribeLiveUsage((live) => {
-      render(costUsdRef.current + (live?.cost ?? 0), costCnyRef.current);
-    });
   }, [costUsd, costCny]);
 
   const toggle = useCallback(() => {

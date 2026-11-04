@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SessionInfo } from "../../lib/types";
-import { defaultSidebarPreferences, groupProjects, moveProject, parseSidebarPreferences, partitionProjects, projectExpanded, projectKey, recentProjectKeys, searchProjects, sortProjects } from "./projects.ts";
+import { applyProjectSettings, defaultSidebarPreferences, groupProjects, moveProject, parseSidebarPreferences, partitionProjects, projectExpanded, projectKey, recentProjectKeys, searchProjects, sortProjects } from "./projects.ts";
 
 function session(id: string, cwd: string, name = id, parentSessionId?: string): SessionInfo {
   return { id, cwd, name, parentSessionId, path: id + ".jsonl", created: "2026-10-01T00:00:00Z", modified: "2026-10-15T00:00:00Z", firstMessage: "", messageCount: 2 };
@@ -67,8 +67,24 @@ test("preferences recover from invalid storage and keep only valid presentation 
   assert.deepEqual(parseSidebarPreferences("broken"), defaultSidebarPreferences);
   assert.deepEqual(parseSidebarPreferences(JSON.stringify({ paths: ["D:/Pi", null, 3, ""], expanded: { "d:/pi": false, invalid: 4 }, explorerOpen: false, token: "ignored" })), {
     paths: ["D:/Pi"], expanded: { "d:/pi": false }, explorerOpen: false, sortMode: "name", projectOrder: [],
-    autoCollapse: true, projectAsideOpen: false,
+    autoCollapse: true, projectAsideOpen: false, projectNames: {}, hiddenProjects: [],
   });
+  const projectPrefs = parseSidebarPreferences(JSON.stringify({ projectNames: { "d:/pi": "Workbench", "": "x", "d:/bad": 3 }, hiddenProjects: ["d:/gone", "d:/gone"] }));
+  assert.deepEqual(projectPrefs.projectNames, { "d:/pi": "Workbench" });
+  assert.deepEqual(projectPrefs.hiddenProjects, ["d:/gone"]);
+});
+
+test("project settings rename and hide projects without touching cwd or sessions", () => {
+  const projects = groupProjects([session("a", "D:/Pi"), session("b", "D:/Other")]);
+  const renamed = applyProjectSettings(projects, { "d:/pi": "Workbench" }, []);
+  assert.equal(renamed.find((project) => project.key === "d:/pi")!.name, "Workbench");
+  assert.equal(renamed.find((project) => project.key === "d:/pi")!.cwd, "D:/Pi");
+  assert.equal(renamed.find((project) => project.key === "d:/pi")!.sessions.length, 1);
+  // 没有覆盖名称 / 没有隐藏项时原样返回，下游 memo 不被打破。
+  assert.equal(applyProjectSettings(projects, {}, []), projects);
+  assert.deepEqual(applyProjectSettings(projects, {}, ["d:/other"]).map((project) => project.key), ["d:/pi"]);
+  // 恢复默认名（与文件夹同名）等同于没有覆盖。
+  assert.equal(applyProjectSettings(renamed, { "d:/pi": "Pi" }, []).find((project) => project.key === "d:/pi")!.name, "Pi");
 });
 
 test("recent three projects stay expanded and the rest go to the aside container", () => {

@@ -6,8 +6,8 @@ import { SidebarHeader } from "./session-sidebar/SidebarHeader";
 import { SessionTreeItem } from "./session-sidebar/SessionTree";
 import { ProjectGroup } from "./session-sidebar/ProjectGroup";
 import { SidebarIcon } from "./session-sidebar/SidebarIcon";
-import { groupProjects, partitionProjects, projectExpanded, projectKey, recentProjectKeys, searchProjects, sortProjects, type SidebarProject } from "./session-sidebar/projects";
-import { formatDateBucketLabel, groupSessionNodesByDate } from "./session-sidebar/date-groups";
+import { applyProjectSettings, groupProjects, partitionProjects, projectExpanded, projectKey, projectName, recentProjectKeys, searchProjects, sortProjects, type SidebarProject } from "./session-sidebar/projects";
+import { formatDateBucketLabel, groupSessionNodesByDate, type SessionDateGroup } from "./session-sidebar/date-groups";
 import { dateGroupContainsSession, dateGroupOpen, dateGroupOpenByDefault, dateGroupStateKey } from "./session-sidebar/session-preview";
 import { SortableProjects } from "./session-sidebar/SortableProjects";
 import { useSidebarPreferences } from "./session-sidebar/useSidebarPreferences";
@@ -17,6 +17,9 @@ import { mergeSessionList } from "./session-sidebar/session-merge";
 import { rememberSessionTitles } from "@/lib/session-titles";
 import { ErrorNotice } from "./ErrorNotice";
 import { SidebarErrorBoundary } from "./session-sidebar/SidebarErrorBoundary";
+
+/** 空分组的稳定引用：少一个每帧新建的数组，ProjectGroup 的 memo 才不被打破。 */
+const EMPTY_DATE_GROUPS: SessionDateGroup[] = [];
 
 interface Props {
   selectedSessionId: string | null;
@@ -144,13 +147,50 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     void loadSessions(isFirst);
   }, [loadSessions, refreshKey]);
 
-  const projects = useMemo(() => groupProjects(allSessions, [...preferences.paths, ...(selectedCwd ? [selectedCwd] : [])]), [allSessions, preferences.paths, selectedCwd]);
+  // 先分组，再套用「重命名 / 从侧栏移除」这两项纯显示偏好。
+  const projects = useMemo(() => applyProjectSettings(
+    groupProjects(allSessions, [...preferences.paths, ...(selectedCwd ? [selectedCwd] : [])]),
+    preferences.projectNames, preferences.hiddenProjects,
+  ), [allSessions, preferences.paths, selectedCwd, preferences.projectNames, preferences.hiddenProjects]);
   const sortedProjects = useMemo(() => sortProjects(projects, preferences.sortMode, preferences.projectOrder, locale), [projects, preferences.sortMode, preferences.projectOrder, locale]);
   const visibleProjects = useMemo(() => searchProjects(sortedProjects, searchQuery), [sortedProjects, searchQuery]);
   const searching = !!searchQuery.trim();
   const activeProjectKey = selectedCwd ? projectKey(selectedCwd) : null;
   /** 最近活跃的 N 个项目默认展开，其余收进「其他项目」收纳盒。 */
   const recentKeys = useMemo(() => recentProjectKeys(sortedProjects), [sortedProjects]);
+  /**
+   * 日期分组与重名判断原来都在 renderProject 里现算：
+   * 「每敲一个字」由 Workbench 引起的整栏重渲染都会把全部分组重建一遍
+   * （外加每个项目一次 projects.some 的 O(n²)）。这里按 projects 记忆化，
+   * 渲染循环只做查表。dayKey 参与依赖，跨零点后仍然重新分桶。
+   */
+  const dayKey = new Date().toDateString();
+  const dateGroupsByProject = useMemo(() => {
+    // 桶边界依赖"今天"，dayKey 只用来让缓存在跨零点后失效。
+    void dayKey;
+    const map = new Map<string, SessionDateGroup[]>();
+    for (const project of projects) map.set(project.key, groupSessionNodesByDate(project.tree));
+    return map;
+  }, [projects, dayKey]);
+  const duplicateNames = useMemo(() => {
+    const seen = new Set<string>();
+    const duplicated = new Set<string>();
+    for (const project of projects) {
+      if (seen.has(project.name)) duplicated.add(project.name);
+      else seen.add(project.name);
+    }
+    return duplicated;
+  }, [projects]);
+  /** 稳定回调：身份不变，SessionTreeItem 的 memo 才可能命中。 */
+  const handleSessionRenamed = useCallback(() => {
+    invalidateSessions();
+    void loadSessions(false, true);
+  }, [loadSessions]);
+  const handleSessionDeleted = useCallback((sessionId: string) => {
+    onSessionDeleted?.(sessionId);
+    invalidateSessions();
+    void loadSessions(false, true);
+  }, [loadSessions, onSessionDeleted]);
   const projectPartition = useMemo(() => partitionProjects(visibleProjects, {
     recentKeys, activeKey: activeProjectKey, expanded: preferences.expanded, autoCollapse: preferences.autoCollapse,
   }), [visibleProjects, recentKeys, activeProjectKey, preferences.expanded, preferences.autoCollapse]);
@@ -182,9 +222,31 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     setPreferences((previous) => ({
       ...previous,
       paths: previous.paths.some((path) => projectKey(path) === key) ? previous.paths : [...previous.paths, cwd],
+      // 重新添加同一个目录 = 撤销「从侧栏移除」。
+      hiddenProjects: previous.hiddenProjects.filter((hidden) => hidden !== key),
     }));
     setExpanded(key, true);
   }, [setExpanded, setPreferences]);
+
+  /** 项目改名只写显示层偏好；改成文件夹原名（或清空）就删掉这条覆盖。 */
+  const renameProject = useCallback((project: SidebarProject, name: string) => {
+    const trimmed = name.trim();
+    setPreferences((previous) => {
+      const projectNames = { ...previous.projectNames };
+      if (!trimmed || trimmed === projectName(project.cwd)) delete projectNames[project.key];
+      else projectNames[project.key] = trimmed;
+      return { ...previous, projectNames };
+    });
+  }, [setPreferences]);
+
+  /** 从侧栏移除：只记 key，不删会话、不动磁盘目录，重新添加目录即可恢复。 */
+  const removeProject = useCallback((project: SidebarProject) => {
+    setPreferences((previous) => ({
+      ...previous,
+      hiddenProjects: previous.hiddenProjects.includes(project.key) ? previous.hiddenProjects : [...previous.hiddenProjects, project.key],
+      projectOrder: previous.projectOrder.filter((key) => key !== project.key),
+    }));
+  }, [setPreferences]);
 
   const newSession = useCallback((cwd: string) => {
     setSearchQuery("");
@@ -242,12 +304,12 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const renderProject = (project: SidebarProject, dragHandle: ReactNode, dragging: boolean) => {
     // 分组永远是全量的：折叠头的计数和点开后的内容同源。所以这里没有
     // 「显示全部」这种会改变可见集合的按钮，也没有「点开是空的」这种状态。
-    const dateGroups = groupSessionNodesByDate(project.tree);
+    const dateGroups = dateGroupsByProject.get(project.key) ?? EMPTY_DATE_GROUPS;
     return (
-      <ProjectGroup project={project} dragHandle={dragHandle} dragging={dragging} expanded={isExpanded(project.key)} active={project.key === activeProjectKey} duplicateName={projects.some((other) => other.key !== project.key && other.name === project.name)} onToggle={(expanded) => {
+      <ProjectGroup project={project} dragHandle={dragHandle} dragging={dragging} expanded={isExpanded(project.key)} active={project.key === activeProjectKey} duplicateName={duplicateNames.has(project.name)} onToggle={(expanded) => {
         if (searching) setSearchQuery("");
         setExpanded(project.key, expanded);
-      }} onNewSession={() => newSession(project.cwd)}>
+      }} onNewSession={() => newSession(project.cwd)} onRename={(name) => renameProject(project, name)} onRemove={() => removeProject(project)}>
         {project.sessions.length === 0 && <button className="sidebar-empty-project" onClick={() => newSession(project.cwd)}>{t("sidebar.startFirstSession")}<SidebarIcon name="plus" size={13} /></button>}
         {dateGroups.map((group) => {
           // 搜索、选中项所在组强制展开；其余按「今天/昨天默认开，其它默认收」。
@@ -266,14 +328,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 <span>{label}</span>
                 <span className="sidebar-date-group-count">{group.count}</span>
               </button>
-              {open && group.nodes.map((node) => <SessionTreeItem key={node.session.id} node={node} selectedSessionId={selectedSessionId} onSelectSession={onSelectSession} onRenamed={() => {
-                    invalidateSessions();
-                    void loadSessions(false, true);
-                  }} onSessionDeleted={(id) => {
-                    onSessionDeleted?.(id);
-                    invalidateSessions();
-                    void loadSessions(false, true);
-                  }} onBranchSession={onBranchSession} onCloneSession={onCloneSession} onExportSession={onExportSession} depth={0} searching={searching} openSessionIds={openSessionIds} />)}
+              {open && group.nodes.map((node) => <SessionTreeItem key={node.session.id} node={node} selectedSessionId={selectedSessionId} onSelectSession={onSelectSession} onRenamed={handleSessionRenamed} onSessionDeleted={handleSessionDeleted} onBranchSession={onBranchSession} onCloneSession={onCloneSession} onExportSession={onExportSession} depth={0} searching={searching} openSessionIds={openSessionIds} />)}
             </div>
           );
         })}

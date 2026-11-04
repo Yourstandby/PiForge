@@ -15,13 +15,20 @@ Windows-first · Local-first · Electron + Next.js 静态导出 + Agent Host · 
 
 ---
 
-PiForge 不是「聊天框套壳」。左栏是项目与会话，中栏是多标签对话，右栏常驻文件树 / 内置浏览器 / 终端 / Git / Agents / 编排 / 插件面板。主 Agent 改代码的同时可以派子 Agent 去调研、让常驻舰队 Agent 盯审计——互不干扰，全部在本机。
+PiForge 不是「聊天框套壳」。左栏是项目与会话，中栏是多标签对话，右栏常驻文件树 / 内置浏览器 / 终端 / Git / 舰队 Agent / 编排 / 插件面板。主 Agent 改代码的同时可以派子 Agent 去调研、让常驻舰队 Agent 盯审计——互不干扰，全部在本机。
 
-底层复用官方 [`@earendil-works/pi-coding-agent`](https://github.com/earendil-works/pi-coding-agent)（锁定 `1.4.0`）。**不 fork SDK、不在中间加代理层**：整个 Pi 只经过 `agent-host/sdk-adapter.ts` 一个文件，`npm run check:sdk-imports` 在 CI 里强制这条边界。
-
-## 它长什么样
+底层复用官方 [`@earendil-works/pi-coding-agent`](https://github.com/earendil-works/pi-coding-agent)（三个 `@earendil-works/pi-*` 包精确锁定 `1.5.0`）。**不 fork SDK、不在中间加代理层**：整个 Pi 只经过 `agent-host/sdk-adapter.ts` 一个文件，`npm run check:sdk-imports` 在 CI 里强制这条边界。
 
 [![PiForge 主界面](./docs/assets/generated/poster-light@2x.png)](./docs/assets/generated/demo.mp4)
+
+## v0.12.0 有什么新的
+
+- **项目归你自己管**：左栏项目可重命名、可从侧栏移除。只写本地显示偏好，不删会话、不碰磁盘目录，重新选回同一目录即恢复。
+- **数字先说真话**：用量只报真实 `usage` 累计（不再叠加流式估算），按会话隔离；千以上缩写为 `2.9K` / `69.8K` / `1.0M`。
+- **开关先说默认**：思考等级默认「均衡」；AGENTS.md / CLAUDE.md 注入可按全局 + 项目三态关闭；HANDOFF.md 接续注入可选开启（默认关）。
+- **看门狗更耐心**：无有效进展的停滞阈值默认 90s，且 90s 就是最低档（预设 90 / 120 / 300 / 600 秒），不会再误杀长活。
+
+逐条细节与「默认行为变没变」见 [`CHANGELOG.md`](./CHANGELOG.md)；安装包说明见 [`docs/releases/v0.12.0.md`](./docs/releases/v0.12.0.md)。
 
 ## 能力
 
@@ -31,11 +38,11 @@ PiForge 不是「聊天框套壳」。左栏是项目与会话，中栏是多标
 | 🖐 | **人工介入** | Skip / 极简询问 / 深度诊断，复用手边已有的队列通路 |
 | 🧠 | **上下文可视化与压缩** | 上下文环 + 四段式摘要，切点永远落在用户轮次上 |
 | 🤖 | **子 Agent / 常驻舰队** | 一次性 `spawn_agent` 与可反复下发的 `herdr_*`，各自独立上下文 |
+| 🗂 | **项目与会话自己管** | 项目可改名可隐藏，会话按时间分桶，折叠头条数即真实条数 |
+| 💰 | **Token 账本** | 只报真实 usage，成本结构可审计（`audit:token`），优化全部以实测为准 |
 | ⚡ | **启动与内存** | 静态导出替代 Next 运行时、Host 传输层可切、V8 堆按传输层分档 |
-| 💰 | **Token 账本** | 成本结构可审计（`audit:token`），优化全部以实测为准 |
 | 🧱 | **三进程隔离** | Agent 只住 Host，Next 只做 UI 与转发，零内部端口 |
 | 🌙 | **夜晚模式** | 跟随系统 / 浅色 / 深色，令牌化主题，首屏无闪烁 |
-| 🗂 | **会话按时间分桶** | 近 7 天按天、一年内按月、更早按年；折叠头条数即真实条数，点开必有内容 |
 
 调用压缩（0.9.4 起默认）：codemode 默认开启且为 `only`——普通工具不再逐条声明给模型，改由一次脚本批量调用；提示词内置批量与调用预算。不想用可关，工具恢复直呼（见[设置](#设置与开关)）。
 
@@ -79,6 +86,8 @@ npm run dev:electron   # 桌面窗口（推荐）
 npm run dev            # 浏览器开发模式 → http://localhost:30141（仅开发期有端口）
 ```
 
+> `dev:electron` 只重编主进程与 agent-host，界面来自 `out/` 静态导出。改过 `app/` `components/` `lib/` `hooks/` `public/` 之后要先 `npm run build:static`——脚本会拦下「`out/` 比源码旧」的情况并直接报错，避免对着旧 UI 调半天。
+
 ### 常用命令
 
 | 命令 | 作用 |
@@ -101,10 +110,20 @@ npm run dev            # 浏览器开发模式 → http://localhost:30141（仅�
 
 ## 设置与开关
 
-- **Codemode**：扩展与 MCP → Codemode。关闭 = 工具恢复直呼（脚本仍可用）；「照常声明工具」= `codemodeMode: "on"`。
-- **思考等级**：常规设置 → 默认思考等级。首次启动只在该键缺失时写一次 `defaultThinkingLevel: "low"`。
-- **夜晚模式**：跟随系统 / 浅色 / 深色，写 `localStorage["pi-theme"]`，`app/globals.css` 的 `:root[data-theme="dark"]` 提供令牌。新组件一律用令牌，禁止写深色字面量。
-- **实验开关**（默认关闭，默认行为不变）：`PIFORGE_HOST_TRANSPORT` / `PIFORGE_HOST_HEAP` / `PIFORGE_USE_NEXT` / `PIFORGE_SUBAGENT_MAX_TURNS`，见 [`docs/optimizations`](./docs/optimizations)。
+| 开关 | 位置 | 默认 |
+| --- | --- | --- |
+| Codemode | 扩展与 MCP → Codemode | `only`（关掉 = 工具直呼） |
+| 默认思考等级 | 常规设置 → 默认思考等级 | 均衡（`medium`） |
+| 上下文文件注入 | 常规设置 / 项目设置（三态） | 开（AGENTS.md / CLAUDE.md） |
+| HANDOFF.md 接续注入 | 常规设置 / 项目设置 | 关 |
+| 看门狗停滞阈值 | 状态面板下拉 | 90s（可选 90 / 120 / 300 / 600s，下限 90s） |
+| 关闭窗口行为 | 托盘菜单「关闭窗口时」 | 每次询问（最小化到托盘 / 退出程序） |
+| 项目名与可见性 | 左栏项目行 `⋯` 或右键 | 无（用文件夹名，全部可见） |
+| 夜晚模式 | 常规设置 | 跟随系统 |
+
+偏好落点：项目名与隐藏项目写 `localStorage["pi-sidebar-projects-v1"]`；关闭行为写 `<userData>/close-preference.json`；主题写 `localStorage["pi-theme"]`（令牌在 `app/globals.css`，**新组件禁止写深色字面量**）。
+
+实验开关（默认关闭，默认行为不变）：`PIFORGE_HOST_TRANSPORT` / `PIFORGE_HOST_HEAP` / `PIFORGE_USE_NEXT` / `PIFORGE_SUBAGENT_MAX_TURNS`，见 [`docs/optimizations`](./docs/optimizations)。
 
 ## 目录结构
 
@@ -126,8 +145,9 @@ docs/              架构、优化与实测记录、发布说明；docs/releases
 CI 四条线（`.github/workflows/`）：
 
 - `ci.yml`：lint · typecheck · test、token guards、Next 构建、Windows 专用测试；**纯文档改动（`**.md` / `docs/**`）不触发**。
-- `desktop-packages.yml`：push `v*` tag 触发，三平台并行 `dist`（含打包内冒烟）→ 统一发布 12 个资产 + `SHA256SUMS.txt`。`workflow_dispatch` 可预演。
+- `desktop-packages.yml`：push `v*` tag 触发，三平台并行 `dist`（含打包内冒烟）→ 统一发布安装包资产 + `SHA256SUMS.txt`。`workflow_dispatch` 可预演。
 - 打包冒烟分三层：`smoke-packaged-layout`（布局/体积）、`smoke-packaged-static`（渲染进程真的挂上 Workbench）、`smoke-packaged-standalone`（打包后的 Agent Host + Extension UI Bridge 往返）。
+- `pi-auto-upgrade.yml`：跟踪 Pi 核心新版本，产出可审阅的升级 PR。
 
 发布流程见 [`docs/RELEASING.md`](./docs/RELEASING.md)；分支保护：`main` 只接受 PR 合并。
 
@@ -149,5 +169,7 @@ CI 四条线（`.github/workflows/`）：
 ## 致谢与协议
 
 PiForge 在 [Chasen-Liao/pi-agent-desktop](https://github.com/Chasen-Liao/pi-agent-desktop)（MIT）与 [DLYZZT/pi-desktop](https://github.com/DLYZZT/pi-desktop) 的设计思路上重写实现，向上游 [Pi coding agent](https://github.com/badlogic/pi-mono) 致敬。**学设计、重实现，不搬运代码。**
+
+安装包当前未代码签名：Windows 可能出现 SmartScreen 提示，macOS 可能出现 Gatekeeper 提示，Linux `.deb` 未做包签名（详见发布说明）。
 
 以 **MIT License** 发布，详见 [`LICENSE`](./LICENSE)。

@@ -2,10 +2,11 @@
  * Inline pi extension: 历史滑动窗口 + 结构化摘要（第三维度）。
  *
  * 两条路径共用同一份摘要逻辑：
- *   1. `agent_settled`：每轮结束后检查「窗口满 / 预算超限」双条件，满足就
- *      主动调 `ctx.compact()`（只触发一次，压完窗口自然回落）；
- *   2. `session_before_compact`：不论是手动 `/compact`、阈值触发还是溢出兜底，
- *      都由我们接管——切点按「最近 N 轮」对齐，摘要按四段结构生成。
+ *   1. `session_before_compact`（**默认常开**）：不论是手动 `/compact`、阈值触发
+ *      还是溢出兜底，摘要正文都由我们生成——中文、六段、300–600 token；
+ *      何时压缩仍由 pi 的 `shouldCompact` 决定。
+ *   2. `agent_settled`（仅 `autoTrigger`，默认关）：每轮结束后检查「窗口满 /
+ *      预算超限」双条件，满足就主动调 `ctx.compact()`，A/B 用。
  *
  * 任何一步失败都**不阻断**压缩：返回 undefined 让 pi 用它自己的摘要器。
  * 宁可摘要难看，也不能让用户的会话压不了。
@@ -48,6 +49,11 @@ export interface HistoryCompactionOptions {
   /** 上下文硬顶（不传则按 `min(120k, 窗口 × 0.8)` 现算）。 */
   maxContextTokens?: number;
   minDroppableTokens?: number;
+  /**
+   * 是否由 PiForge 自己按「窗口满 / 预算超限」触发压缩（默认 true）。
+   * 置 false 时只接管摘要正文，何时压缩仍由 pi 的 shouldCompact 决定。
+   */
+  autoTrigger?: boolean;
   /** 测试注入：直接产出摘要正文（不传则真调模型）。 */
   summarize?: (input: {
     messages: readonly MessageLike[];
@@ -60,8 +66,8 @@ export interface HistoryCompactionOptions {
 }
 
 const SUMMARY_SYSTEM_PROMPT =
-  "You compress earlier turns of a coding-assistant conversation into a compact context checkpoint. " +
-  "Follow the requested section structure exactly. Output only the checkpoint, no preamble.";
+  "你把编程助手会话里较早的对话压缩成一份简洁的中文上下文检查点。" +
+  "严格遵守要求的小标题结构，只输出检查点正文，不写任何前言或客套话。";
 
 /** 摘要输出上限：够写四段，又不会变成新的包袱。 */
 const SUMMARY_MAX_TOKENS = 1_600;
@@ -212,6 +218,7 @@ export function createDesktopCompactionFactory(options: HistoryCompactionOptions
     });
 
     pi.on("agent_settled", async (event, ctx) => {
+      if (options.autoTrigger === false) return;
       if (event.aborted) return;
       if (pendingCompaction) return;
       if (typeof ctx.isIdle === "function" && !ctx.isIdle()) return;

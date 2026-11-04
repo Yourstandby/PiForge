@@ -27,7 +27,7 @@ export function FolderIcon({ size = 14, open = false }: IconProps & { open?: boo
 
 // ── Generic file (fallback) ────────────────────────────────────────────────
 
-export function GenericFileIcon({ size = 14 }: IconProps) {
+function GenericFileIcon({ size = 14 }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none">
       <path d="M3 2h7l3 3v9H3V2Z" stroke={DIM} strokeWidth="1" fill={DIM} fillOpacity="0.08" />

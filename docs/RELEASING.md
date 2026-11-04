@@ -1,6 +1,6 @@
 # Release 流程
 
-本文档是 Pi Agent Desktop 的现役发布流程。GitHub 桌面安装包与 npm CLI 包是两条不同通道。
+本文档是 PiForge 的现役发布流程。GitHub 桌面安装包与 npm CLI 包是两条不同通道。
 
 > 客户端自动更新走已有的 electron-updater 链（checkForUpdates -> downloadUpdate -> quitAndInstall），Pi 核心升级通过 PR 合并后触发常规打包流程。
 
@@ -25,23 +25,25 @@
    - 三端都跑 `smoke-packaged-standalone`；macOS 额外 `hdiutil verify` / `unzip -t` / `lipo` 双架构；Linux 额外 `dpkg-deb -I`
    - Actions 设置 `CSC_IDENTITY_AUTO_DISCOVERY=false`，产物均未代码签名。手动 `workflow_dispatch` 只上传 artifact，不发 Release。
 6. 工作流上传的资产：
-   - `Pi-Agent-Desktop-Setup-X.Y.Z.exe`
-   - `Pi-Agent-Desktop-Setup-X.Y.Z.exe.blockmap`
+   - `PiForge-Setup-X.Y.Z.exe`
+   - `PiForge-Setup-X.Y.Z.exe.blockmap`
    - `latest.yml`
-   - `Pi-Agent-Desktop-X.Y.Z-mac-universal.dmg`
-   - `Pi-Agent-Desktop-X.Y.Z-mac-universal.dmg.blockmap`
-   - `Pi-Agent-Desktop-X.Y.Z-mac-universal.zip`
-   - `Pi-Agent-Desktop-X.Y.Z-mac-universal.zip.blockmap`
+   - `PiForge-X.Y.Z-mac-universal.dmg`
+   - `PiForge-X.Y.Z-mac-universal.dmg.blockmap`
+   - `PiForge-X.Y.Z-mac-universal.zip`
+   - `PiForge-X.Y.Z-mac-universal.zip.blockmap`
    - `latest-mac.yml`
-   - `Pi-Agent-Desktop-X.Y.Z-linux-amd64.deb`
+   - `PiForge-X.Y.Z-linux-x64.deb`
    - `latest-linux.yml`
+   - `PiForge-X.Y.Z-win-x64.zip`
+   - `SHA256SUMS.txt`
 7. 重新查询 GitHub Release，确认 tag、目标 commit、资产名称、大小，以及三份 `latest*.yml` 的 `version` 与 SHA512。
 
 本地 fallback（Actions 失败或要复现）：干净 worktree `npm ci` 后，Windows / Linux 跑 `npm run dist`，macOS 跑 `npm run dist:mac`。Linux 打包机需要 `fakeroot` 与 `dpkg`；Debian/Ubuntu 执行 `sudo apt-get install fakeroot dpkg`，Arch 需另装 `fakeroot`、`dpkg` 与 `libxcrypt-compat`。不要另开一套版本号。
 
 Windows 安装包当前未代码签名，Release Notes 必须披露 SmartScreen 提示。GitHub Actions 打的 macOS 包同样未签名、未公证，Release Notes 必须披露 Gatekeeper 提示。Linux 的 `.deb` 安装包通过 electron-updater 的 `DebUpdater` 自动更新：应用内下载新 `.deb` 后经 `dpkg -i` 或 `apt --allow-unauthenticated` 安装，安装时需要 root 授权提示。下载完整性由 `latest-linux.yml` 的 SHA512 校验（与 Windows NSIS 相同），但 `.deb` 本身未做 debsig，系统包管理器不会再验包签名。自动更新依赖 Release 资产中的 `latest-linux.yml`，漏传则 Linux 端收不到更新。Release Notes 必须披露未签名 deb 与 root 安装。
 
-截至 2026-09-23：最新桌面 GitHub Release 是 [`v0.8.9`](https://github.com/Chasen-Liao/pi-agent-desktop/releases/tag/v0.8.9)，包含 Windows NSIS、macOS Universal DMG + ZIP、Linux deb 及三份 `latest*.yml`；所有 10 个资产已上传，三份更新清单均为 `version: 0.8.9` 并带 SHA512。`v0.8.4` 及更早只有 Windows 资产。Issue / PR 约定见 [CONTRIBUTING.md](../CONTRIBUTING.md)。
+截至 2026-11-04：最新桌面 GitHub Release 是 [`v0.12.0`](https://github.com/Yourstandby/PiForge/releases/tag/v0.12.0)（上一个公开版本为 `v0.11.2`），包含 Windows NSIS + ZIP、macOS Universal DMG + ZIP、Linux `x64` deb 及三份 `latest*.yml`，共 12 个资产 + `SHA256SUMS.txt`。`v0.11.3` / `v0.11.4` 只在本地打过 tag、从未推送，其内容合并进 `v0.12.0` 发布；发布前务必确认本地未推送的旧 tag 不会连带推送。Issue / PR 约定见 [CONTRIBUTING.md](../CONTRIBUTING.md)。
 
 ## npm Release
 

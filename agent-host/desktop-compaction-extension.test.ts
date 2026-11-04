@@ -47,6 +47,7 @@ function setup(options: {
   summarize?: (input: unknown) => Promise<string | null>;
   keepRounds?: number;
   minDropRounds?: number;
+  autoTrigger?: boolean;
 }) {
   const handlers = new Map<string, Handler>();
   const compactions: CompactCall[] = [];
@@ -67,6 +68,7 @@ function setup(options: {
     getTarget: () => undefined,
     keepRounds: options.keepRounds,
     minDropRounds: options.minDropRounds,
+    autoTrigger: options.autoTrigger,
     summarize:
       options.summarize ??
       (async (input) => {
@@ -134,6 +136,20 @@ test("aborted runs and busy sessions never trigger", async () => {
     { ...second.ctx, isIdle: () => false },
   );
   assert.equal(second.compactions.length, 0);
+});
+
+test("autoTrigger=false 时只接管摘要正文，不自己触发压缩", async () => {
+  const entries = branch(KEEP_RECENT_ROUNDS + 3);
+  const { handlers, compactions, ctx } = setup({ entries, autoTrigger: false });
+  await handlers.get("agent_settled")?.({ type: "agent_settled", aborted: false }, ctx);
+  assert.equal(compactions.length, 0, "何时压缩交给 pi，不看窗口/预算");
+
+  const result = (await handlers.get("session_before_compact")?.(
+    { type: "session_before_compact", preparation: { tokensBefore: 1 }, branchEntries: entries, reason: "threshold", willRetry: false },
+    ctx,
+  )) as { compaction?: { summary: string } };
+  assert.ok(result?.compaction, "摘要正文仍由 PiForge 生成");
+  assert.match(result.compaction.summary, /## 1\. 用户核心意图/);
 });
 
 test("session_before_compact supplies a round-aligned structured summary", async () => {
