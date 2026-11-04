@@ -1,17 +1,54 @@
-## Unreleased — Token 数量千以上缩写
-
-- 用量两行与「本轮产出」：< 1000 精确整数，≥ 1000 用一位小数缩写（`2.9K` / `69.8K`），
-  ≥ 999,950 进位到 `1.0M`。规则集中到 `lib/token-format.ts`。
-- Pi 核心 `@earendil-works/pi-*` 1.4.0 → 1.5.0（精确锁定，含新的 `pi-schema` 传递依赖）。
-  上游破坏性变更（工具参数改由 pi-schema 校验、pi-ai 不再透出 TypeBox）不影响 PiForge：
-  我们没有用 `Type.Refine` / `BigInt` / `Undefined` / codec 定义工具参数。唯一适配是
-  `agent-host/mcp-service.ts` 里 `clientRegistration` 的类型跟随上游放宽到 `"auto" | "dcr" | "cimd"`
-  （该字段不参与 PiForge 自己的 loopback 登录流程，行为无变化）。
-
 # Changelog
 
 迁移条目按「改了什么 / 默认行为变没变 / 开关怎么用」组织。详细数据见 `docs/measurements/`
 （三个口径：记录型 provider、真实 deepseek 会话、重复场景 A/B，三者不要混读）。
+
+## v0.11.4 — 项目可改名可移除 · 看门狗看长活
+
+主题：**左栏项目归用户自己管，看门狗别误杀长活**。四件事：项目重命名 / 从侧栏移除、
+看门狗停滞阈值默认 90s 且以 90s 为最低档、用量数字千以上缩写、Pi 核心升到 1.5.0。
+
+### 改了什么
+
+**左栏项目**
+
+- **项目重命名**（`components/session-sidebar/ProjectGroup.tsx`、`components/SessionSidebar.tsx`）：
+  悬停行尾 `⋯` 或右键项目行 →「重命名项目」，行内输入框回车提交、Esc 取消。只改左栏显示名，
+  磁盘目录与会话归属都不动；改成空或改回文件夹原名 = 恢复默认。
+- **从侧栏移除**（同上）：「从侧栏移除」把项目从常规区和「其他项目」收纳盒里一起摘掉。
+  只写一条本地偏好（`pi-sidebar-projects-v1` 的 `hiddenProjects`），不删会话、不碰目录；
+  以后用「新建项目」重新选回同一目录即自动恢复显示。
+- 自定义名称同处持久化（`projectNames`），解析时逐项校验、非法值丢弃
+  （`components/session-sidebar/projects.ts`）。
+
+**看门狗**
+
+- **停滞阈值默认 90s，90s 同时是最低档**（`agent-host/watchdog.ts`）：默认值 20s → 90s，
+  运行期下限 5s → 90s（`watchdog.configure` 传更小的值会被钳到 90s，上限仍 10min）。
+  扫描周期仍 5s、连续 2 次超阈值升级，因此默认约 100s 无有效进展才亮红灯。
+- **下拉框预设改为 90 / 120 / 300 / 600 秒**（`hooks/useWatchdogStatus.ts`）；本地存过的旧值
+  （15/30/60s）读取时钳进新区间，避免面板显示一个 Host 会改写的数字。
+
+**用量**
+
+- 用量两行与「本轮产出」：< 1000 精确整数，≥ 1000 用一位小数缩写（`2.9K` / `69.8K`），
+  ≥ 999,950 进位到 `1.0M`。规则集中到 `lib/token-format.ts`。
+
+**Pi 核心**
+
+- `@earendil-works/pi-*` 1.4.0 → 1.5.0（精确锁定，传递依赖新增 `pi-schema`）。上游破坏性变更
+  （工具参数改由 pi-schema 校验、pi-ai 不再透出 TypeBox）不影响 PiForge：我们没有用
+  `Type.Refine` / `BigInt` / `Undefined` / codec 定义工具参数。唯一适配是 `agent-host/mcp-service.ts`
+  的 `clientRegistration` 类型跟随上游放宽到 `"auto" | "dcr" | "cimd"`（该字段不参与 PiForge 自己的
+  loopback 登录流程）。
+
+### 默认行为变没变
+
+- **项目名与可见性**：不变。旧数据没有这两个字段 → 原样显示，除非你自己改名 / 移除。
+- **看门狗**：变了。默认红灯从约 25s 推到约 100s，且不能再调到 90s 以下。想更迟钝可选
+  120 / 300 / 600 秒。
+- **用量数字**：只换显示，计费口径不变。
+- **Pi 核心**：接口与行为不变；工具参数校验改由 pi-schema 执行（我们全部是普通 JSON Schema 工具）。
 
 ## v0.11.3 — 用量说真话 · 注入与预算收口
 
