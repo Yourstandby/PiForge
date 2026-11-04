@@ -2,6 +2,11 @@
 
 - 用量两行与「本轮产出」：< 1000 精确整数，≥ 1000 用一位小数缩写（`2.9K` / `69.8K`），
   ≥ 999,950 进位到 `1.0M`。规则集中到 `lib/token-format.ts`。
+- Pi 核心 `@earendil-works/pi-*` 1.4.0 → 1.5.0（精确锁定，含新的 `pi-schema` 传递依赖）。
+  上游破坏性变更（工具参数改由 pi-schema 校验、pi-ai 不再透出 TypeBox）不影响 PiForge：
+  我们没有用 `Type.Refine` / `BigInt` / `Undefined` / codec 定义工具参数。唯一适配是
+  `agent-host/mcp-service.ts` 里 `clientRegistration` 的类型跟随上游放宽到 `"auto" | "dcr" | "cimd"`
+  （该字段不参与 PiForge 自己的 loopback 登录流程，行为无变化）。
 
 # Changelog
 
