@@ -31,8 +31,8 @@ export interface StallView {
   stuckToolCallIds: string[];
 }
 
-/** 与 Host 默认阈值一致（20s）；关闭/自定义时以快照里的 config 为准。 */
-export const DEFAULT_STALL_MS = 20_000;
+/** 与 Host 默认阈值一致（90s）；关闭/自定义时以快照里的 config 为准。 */
+export const DEFAULT_STALL_MS = 90_000;
 
 const ACTIVE_STATUSES = new Set<WatchdogTaskView["status"]>(["running", "stalled"]);
 
