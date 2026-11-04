@@ -86,6 +86,10 @@ export interface SidebarPreferences {
   autoCollapse: boolean;
   /** 「其他项目」收纳盒是否展开。 */
   projectAsideOpen: boolean;
+  /** 用户给项目起的显示名（key → 名称），只改左栏显示，不动目录。 */
+  projectNames: Record<string, string>;
+  /** 用户从侧栏移除的项目 key：只是不显示，会话与目录都还在，重新添加同一目录即可恢复。 */
+  hiddenProjects: string[];
 }
 
 /** 自动展开的最近项目数量。 */
@@ -96,6 +100,7 @@ export type ProjectSortMode = "name" | "recent" | "manual";
 export const defaultSidebarPreferences: SidebarPreferences = {
   paths: [], expanded: {}, explorerOpen: true, sortMode: "name", projectOrder: [],
   autoCollapse: true, projectAsideOpen: false,
+  projectNames: {}, hiddenProjects: [],
 };
 
 /** 最近活跃的项目 key（按 modified 降序取前 N 个）。 */
@@ -163,6 +168,24 @@ export function sortProjects(projects: SidebarProject[], mode: ProjectSortMode, 
   });
 }
 
+/**
+ * 应用用户对项目的显示偏好：先按 hiddenProjects 摘掉「从侧栏移除」的项目，
+ * 再套用 projectNames 里的自定义名称。只影响显示，cwd / key / 会话都不变。
+ */
+export function applyProjectSettings(projects: SidebarProject[], names: Record<string, string>, hidden: string[]): SidebarProject[] {
+  const hiddenKeys = new Set(hidden);
+  let changed = hiddenKeys.size > 0;
+  const next = projects.flatMap((project) => {
+    if (hiddenKeys.has(project.key)) return [];
+    const custom = names[project.key];
+    if (!custom || custom === project.name) return [project];
+    changed = true;
+    return [{ ...project, name: custom }];
+  });
+  // 没有任何改动时保持原数组引用，下游 memo 才不会白跑一遍。
+  return changed ? next : projects;
+}
+
 export function moveProject(keys: string[], source: string, target: string): string[] {
   const from = keys.indexOf(source);
   const to = keys.indexOf(target);
@@ -187,6 +210,10 @@ export function parseSidebarPreferences(value: string | null): SidebarPreference
         ? [...new Set(saved.projectOrder.filter((key): key is string => typeof key === "string"))] : [],
       autoCollapse: typeof saved.autoCollapse === "boolean" ? saved.autoCollapse : true,
       projectAsideOpen: saved.projectAsideOpen === true,
+      projectNames: saved.projectNames && typeof saved.projectNames === "object" && !Array.isArray(saved.projectNames)
+        ? Object.fromEntries(Object.entries(saved.projectNames).filter(([key, name]) => !!key && typeof name === "string" && !!name.trim())) : {},
+      hiddenProjects: Array.isArray(saved.hiddenProjects)
+        ? [...new Set(saved.hiddenProjects.filter((key): key is string => typeof key === "string" && !!key))] : [],
     };
   } catch {
     return defaultSidebarPreferences;
