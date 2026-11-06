@@ -25,6 +25,10 @@ export async function GET(req: Request) {
     if (error instanceof GitStatusError && error.code === "PATH_OUTSIDE_CWD") {
       return jsonError(req, 403, error.message);
     }
+    if (error instanceof GitStatusError && error.code === "FILE_MISSING") {
+      // 404 而不是 403：路径是合法的，只是文件没了（未跟踪文件被删/改名）。
+      return jsonError(req, 404, error.message);
+    }
     if (error instanceof GitStatusError && error.code === "NOT_GIT_REPOSITORY") {
       return jsonError(req, 400, "Not a Git repository");
     }

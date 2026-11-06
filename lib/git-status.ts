@@ -41,7 +41,12 @@ export interface GitStatusResult {
 }
 
 export class GitStatusError extends Error {
-  readonly code: "GIT_UNAVAILABLE" | "NOT_GIT_REPOSITORY" | "PATH_OUTSIDE_CWD";
+  readonly code:
+    | "GIT_UNAVAILABLE"
+    | "NOT_GIT_REPOSITORY"
+    | "PATH_OUTSIDE_CWD"
+    /** 未跟踪的文件在磁盘上已经消失（被删除/改名）：没有可读的内容，不可能是越界。 */
+    | "FILE_MISSING";
 
   constructor(code: GitStatusError["code"], message: string) {
     super(message);
@@ -319,9 +324,15 @@ export async function readGitDiff(
   );
   if (untracked.stdout.trim()) return untracked.stdout;
 
-  // Binary/unreadable file: still give the viewer a hint instead of a blank pane.
+  // 未跟踪 + 磁盘上也没了（被删/改名）+ 二进制不可读，三种情况都落到这里：
+  // 给查看器一句人话，不要留空面板。
   const stat = await fs.stat(absolute).catch(() => null);
-  if (!stat) throw new GitStatusError("PATH_OUTSIDE_CWD", "File not found");
+  if (!stat) {
+    throw new GitStatusError(
+      "FILE_MISSING",
+      "文件已不在磁盘上（可能被删除或改名）——未跟踪过 git，没有可恢复的历史内容",
+    );
+  }
   return `Untracked file (${stat.size} bytes) — no textual diff available.`;
 }
 
