@@ -342,6 +342,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     isNew,
     modelsRefreshKey,
     sessionIdRef,
+    // 与发送失败共用同一条 toast 通道：切模型失败同样不能静默。
+    onModelChangeError: onPromptError,
   });
 
   const {

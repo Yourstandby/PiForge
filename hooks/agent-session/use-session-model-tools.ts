@@ -87,6 +87,8 @@ export type UseSessionModelToolsOptions = {
   isNew: boolean;
   modelsRefreshKey?: number;
   sessionIdRef: React.MutableRefObject<string | null>;
+  /** 切换模型失败时的可见提示（以前只 console.error，界面毫无反馈）。 */
+  onModelChangeError?: (message: string) => void;
 };
 
 export function useSessionModelTools(opts: UseSessionModelToolsOptions) {
@@ -94,6 +96,7 @@ export function useSessionModelTools(opts: UseSessionModelToolsOptions) {
     isNew,
     modelsRefreshKey,
     sessionIdRef,
+    onModelChangeError,
   } = opts;
 
   const [modelNames, setModelNames] = useState<Record<string, string>>({});
@@ -154,9 +157,12 @@ export function useSessionModelTools(opts: UseSessionModelToolsOptions) {
         setCurrentModelOverride({ provider, modelId });
       } catch (e) {
         console.error("Failed to set model:", e);
+        // 静默失败就是「点了没反应」：必须让用户看到原因（Provider 地址不通、
+        // 模型未注册等），否则会一直以为是自己没点中。
+        onModelChangeError?.(`切换模型失败：${e instanceof Error ? e.message : String(e)}`);
       }
     },
-    [sessionIdRef]
+    [sessionIdRef, onModelChangeError]
   );
 
   /** Pick fast/strong for one prompt (used by handleSend when Auto is active). */

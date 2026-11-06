@@ -802,6 +802,12 @@ export class AgentSessionWrapper {
 
       case "set_model": {
         const { provider, modelId } = command as { provider: string; modelId: string };
+        // 自定义 Provider 保存后只把会话标记成「待重载」（懒加载，真重载发生在
+        // 下一条 prompt）。而模型下拉来自 /api/models —— 那里每次请求都新建
+        // runtime，所以新模型立刻可见。不在切换前重载，getModel 就会在旧快照里
+        // 查不到，选择器表现为「点了没反应」。
+        await this._binding.catch(() => undefined);
+        if (this.resourcesChanged) await this.reloadResources();
         const model = this.inner.modelRuntime.getModel(provider, modelId);
         if (!model) throw new Error(`Model not found: ${provider}/${modelId}`);
         await this.inner.setModel(model);
