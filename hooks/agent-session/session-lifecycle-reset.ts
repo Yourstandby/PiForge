@@ -3,7 +3,6 @@
  * Keeps the session-id effect in useAgentSession thin and testable.
  */
 
-import type { ContextBudget } from "../../lib/pi-types.ts";
 import { DEFAULT_THINKING_LEVEL, type ThinkingLevelOption } from "../../lib/thinking-level.ts";
 
 export type { ThinkingLevelOption };
@@ -15,7 +14,6 @@ export type SessionScopedResetPatch = {
   agentPhase: null;
   retryInfo: null;
   contextUsage: null;
-  contextBudget: null;
   systemPrompt: null;
   forkingEntryId: null;
   isCompacting: false;
@@ -33,7 +31,6 @@ export function sessionScopedResetPatch(): SessionScopedResetPatch {
     agentPhase: null,
     retryInfo: null,
     contextUsage: null,
-    contextBudget: null,
     systemPrompt: null,
     forkingEntryId: null,
     isCompacting: false,
@@ -54,7 +51,6 @@ export type LoadedAgentStateInput = {
         contextWindow: number;
         tokens: number | null;
       } | null;
-      contextBudget?: ContextBudget | null;
       systemPrompt?: string;
       thinkingLevel?: string;
     } | null;
@@ -74,7 +70,6 @@ export type LoadedAgentStatePatch = {
     contextWindow: number;
     tokens: number | null;
   } | null;
-  contextBudget?: ContextBudget | null;
   systemPrompt?: string | null;
 };
 
@@ -108,9 +103,6 @@ export function loadedAgentStatePatch(input: LoadedAgentStateInput): LoadedAgent
     }
     if (agentState.state.contextUsage !== undefined) {
       patch.contextUsage = agentState.state.contextUsage ?? null;
-    }
-    if (agentState.state.contextBudget !== undefined) {
-      patch.contextBudget = agentState.state.contextBudget ?? null;
     }
     if (agentState.state.systemPrompt !== undefined) {
       patch.systemPrompt = agentState.state.systemPrompt ?? null;
