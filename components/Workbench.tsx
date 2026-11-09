@@ -27,6 +27,7 @@ import { ApplyCodeModal } from "./ApplyCodeModal";
 import { DevEnvironmentConfig } from "./DevEnvironmentConfig";
 import { McpSettingsModal } from "./McpSettingsModal";
 import { GeneralSettingsModal } from "./GeneralSettingsModal";
+import { SceneConfig } from "./SceneConfig";
 import type { FloatingFileTarget } from "./FloatingFileViewer";
 import { SkillsConfig } from "./SkillsConfig";
 import { HelpModal } from "./HelpModal";
@@ -43,7 +44,7 @@ function byModifiedDesc(a: SessionInfo, b: SessionInfo): number {
   return new Date(b.modified).getTime() - new Date(a.modified).getTime();
 }
 
-type SettingsModal = "general" | "skills" | "models" | "extensions" | "auto" | "aux" | "mcp" | "dev" | "providers" | "plugins" | null;
+type SettingsModal = "general" | "skills" | "models" | "extensions" | "auto" | "aux" | "scene" | "mcp" | "dev" | "providers" | "plugins" | null;
 
 const MIN_RIGHT_PANEL_WIDTH = 280;
 const MAX_RIGHT_PANEL_WIDTH = 800;
@@ -1186,6 +1187,7 @@ ${fenced}`
                   { label: "Models", hint: "模型与登录：选择模型、登录账号", action: () => setSettingsModal("models") },
                   { label: "Auto", hint: "Auto 路由：按任务难度自动选快 / 强模型", action: () => setSettingsModal("auto") },
                   { label: "Aux", hint: "辅助模型：生图、决策、标题等轻量任务", action: () => setSettingsModal("aux") },
+                  { label: "Scene", hint: "场景：私密模式下只用本地模型", action: () => setSettingsModal("scene") },
                   { label: "Provider", hint: "自定义 Provider：Ollama、自建网关等", action: () => setSettingsModal("providers") },
                   { label: "Plugins", hint: "插件管理：启用 / 停用扩展", action: () => setSettingsModal("plugins") },
                   { label: "Dev", hint: "开发环境与内置浏览器权限", action: () => setSettingsModal("dev") },
@@ -1382,6 +1384,15 @@ ${fenced}`
       )}
       {settingsModal === "aux" && (
         <AuxModelsConfig onClose={() => setSettingsModal(null)} />
+      )}
+      {settingsModal === "scene" && (
+        <SceneConfig
+          onClose={() => {
+            setSettingsModal(null);
+            // 场景切换会改主模型与 Auto/辅助通道：让每个会话重新拉取模型并自动跟随。
+            setModelsVersion((version) => version + 1);
+          }}
+        />
       )}
       {settingsModal === "dev" && (
         <DevEnvironmentConfig onClose={() => setSettingsModal(null)} />

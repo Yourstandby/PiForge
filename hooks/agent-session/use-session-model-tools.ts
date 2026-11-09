@@ -16,6 +16,7 @@ import {
   resolveAutoModel,
   type AutoRoutingTargets,
 } from "@/lib/model-routing";
+import type { SceneName } from "@/lib/scene-profiles";
 
 const AUTO_MODEL_STORAGE_KEY = "piforge.autoModel";
 
@@ -44,6 +45,7 @@ interface ModelsPayload {
   models: Record<string, string>;
   modelList?: ModelListItem[];
   defaultModel?: { provider: string; modelId: string } | null;
+  activeScene?: SceneName;
   thinkingLevels?: Record<string, string[]>;
   thinkingLevelMaps?: Record<string, Record<string, string | null>>;
   autoRouting?: AutoRoutingTargets;
@@ -124,6 +126,14 @@ export function useSessionModelTools(opts: UseSessionModelToolsOptions) {
     fast: null,
     strong: null,
   });
+  /**
+   * 场景档案的生效状态。私密场景下 `model` 是唯一允许的主模型，ChatSurface 据此
+   * 把活跃会话也切过去 —— 只换新会话不换当前会话等于没做私密。
+   */
+  const [sceneState, setSceneState] = useState<{
+    activeScene: SceneName;
+    model: { provider: string; modelId: string } | null;
+  }>({ activeScene: "normal", model: null });
 
   const loadTools = useCallback(async (sid: string) => {
     try {
@@ -241,6 +251,10 @@ export function useSessionModelTools(opts: UseSessionModelToolsOptions) {
       if (cancelled || !d) return;
       setModelNames(d.models);
       if (d.autoRouting) setAutoTargets(d.autoRouting);
+      setSceneState({
+        activeScene: d.activeScene === "private" ? "private" : "normal",
+        model: d.defaultModel ?? null,
+      });
       if (d.thinkingLevels) setModelThinkingLevels(d.thinkingLevels);
       if (d.thinkingLevelMaps) setModelThinkingLevelMaps(d.thinkingLevelMaps);
       if (d.modelList) {
@@ -275,6 +289,7 @@ export function useSessionModelTools(opts: UseSessionModelToolsOptions) {
     setCurrentModelOverride,
     autoRouting,
     autoTargets,
+    sceneState,
     resolveAutoModelForPrompt,
     pendingModel,
     setPendingModel,

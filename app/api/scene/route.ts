@@ -12,6 +12,7 @@ import {
   isLocalEndpoint,
   isSceneName,
   sceneModel,
+  snapshotSceneLanes,
   type SceneName,
   type SceneProfile,
 } from "../../../lib/scene-profiles.ts";
@@ -116,6 +117,16 @@ export async function PUT(req: Request) {
     const current = readDesktopSettings(agentDir);
     const incoming = parseProfile(body.profile);
     const profiles = { ...(current.sceneProfiles ?? {}) };
+    // 切走之前先把「当前生效」的通道存成离开方的档案：先切私密、再切回常规时，
+    // Auto / 生图 / 决策不会永久停留在本地模型上。
+    const outgoing: SceneName = current.activeScene ?? "normal";
+    if (outgoing !== scene && !profiles[outgoing]) {
+      profiles[outgoing] = snapshotSceneLanes(current);
+    }
+    if (body.saveProfile === true) {
+      if (incoming === undefined || incoming === null) delete profiles[scene];
+      else profiles[scene] = incoming;
+    }
     const profile = incoming === undefined ? profiles[scene] : (incoming ?? undefined);
 
     if (scene === "private") {
@@ -130,14 +141,7 @@ export async function PUT(req: Request) {
       }
     }
 
-    if (body.saveProfile === true) {
-      if (incoming === undefined || incoming === null) {
-        delete profiles[scene];
-      } else {
-        profiles[scene] = incoming;
-      }
-    }
-    const candidate = { ...current, ...(Object.keys(profiles).length > 0 ? { sceneProfiles: profiles } : {}) };
+    const candidate = { ...current, sceneProfiles: profiles };
     const invalid = validateDesktopSettingsBody(candidate);
     if (invalid) return jsonError(req, 400, invalid);
 

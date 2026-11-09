@@ -196,6 +196,20 @@ export function auditSceneProfile(
   return { ok: issues.length === 0, issues, localProviders: [...localProviders] };
 }
 
+/** 把**当前生效**的通道抓成快照 —— 切走之前先存一份，切回来才能原样恢复。 */
+export function snapshotSceneLanes(settings: DesktopSettings): SceneProfile {
+  const profile: SceneProfile = {};
+  for (const lane of ["autoRoutingFast", "autoRoutingStrong", "imageModel", "decisionModel"] as const) {
+    const ref = settings[lane];
+    if (ref) profile[lane] = { provider: ref.provider, modelId: ref.modelId };
+  }
+  if (settings.browserReadEnabled !== undefined) profile.browserReadEnabled = settings.browserReadEnabled;
+  if (settings.browserInteractEnabled !== undefined) {
+    profile.browserInteractEnabled = settings.browserInteractEnabled;
+  }
+  return profile;
+}
+
 /** 把档案落到桌面设置上。私密场景顺手关掉网页读取/交互（不会被档案里的 true 覆盖回去）。 */
 export function applySceneProfile(
   current: DesktopSettings,

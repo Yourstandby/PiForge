@@ -376,6 +376,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     currentModelOverride,
     setCurrentModelOverride,
     autoRouting,
+    sceneState,
     resolveAutoModelForPrompt,
     pendingModel,
     setPendingModel,
@@ -1087,6 +1088,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     compactionNotice,
     clearCompactionNotice,
     displayModel,
+    currentModel,
+    sceneState,
     sessionStats,
     sessionActivity,
     /** 手动重试会话加载（错误卡片上的「重试」按钮）。 */

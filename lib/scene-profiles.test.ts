@@ -6,6 +6,7 @@ import {
   draftPrivateProfile,
   isLocalEndpoint,
   sceneModel,
+  snapshotSceneLanes,
 } from "./scene-profiles.ts";
 import { defaultDesktopSettings, mergeDesktopSettings } from "./desktop-settings.ts";
 
@@ -147,6 +148,35 @@ test("sceneProfiles survive a settings round-trip and reject junk", () => {
   assert.deepEqual(merged.sceneProfiles?.private?.model, local);
   assert.equal(merged.sceneProfiles?.normal?.model?.provider, "deepseek");
   assert.equal(mergeDesktopSettings({ activeScene: "leaky" }).activeScene, undefined);
+});
+
+test("switching away snapshots the outgoing lanes so switching back restores them", () => {
+  const cloudFast = { provider: "deepseek", modelId: "deepseek-chat" };
+  const local = { provider: "ollama", modelId: "qwen2.5-coder:7b" };
+  const before = {
+    ...defaultDesktopSettings(),
+    autoRoutingFast: cloudFast,
+    imageModel: cloudFast,
+    browserReadEnabled: true,
+  };
+  const savedNormal = snapshotSceneLanes(before);
+  assert.deepEqual(savedNormal.autoRoutingFast, cloudFast);
+  assert.deepEqual(savedNormal.imageModel, cloudFast);
+  assert.equal(savedNormal.browserReadEnabled, true);
+
+  const privateProfile = {
+    model: local,
+    autoRoutingFast: local,
+    autoRoutingStrong: local,
+    imageModel: local,
+    decisionModel: local,
+  };
+  const priv = applySceneProfile(before, "private", privateProfile);
+  assert.deepEqual(priv.autoRoutingFast, local);
+
+  const back = applySceneProfile(priv, "normal", savedNormal);
+  assert.deepEqual(back.autoRoutingFast, cloudFast);
+  assert.equal(back.browserReadEnabled, true);
 });
 
 test("draftPrivateProfile prefers a registered local provider", () => {
