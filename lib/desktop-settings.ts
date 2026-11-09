@@ -13,6 +13,15 @@ import {
   type AgentMode,
   type ToolPreset,
 } from "./approval-policy.ts";
+import {
+  isSceneName,
+  SCENE_MODEL_LANES,
+  SCENE_NAMES,
+  type SceneModelLane,
+  type SceneName,
+  type SceneProfile,
+  type SceneProfiles,
+} from "./scene-profiles.ts";
 
 /** Optional nested LTM overrides in desktop-settings.json (`ltm`). */
 export interface DesktopLtmSettings {
@@ -113,6 +122,10 @@ export interface DesktopSettings {
    * 开与不写都是 undefined，读取侧按 false 处理（见 project-settings.ts）。
    */
   handoffEnabled?: boolean;
+  /** 当前生效的场景档案（默认 normal）。 */
+  activeScene?: SceneName;
+  /** 场景档案快照：normal / private 两套模型通道 + 网页权限。 */
+  sceneProfiles?: SceneProfiles;
 }
 
 const DESKTOP_SETTINGS_FILENAME = "desktop-settings.json";
@@ -142,6 +155,32 @@ function parseAutoRoutingSelection(raw: unknown): AutoRoutingModelSelection | un
   if (typeof obj.provider !== "string" || !obj.provider.trim()) return undefined;
   if (typeof obj.modelId !== "string" || !obj.modelId.trim()) return undefined;
   return { provider: obj.provider.trim(), modelId: obj.modelId.trim() };
+}
+
+function parseSceneProfile(raw: unknown): SceneProfile | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const obj = raw as Record<string, unknown>;
+  const profile: SceneProfile = {};
+  for (const lane of SCENE_MODEL_LANES) {
+    const ref = parseAutoRoutingSelection(obj[lane]);
+    if (ref) profile[lane as SceneModelLane] = ref;
+  }
+  if (typeof obj.browserReadEnabled === "boolean") profile.browserReadEnabled = obj.browserReadEnabled;
+  if (typeof obj.browserInteractEnabled === "boolean") {
+    profile.browserInteractEnabled = obj.browserInteractEnabled;
+  }
+  return Object.keys(profile).length > 0 ? profile : undefined;
+}
+
+function mergeSceneProfiles(raw: unknown): SceneProfiles | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const obj = raw as Record<string, unknown>;
+  const out: SceneProfiles = {};
+  for (const scene of SCENE_NAMES) {
+    const profile = parseSceneProfile(obj[scene]);
+    if (profile) out[scene] = profile;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function mergeDesktopLtmSettings(raw: unknown): DesktopLtmSettings | undefined {
@@ -200,6 +239,9 @@ export function mergeDesktopSettings(raw: unknown): DesktopSettings {
   if (typeof obj.handoffEnabled === "boolean") {
     result.handoffEnabled = obj.handoffEnabled;
   }
+  if (isSceneName(obj.activeScene)) result.activeScene = obj.activeScene;
+  const sceneProfiles = mergeSceneProfiles(obj.sceneProfiles);
+  if (sceneProfiles) result.sceneProfiles = sceneProfiles;
   if (Array.isArray(obj.onDemandDomains)) {
     const allowed = new Set(["browser", "shell", "fleet", "memory", "orchestrator", "plugin"]);
     result.onDemandDomains = [...new Set(obj.onDemandDomains.filter(
@@ -297,6 +339,43 @@ export function validateDesktopSettingsBody(body: unknown): string | null {
     const allowed = ["browser", "shell", "fleet", "memory", "orchestrator", "plugin"];
     if (!obj.onDemandDomains.every((name) => allowed.includes(name as string))) {
       return `onDemandDomains only accepts: ${allowed.join(", ")}`;
+    }
+  }
+  if (obj.activeScene !== undefined && !isSceneName(obj.activeScene)) {
+    return "activeScene must be normal | private";
+  }
+  if (obj.sceneProfiles !== undefined) {
+    if (!obj.sceneProfiles || typeof obj.sceneProfiles !== "object" || Array.isArray(obj.sceneProfiles)) {
+      return "sceneProfiles must be an object";
+    }
+    const profiles = obj.sceneProfiles as Record<string, unknown>;
+    for (const key of Object.keys(profiles)) {
+      if (!isSceneName(key)) return `sceneProfiles only accepts: ${SCENE_NAMES.join(", ")}`;
+      const profile = profiles[key];
+      if (profile === undefined || profile === null) continue;
+      if (!profile || typeof profile !== "object" || Array.isArray(profile)) {
+        return `sceneProfiles.${key} must be an object`;
+      }
+      const entry = profile as Record<string, unknown>;
+      for (const lane of SCENE_MODEL_LANES) {
+        const value = entry[lane];
+        if (value === undefined || value === null) continue;
+        if (!value || typeof value !== "object" || Array.isArray(value)) {
+          return `sceneProfiles.${key}.${lane} must be an object`;
+        }
+        const selection = value as Record<string, unknown>;
+        if (typeof selection.provider !== "string" || !selection.provider.trim()) {
+          return `sceneProfiles.${key}.${lane}.provider must be a non-empty string`;
+        }
+        if (typeof selection.modelId !== "string" || !selection.modelId.trim()) {
+          return `sceneProfiles.${key}.${lane}.modelId must be a non-empty string`;
+        }
+      }
+      for (const flag of ["browserReadEnabled", "browserInteractEnabled"] as const) {
+        if (entry[flag] !== undefined && typeof entry[flag] !== "boolean") {
+          return `sceneProfiles.${key}.${flag} must be a boolean`;
+        }
+      }
     }
   }
   if (obj.ltm !== undefined) {
