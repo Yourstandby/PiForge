@@ -89,11 +89,15 @@ export function toolNamesForPreset(preset: ToolPreset): string[] {
 }
 
 /**
- * Tools actually enabled for the session given mode + preset.
- * Plan always forces the four read-side tools (even if preset is none).
+ * Tools declared for the session given preset.
+ *
+ * **与模式无关**：任何「plan 模式少声明几个工具」的做法都会让 plan 与执行模式
+ * 切换时工具数组变形 → 整段前缀缓存作废（那才是真正的成本大头）。
+ * plan 的只读约束改由执行期拦截承担：tool_call 里按 PLAN_TOOLS /
+ * isPlanAllowedDomainCall 拒绝非只读调用。
  */
 export function effectiveToolsForMode(mode: AgentMode, preset: ToolPreset): string[] {
-  if (mode === "plan") return [...PLAN_TOOLS];
+  void mode;
   return toolNamesForPreset(preset);
 }
 

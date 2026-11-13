@@ -12,6 +12,7 @@ import {
   PLAN_MODE_SYSTEM_PROMPT,
   effectiveToolsForMode,
   needsAskConfirm,
+  toolNamesForPreset,
 } from "../lib/approval-policy.ts";
 import { AgentSessionWrapper } from "./rpc-manager.ts";
 import { ExtensionUiBridge } from "./extension-ui-bridge.ts";
@@ -29,8 +30,11 @@ test("command whitelist accepts set_agent_mode and extension_ui_response", () =>
 });
 
 test("plan/ask/full tool policy is shipped", () => {
-  // plan 只读：memory 多态工具随 PLAN_TOOLS 一起声明，非只读动作由 policy 拦。
-  assert.deepEqual(effectiveToolsForMode("plan", "full").sort(), ["find", "grep", "ls", "memory", "plan", "read", "tool_history_get"]);
+  // plan 的声明集合与 full 一致（前缀缓存优先）；只读靠执行期白名单拦。
+  assert.deepEqual(
+    effectiveToolsForMode("plan", "full").sort(),
+    [...toolNamesForPreset("full")].sort(),
+  );
   for (const t of ASK_CONFIRM_TOOLS) assert.equal(needsAskConfirm("ask", t), true);
   assert.equal(needsAskConfirm("full", "bash"), false);
   assert.match(EXECUTE_PLAN_PROMPT, /计划/);
@@ -71,7 +75,8 @@ test("wrapper set_agent_mode + extension_ui_response path", async () => {
   const w = new AgentSessionWrapper(inner as never);
   w.initPolicy("ask", "default");
   await w.send({ type: "set_agent_mode", mode: "plan" });
-  assert.ok(tools.some((t) => t.includes("read") && !t.includes("bash")));
+  // 切到 plan 不改工具装载（否则整段前缀缓存作废）；只读靠执行期拦截。
+  assert.deepEqual(tools.at(-1)?.slice().sort(), ["bash", "edit", "read", "write"]);
 
   const bridge = new ExtensionUiBridge(() => {});
   w.attachUiBridge(bridge);

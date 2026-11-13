@@ -77,7 +77,10 @@ test("native MCP handshake, discovery, invocation and Codemode nested permission
     assert.match(JSON.stringify(blocked), /Blocked/);
     ref.current = "plan";
     await session.extensionRunner.emitBeforeAgentStart({ messageType: "user", prompt: "plan prompt" }, { cwd: dir });
-    assert.ok(!session.getActiveToolNames().includes("mcp__fixture__echo"), "Plan must still remove MCP declarations");
+    // 声明与 full 一致（模式相关的声明差异会让切换时前缀缓存整段作废）；只读改由执行期拦截。
+    assert.ok(session.getActiveToolNames().includes("mcp__fixture__echo"), "plan declares the same tools as full");
+    const blockedPlan = await ctx.executeTool("mcp__fixture__echo", { text: "must-not-run-in-plan" });
+    assert.equal(blockedPlan.isError, true, "plan mode must still block MCP calls at execution time");
     const event = { type: "tool_call" as const, toolName: "codemode", toolCallId: "test-parent", input: code };
     assert.equal((await session.extensionRunner.emitToolCall(event))?.block, true);
     ref.current = "full";
