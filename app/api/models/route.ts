@@ -3,6 +3,7 @@ import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { createPiRuntime } from "../../../lib/pi-runtime.ts";
 import { readDesktopSettings } from "../../../lib/desktop-settings.ts";
 import { pickAutoTargets } from "../../../lib/model-routing.ts";
+import { sceneModel } from "../../../lib/scene-profiles.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -53,6 +54,13 @@ export async function GET() {
     );
     const fast = desktopSettings.autoRoutingFast;
     const strong = desktopSettings.autoRoutingStrong;
+    // 场景档案里的主模型优先于 pi 的默认模型（私密场景必须真正切到本地模型），
+    // 但模型已经不在可用列表里时不要假装生效。
+    const activeScene = desktopSettings.activeScene ?? "normal";
+    const sceneTarget = sceneModel(desktopSettings.sceneProfiles?.[activeScene]);
+    if (sceneTarget && availableKeys.has(`${sceneTarget.provider}:${sceneTarget.modelId}`)) {
+      defaultModel = sceneTarget;
+    }
     if (fast && availableKeys.has(`${fast.provider}:${fast.modelId}`)) {
       autoRouting.fast = { provider: fast.provider, modelId: fast.modelId };
     }
@@ -68,5 +76,7 @@ export async function GET() {
     thinkingLevels,
     thinkingLevelMaps,
     autoRouting,
+    // 私密场景下前端据此把活跃会话也切过去，而不是只有新会话才换模型。
+    activeScene: readDesktopSettings(getAgentDir()).activeScene ?? "normal",
   });
 }

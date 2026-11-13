@@ -1,6 +1,6 @@
 /**
  * ⚠️ 自动生成，不要手改 —— 由 `node scripts/generate-api-routes.mjs` 产出。
- * 路由数量：73
+ * 路由数量：74
  */
 export interface ApiRouteEntry {
   /** 归一化后的路径模式（`:param` / `*rest`）。 */
@@ -326,6 +326,11 @@ export const API_ROUTES: ApiRouteEntry[] = [
     pattern: "/api/providers",
     segments: ["providers"],
     load: () => import("../app/api/providers/route.ts"),
+  },
+  {
+    pattern: "/api/scene",
+    segments: ["scene"],
+    load: () => import("../app/api/scene/route.ts"),
   },
   {
     pattern: "/api/select-directory",

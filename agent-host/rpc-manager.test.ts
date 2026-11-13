@@ -1163,3 +1163,35 @@ test("a failing steer falls back to the queue instead of dropping the instructio
     await w.destroy();
   }
 });
+
+// 自定义 Provider 保存后只把会话标成「待重载」；模型下拉来自 /api/models 的独立
+// runtime，所以新模型点得到、会话里却 getModel 不到 —— 表现为「点了没反应」。
+// set_model 必须在查表前自己重载一次。
+test("set_model reloads pending resources before resolving the model", async () => {
+  const model = { id: "qwen3-vl-30b-a3b", provider: "qwen3-30b" };
+  let reloads = 0;
+  let registered = false;
+  let switchedTo: unknown = null;
+  const inner = makeStubInner() as unknown as Record<string, unknown>;
+  inner.reload = async () => {
+    reloads += 1;
+    registered = true;
+  };
+  inner.modelRuntime = {
+    getModel: (provider: string, modelId: string) =>
+      registered && provider === model.provider && modelId === model.id ? model : undefined,
+  };
+  inner.setModel = async (picked: unknown) => {
+    switchedTo = picked;
+  };
+  const w = new AgentSessionWrapper(inner as never);
+  w.requestResourceReload();
+  try {
+    const result = await w.send({ type: "set_model", provider: model.provider, modelId: model.id });
+    assert.equal(reloads, 1, "查表前必须先重载，否则新 Provider 永远查不到");
+    assert.equal(switchedTo, model);
+    assert.deepEqual(result, { id: model.id, provider: model.provider });
+  } finally {
+    await w.destroy();
+  }
+});

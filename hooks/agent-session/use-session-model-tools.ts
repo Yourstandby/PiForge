@@ -16,6 +16,7 @@ import {
   resolveAutoModel,
   type AutoRoutingTargets,
 } from "@/lib/model-routing";
+import type { SceneName } from "@/lib/scene-profiles";
 
 const AUTO_MODEL_STORAGE_KEY = "piforge.autoModel";
 
@@ -44,6 +45,7 @@ interface ModelsPayload {
   models: Record<string, string>;
   modelList?: ModelListItem[];
   defaultModel?: { provider: string; modelId: string } | null;
+  activeScene?: SceneName;
   thinkingLevels?: Record<string, string[]>;
   thinkingLevelMaps?: Record<string, Record<string, string | null>>;
   autoRouting?: AutoRoutingTargets;
@@ -87,6 +89,8 @@ export type UseSessionModelToolsOptions = {
   isNew: boolean;
   modelsRefreshKey?: number;
   sessionIdRef: React.MutableRefObject<string | null>;
+  /** 切换模型失败时的可见提示（以前只 console.error，界面毫无反馈）。 */
+  onModelChangeError?: (message: string) => void;
 };
 
 export function useSessionModelTools(opts: UseSessionModelToolsOptions) {
@@ -94,6 +98,7 @@ export function useSessionModelTools(opts: UseSessionModelToolsOptions) {
     isNew,
     modelsRefreshKey,
     sessionIdRef,
+    onModelChangeError,
   } = opts;
 
   const [modelNames, setModelNames] = useState<Record<string, string>>({});
@@ -121,6 +126,14 @@ export function useSessionModelTools(opts: UseSessionModelToolsOptions) {
     fast: null,
     strong: null,
   });
+  /**
+   * 场景档案的生效状态。私密场景下 `model` 是唯一允许的主模型，ChatSurface 据此
+   * 把活跃会话也切过去 —— 只换新会话不换当前会话等于没做私密。
+   */
+  const [sceneState, setSceneState] = useState<{
+    activeScene: SceneName;
+    model: { provider: string; modelId: string } | null;
+  }>({ activeScene: "normal", model: null });
 
   const loadTools = useCallback(async (sid: string) => {
     try {
@@ -154,9 +167,12 @@ export function useSessionModelTools(opts: UseSessionModelToolsOptions) {
         setCurrentModelOverride({ provider, modelId });
       } catch (e) {
         console.error("Failed to set model:", e);
+        // 静默失败就是「点了没反应」：必须让用户看到原因（Provider 地址不通、
+        // 模型未注册等），否则会一直以为是自己没点中。
+        onModelChangeError?.(`切换模型失败：${e instanceof Error ? e.message : String(e)}`);
       }
     },
-    [sessionIdRef]
+    [sessionIdRef, onModelChangeError]
   );
 
   /** Pick fast/strong for one prompt (used by handleSend when Auto is active). */
@@ -235,6 +251,10 @@ export function useSessionModelTools(opts: UseSessionModelToolsOptions) {
       if (cancelled || !d) return;
       setModelNames(d.models);
       if (d.autoRouting) setAutoTargets(d.autoRouting);
+      setSceneState({
+        activeScene: d.activeScene === "private" ? "private" : "normal",
+        model: d.defaultModel ?? null,
+      });
       if (d.thinkingLevels) setModelThinkingLevels(d.thinkingLevels);
       if (d.thinkingLevelMaps) setModelThinkingLevelMaps(d.thinkingLevelMaps);
       if (d.modelList) {
@@ -269,6 +289,7 @@ export function useSessionModelTools(opts: UseSessionModelToolsOptions) {
     setCurrentModelOverride,
     autoRouting,
     autoTargets,
+    sceneState,
     resolveAutoModelForPrompt,
     pendingModel,
     setPendingModel,

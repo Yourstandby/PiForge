@@ -1,8 +1,9 @@
 import { NextResponse } from "../../../lib/next-server-shim.ts";
 import { homedir } from "os";
-import { existsSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { DefaultResourceLoader, getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { errorMessage, getRequestId, jsonError, logApiError } from "../../../lib/api-error.ts";
+import { writeFileAtomic } from "../../../lib/atomic-write.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -127,7 +128,9 @@ export async function PATCH(req: Request) {
       updated = content.replace(new RegExp(`^${key}\\s*:.*\\r?\\n`, "m"), "");
     }
 
-    writeFileSync(filePath, updated, "utf8");
+    // 不能直接 writeFileSync：它用 "w" 打开，遇到带隐藏属性的 SKILL.md 会被
+    // Windows 拒成 EPERM。临时文件 + rename 的路径不受隐藏属性影响。
+    writeFileAtomic(filePath, updated);
     cache.clear();
     return NextResponse.json({ success: true });
   } catch (error) {

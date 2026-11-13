@@ -208,8 +208,12 @@ export function GitPanel({
       .then((res) => res.json())
       .then((body: { diff?: string; error?: string }) => {
         if (cancelled) return;
-        if (body.error) setDiffError(body.error);
-        else setDiff(body.diff ?? "");
+        if (body.error) {
+          setDiffError(body.error);
+          // 文件已不在磁盘上 = 列表这一行是过期快照（删除/改名不触发 refreshKey）。
+          // 顺手重扫一次，幽灵行会自己消失，用户不必手动点刷新。
+          if (/不在磁盘上|not found/i.test(body.error)) void loadStatus();
+        } else setDiff(body.diff ?? "");
       })
       .catch((e: unknown) => {
         if (!cancelled) setDiffError(e instanceof Error ? e.message : String(e));
@@ -220,7 +224,7 @@ export function GitPanel({
     return () => {
       cancelled = true;
     };
-  }, [cwd, selected]);
+  }, [cwd, selected, loadStatus]);
 
   const groups = useMemo(() => groupByDirectory(files), [files]);
   const parsed = useMemo(() => parseUnifiedDiff(diff), [diff]);

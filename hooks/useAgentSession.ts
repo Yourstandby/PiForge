@@ -47,7 +47,7 @@ import type { AgentMode } from "@/lib/approval-policy";
 import { DEFAULT_AGENT_MODE } from "@/lib/approval-policy";
 import type { ExtensionUiRequestEvent } from "./agent-session/agent-events-manager";
 import type { NeedsTrustPayload } from "@/lib/trust-types";
-import type { ContextBudget } from "@/lib/pi-types";
+import { describeContextBudget } from "@/lib/context-budget";
 import { sendAgentCommand } from "@/lib/agent-client";
 import { reconcileOrAppendPendingUserMessage } from "./agent-session/user-message-reconciliation";
 import { normalizeUserTextForMatch } from "../lib/image-dimension-note";
@@ -177,7 +177,24 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
    * 只用于提示"前缀已失效"，不参与任何前缀生成逻辑。
    */
   const [prefixAudit, setPrefixAudit] = useState<PrefixAuditView | null>(null);
-  const [contextBudget, setContextBudget] = useState<ContextBudget | null>(null);
+  /**
+   * 上下文预算在**前端**由 `contextUsage` 现算，不再单独存一份。
+   *
+   * 曾经的坑：host 的 `get_state` 快照里同时给了 contextUsage 与 contextBudget，
+   * 但只有 contextUsage 在 agent 结束时被前端刷新，contextBudget 停留在会话加载
+   * 时的旧值 —— 于是「用量与额度」显示 22.1%，输入框下面那一行还写着 0.7%。
+   * 预算本来就是 contextUsage 的纯函数，现算就不可能再对不上。
+   */
+  const contextBudget = useMemo(
+    () =>
+      contextUsage
+        ? describeContextBudget({
+            tokens: contextUsage.tokens,
+            contextWindow: contextUsage.contextWindow,
+          })
+        : null,
+    [contextUsage]
+  );
   const [authoritativeSessionStats, setAuthoritativeSessionStats] =
     useState<SessionStats | null>(null);
   const [systemPrompt, setSystemPrompt] = useState<string | null>(null);
@@ -342,6 +359,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     isNew,
     modelsRefreshKey,
     sessionIdRef,
+    // 与发送失败共用同一条 toast 通道：切模型失败同样不能静默。
+    onModelChangeError: onPromptError,
   });
 
   const {
@@ -357,6 +376,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     currentModelOverride,
     setCurrentModelOverride,
     autoRouting,
+    sceneState,
     resolveAutoModelForPrompt,
     pendingModel,
     setPendingModel,
@@ -971,7 +991,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (patch.connectEvents) connectEvents(sid);
       if (patch.isCompacting !== undefined) setIsCompacting(patch.isCompacting);
       if (patch.contextUsage !== undefined) setContextUsage(patch.contextUsage);
-      if (patch.contextBudget !== undefined) setContextBudget(patch.contextBudget);
       if (loaded?.agentState?.state?.sessionStats !== undefined) {
         setAuthoritativeSessionStats(loaded.agentState.state.sessionStats ?? null);
       }
@@ -1069,6 +1088,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     compactionNotice,
     clearCompactionNotice,
     displayModel,
+    currentModel,
+    sceneState,
     sessionStats,
     sessionActivity,
     /** 手动重试会话加载（错误卡片上的「重试」按钮）。 */

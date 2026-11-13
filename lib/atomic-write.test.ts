@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "os";
 import { join } from "path";
 import { Worker } from "node:worker_threads";
@@ -70,6 +71,49 @@ test("writeFileAtomic falls back to a direct write when rename stays blocked", (
         sleepSync: () => {},
       });
       assert.equal(readFileSync(target, "utf-8"), '{"n": 3}');
+    } finally {
+      closeSync(fd);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// 技能目录里装进来的 SKILL.md 常带 +H；Windows 用 "w"（写 + 截断）打开这种文件
+// 会被内核拒成 EPERM，而 rename 覆盖同一个文件是允许的 —— 这正是「技能开关点了
+// 报 EPERM」的根因，所以这两条是回归测试。
+const hiddenFileTest = process.platform === "win32" ? test : test.skip;
+
+hiddenFileTest("writeFileAtomic 能写带隐藏属性的文件（writeFileSync 会 EPERM）", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-atomic-write-hidden-"));
+  try {
+    const target = join(dir, "SKILL.md");
+    writeFileSync(target, "old");
+    execFileSync("attrib", ["+h", target]);
+    assert.throws(() => writeFileSync(target, "new"), /EPERM/);
+
+    writeFileAtomic(target, "new");
+    assert.equal(readFileSync(target, "utf-8"), "new");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+hiddenFileTest("rename 被占用且「w」被拒时退化为句柄内重写", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-atomic-write-hidden-"));
+  try {
+    const target = join(dir, "SKILL.md");
+    writeFileSync(target, "old");
+    execFileSync("attrib", ["+h", target]);
+    // 读者持有句柄 → rename 必然失败；直接写又撞 EPERM，只能走 writeInPlace。
+    const fd = openSync(target, "r");
+    try {
+      writeFileAtomic(target, "short", {
+        retryIntervalMs: 1,
+        maxRenameAttempts: 2,
+        sleepSync: () => {},
+      });
+      assert.equal(readFileSync(target, "utf-8"), "short");
     } finally {
       closeSync(fd);
     }

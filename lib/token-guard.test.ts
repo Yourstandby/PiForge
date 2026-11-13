@@ -8,6 +8,7 @@ import {
   isPrefixInvalidated,
   resolveSessionSplitHint,
   resolveTokenGuards,
+  takeResumeBaseline,
 } from "./token-guard.ts";
 
 /** 固定“现在”，避免测试随真实时钟漂移。 */
@@ -235,4 +236,33 @@ test("L-B 打开也不会在阈值以下出现提示", () => {
     flags: { sessionSplitHint: true },
   });
   assert.equal(output.some((hint) => hint.kind === "session-too-long"), false);
+});
+
+// 回归：提示的出现时机不能依赖「某次重渲染恰好踩中 10 分钟」。
+// 之前 ChatSurface 用活的 session.modified + Date.now()，于是打开会话 15 分钟后
+// 随便一次重渲染（发消息）就让 resume-cost 第一次成立 → 输入框上方凭空跳出提示。
+test("takeResumeBaseline 冻结空闲基准：时间流逝不会让提示迟到出现", () => {
+  const modified = "2026-01-01T00:00:00.000Z";
+  const openedAt = Date.parse(modified) + 3 * 60_000; // 打开时才闲置 3 分钟
+  const baseline = takeResumeBaseline(modified, openedAt);
+  assert.deepEqual(baseline, { lastActivityAt: modified, sampledAt: openedAt });
+
+  const input = {
+    contextTokens: 40_000,
+    hasMessages: true,
+    lastActivityAt: baseline.lastActivityAt,
+    now: baseline.sampledAt,
+  };
+  assert.deepEqual(resolveTokenGuards(input).map((hint) => hint.kind), []);
+
+  // 15 分钟后用活值判定会突然成立；用快照则永远不成立。
+  const later = openedAt + 15 * 60_000;
+  assert.deepEqual(
+    resolveTokenGuards({ ...input, now: later }).map((hint) => hint.kind),
+    ["resume-cost"],
+  );
+  assert.deepEqual(
+    resolveTokenGuards({ ...input, now: baseline.sampledAt }).map((hint) => hint.kind),
+    [],
+  );
 });

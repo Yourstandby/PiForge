@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync } from "fs";
 import { dirname, join, isAbsolute, relative, resolve } from "path";
 import { writeFileAtomic } from "./atomic-write.ts";
 import { DefaultResourceLoader, getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
@@ -256,7 +256,8 @@ export async function mutateExtensionOrSkill(
         updated = content.replace(new RegExp(`^${key}\\s*:.*\\r?\\n`, "m"), "");
       }
 
-      writeFileSync(resolvedTarget, updated, "utf8");
+      // 同 skills 面板：writeFileSync 的 "w" 打不开带隐藏属性的 SKILL.md（EPERM）。
+      writeFileAtomic(resolvedTarget, updated);
       return { success: true };
     }
 
