@@ -1,4 +1,5 @@
 import { createPiRuntime } from "../../../../lib/pi-runtime.ts";
+import { activeProviderEnvVar, listProviderEnvVars } from "../../../../lib/provider-env-vars.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +19,10 @@ export async function GET() {
     configured: boolean;
     source?: string;
     modelCount: number;
+    /** Env vars that can supply this provider's API key (set or not). */
+    envVars: string[];
+    /** The env var currently set in this process, if any. */
+    envVarSet?: string;
   }[] = [];
 
   for (const p of providers) {
@@ -33,6 +38,8 @@ export async function GET() {
       configured: status.configured,
       source: status.source,
       modelCount,
+      envVars: listProviderEnvVars(p.id),
+      envVarSet: activeProviderEnvVar(p.id),
     });
   }
 

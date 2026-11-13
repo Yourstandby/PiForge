@@ -11,6 +11,10 @@ export interface ApiKeyProvider {
   configured: boolean;
   source?: string;
   modelCount: number;
+  /** Env vars that can supply this provider's API key (set or not). */
+  envVars?: string[];
+  /** The env var currently set in the host process, if any. */
+  envVarSet?: string;
 }
 
 export type OAuthLoginState =
