@@ -179,7 +179,15 @@ function SkillDetail({
           onToggle={() => onToggle(skill)}
         />
         {saveError && (
-          <span style={{ fontSize: 12, color: "var(--danger)", flexShrink: 0 }}>
+          <span
+            title={saveError}
+            style={{
+              fontSize: 12,
+              color: "var(--danger)",
+              minWidth: 0,
+              overflowWrap: "anywhere",
+            }}
+          >
             {saveError}
           </span>
         )}
@@ -594,7 +602,8 @@ export function SkillsConfig({
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [toggling, setToggling] = useState<Set<string>>(new Set());
-  const [saveError, setSaveError] = useState<string | null>(null);
+  // 记住是哪个技能保存失败：否则错误会挂在下一次选中的技能上，误导排查。
+  const [saveError, setSaveError] = useState<{ filePath: string; message: string } | null>(null);
   const [addMode, setAddMode] = useState(false);
   const [overrides, setOverrides] = useState<SkillCategoryOverrides>({});
 
@@ -668,7 +677,7 @@ export function SkillsConfig({
       });
       const d = (await res.json()) as { success?: boolean; error?: string };
       if (!res.ok || d.error) {
-        setSaveError(d.error ?? `HTTP ${res.status}`);
+        setSaveError({ filePath: skill.filePath, message: d.error ?? `HTTP ${res.status}` });
         return;
       }
       setSkills((prev) =>
@@ -679,7 +688,7 @@ export function SkillsConfig({
         ),
       );
     } catch (e) {
-      setSaveError(String(e));
+      setSaveError({ filePath: skill.filePath, message: String(e) });
     } finally {
       setToggling((s) => {
         const n = new Set(s);
@@ -1056,7 +1065,11 @@ export function SkillsConfig({
                 cwd={cwd}
                 onToggle={toggle}
                 toggling={toggling.has(selectedSkill.filePath)}
-                saveError={saveError}
+                saveError={
+                  saveError?.filePath === selectedSkill.filePath
+                    ? saveError.message
+                    : null
+                }
                 category={resolveSkillCategory(selectedSkill, overrides)}
                 onCategoryChange={(id) =>
                   setSkillCategory(selectedSkill.filePath, id)
