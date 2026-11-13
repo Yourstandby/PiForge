@@ -12,6 +12,7 @@ import type { SessionInfo, SessionTreeNode, UserMessage } from "@/lib/types";
 import type { FollowUpQueueSnapshot } from "@/lib/follow-up-queue";
 import type { PrefixAuditView } from "@/lib/token-guard";
 import { formatCodemodeProgressFromResult } from "@/lib/codemode-progress";
+import { planFromMessages } from "@/lib/plan-progress";
 import {
   calculateSessionActivity,
   calculateSessionStats,
@@ -213,6 +214,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [agentPhase, setAgentPhase] = useState<AgentPhase>(null);
   const [agentMode, setAgentMode] = useState<AgentMode>(DEFAULT_AGENT_MODE);
   const [canExecutePlan, setCanExecutePlan] = useState(false);
+  /** 计划进度卡片开关（desktop-settings，默认开）；关掉时连折叠计算都跳过。 */
+  const [planProgressEnabled, setPlanProgressEnabled] = useState(true);
   const [extensionUiRequest, setExtensionUiRequest] =
     useState<ExtensionUiRequestEvent | null>(null);
   const [extensionUiNotify, setExtensionUiNotify] = useState<{
@@ -971,8 +974,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
     fetch("/api/desktop-settings")
       .then((r) => r.json())
-      .then((d: { defaultAgentMode?: AgentMode }) => {
-        if (!cancelled && d.defaultAgentMode) setAgentMode(d.defaultAgentMode);
+      .then((d: { defaultAgentMode?: AgentMode; planProgressEnabled?: boolean }) => {
+        if (cancelled) return;
+        if (d.defaultAgentMode) setAgentMode(d.defaultAgentMode);
+        if (typeof d.planProgressEnabled === "boolean") setPlanProgressEnabled(d.planProgressEnabled);
       })
       .catch(() => {});
 
@@ -1055,6 +1060,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const clearCompactionNotice = useCallback(() => setCompactionNotice(null), []);
 
+  /**
+   * 计划进度：只认最后一次 `plan` 工具调用折叠出来的状态。
+   * 历史消息里的 plan 调用不重复渲染，卡片永远只有一张。
+   */
+  const planProgress = useMemo(
+    () => (planProgressEnabled ? planFromMessages(messages) : null),
+    [messages, planProgressEnabled],
+  );
+
   return {
     // State
     loading,
@@ -1070,6 +1084,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     modelThinkingLevelMaps,
     agentMode,
     canExecutePlan,
+    planProgress,
+    planProgressEnabled,
     extensionUiRequest,
     extensionUiNotify,
     trustPrompt,

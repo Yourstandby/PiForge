@@ -3,6 +3,7 @@ import { effectiveToolsForMode, type AgentMode, type ToolPreset } from "../lib/a
 import { DOMAIN_TOOL_NAMES, enabledOnDemandDomains } from "../lib/domain-tools.ts";
 import { CLASSIFY_DECISION_TOOL_NAME, GENERATE_IMAGE_TOOL_NAME } from "./aux-tool-names.ts";
 import { TOOL_HISTORY_TOOL_NAME } from "./tool-outputs.ts";
+import { PLAN_TOOL_NAME } from "../lib/plan-progress.ts";
 import { TOOL_USE_TOOL_NAME } from "./tool-stubs.ts";
 
 /** Auxiliary model tools are only declared once the user configured them. */
@@ -44,6 +45,9 @@ export function desktopRuntimeTools(mode: AgentMode, preset: ToolPreset, codemod
   }
   // Oversized tool outputs are persisted; the agent reads them back by page.
   if (registered.some((tool) => tool.name === TOOL_HISTORY_TOOL_NAME)) names.push(TOOL_HISTORY_TOOL_NAME);
+  // 计划进度：注册即声明。设置项关掉时扩展根本不注册，这里自然拿不到名字 ——
+  // 关闭是「整条链路消失」，不是「声明了但不用」。
+  if (registered.some((tool) => tool.name === PLAN_TOOL_NAME)) names.push(PLAN_TOOL_NAME);
   // Sandboxed plugins: always visible when the plugin manager loaded them.
   // Plan mode returned above, so plugin tools (which may request Host writes
   // through RPC) stay out of read-only plans.

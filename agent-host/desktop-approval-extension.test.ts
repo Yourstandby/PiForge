@@ -50,8 +50,8 @@ test("plan mode appends the plan prompt and keeps only read tools", async () => 
 
 ${PLAN_MODE_SYSTEM_PROMPT}`,
   );
-  // 只读工具 + memory 多态工具（plan 模式只放行 recall 动作）。
-  assert.deepEqual(activeTools[0].slice().sort(), ["find", "grep", "ls", "memory", "read", "tool_history_get"]);
+  // 只读工具 + plan 进度工具（规划产物本身）+ memory 多态工具（只放行 recall）。
+  assert.deepEqual(activeTools[0].slice().sort(), ["find", "grep", "ls", "memory", "plan", "read", "tool_history_get"]);
 });
 
 test("plan mode appends after an existing append prompt", async () => {

@@ -889,9 +889,10 @@ test("set_agent_mode plan forces read tools", async () => {
   const result = await w.send({ type: "set_agent_mode", mode: "plan" }) as { agentMode: string };
   assert.equal(result.agentMode, "plan");
   // Plan is read-only: the memory facade stays (recall only), writes are gated per action.
+  // plan 工具本身是规划产物（只写参数），必须留在计划模式里。
   assert.deepEqual(
     applied.at(-1)?.slice().sort(),
-    ["find", "grep", "ls", "memory", "read", "tool_history_get"]
+    ["find", "grep", "ls", "memory", "plan", "read", "tool_history_get"]
   );
 });
 

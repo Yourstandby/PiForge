@@ -12,6 +12,11 @@ export const PLAN_TOOLS: readonly string[] = [
   "find",
   "ls",
   "tool_history_get",
+  /**
+   * 计划进度：plan 模式的核心产物就是这份步骤清单，必须放行。
+   * （只写参数、不改磁盘，属于规划侧动作。）
+   */
+  "plan",
   /** 多态工具：plan 模式只放行只读动作（memory.recall / shell.read / shell.wait / browser.read）。 */
   "memory",
 ];
