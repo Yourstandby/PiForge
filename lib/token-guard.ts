@@ -17,6 +17,26 @@
  * 所以这两个提示的价值是"让用户看见"，不承诺省钱。
  */
 
+/**
+ * 打开会话那一刻的「空闲基准」快照。
+ *
+ * 为什么必须冻结：判定"恢复"要两个会漂移的值 —— `session.modified`（每轮消息后
+ * 都会刷新）与 `Date.now()`（每次渲染都变）。用活值就会让"闲置 ≥10 分钟"这个条件
+ * 在**某次发消息触发的重渲染里才第一次成立**，于是提示框在输入框上方凭空跳出来。
+ * 快照只在打开会话时取一次，之后再怎么重渲染，结论都不变。
+ */
+export interface ResumeBaseline {
+  lastActivityAt: string | number | null;
+  sampledAt: number;
+}
+
+export function takeResumeBaseline(
+  lastActivityAt: string | number | null | undefined,
+  now: number = Date.now(),
+): ResumeBaseline {
+  return { lastActivityAt: lastActivityAt ?? null, sampledAt: now };
+}
+
 /** 恢复提示的上下文阈值：低于这个量级重发成本可以忽略（约 $0.006/次）。 */
 export const RESUME_TOKENS_THRESHOLD = 20_000;
 /**

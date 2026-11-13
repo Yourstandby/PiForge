@@ -8,7 +8,7 @@ import { useAgentSession } from "@/hooks/useAgentSession";
 import { useSmoothTypewriter } from "@/hooks/useSmoothTypewriter";
 import { useAudio } from "@/hooks/useAudio";
 import { useHostHealth } from "@/hooks/useHostHealth";
-import { estimateContextTokens, resolveTokenGuards, type TokenGuardKind } from "@/lib/token-guard";
+import { estimateContextTokens, resolveTokenGuards, takeResumeBaseline, type TokenGuardKind } from "@/lib/token-guard";
 import { compactionNoticeText } from "@/lib/compaction-notice";
 import { formatTokenCount } from "@/lib/token-format";
 import { TokenGuardBanner } from "./TokenGuardBanner";
@@ -671,6 +671,16 @@ function ChatSession({
   }, [session?.id]);
   // L-B 实验开关：默认 false（与引入前一致），`PIFORGE_SESSION_SPLIT_HINT=1` 才给动作按钮。
   const sessionSplitHint = useSessionSplitHint();
+  /**
+   * 打开会话时取一次「空闲基准」快照（modified + 当时的时间），之后不再刷新。
+   * 用活的 `session.modified` + 每帧的 `Date.now()`，"闲置 ≥10 分钟" 会迟到地
+   * 在**发消息那一次重渲染**里才成立，提示框就在输入框上方凭空跳出来 —— 那正是
+   * 用户看到的「视觉 bug」。冻结后它只在打开会话那一刻成立。
+   */
+  const resumeBaseline = useMemo(
+    () => takeResumeBaseline(session?.modified),
+    [session?.id], // eslint-disable-line react-hooks/exhaustive-deps
+  );
   const tokenGuardHints = useMemo(
     () =>
       resolveTokenGuards({
@@ -679,12 +689,13 @@ function ChatSession({
         contextTokens: chat.contextUsage?.tokens ?? (estimateContextTokens(messages) || null),
         hasMessages: messages.length > 0,
         // 只有真正闲置过的会话才算“恢复”：新会话的 modified 就是刚刚，不会触发。
-        lastActivityAt: session?.modified ?? null,
+        lastActivityAt: resumeBaseline.lastActivityAt,
+        now: resumeBaseline.sampledAt,
         prefixAudit: chat.prefixAudit,
         dismissed: dismissedGuards,
       }),
     // messages 用于估算上下文（未运行会话没有 contextUsage）；依赖整数组才能跟上内容变化。
-    [chat.contextUsage?.tokens, chat.prefixAudit, messages, dismissedGuards, sessionSplitHint, session?.modified],
+    [chat.contextUsage?.tokens, chat.prefixAudit, messages, dismissedGuards, sessionSplitHint, resumeBaseline],
   );
 
   /**
