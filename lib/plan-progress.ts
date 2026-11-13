@@ -112,9 +112,18 @@ export function planFromMessages(messages: readonly unknown[]): PlanProgress | n
     if (!Array.isArray(content)) continue;
     for (const block of content) {
       if (!block || block.type !== "toolCall") continue;
-      const call = block as { toolName?: unknown; input?: unknown };
-      if (call.toolName !== PLAN_TOOL_NAME) continue;
-      progress = applyPlanCall(progress, call.input);
+      // 两种形状都要认：SDK/会话 JSONL 里是 {id, name, arguments}，
+      // 而 AgentMessage 的 TS 定义是 {toolCallId, toolName, input}。
+      // 只认后者 → 真实会话里一次都匹配不上，卡片永远不渲染。
+      const call = block as {
+        toolName?: unknown;
+        name?: unknown;
+        input?: unknown;
+        arguments?: unknown;
+      };
+      const toolName = call.toolName ?? call.name;
+      if (toolName !== PLAN_TOOL_NAME) continue;
+      progress = applyPlanCall(progress, call.input ?? call.arguments);
     }
   }
   return progress;

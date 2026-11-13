@@ -22,6 +22,27 @@ test("没有 plan 调用 → null（卡片不渲染）", () => {
   assert.equal(planFromMessages([{ role: "user", content: "hi" }]), null);
 });
 
+test("SDK 形状的 toolCall（name / arguments）同样能识别", () => {
+  // 会话 JSONL 里存的是 {id, name, arguments}，不是 {toolCallId, toolName, input}。
+  const progress = planFromMessages([
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "toolCall",
+          id: "call_1",
+          name: "plan",
+          arguments: { steps: [{ title: "读代码", status: "done" }, { title: "改代码" }] },
+        },
+      ],
+    },
+  ]);
+  assert.ok(progress, "真实会话形状必须能折叠出进度，否则卡片永远不渲染");
+  assert.equal(progress.total, 2);
+  assert.equal(progress.done, 1);
+  assert.equal(progress.activeIndex, 1);
+});
+
 test("全量 steps 决定步数与完成数", () => {
   const progress = planFromMessages([
     assistantCall({ steps: [{ title: "读代码", status: "done" }, { title: "改代码" }, { title: "跑测试" }] }),
