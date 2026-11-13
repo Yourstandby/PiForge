@@ -8,6 +8,7 @@ import {
 import type { AgentEvent } from "./agent-events-manager.ts";
 import { streamReducer, initialStreamingState } from "./stream-state.ts";
 import type { AgentPhase } from "./agent-phase.ts";
+import { applyPlanCall } from "../../lib/plan-progress.ts";
 
 /** Reduce a sequence of events through pure apply + streamReducer (contract driver). */
 function reduceEvents(events: AgentEvent[], now = 1_700_000_000_000) {
@@ -249,6 +250,51 @@ test("contract: extension_ui_request and notify produce side effects", () => {
     assert.equal(r2.effects[0].message, "hi");
     assert.equal(r2.effects[0].notifyType, "warning");
   }
+});
+
+test("plan 调用在执行中就能推进卡片（含 codemode 脚本内的嵌套调用）", () => {
+  // 关键：嵌套 plan 要等整段脚本结束才会进消息；只靠消息的话卡片是空的。
+  const start = applyAgentEvent({ type: "agent_start" });
+  assert.deepEqual(start.planOp, { type: "reset" });
+
+  const steps = [
+    { title: "读代码", status: "active" },
+    { title: "改代码" },
+  ];
+  const nested = applyAgentEvent({
+    type: "tool_execution_start",
+    toolCallId: "call_1/1",
+    toolName: "plan",
+    parentToolCallId: "call_1",
+    args: { steps },
+  });
+  assert.deepEqual(nested.planOp, { type: "apply", args: { steps } });
+
+  const advance = applyAgentEvent({
+    type: "tool_execution_start",
+    toolCallId: "call_1/2",
+    toolName: "plan",
+    parentToolCallId: "call_1",
+    args: { update: { index: 0, status: "done" } },
+  });
+  assert.ok(advance.planOp?.type === "apply");
+
+  // 折叠两次事件 → 卡片立刻反映「第 1 步完成、第 2 步进行中」
+  let progress = applyPlanCall(null, steps ? { steps } : null);
+  if (advance.planOp?.type === "apply") progress = applyPlanCall(progress, advance.planOp.args);
+  assert.ok(progress);
+  assert.equal(progress.steps[0].status, "done");
+  assert.equal(progress.activeIndex, 1);
+});
+
+test("非 plan 工具调用不触发 planOp", () => {
+  const r = applyAgentEvent({
+    type: "tool_execution_start",
+    toolCallId: "c2",
+    toolName: "bash",
+    args: { command: "ls" },
+  });
+  assert.equal(r.planOp, undefined);
 });
 
 test("applyPhaseOp set/add/remove matches agent-phase helpers", () => {

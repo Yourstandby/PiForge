@@ -12,7 +12,7 @@ import type { SessionInfo, SessionTreeNode, UserMessage } from "@/lib/types";
 import type { FollowUpQueueSnapshot } from "@/lib/follow-up-queue";
 import type { PrefixAuditView } from "@/lib/token-guard";
 import { formatCodemodeProgressFromResult } from "@/lib/codemode-progress";
-import { planFromMessages } from "@/lib/plan-progress";
+import { applyPlanCall, planFromMessages, type PlanProgress } from "@/lib/plan-progress";
 import {
   calculateSessionActivity,
   calculateSessionStats,
@@ -216,6 +216,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [canExecutePlan, setCanExecutePlan] = useState(false);
   /** 计划进度卡片开关（desktop-settings，默认开）；关掉时连折叠计算都跳过。 */
   const [planProgressEnabled, setPlanProgressEnabled] = useState(true);
+  /**
+   * 本轮执行中折叠出来的进度（来自 SSE 的 plan 事件，含 codemode 脚本内的嵌套调用）。
+   * 历史轮次靠 planFromMessages 从消息里重建，所以这里只服务「正在跑的这一轮」。
+   */
+  const [livePlan, setLivePlan] = useState<PlanProgress | null>(null);
   const [extensionUiRequest, setExtensionUiRequest] =
     useState<ExtensionUiRequestEvent | null>(null);
   const [extensionUiNotify, setExtensionUiNotify] = useState<{
@@ -618,6 +623,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         setAgentPhase((prev) => applyPhaseOp(prev, result.phaseOp!));
       }
       if (result.streamAction) dispatch(result.streamAction);
+      if (result.planOp) {
+        const op = result.planOp;
+        setLivePlan((prev) => (op.type === "reset" ? null : applyPlanCall(prev, op.args)));
+      }
       if (result.retryInfo !== undefined) setRetryInfo(result.retryInfo);
       if (result.isCompacting !== undefined)
         setIsCompacting(result.isCompacting);
@@ -945,6 +954,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     setData(null);
     setActiveLeafId(null);
     setMessages([]);
+    setLivePlan(null);
     setEntryIds([]);
     setToolPreset(reset.toolPreset);
     setThinkingLevel(reset.thinkingLevel);
@@ -1065,8 +1075,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
    * 历史消息里的 plan 调用不重复渲染，卡片永远只有一张。
    */
   const planProgress = useMemo(
-    () => (planProgressEnabled ? planFromMessages(messages) : null),
-    [messages, planProgressEnabled],
+    () =>
+      planProgressEnabled ? (livePlan ?? planFromMessages(messages)) : null,
+    [messages, livePlan, planProgressEnabled],
   );
 
   return {
