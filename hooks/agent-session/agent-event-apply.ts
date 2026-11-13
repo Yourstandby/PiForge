@@ -78,6 +78,18 @@ export function applyAgentEvent(
   const now = options.now ?? Date.now();
   const effects: AgentEventSideEffect[] = [];
 
+  // 裸 `error` 不在 AgentEvent 联合类型里，但 pi 重试耗尽后确实会发；不接住的话
+  // 界面会一直停在「思考中」，最后一次失败原因也随之丢掉。
+  if ((event.type as string) === "error") {
+    const raw = event as unknown as { errorMessage?: unknown; message?: unknown; error?: unknown };
+    const msg =
+      (typeof raw.errorMessage === "string" && raw.errorMessage) ||
+      (typeof raw.message === "string" && raw.message) ||
+      (typeof raw.error === "string" && raw.error) ||
+      "模型请求失败（未提供原因）";
+    return agentErrorResult(msg, now, effects);
+  }
+
   switch (event.type) {
     case "agent_start":
       return {
@@ -100,25 +112,12 @@ export function applyAgentEvent(
         effects,
       };
 
-    case "agent_error": {
-      const msg = event.errorMessage || "Agent error";
-      effects.push({ type: "consoleError", message: msg });
-      const errorMessage: CustomMessage = {
-        role: "custom",
-        customType: "agent_error",
-        content: msg,
-        display: true,
-        timestamp: now,
-      };
-      return {
-        agentRunning: false,
-        phaseOp: { type: "set", phase: null },
-        retryInfo: null,
-        streamAction: { type: "end" },
-        appendMessages: [errorMessage as AgentMessage],
-        effects,
-      };
-    }
+    case "agent_error":
+      return agentErrorResult(
+        (typeof event.errorMessage === "string" && event.errorMessage) || "模型请求失败（未提供原因）",
+        now,
+        effects
+      );
 
     case "message_start":
     case "message_update": {
@@ -229,6 +228,30 @@ export function applyAgentEvent(
       // Connected / unknown variants: no-op (connected is handled by EventSource layer).
       return { effects };
   }
+}
+
+/** 「请求失败」的统一收敛：清 running、结束流式、留一条可见错误气泡。 */
+function agentErrorResult(
+  msg: string,
+  now: number,
+  effects: AgentEventSideEffect[]
+): AgentEventApplyResult {
+  effects.push({ type: "consoleError", message: msg });
+  const errorMessage: CustomMessage = {
+    role: "custom",
+    customType: "agent_error",
+    content: msg,
+    display: true,
+    timestamp: now,
+  };
+  return {
+    agentRunning: false,
+    phaseOp: { type: "set", phase: null },
+    retryInfo: null,
+    streamAction: { type: "end" },
+    appendMessages: [errorMessage as AgentMessage],
+    effects,
+  };
 }
 
 /** Apply a phase op to current phase (pure). */

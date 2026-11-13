@@ -83,6 +83,32 @@ test("contract: agent_error clears running state and surfaces transcript error",
   assert.ok(!allEffects.some((e) => e.type === "onAgentEnd"));
 });
 
+test("contract: bare 'error' events surface like agent_error (重试耗尽不再静默)", () => {
+  const { agentRunning, messages, allEffects } = reduceEvents([
+    { type: "agent_start" },
+    // 裸 error 不在 AgentEvent 联合类型里（pi 类型未收录），运行时确实会发。
+    { type: "error", errorMessage: "connect ECONNREFUSED 127.0.0.1:11434" } as unknown as AgentEvent,
+  ]);
+
+  assert.equal(agentRunning, false);
+  const err = messages[0] as { role: string; customType?: string; content: string; display?: boolean };
+  assert.equal(err.role, "custom");
+  assert.equal(err.customType, "agent_error");
+  assert.equal(err.content, "connect ECONNREFUSED 127.0.0.1:11434");
+  assert.equal(err.display, true);
+  assert.ok(allEffects.some((e) => e.type === "consoleError"));
+});
+
+test("contract: bare 'error' without a message still clears running state", () => {
+  const { agentRunning, messages } = reduceEvents([
+    { type: "agent_start" },
+    { type: "error" } as unknown as AgentEvent,
+  ]);
+  assert.equal(agentRunning, false);
+  const err = messages[0] as { content: string };
+  assert.equal(err.content, "模型请求失败（未提供原因）");
+});
+
 test("contract: tool_execution_start/end drives running_tools phase", () => {
   const { phase, agentRunning } = reduceEvents([
     { type: "agent_start" },

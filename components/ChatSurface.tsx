@@ -13,6 +13,7 @@ import { compactionNoticeText } from "@/lib/compaction-notice";
 import { formatTokenCount } from "@/lib/token-format";
 import { TokenGuardBanner } from "./TokenGuardBanner";
 import { StreamHealthBanner } from "./StreamHealthBanner";
+import { RetryNotice } from "./RetryNotice";
 import { evaluateStreamHealth, type StreamHealth } from "@/hooks/agent-session/stream-health";
 import { useSessionSplitHint } from "@/hooks/useSessionSplitHint";
 import { useSessionScope } from "@/hooks/useSessionScope";
@@ -1571,7 +1572,10 @@ function ChatSession({
   const upstreamUsage = useUpstreamUsage(currentModel?.provider ?? null);
 
   const composer = (
-    <div className="flex flex-col gap-2">      {chat.canExecutePlan && chat.agentMode === "plan" && (
+    <div className="flex flex-col gap-2">
+      {/* 模型连接失败 / 自动重试：pi 的 auto_retry_start 自带原因，之前这条链路没有渲染出口 */}
+      <RetryNotice info={chat.retryInfo} />
+      {chat.canExecutePlan && chat.agentMode === "plan" && (
         <div
           role="group"
           aria-label="计划已生成"
