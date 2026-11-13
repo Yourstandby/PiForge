@@ -107,7 +107,22 @@ export function applyPlanCall(current: PlanProgress | null, input: unknown): Pla
 export function planFromMessages(messages: readonly unknown[]): PlanProgress | null {
   let progress: PlanProgress | null = null;
   for (const message of messages as readonly AgentMessage[]) {
-    if (!message || message.role !== "assistant") continue;
+    if (!message) continue;
+    // codemode 脚本内的 plan 调用不是顶层 toolCall（SDK 不会把嵌套调用写进消息），
+    // 只记录在结果的 nestedCalls 上。不扫这里 → 只要模型把 plan 塞进脚本，
+    // 卡片就永远不渲染，而"合并进一次脚本"恰恰是被鼓励的路径。
+    if (message.role === "toolResult") {
+      const calls = (message as { nestedCalls?: { calls?: unknown } }).nestedCalls?.calls;
+      if (Array.isArray(calls)) {
+        for (const record of calls) {
+          const nested = record as { name?: unknown; arguments?: unknown };
+          if (nested?.name !== PLAN_TOOL_NAME) continue;
+          progress = applyPlanCall(progress, nested.arguments);
+        }
+      }
+      continue;
+    }
+    if (message.role !== "assistant") continue;
     const content = message.content;
     if (!Array.isArray(content)) continue;
     for (const block of content) {

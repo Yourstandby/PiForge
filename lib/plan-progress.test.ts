@@ -124,3 +124,80 @@ test("多次调用取累计结果（列计划 → 推进 → 改计划）", () =
 test("非 plan 工具调用被忽略", () => {
   assert.equal(planFromMessages([assistantCall({ steps: [{ title: "a" }] }, "bash")]), null);
 });
+
+test("codemode 脚本内的 plan 调用（nestedCalls）也能折叠出进度", () => {
+  // 真实会话里模型把 plan 写进 codemode 脚本：顶层只有 codemode 一条 toolCall，
+  // 嵌套调用只落在结果的 nestedCalls 上（含完整 arguments）。
+  const progress = planFromMessages([
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "toolCall",
+          toolCallId: "c1",
+          toolName: "codemode",
+          input: { code: "const r = await tools.plan({ steps: [...] }); return r;" },
+        },
+      ],
+    },
+    {
+      role: "toolResult",
+      toolCallId: "c1",
+      toolName: "codemode",
+      content: [{ type: "text", text: "ok" }],
+      nestedCalls: {
+        complete: true,
+        calls: [
+          {
+            id: "c1/1",
+            name: "plan",
+            status: "ok",
+            arguments: { steps: [{ title: "读代码", status: "active" }, { title: "改代码" }] },
+          },
+        ],
+      },
+    },
+  ]);
+  assert.ok(progress, "嵌套 plan 调用必须能出卡片，否则卡片永远不渲染");
+  assert.equal(progress.total, 2);
+  assert.equal(progress.activeIndex, 0);
+});
+
+test("嵌套调用里的非 plan 工具被忽略", () => {
+  assert.equal(
+    planFromMessages([
+      {
+        role: "toolResult",
+        toolCallId: "c1",
+        toolName: "codemode",
+        content: [{ type: "text", text: "ok" }],
+        nestedCalls: {
+          complete: true,
+          calls: [{ id: "c1/1", name: "bash", status: "ok", arguments: { command: "ls" } }],
+        },
+      },
+    ]),
+    null,
+  );
+});
+
+test("嵌套全量 + 顶层 update 混用按消息顺序累加", () => {
+  const progress = planFromMessages([
+    {
+      role: "toolResult",
+      toolCallId: "c1",
+      toolName: "codemode",
+      content: [{ type: "text", text: "ok" }],
+      nestedCalls: {
+        complete: true,
+        calls: [
+          { id: "c1/1", name: "plan", status: "ok", arguments: { steps: [{ title: "a" }, { title: "b" }] } },
+        ],
+      },
+    },
+    assistantCall({ update: { index: 0, status: "done" } }),
+  ]);
+  assert.ok(progress);
+  assert.equal(progress.done, 1);
+  assert.equal(progress.activeIndex, 1);
+});
