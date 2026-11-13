@@ -100,8 +100,15 @@ export function applyAgentEvent(
         effects,
       };
 
-    case "agent_error": {
-      const msg = event.errorMessage || "Agent error";
+    // pi 的自动重试耗尽后可能只发 `error`（不带 errorMessage）：两者都按同一条
+    // 可见错误处理，否则 running 状态与最后一次失败原因会一直挂在界面上。
+    case "agent_error":
+    case "error": {
+      const msg =
+        (typeof event.errorMessage === "string" && event.errorMessage) ||
+        (typeof event.message === "string" && event.message) ||
+        (typeof event.error === "string" && event.error) ||
+        "模型请求失败（未提供原因）";
       effects.push({ type: "consoleError", message: msg });
       const errorMessage: CustomMessage = {
         role: "custom",
