@@ -57,6 +57,14 @@ const mode = valueOf("--mode") ?? "both";
 const baselinePath = valueOf("--baseline");
 const maxPrefixArg = valueOf("--max-prefix");
 /**
+ * 双阈值：`--max-prefix` 是硬失败（真回归），`--warn-prefix` 只提示。
+ * 前缀涨一点通常是"加了新工具/新提示词"的正常结果，硬拦会让每个功能 PR 都红叉，
+ * 久了就没人看红叉了 —— 所以日常增长走告警，只有越过 baseline+10% 才拦。
+ */
+const warnPrefixArg = valueOf("--warn-prefix");
+/** `--record-prefix <path>`：把实测前缀写进 JSON，供 smoke-prefix-budget 维护 baseline。 */
+const recordPrefixPath = valueOf("--record-prefix");
+/**
  * `--codemode off|on|only`：写进 desktop-settings.json 的 codemodeEnabled / codemodeMode。
  * 默认（不传）＝不写该文件，走应用默认值（当前是开启 + `only`：普通工具不声明给模型）。
  * 量「按需域 / 工具声明」这类护栏时必须传 `off`，否则声明集合里本来就没有普通工具。
@@ -933,13 +941,41 @@ async function main() {
     }
   }
 
+  const prefixTurn = reports.PiForge?.turns?.[0] ?? {};
+
+  if (warnPrefixArg) {
+    const warn = Number(warnPrefixArg);
+    const value = prefixTurn.prefixTokens ?? 0;
+    if (Number.isFinite(warn) && value > warn) {
+      // 不设 exitCode：告警不该挡住合并，只提醒"前缀涨了，确认是有意的"。
+      console.log(
+        `::warning::measure-prefix: prefix ${value} tok > 告警线 ${warn} tok（未超硬上限，不失败）`
+      );
+    }
+  }
+
   if (maxPrefixArg) {
     const budget = Number(maxPrefixArg);
-    const value = reports.PiForge?.turns?.[0]?.prefixTokens ?? 0;
+    const value = prefixTurn.prefixTokens ?? 0;
     if (Number.isFinite(budget) && value > budget) {
       console.error(`measure-prefix: prefix ${value} tok > budget ${budget} tok`);
       process.exitCode = 2;
     }
+  }
+
+  if (recordPrefixPath) {
+    writeFileSync(
+      recordPrefixPath,
+      JSON.stringify(
+        {
+          prefixTokens: prefixTurn.prefixTokens ?? 0,
+          systemTokens: prefixTurn.systemTokens ?? null,
+          prefixHash: prefixTurn.prefixHash ?? null,
+        },
+        null,
+        2
+      )
+    );
   }
 }
 

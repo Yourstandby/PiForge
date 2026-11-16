@@ -1,0 +1,10 @@
+{
+  "_comment": "前缀 token 基线（CI/Linux 实测）。smoke-prefix-budget 用它派生双阈值：超过 ×1.03 只告警，超过 ×1.10 才失败。有意改提示词 / 工具声明后跑：node scripts/smoke-prefix-budget.mjs --update-baseline",
+  "updatedAt": "2026-11-16",
+  "cases": {
+    "codemode:only": {
+      "prefixTokens": 7889,
+      "prefixHash": "81b200634962"
+    }
+  }
+}
