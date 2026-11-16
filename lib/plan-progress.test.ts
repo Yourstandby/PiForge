@@ -201,3 +201,33 @@ test("嵌套全量 + 顶层 update 混用按消息顺序累加", () => {
   assert.equal(progress.done, 1);
   assert.equal(progress.activeIndex, 1);
 });
+test("sinceLastUser：上一轮没结尾的计划不再被翻出来", () => {
+  const messages = [
+    { role: "user", content: "第一轮" },
+    assistantCall({ steps: [{ title: "修复 env key", status: "active" }, { title: "跑测试", status: "done" }] }),
+    { role: "user", content: "第二轮，跟计划无关" },
+    { role: "assistant", content: [{ type: "text", text: "好的" }] },
+  ];
+  // 全量折叠：旧计划会一直挂着（这正是要修的现象）
+  assert.ok(planFromMessages(messages));
+  // 只看当前轮：本轮没有 plan 调用 → 没有卡片
+  assert.equal(planFromMessages(messages, { sinceLastUser: true }), null);
+});
+
+test("sinceLastUser：同一轮里的 plan 调用照常折叠", () => {
+  const messages = [
+    { role: "user", content: "旧轮次" },
+    assistantCall({ steps: [{ title: "旧步骤", status: "active" }] }),
+    { role: "user", content: "新一轮" },
+    assistantCall({ steps: [{ title: "读代码", status: "done" }, { title: "改代码" }] }),
+  ];
+  const progress = planFromMessages(messages, { sinceLastUser: true });
+  assert.ok(progress);
+  assert.deepEqual(progress.steps.map((step) => step.title), ["读代码", "改代码"]);
+  assert.equal(progress.done, 1);
+});
+
+test("sinceLastUser：没有用户消息时等价全量折叠", () => {
+  const messages = [assistantCall({ steps: [{ title: "只有助手消息" }] })];
+  assert.deepEqual(planFromMessages(messages, { sinceLastUser: true }), planFromMessages(messages));
+});

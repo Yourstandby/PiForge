@@ -104,9 +104,32 @@ export function applyPlanCall(current: PlanProgress | null, input: unknown): Pla
  * 从会话消息里取最后一次 plan 工具调用后的完整状态。
  * 没有调用过 → null（卡片不渲染）。
  */
-export function planFromMessages(messages: readonly unknown[]): PlanProgress | null {
+export interface PlanFromMessagesOptions {
+  /**
+   * 只折叠**最后一条用户消息之后**的 plan 调用。
+   * 卡片贴在输入框上方，语义是"这一轮在干什么"；不限范围的话，上一轮没结尾的
+   * 计划会被一直翻出来（切会话、重启、开新轮次都还在）。
+   */
+  sinceLastUser?: boolean;
+}
+
+/** 最后一条用户消息的下标 + 1；没有用户消息时返回 0（等价全量折叠）。 */
+function lastUserBoundary(messages: readonly AgentMessage[]): number {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === "user") return index + 1;
+  }
+  return 0;
+}
+
+export function planFromMessages(
+  messages: readonly unknown[],
+  options: PlanFromMessagesOptions = {},
+): PlanProgress | null {
   let progress: PlanProgress | null = null;
-  for (const message of messages as readonly AgentMessage[]) {
+  const all = messages as readonly AgentMessage[];
+  const start = options.sinceLastUser ? lastUserBoundary(all) : 0;
+  for (let index = start; index < all.length; index += 1) {
+    const message = all[index];
     if (!message) continue;
     // codemode 脚本内的 plan 调用不是顶层 toolCall（SDK 不会把嵌套调用写进消息），
     // 只记录在结果的 nestedCalls 上。不扫这里 → 只要模型把 plan 塞进脚本，
