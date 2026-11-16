@@ -1581,6 +1581,7 @@ function ChatSession({
       {chat.planProgress ? (
         <PlanProgressCard
           progress={chat.planProgress}
+          running={chat.agentRunning}
           approval={
             chat.agentMode === "plan" && chat.canExecutePlan
               ? {

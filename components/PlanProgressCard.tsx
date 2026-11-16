@@ -13,9 +13,17 @@ import type { PlanProgress } from "@/lib/plan-progress";
  */
 export function PlanProgressCard({
   progress,
+  running = true,
   approval,
 }: {
   progress: PlanProgress;
+  /**
+   * 这一轮是否还在跑。false 时把残留的 active 步骤判为「状态没收尾」：
+   * 模型常常把第 1 步标成 active 之后只推进了后面几步，从没回填 done，
+   * 卡片就会永远 4/5 转圈 —— 看起来像任务卡死，其实早跑完了。
+   * 缺省 true，保持没有传这个 prop 时的旧行为。
+   */
+  running?: boolean;
   approval?: {
     running: boolean;
     onExecute: () => void;
@@ -25,13 +33,17 @@ export function PlanProgressCard({
   const [open, setOpen] = useState(false);
   const { steps, done, total } = progress;
   const allDone = total > 0 && done === total;
+  /** 真的在推进：有 spinner 才转。 */
+  const live = !allDone && running;
+  /** 停机了但还有没做完的步骤 —— 状态残留，不再假装在跑。 */
+  const stale = !allDone && !running;
   const percent = total > 0 ? Math.round((done / total) * 100) : 0;
   const current = progress.activeIndex >= 0 ? steps[progress.activeIndex] : null;
 
   return (
     <div
       role="group"
-      aria-label="计划进度"
+      aria-label={stale ? "计划进度（待继续）" : "计划进度"}
       className="flex flex-col gap-1.5 rounded-xl border border-[#E6E8EE] bg-white px-2.5 py-2 shadow-[0_1px_2px_rgba(15,23,42,0.04)]"
     >
       <button
@@ -45,6 +57,11 @@ export function PlanProgressCard({
         <span className="min-w-0 flex-1 truncate text-[12px] text-ink-muted">
           {allDone ? "已完成" : (current?.title ?? "")}
         </span>
+        {stale && (
+          <span className="shrink-0 rounded-[4px] bg-[#F1F2F5] px-1 text-[10.5px] leading-[15px] text-ink-muted">
+            待继续
+          </span>
+        )}
         <span className="shrink-0 font-mono text-[11px] text-ink-faint">
           {done}/{total}
         </span>
@@ -93,14 +110,20 @@ export function PlanProgressCard({
                 >
                   {isDone ? (
                     <Check size={9} strokeWidth={3.2} />
-                  ) : active ? (
+                  ) : active && live ? (
                     <Loader2 size={9} strokeWidth={2.6} className="animate-spin text-accent" />
+                  ) : active ? (
+                    <span className="size-[4px] rounded-full bg-ink-faint" />
                   ) : null}
                 </span>
                 <span
                   className={[
                     "min-w-0",
-                    isDone ? "text-ink-faint line-through" : active ? "text-ink" : "text-ink-muted",
+                    isDone
+                      ? "text-ink-faint line-through"
+                      : active && live
+                        ? "text-ink"
+                        : "text-ink-muted",
                   ].join(" ")}
                 >
                   {step.title}
