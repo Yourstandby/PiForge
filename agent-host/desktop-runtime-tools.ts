@@ -3,6 +3,7 @@ import { effectiveToolsForMode, type AgentMode, type ToolPreset } from "../lib/a
 import { DOMAIN_TOOL_NAMES, enabledOnDemandDomains } from "../lib/domain-tools.ts";
 import { CLASSIFY_DECISION_TOOL_NAME, GENERATE_IMAGE_TOOL_NAME } from "./aux-tool-names.ts";
 import { TOOL_HISTORY_TOOL_NAME } from "./tool-outputs.ts";
+import { PLAN_TOOL_NAME } from "../lib/plan-progress.ts";
 import { TOOL_USE_TOOL_NAME } from "./tool-stubs.ts";
 
 /** Auxiliary model tools are only declared once the user configured them. */
@@ -20,9 +21,11 @@ export function desktopRuntimeTools(mode: AgentMode, preset: ToolPreset, codemod
   // platform 保留在签名里：历史上 Windows 才声明 powershell，现在它收进 shell 多态工具，
   // 平台差异由 shell 的 action 表（exec 只在 win32 注册）决定。
   void platform;
-  // memory 是「按需域」：默认不声明，plan 模式通过 PLAN_TOOLS 显式带上只读 recall。
+  // 声明集合只跟 preset 走，**与模式无关**：plan 模式也声明同一份工具
+  // （只读约束在执行期拦截，见 desktop-approval-extension 的 tool_call）。
+  // 唯一因为模式而变的前缀字节，会在切换那一轮把整段历史缓存作废。
   const names = effectiveToolsForMode(mode, preset);
-  if (mode === "plan" || preset === "none") return names;
+  if (preset === "none") return names;
   for (const tool of registered) {
     // Native tool_search records deferred/codemode activations in the session.
     // Keep those declarations across prompts without exposing hidden tools.
@@ -44,9 +47,11 @@ export function desktopRuntimeTools(mode: AgentMode, preset: ToolPreset, codemod
   }
   // Oversized tool outputs are persisted; the agent reads them back by page.
   if (registered.some((tool) => tool.name === TOOL_HISTORY_TOOL_NAME)) names.push(TOOL_HISTORY_TOOL_NAME);
+  // 计划进度：注册即声明。设置项关掉时扩展根本不注册，这里自然拿不到名字 ——
+  // 关闭是「整条链路消失」，不是「声明了但不用」。
+  if (registered.some((tool) => tool.name === PLAN_TOOL_NAME)) names.push(PLAN_TOOL_NAME);
   // Sandboxed plugins: always visible when the plugin manager loaded them.
-  // Plan mode returned above, so plugin tools (which may request Host writes
-  // through RPC) stay out of read-only plans.
+  // plan 模式同样声明（一致性优先于「少声明几个」）——它们的写请求由执行期拦截挡下。
   for (const tool of registered) {
     if (tool.name.startsWith("plugin__")) names.push(tool.name);
   }

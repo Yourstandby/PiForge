@@ -12,6 +12,7 @@ import {
   type ToolPreset,
   PLAN_TOOLS,
 } from "../lib/approval-policy.ts";
+import { PLAN_TOOL_NAME } from "../lib/plan-progress.ts";
 import { desktopRuntimeTools, isMcpTool } from "./desktop-runtime-tools.ts";
 import {
   STATIC_CWD_SECTION,
@@ -160,6 +161,9 @@ export function createDesktopApprovalFactory(modeRef: AgentModeRef): ExtensionFa
       const pinnedTools = [
         ...(registered.some((tool) => tool.name === "tool_search") ? ["tool_search"] : []),
         ...(registered.some((tool) => tool.name === TOOL_USE_TOOL_NAME) ? [TOOL_USE_TOOL_NAME] : []),
+        // 计划进度原语：提示词要求模型主动调它，一旦被存根（只留名字）模型就不会用了
+        // → 进度卡片永远空着。它必须常驻，且各模式都常驻（模式间前缀才能字节一致）。
+        ...(registered.some((tool) => tool.name === PLAN_TOOL_NAME) ? [PLAN_TOOL_NAME] : []),
         // 多态工具：没被开关点名的恒常驻；被点名的只在激活后常驻（否则模型刚拿到又失去）。
         ...DOMAIN_TOOL_NAMES.filter(
           (name) =>
@@ -183,8 +187,13 @@ export function createDesktopApprovalFactory(modeRef: AgentModeRef): ExtensionFa
         usedExtensionTools,
         pinnedTools,
       });
-      /** plan 模式 / 预设 none 保持原样（本身就是静态小集合）。 */
-      const keepFullLoadout = preset === "none" || modeRef.current === "plan";
+      /**
+       * 预设 none 保持原样（本身就是静态小集合）。
+       * plan 模式**不**再单独走全量装载：那会让 plan ↔ full 的工具数组完全不同，
+       * 切换一次整段前缀缓存作废。plan 的只读约束由下面 tool_call 里的执行期拦截
+       * 保证（PLAN_TOOLS / isPlanAllowedDomainCall），不靠工具缺席。
+       */
+      const keepFullLoadout = preset === "none";
 
       /**
        * 装载 key：模式 / 预设 / codemode / 已注册工具集合 / 已激活工具集合 / 实际声明的工具集。
@@ -307,14 +316,13 @@ export function createDesktopApprovalFactory(modeRef: AgentModeRef): ExtensionFa
       }
 
       if (modeRef.current === "plan") {
-        // Appending to the options (instead of forcing a prompt) keeps pi's own
-        // section rendering and the current tool loadout intact. Plan tools are
-        // read-only already; this text tells the model what to deliver.
-        const appended = event.systemPromptOptions.appendSystemPrompt;
-        event.systemPromptOptions.appendSystemPrompt = appended
-          ? `${appended}\n\n${PLAN_MODE_SYSTEM_PROMPT}`
+        // 不改 system prompt：那是前缀里的字节，一改整段历史缓存就作废。
+        // 改放尾部 message（display:false，不进对话记录）—— 前缀字节不变，
+        // 只在 plan 期间每轮多背这一小段。
+        const planBlock = messageBlock
+          ? `${messageBlock}\n\n${PLAN_MODE_SYSTEM_PROMPT}`
           : PLAN_MODE_SYSTEM_PROMPT;
-        return messageBlock ? { message: contextMessage(messageBlock) } : undefined;
+        return { message: contextMessage(planBlock) };
       }
       if (preset === "none") return { systemPrompt: "" };
       return messageBlock ? { message: contextMessage(messageBlock) } : undefined;
@@ -325,11 +333,18 @@ export function createDesktopApprovalFactory(modeRef: AgentModeRef): ExtensionFa
       // Enforce the desktop policy at execution as well as declaration time.
       if (modeRef.toolPreset === "none" && modeRef.current !== "plan") return askBlockResult();
       if (modeRef.current === "plan") {
+        // plan 模式现在与执行模式声明同一份工具（前缀缓存优先），这里是唯一的
+        // 只读闸门，所以拒绝理由要写清楚——"Blocked by user" 会误导模型重试。
         const allowed =
           PLAN_TOOLS.includes(event.toolName) ||
           PLAN_READONLY_LEGACY_TOOLS.has(event.toolName) ||
           isPlanAllowedDomainCall(event.toolName, event.input);
-        if (!allowed) return askBlockResult();
+        if (!allowed) {
+          return {
+            block: true,
+            reason: "Plan mode: planning only. Wait for the user to approve the plan, then execute.",
+          };
+        }
       }
       if (event.toolName === "codemode" && !modeRef.codemodeEnabled) return askBlockResult();
       const confirmMcp = modeRef.current === "ask" && isMcpTool(event.toolName);

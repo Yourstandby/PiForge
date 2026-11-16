@@ -11,10 +11,18 @@ import {
   toolNamesForPreset,
 } from "./approval-policy.ts";
 
-test("plan mode always returns the four read tools", () => {
-  assert.deepEqual(effectiveToolsForMode("plan", "none"), [...PLAN_TOOLS]);
-  assert.deepEqual(effectiveToolsForMode("plan", "default"), [...PLAN_TOOLS]);
-  assert.deepEqual(effectiveToolsForMode("plan", "full"), [...PLAN_TOOLS]);
+test("声明集合与模式无关（plan 不再收窄，只有 preset 决定）", () => {
+  for (const preset of ["none", "default", "full"] as const) {
+    assert.deepEqual(
+      effectiveToolsForMode("plan", preset),
+      toolNamesForPreset(preset),
+      "plan 一旦少声明工具，plan 与执行模式切换就会把整段前缀缓存作废",
+    );
+    assert.deepEqual(effectiveToolsForMode("ask", preset), effectiveToolsForMode("plan", preset));
+  }
+  // 只读约束仍在：PLAN_TOOLS 是执行期白名单。
+  assert.ok(PLAN_TOOLS.includes("read"));
+  assert.ok(!PLAN_TOOLS.includes("write"));
 });
 
 test("ask/full use tool preset lists", () => {

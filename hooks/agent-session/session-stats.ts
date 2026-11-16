@@ -155,7 +155,10 @@ export function calculateSessionActivity(messages: AgentMessage[]): SessionActiv
       if (!Array.isArray(blocks)) continue;
       for (const block of blocks) {
         if ((block as { type?: string }).type === "toolCall") {
-          bump((block as { toolName?: string }).toolName);
+          // 会话里的 toolCall 块是 {name, arguments}（SDK 形状），
+          // 本地类型定义写的是 {toolName, input}；两种都认，否则统计全落 unknown。
+          bump((block as { toolName?: string; name?: string }).toolName ??
+            (block as { toolName?: string; name?: string }).name);
         }
       }
       continue;

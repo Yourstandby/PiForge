@@ -880,7 +880,7 @@ test("agent event reaches every listener even if an earlier listener throws (M2)
   assert.deepEqual(events[0], { type: "custom_event" });
 });
 
-test("set_agent_mode plan forces read tools", async () => {
+test("set_agent_mode plan 不改工具装载（只读靠执行期拦截）", async () => {
   const applied: string[][] = [];
   const w = new AgentSessionWrapper(makeStubInner({
     setActiveToolsByName: (names) => { applied.push([...names]); },
@@ -888,11 +888,8 @@ test("set_agent_mode plan forces read tools", async () => {
   w.initPolicy("ask", "default");
   const result = await w.send({ type: "set_agent_mode", mode: "plan" }) as { agentMode: string };
   assert.equal(result.agentMode, "plan");
-  // Plan is read-only: the memory facade stays (recall only), writes are gated per action.
-  assert.deepEqual(
-    applied.at(-1)?.slice().sort(),
-    ["find", "grep", "ls", "memory", "read", "tool_history_get"]
-  );
+  // 切到 plan 若改了工具数组，整段前缀缓存就作废了 —— 只跟 preset 走。
+  assert.deepEqual(applied.at(-1)?.slice().sort(), ["bash", "edit", "read", "write"]);
 });
 
 test("get_state includes agentMode", async () => {

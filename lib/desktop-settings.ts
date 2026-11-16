@@ -122,6 +122,11 @@ export interface DesktopSettings {
    * 开与不写都是 undefined，读取侧按 false 处理（见 project-settings.ts）。
    */
   handoffEnabled?: boolean;
+  /**
+   * 计划进度卡片（默认开）。开：声明 `plan` 工具 + 注入进度提示词 + 输入框上方渲染卡片；
+   * 关：三者一起关掉（不声明工具才真省 token）。改动从新会话起生效。
+   */
+  planProgressEnabled?: boolean;
   /** 当前生效的场景档案（默认 normal）。 */
   activeScene?: SceneName;
   /** 场景档案快照：normal / private 两套模型通道 + 网页权限。 */
@@ -239,6 +244,10 @@ export function mergeDesktopSettings(raw: unknown): DesktopSettings {
   if (typeof obj.handoffEnabled === "boolean") {
     result.handoffEnabled = obj.handoffEnabled;
   }
+  // 默认开：不写就是 undefined，读取侧按 true 处理。
+  if (typeof obj.planProgressEnabled === "boolean") {
+    result.planProgressEnabled = obj.planProgressEnabled;
+  }
   if (isSceneName(obj.activeScene)) result.activeScene = obj.activeScene;
   const sceneProfiles = mergeSceneProfiles(obj.sceneProfiles);
   if (sceneProfiles) result.sceneProfiles = sceneProfiles;
@@ -307,6 +316,7 @@ export function validateDesktopSettingsBody(body: unknown): string | null {
     "projectIsolation",
     "contextFilesEnabled",
     "handoffEnabled",
+    "planProgressEnabled",
   ] as const) {
     if (obj[key] !== undefined && typeof obj[key] !== "boolean") {
       return `${key} must be a boolean`;

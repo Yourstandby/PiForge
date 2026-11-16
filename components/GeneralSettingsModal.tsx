@@ -239,6 +239,9 @@ export function GeneralSettingsModal({
   // 会话接续（HANDOFF.md 注入）：同样是全局 + 项目级覆盖，默认关。
   const [handoffEnabled, setHandoffEnabled] = useState(false);
   const [projectHandoff, setProjectHandoff] = useState<boolean | null>(null);
+  // 计划进度卡片（默认开）：关掉后输入框上方不再出现进度卡片，
+  // 同时新会话也不再向模型声明 plan 工具（那才是真正省 token 的部分）。
+  const [planProgressEnabled, setPlanProgressEnabled] = useState(true);
   const [saving, setSaving] = useState(false);
   const [reloading, setReloading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -284,11 +287,15 @@ export function GeneralSettingsModal({
             projectIsolation?: boolean;
             contextFilesEnabled?: boolean;
             handoffEnabled?: boolean;
+            planProgressEnabled?: boolean;
           } | null,
         ) => {
           if (typeof data?.projectIsolation === "boolean") setProjectIsolation(data.projectIsolation);
           if (typeof data?.contextFilesEnabled === "boolean") setContextFilesEnabled(data.contextFilesEnabled);
           if (typeof data?.handoffEnabled === "boolean") setHandoffEnabled(data.handoffEnabled);
+          if (typeof data?.planProgressEnabled === "boolean") {
+            setPlanProgressEnabled(data.planProgressEnabled);
+          }
           if (!data?.onDemandEffective) return;
           setOnDemand({
             domains: data.onDemandEffective.domains,
@@ -354,6 +361,20 @@ export function GeneralSettingsModal({
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ handoffEnabled: next }),
+      });
+    } catch {
+      /* 乐观更新；下次打开重新读 */
+    }
+  }, []);
+
+  /** 全局：计划进度卡片 + plan 工具开关。 */
+  const savePlanProgressEnabled = useCallback(async (next: boolean) => {
+    setPlanProgressEnabled(next);
+    try {
+      await fetch("/api/desktop-settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ planProgressEnabled: next }),
       });
     } catch {
       /* 乐观更新；下次打开重新读 */
@@ -767,6 +788,15 @@ export function GeneralSettingsModal({
             disabled={!cwd}
             onChange={(next) => void saveProjectHandoff(next)}
           />
+          <Row
+            label="计划进度卡片"
+            hint="输入框上方显示 plan 工具维护的步骤清单；关掉后新会话不再声明 plan 工具（默认开）"
+          >
+            <Toggle
+              checked={planProgressEnabled}
+              onChange={(next) => void savePlanProgressEnabled(next)}
+            />
+          </Row>
           <p className="px-1 text-[11px] leading-4 text-ink-faint">
             切换后新会话生效；已有会话维持原上下文。
           </p>

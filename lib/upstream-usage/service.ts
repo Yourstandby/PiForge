@@ -19,6 +19,9 @@ function getCache(): Map<string, CacheEntry> {
   return (globalThis.__piforgeUpstreamUsageCache ??= new Map<string, CacheEntry>());
 }
 
+/** Providers whose balance/quota endpoint PiForge knows how to query. */
+const BALANCE_PROVIDERS = ["openai-codex", "deepseek", "openrouter", "anthropic"] as const;
+
 export const CACHE_TTL_MS = 120 * 1000; // 120 seconds TTL to protect upstream rate limits
 export const REFRESH_COOLDOWN_MS = 15 * 1000; // 15 seconds cooldown debounce on manual refresh
 const REQUEST_TIMEOUT_MS = 5000;
@@ -449,12 +452,45 @@ function usableStoredAuth(stored: AuthStorageContent["string"]): AuthStorageCont
   return stored;
 }
 
+export interface UpstreamUsageOptions {
+  forceRefresh?: boolean;
+  auth?: AuthStorageContent;
+  fetchImpl?: typeof fetch;
+  now?: number;
+  /** Override for the credential lookup (tests); defaults to the pi runtime. */
+  resolveAuth?: (
+    providerId: string,
+    stored: AuthStorageContent["string"]
+  ) => Promise<AuthStorageContent["string"]>;
+}
+
+/** Process-wide ModelRuntime: four providers may resolve auth on the same request. */
+let sharedRuntime: Promise<Awaited<ReturnType<typeof createPiRuntime>>> | null = null;
+
+function getSharedRuntime(): Promise<Awaited<ReturnType<typeof createPiRuntime>>> {
+  if (!sharedRuntime) {
+    sharedRuntime = createPiRuntime({ allowModelNetwork: false });
+    sharedRuntime.catch(() => {
+      sharedRuntime = null;
+    });
+  }
+  return sharedRuntime;
+}
+
+/** True when the resolved auth carries any credential the balance endpoints can use. */
+function hasCredential(auth: AuthStorageContent["string"] | undefined): boolean {
+  if (!auth) return false;
+  return [auth.key, auth.apiKey, auth.token, auth.access].some(
+    (value) => typeof value === "string" && value.trim() !== ""
+  );
+}
+
 async function resolveProviderAuth(
   providerId: string,
   stored: AuthStorageContent["string"]
 ): Promise<AuthStorageContent["string"]> {
   try {
-    const { runtime } = await createPiRuntime({ allowModelNetwork: false });
+    const { runtime } = await getSharedRuntime();
     const resolved = await runtime.getAuth(providerId, { minOAuthValidityMs: REQUEST_TIMEOUT_MS });
     if (!resolved) return usableStoredAuth(stored);
 
@@ -477,7 +513,7 @@ async function resolveProviderAuth(
 
 export async function getUpstreamProviderUsage(
   providerId: string,
-  options: { forceRefresh?: boolean; auth?: AuthStorageContent; fetchImpl?: typeof fetch; now?: number } = {}
+  options: UpstreamUsageOptions = {}
 ): Promise<UpstreamProviderUsage | null> {
   const authData = options.auth ?? readStoredAuth();
   const effectiveProviderId = normalizeProviderId(providerId, authData);
@@ -492,13 +528,17 @@ export async function getUpstreamProviderUsage(
     if (options.forceRefresh && now - cached.fetchedAt < REFRESH_COOLDOWN_MS) return cached.data;
   }
 
-  const storedAuth = authData[effectiveProviderId];
-  if (!storedAuth) return null;
+  // An empty auth.json does not mean "no credential": pi also resolves provider
+  // keys from the environment (DEEPSEEK_API_KEY, ...), so always let auth
+  // resolution run and drop the provider only when it yields nothing usable.
+  const storedAuth = authData[effectiveProviderId] ?? {};
 
   const request = (async (): Promise<UpstreamProviderUsage | null> => {
-    const providerAuth = options.auth
-      ? storedAuth
-      : await resolveProviderAuth(effectiveProviderId, storedAuth);
+    const providerAuth = await (options.resolveAuth ?? resolveProviderAuth)(
+      effectiveProviderId,
+      storedAuth
+    );
+    if (!hasCredential(providerAuth)) return null;
     const fetchImpl = options.fetchImpl ?? globalThis.fetch;
     let result: UpstreamProviderUsage | null = null;
 
@@ -541,15 +581,18 @@ export async function getUpstreamProviderUsage(
 }
 
 export async function getAllUpstreamUsage(
-  options: { forceRefresh?: boolean; auth?: AuthStorageContent; fetchImpl?: typeof fetch } = {}
+  options: UpstreamUsageOptions = {}
 ): Promise<UpstreamProviderUsage[]> {
   const authData = options.auth ?? readStoredAuth();
-  const supportedProviders = Object.keys(authData).filter(
-    (id) =>
-      id === "openai-codex" ||
-      id === "deepseek" ||
-      id === "openrouter" ||
-      id === "anthropic"
+  // auth.json only lists providers that were logged in there; credentials can
+  // also come from the environment, so probe every supported provider and let
+  // getUpstreamProviderUsage() drop the ones without a usable key.
+  const candidates = new Set<string>([
+    ...Object.keys(authData),
+    ...BALANCE_PROVIDERS,
+  ]);
+  const supportedProviders = [...candidates].filter((id) =>
+    (BALANCE_PROVIDERS as readonly string[]).includes(id)
   );
 
   const results = await Promise.all(

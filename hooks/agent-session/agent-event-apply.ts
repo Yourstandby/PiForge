@@ -3,6 +3,7 @@
  * Keeps event contract testable without React or network.
  */
 import type { AgentMessage, CustomMessage } from "../../lib/types.ts";
+import { PLAN_TOOL_NAME } from "../../lib/plan-progress.ts";
 import { normalizeToolCalls } from "../../lib/normalize.ts";
 import { addRunningTool, removeRunningTool, type AgentPhase } from "./agent-phase.ts";
 import type { StreamAction } from "./stream-state.ts";
@@ -45,8 +46,18 @@ export type AgentPhaseOp =
   | { type: "removeTool"; id: string }
   | { type: "clear" };
 
+/**
+ * plan 调用的实时推进：执行中就能更新卡片，不必等 toolResult 落库。
+ * codemode 脚本内的 plan 调用同样会走到这里（带 parentToolCallId），
+ * 而消息里它要等整段脚本结束才出现。
+ */
+export type PlanOp =
+  | { type: "reset" }
+  | { type: "apply"; args: unknown };
+
 export type AgentEventApplyResult = {
   agentRunning?: boolean;
+  planOp?: PlanOp;
   phaseOp?: AgentPhaseOp;
   streamAction?: StreamAction;
   retryInfo?: RetryInfo | null;
@@ -93,6 +104,9 @@ export function applyAgentEvent(
   switch (event.type) {
     case "agent_start":
       return {
+        // 新一轮从空进度开始：历史消息里的 plan 调用仍由 planFromMessages 兜底，
+        // 不清的话跨轮次会把上一轮的状态和这一轮拼在一起。
+        planOp: { type: "reset" },
         agentRunning: true,
         phaseOp: { type: "set", phase: { kind: "waiting_model" } },
         streamAction: { type: "start" },
@@ -152,8 +166,8 @@ export function applyAgentEvent(
       return result;
     }
 
-    case "tool_execution_start":
-      return {
+    case "tool_execution_start": {
+      const result: AgentEventApplyResult = {
         phaseOp: {
           type: "addTool",
           id: event.toolCallId,
@@ -161,6 +175,12 @@ export function applyAgentEvent(
         },
         effects,
       };
+      // 顶层与嵌套（parentToolCallId）一律认：事件里带着完整 args。
+      if (event.toolName === PLAN_TOOL_NAME && event.args !== undefined) {
+        result.planOp = { type: "apply", args: event.args };
+      }
+      return result;
+    }
 
     case "tool_execution_end":
       return {

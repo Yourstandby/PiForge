@@ -262,11 +262,16 @@ test("getUpstreamProviderUsage deduplicates concurrent requests", async () => {
   };
   const options = {
     auth: { "openai-codex": { access: "token" } },
+    // Credential resolution now always runs (it is what recovers env-only keys),
+    // so stub it to keep the assertions synchronous-ish.
+    resolveAuth: async () => ({ access: "token" }),
     fetchImpl: mockFetch as unknown as typeof fetch,
   };
 
   const first = getUpstreamProviderUsage("openai-codex", options);
   const second = getUpstreamProviderUsage("openai-codex", options);
+  // auth resolution is async now, so let its microtasks settle before counting.
+  await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(fetchCount, 1);
   release();
   const [firstResult, secondResult] = await Promise.all([first, second]);

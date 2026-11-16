@@ -12,6 +12,7 @@ import type { SessionInfo, SessionTreeNode, UserMessage } from "@/lib/types";
 import type { FollowUpQueueSnapshot } from "@/lib/follow-up-queue";
 import type { PrefixAuditView } from "@/lib/token-guard";
 import { formatCodemodeProgressFromResult } from "@/lib/codemode-progress";
+import { applyPlanCall, planFromMessages, type PlanProgress } from "@/lib/plan-progress";
 import {
   calculateSessionActivity,
   calculateSessionStats,
@@ -213,6 +214,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [agentPhase, setAgentPhase] = useState<AgentPhase>(null);
   const [agentMode, setAgentMode] = useState<AgentMode>(DEFAULT_AGENT_MODE);
   const [canExecutePlan, setCanExecutePlan] = useState(false);
+  /** 计划进度卡片开关（desktop-settings，默认开）；关掉时连折叠计算都跳过。 */
+  const [planProgressEnabled, setPlanProgressEnabled] = useState(true);
+  /**
+   * 本轮执行中折叠出来的进度（来自 SSE 的 plan 事件，含 codemode 脚本内的嵌套调用）。
+   * 历史轮次靠 planFromMessages 从消息里重建，所以这里只服务「正在跑的这一轮」。
+   */
+  const [livePlan, setLivePlan] = useState<PlanProgress | null>(null);
   const [extensionUiRequest, setExtensionUiRequest] =
     useState<ExtensionUiRequestEvent | null>(null);
   const [extensionUiNotify, setExtensionUiNotify] = useState<{
@@ -615,6 +623,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         setAgentPhase((prev) => applyPhaseOp(prev, result.phaseOp!));
       }
       if (result.streamAction) dispatch(result.streamAction);
+      if (result.planOp) {
+        const op = result.planOp;
+        setLivePlan((prev) => (op.type === "reset" ? null : applyPlanCall(prev, op.args)));
+      }
       if (result.retryInfo !== undefined) setRetryInfo(result.retryInfo);
       if (result.isCompacting !== undefined)
         setIsCompacting(result.isCompacting);
@@ -942,6 +954,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     setData(null);
     setActiveLeafId(null);
     setMessages([]);
+    setLivePlan(null);
     setEntryIds([]);
     setToolPreset(reset.toolPreset);
     setThinkingLevel(reset.thinkingLevel);
@@ -971,8 +984,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
     fetch("/api/desktop-settings")
       .then((r) => r.json())
-      .then((d: { defaultAgentMode?: AgentMode }) => {
-        if (!cancelled && d.defaultAgentMode) setAgentMode(d.defaultAgentMode);
+      .then((d: { defaultAgentMode?: AgentMode; planProgressEnabled?: boolean }) => {
+        if (cancelled) return;
+        if (d.defaultAgentMode) setAgentMode(d.defaultAgentMode);
+        if (typeof d.planProgressEnabled === "boolean") setPlanProgressEnabled(d.planProgressEnabled);
       })
       .catch(() => {});
 
@@ -1055,6 +1070,21 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const clearCompactionNotice = useCallback(() => setCompactionNotice(null), []);
 
+  /**
+   * 计划进度：只认最后一次 `plan` 工具调用折叠出来的状态。
+   * 历史消息里的 plan 调用不重复渲染，卡片永远只有一张。
+   */
+  /**
+   * 停机后不再挂着上一轮的计划卡片：本轮已结束、也没在等用户批准时直接不渲染，
+   * 位置还给输入框（旧计划留在会话历史里，再点"继续"会被重新折出来）。
+   * 计划模式下的"批准并执行"是例外 —— 那是等用户操作，不是残留。
+   */
+  const planProgress = useMemo(() => {
+    if (!planProgressEnabled) return null;
+    if (!agentRunning && !canExecutePlan) return null;
+    return livePlan ?? planFromMessages(messages, { sinceLastUser: true });
+  }, [messages, livePlan, planProgressEnabled, agentRunning, canExecutePlan]);
+
   return {
     // State
     loading,
@@ -1070,6 +1100,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     modelThinkingLevelMaps,
     agentMode,
     canExecutePlan,
+    planProgress,
+    planProgressEnabled,
     extensionUiRequest,
     extensionUiNotify,
     trustPrompt,

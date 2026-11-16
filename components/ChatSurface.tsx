@@ -14,6 +14,7 @@ import { formatTokenCount } from "@/lib/token-format";
 import { TokenGuardBanner } from "./TokenGuardBanner";
 import { StreamHealthBanner } from "./StreamHealthBanner";
 import { RetryNotice } from "./RetryNotice";
+import { PlanProgressCard } from "./PlanProgressCard";
 import { evaluateStreamHealth, type StreamHealth } from "@/hooks/agent-session/stream-health";
 import { useSessionSplitHint } from "@/hooks/useSessionSplitHint";
 import { useSessionScope } from "@/hooks/useSessionScope";
@@ -1575,7 +1576,26 @@ function ChatSession({
     <div className="flex flex-col gap-2">
       {/* 模型连接失败 / 自动重试：pi 的 auto_retry_start 自带原因，之前这条链路没有渲染出口 */}
       <RetryNotice info={chat.retryInfo} />
-      {chat.canExecutePlan && chat.agentMode === "plan" && (
+      {/* 计划进度卡片优先：有 plan 工具数据就渲染卡片，批准按钮并进卡片底部。
+          没有 plan 数据（旧会话 / 设置关掉）时退回原来那条 chip，行为一字不变。 */}
+      {chat.planProgress ? (
+        <PlanProgressCard
+          progress={chat.planProgress}
+          running={chat.agentRunning}
+          approval={
+            chat.agentMode === "plan" && chat.canExecutePlan
+              ? {
+                  running: chat.agentRunning,
+                  onExecute: () => {
+                    void chat.handleExecutePlan();
+                  },
+                  onDismiss: () => chat.dismissPlan(),
+                }
+              : null
+          }
+        />
+      ) : (
+        chat.canExecutePlan && chat.agentMode === "plan" && (
         <div
           role="group"
           aria-label="计划已生成"
@@ -1601,6 +1621,7 @@ function ChatSession({
             拒绝
           </button>
         </div>
+        )
       )}
       {compactToast && (
         <div

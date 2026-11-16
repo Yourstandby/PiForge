@@ -77,11 +77,10 @@ test("PIFORGE_ON_DEMAND_DOMAINS=1 moves memory/orchestrator behind tool_search",
   });
 });
 
-test("plan mode declares the read-only memory facade via PLAN_TOOLS", () => {
-  const declared = desktopRuntimeTools("plan", "default", false, REGISTERED, []);
-  assert.ok(declared.includes("memory"));
-  assert.ok(!declared.includes("shell"));
-  assert.ok(!declared.includes("orchestrator"));
+test("plan mode 与 full 声明同一份工具（切换不破前缀）", () => {
+  const plan = desktopRuntimeTools("plan", "default", false, REGISTERED, []);
+  const full = desktopRuntimeTools("full", "default", false, REGISTERED, []);
+  assert.deepEqual(plan.slice().sort(), full.slice().sort());
 });
 
 /**

@@ -37,31 +37,36 @@ function beforeAgentStartEvent(appendSystemPrompt = "") {
   };
 }
 
-test("plan mode appends the plan prompt and keeps only read tools", async () => {
-  const { handlers, activeTools } = setup("plan");
-  const event = beforeAgentStartEvent();
-  const result = await handlers.get("before_agent_start")?.(event);
-
-  assert.equal(result, undefined, "no forced prompt: pi keeps rendering its own sections");
-  // 语言约束固定在最前，计划模式在其后追加。
-  assert.equal(
-    event.systemPromptOptions.appendSystemPrompt,
-    `${RESPONSE_LANGUAGE_PROMPT}
-
-${PLAN_MODE_SYSTEM_PROMPT}`,
-  );
-  // 只读工具 + memory 多态工具（plan 模式只放行 recall 动作）。
-  assert.deepEqual(activeTools[0].slice().sort(), ["find", "grep", "ls", "memory", "read", "tool_history_get"]);
-});
-
-test("plan mode appends after an existing append prompt", async () => {
+test("plan mode 的计划提示走尾部消息，不动系统前缀", async () => {
   const { handlers } = setup("plan");
   const event = beforeAgentStartEvent("CUSTOM");
-  await handlers.get("before_agent_start")?.(event);
+  const result = (await handlers.get("before_agent_start")?.(event)) as
+    | { message?: { content?: string; display?: boolean } }
+    | undefined;
+
+  // system prompt 只留与模式无关的语言约束：plan 段落进前缀就等于整段历史缓存作废。
   assert.equal(
     event.systemPromptOptions.appendSystemPrompt,
-    `CUSTOM\n\n${RESPONSE_LANGUAGE_PROMPT}\n\n${PLAN_MODE_SYSTEM_PROMPT}`,
+    `CUSTOM\n\n${RESPONSE_LANGUAGE_PROMPT}`,
   );
+  assert.ok(result?.message?.content?.includes(PLAN_MODE_SYSTEM_PROMPT), "计划提示必须仍然送到模型");
+  assert.equal(result?.message?.display, false);
+});
+
+test("plan ↔ full 的前缀字节一致（system prompt + 工具装载）", async () => {
+  const planRun = setup("plan");
+  const planEvent = beforeAgentStartEvent("CUSTOM");
+  await planRun.handlers.get("before_agent_start")?.(planEvent);
+
+  const fullRun = setup("full");
+  const fullEvent = beforeAgentStartEvent("CUSTOM");
+  await fullRun.handlers.get("before_agent_start")?.(fullEvent);
+
+  assert.equal(
+    planEvent.systemPromptOptions.appendSystemPrompt,
+    fullEvent.systemPromptOptions.appendSystemPrompt,
+  );
+  assert.deepEqual(planRun.activeTools, fullRun.activeTools, "工具数组也必须一致，否则前缀照样作废");
 });
 
 test("full mode keeps the custom prompt and only adds the language rule", async () => {

@@ -83,6 +83,44 @@ test("notify emits fire-and-forget event", () => {
   assert.equal(notes[0].notifyType, "warning");
 });
 
+test("UI methods survive pi's spread-based uiContext wrapper", async () => {
+  // pi's ExtensionRunner.wrapUIPromptContext() rebuilds the context as
+  // `{ ...ui, select: ... }`. A class instance would lose every prototype
+  // method there while hasUI() stayed true, so extensions crashed with
+  // "ctx.ui.notify is not a function" and codemode reported the script failed.
+  const events: (ExtensionUiRequestEvent | ExtensionUiNotifyEvent)[] = [];
+  const bridge = new ExtensionUiBridge((e) => events.push(e));
+  const wrapped = { ...bridge } as Record<string, unknown>;
+
+  for (const name of [
+    "notify",
+    "select",
+    "confirm",
+    "input",
+    "editor",
+    "custom",
+    "setStatus",
+    "setWidget",
+    "getToolsExpanded",
+    "getTheme",
+    "pendingRequests",
+  ]) {
+    assert.equal(typeof wrapped[name], "function", name + " must survive the spread");
+  }
+
+  // Methods lifted off the prototype must still be bound to the bridge.
+  (wrapped.notify as (message: string, type: string) => void)("blocked", "warning");
+  const note = events.at(-1);
+  assert.equal(note?.type, "extension_ui_notify");
+  assert.equal((note as ExtensionUiNotifyEvent).message, "blocked");
+
+  const pending = (wrapped.confirm as (t: string, m: string) => Promise<boolean>)("Allow?", "rm -rf /");
+  const request = events.at(-1) as ExtensionUiRequestEvent;
+  assert.equal(request.method, "confirm");
+  assert.equal(bridge.respond({ id: request.id, confirmed: true }), null);
+  assert.equal(await pending, true);
+});
+
 test("pendingRequests keeps unanswered dialogs for SSE replay", async () => {
   const bridge = new ExtensionUiBridge(() => {});
   const input = bridge.input("Project name", "my-repo");

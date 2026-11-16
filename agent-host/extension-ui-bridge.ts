@@ -45,6 +45,43 @@ export type ExtensionUiDialogOptions = {
 };
 
 /**
+ * Copy every prototype member of `target` onto the instance itself, enumerable
+ * and with `this` already bound.
+ *
+ * pi's `ExtensionRunner.wrapUIPromptContext()` re-creates the extension UI
+ * context with an object spread (`{ ...ui, select: ... }`), which only copies
+ * own enumerable properties. A class instance keeps every UI method on its
+ * prototype, so the spread used to produce a context that still reported
+ * `hasUI === true` while `notify` (and every other method) was gone: extensions
+ * like raw-guard crashed with "ctx.ui.notify is not a function" and the whole
+ * codemode script was reported as failed. Hoisting the members onto the
+ * instance makes the spread-based wrapper lossless.
+ */
+function exposeUIOnInstance(target: object): void {
+  const proto = Object.getPrototypeOf(target) as object | null;
+  if (!proto || proto === Object.prototype) return;
+  for (const key of Object.getOwnPropertyNames(proto)) {
+    if (key === "constructor" || Object.prototype.hasOwnProperty.call(target, key)) continue;
+    const desc = Object.getOwnPropertyDescriptor(proto, key);
+    if (!desc) continue;
+    if (typeof desc.value === "function") {
+      Object.defineProperty(target, key, {
+        value: (desc.value as (...args: unknown[]) => unknown).bind(target),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+    } else if (desc.get) {
+      Object.defineProperty(target, key, {
+        get: desc.get.bind(target),
+        enumerable: true,
+        configurable: true,
+      });
+    }
+  }
+}
+
+/**
  * Bridge implementing the dialog + notify subset of ExtensionUIContext.
  * TUI-only methods are provided as no-ops so bindExtensions can use it as mode "rpc".
  */
@@ -57,6 +94,7 @@ export class ExtensionUiBridge {
 
   constructor(emit: ExtensionUiEmit) {
     this.emit = emit;
+    exposeUIOnInstance(this);
   }
 
   get pendingCount(): number {

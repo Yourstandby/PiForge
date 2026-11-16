@@ -192,7 +192,7 @@ test("aux tools are only declared once configured", () => {
   assert.ok(both.includes("generate_image"));
   assert.ok(both.includes("classify_decision"));
 
-  // Plan mode and the "none" preset still strip every declaration.
-  assert.ok(!desktopRuntimeTools("plan", "default", false, registered, [], { image: true, decision: true }).includes("generate_image"));
+  // "none" 预设仍然收窄；plan 模式不再收窄（与 full 声明一致，否则切换破缓存）。
+  assert.ok(desktopRuntimeTools("plan", "default", false, registered, [], { image: true, decision: true }).includes("generate_image"));
   assert.ok(!desktopRuntimeTools("full", "none", false, registered, [], { image: true, decision: true }).includes("generate_image"));
 });

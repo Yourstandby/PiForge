@@ -52,6 +52,7 @@ import {
   setRuntimeOnDemandDomains,
 } from "../lib/domain-tools.ts";
 import { desktopOutputStyleInlineExtension } from "./desktop-output-style-extension.ts";
+import { desktopPlanInlineExtension } from "./desktop-plan-extension.ts";
 import { desktopBrowserInlineExtension } from "./desktop-browser-extension.ts";
 import { desktopTerminalInlineExtension } from "./desktop-terminal-extension.ts";
 import { desktopCodemodeObserverInlineExtension } from "./desktop-codemode-observer-extension.ts";
@@ -1333,6 +1334,10 @@ export async function startRpcSession(
             process.env.PIFORGE_DEBUG_COMPACT === "1"
               ? (message, detail) => console.log(message, detail ?? "")
               : undefined,
+        }),
+        // 计划进度：设置项关掉时整个扩展不注册（工具 schema 与提示词一起消失）。
+        desktopPlanInlineExtension({
+          enabled: () => desktop.planProgressEnabled !== false,
         }),
         desktopLtmInlineExtension({ getCwd: () => cwd }),
         desktopProcessInlineExtension({ getCwd: () => cwd }),
