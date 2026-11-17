@@ -2866,6 +2866,7 @@ export function Transcript({
   precomputedTurns,
   streamingMessage,
   planCardInComposer,
+  planCardsEnabled,
 }: {
   messages: AgentMessage[];
   /** 1:1 with `messages`：React 渲染用的稳定 key（下标会随插入平移，不能当下标用）。 */
@@ -2921,6 +2922,12 @@ export function Transcript({
    * 这一轮一结束、上方卡片消失，冻结卡片就出现在该轮末尾 —— 位置从此不再移动。
    */
   planCardInComposer?: boolean;
+  /**
+   * 设置里的「计划进度卡片」开关。关掉时转录里的冻结卡片也一起收起 ——
+   * 旧会话里已经存在的 plan 调用同样不渲染，否则"关了还看得见"。
+   * 缺省 true，保持旧行为。
+   */
+  planCardsEnabled?: boolean;
 }) {
   const { locale } = useI18n();
   /** 中文界面用人民币符号，其余用美元。 */
@@ -3412,7 +3419,8 @@ export function Transcript({
         const live = Boolean(liveTurn) && index === turns.length - 1;
         /** 本轮计划卡片：跑着时归输入框上方那张，落定后才钉到这一轮末尾。 */
         const planCard =
-          planCardInComposer && index >= roundPlans.lastRoundStart
+          planCardsEnabled === false ||
+          (planCardInComposer && index >= roundPlans.lastRoundStart)
             ? undefined
             : roundPlans.plans.get(index);
         return (

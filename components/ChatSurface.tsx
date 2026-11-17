@@ -1860,6 +1860,8 @@ function ChatSession({
         // 进行中/待批准时卡片留在输入框上方，转录里就不重复渲染这一轮的冻结卡片；
         // 跑完 composer 那张消失，冻结卡片才落到该轮末尾并从此不动。
         planCardInComposer={Boolean(chat.planProgress)}
+        // 设置里关掉「计划进度卡片」= 转录里那些冻结卡片也一起隐藏，不留残余。
+        planCardsEnabled={chat.planProgressEnabled}
       />
     ),
     [
@@ -1871,6 +1873,7 @@ function ChatSession({
       chat.forkingEntryId,
       chat.nestedToolExecutions,
       chat.planProgress,
+      chat.planProgressEnabled,
       session?.cwd,
       newSessionCwd,
       onOpenFile,
