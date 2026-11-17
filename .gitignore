@@ -79,3 +79,6 @@ bun.lock
 
 # local upstream reference clones
 tmp/
+
+# docs screenshot probe scratch (临时截图，不提交)
+/docs/assets/_probe/
