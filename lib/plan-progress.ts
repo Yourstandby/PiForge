@@ -111,6 +111,10 @@ export interface PlanFromMessagesOptions {
    * 计划会被一直翻出来（切会话、重启、开新轮次都还在）。
    */
   sinceLastUser?: boolean;
+  /** 起始消息下标（含），缺省 0（或 sinceLastUser 的边界，两者取大）。 */
+  from?: number;
+  /** 结束消息下标（不含），缺省到数组末尾。 */
+  to?: number;
 }
 
 /** 最后一条用户消息的下标 + 1；没有用户消息时返回 0（等价全量折叠）。 */
@@ -127,8 +131,10 @@ export function planFromMessages(
 ): PlanProgress | null {
   let progress: PlanProgress | null = null;
   const all = messages as readonly AgentMessage[];
-  const start = options.sinceLastUser ? lastUserBoundary(all) : 0;
-  for (let index = start; index < all.length; index += 1) {
+  const sinceStart = options.sinceLastUser ? lastUserBoundary(all) : 0;
+  const start = Math.max(sinceStart, options.from ?? 0);
+  const end = Math.max(start, Math.min(all.length, options.to ?? all.length));
+  for (let index = start; index < end; index += 1) {
     const message = all[index];
     if (!message) continue;
     // codemode 脚本内的 plan 调用不是顶层 toolCall（SDK 不会把嵌套调用写进消息），
@@ -165,4 +171,63 @@ export function planFromMessages(
     }
   }
   return progress;
+}
+
+/**
+ * 折叠**某一段消息区间**里的 plan 调用：给「一轮对话」冻结一张卡片用。
+ *
+ * 和输入框上方那张（sinceLastUser 口径）的区别：这里按区间切，
+ * 一轮结束时的进度就是这一轮最终的样子，不会因为下一轮开了新计划而被改写，
+ * 于是卡片能钉死在该轮末尾，不跟着新任务往下走。
+ */
+export function planInRange(
+  messages: readonly unknown[],
+  from: number,
+  toExclusive: number,
+): PlanProgress | null {
+  return planFromMessages(messages, { from, to: toExclusive });
+}
+
+/** planByRound 只需要轮次的两个字段，不绑定 Transcript 的视图类型。 */
+export interface RoundBoundary {
+  role: "user" | "assistant";
+  /** 该轮次对应的消息下标。 */
+  messageIndex: number;
+}
+
+/**
+ * 每一轮对话冻结下来的计划卡片，按**该轮最后一条渲染轮次的下标**索引。
+ *
+ * 为什么不取全局最新（planFromMessages）：卡片要钉在上一轮的末尾 ——
+ * 新任务开跑后不能跟着往下走，也不能被下一轮的 plan 调用改写。
+ * 区间 = [该轮 user 消息下标, 下一条 user 消息下标)。
+ *
+ * 返回的 lastRoundStart 是最后一轮 user 轮次的下标：调用方用它决定
+ * 「这一轮的计划还在输入框上方那张活卡片里，别在转录里重复渲染」。
+ */
+export function planByRound(
+  turns: readonly RoundBoundary[],
+  messages: readonly unknown[],
+): { plans: Map<number, PlanProgress>; lastRoundStart: number } {
+  const plans = new Map<number, PlanProgress>();
+  let roundStart = -1;
+  let roundEndTurn = -1;
+  let lastRoundStart = 0;
+  const close = (endMessageIndex: number) => {
+    if (roundStart < 0) return;
+    const progress = planInRange(messages, roundStart, endMessageIndex);
+    if (progress) plans.set(roundEndTurn, progress);
+  };
+  turns.forEach((turn, index) => {
+    if (turn.role === "user") {
+      close(turn.messageIndex);
+      lastRoundStart = index;
+      roundStart = turn.messageIndex;
+      roundEndTurn = index;
+      return;
+    }
+    if (roundStart >= 0) roundEndTurn = index;
+  });
+  close(messages.length);
+  return { plans, lastRoundStart };
 }

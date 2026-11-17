@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import {
   applyPlanCall,
   PLAN_MAX_STEPS,
+  planByRound,
   planFromMessages,
+  planInRange,
   readPlanSteps,
   readPlanUpdate,
 } from "./plan-progress.ts";
@@ -230,4 +232,64 @@ test("sinceLastUser：同一轮里的 plan 调用照常折叠", () => {
 test("sinceLastUser：没有用户消息时等价全量折叠", () => {
   const messages = [assistantCall({ steps: [{ title: "只有助手消息" }] })];
   assert.deepEqual(planFromMessages(messages, { sinceLastUser: true }), planFromMessages(messages));
+});
+
+test("planInRange：只折叠区间内的调用（区间外的一律不算）", () => {
+  const messages = [
+    { role: "user", content: "第一轮" },
+    assistantCall({ steps: [{ title: "旧步骤", status: "done" }] }),
+    { role: "user", content: "第二轮" },
+    assistantCall({ steps: [{ title: "新步骤" }] }),
+  ];
+  const second = planInRange(messages, 2, messages.length);
+  assert.ok(second);
+  assert.deepEqual(second.steps.map((step) => step.title), ["新步骤"]);
+  // 空区间 / 越界区间：不报错，就是没有卡片
+  assert.equal(planInRange(messages, 2, 2), null);
+  assert.equal(planInRange(messages, 99, 120), null);
+});
+
+test("planByRound：每轮各自冻结一张卡片，钉在该轮最后一条轮次上", () => {
+  const messages = [
+    { role: "user", content: "第一轮" },
+    assistantCall({ steps: [{ title: "a", status: "done" }, { title: "b", status: "done" }] }),
+    assistantCall({ update: { index: 0, status: "done" } }),
+    { role: "user", content: "第二轮" },
+    assistantCall({ steps: [{ title: "c" }] }),
+  ];
+  const turns = [
+    { role: "user" as const, messageIndex: 0 },
+    { role: "assistant" as const, messageIndex: 1 },
+    { role: "assistant" as const, messageIndex: 2 },
+    { role: "user" as const, messageIndex: 3 },
+    { role: "assistant" as const, messageIndex: 4 },
+  ];
+  const { plans, lastRoundStart } = planByRound(turns, messages);
+  assert.equal(lastRoundStart, 3, "最后一轮的下标给调用方判断要不要在转录里重复渲染");
+  assert.deepEqual([...plans.keys()], [2, 4], "键 = 该轮最后一条轮次的下标");
+  assert.equal(plans.get(2)?.done, 2, "上一轮做完的 2/2 不会被下一轮改写");
+  assert.equal(plans.get(2)?.total, 2);
+  assert.equal(plans.get(4)?.done, 0);
+  // 新一轮开跑（又多一条 user 消息）后，上一轮的卡片内容不变
+  const laterMessages = [...messages, { role: "user", content: "第三轮" }];
+  const later = planByRound(
+    [...turns, { role: "user" as const, messageIndex: 5 }],
+    laterMessages,
+  );
+  assert.deepEqual(later.plans.get(2), plans.get(2));
+});
+
+test("planByRound：没有 plan 调用的轮次不产生卡片", () => {
+  const messages = [
+    { role: "user", content: "hi" },
+    { role: "assistant", content: [{ type: "text", text: "在的" }] },
+  ];
+  const { plans } = planByRound(
+    [
+      { role: "user" as const, messageIndex: 0 },
+      { role: "assistant" as const, messageIndex: 1 },
+    ],
+    messages,
+  );
+  assert.equal(plans.size, 0);
 });

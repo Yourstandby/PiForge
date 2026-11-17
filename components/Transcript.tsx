@@ -1,6 +1,6 @@
 "use client";
 
-import { Children, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Children, Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -11,6 +11,8 @@ import { diffStats } from "@/lib/diff-lines";
 import { stripImageDimensionNotes } from "@/lib/image-dimension-note";
 import { buildWithTurnCache, type TurnCacheEntry } from "@/lib/transcript-turn-cache";
 import { isInterventionText } from "@/contract/intervention-marker";
+import { PLAN_TOOL_NAME, planByRound } from "@/lib/plan-progress";
+import { PlanProgressCard } from "./PlanProgressCard";
 import { estimateTokens } from "@/lib/live-usage";
 import { billableTokens, inputUnitPrice } from "@/lib/usage-billing";
 import { formatTokenCount } from "@/lib/token-format";
@@ -769,6 +771,9 @@ function assistantBlocks(
     } else if (block.type === "toolCall") {
       const name = (block.toolName ?? block.name) as string | undefined;
       if (!name) continue;
+      // plan 调用不再走通用工具卡：它由该轮末尾那张计划卡片呈现（PlanProgressCard）。
+      // 两处都渲染 → 同一份清单在同一轮里出现两遍。
+      if (name === PLAN_TOOL_NAME) continue;
       const input = (block.input ?? block.arguments ?? {}) as Record<string, unknown>;
       const id = (block.toolCallId ?? block.id) as string | undefined;
       blocks.push({
@@ -2860,6 +2865,7 @@ export function Transcript({
   liveToolOutputs,
   precomputedTurns,
   streamingMessage,
+  planCardInComposer,
 }: {
   messages: AgentMessage[];
   /** 1:1 with `messages`：React 渲染用的稳定 key（下标会随插入平移，不能当下标用）。 */
@@ -2909,6 +2915,12 @@ export function Transcript({
    * 流式期间只重算最后这一条。
    */
   streamingMessage?: AgentMessage | null;
+  /**
+   * 输入框上方正挂着「活着」的那张计划卡片（进行中 / 等待批准）。
+   * 为 true 时最后一轮不再在转录里重复渲染冻结卡片，避免同一份清单出现两次；
+   * 这一轮一结束、上方卡片消失，冻结卡片就出现在该轮末尾 —— 位置从此不再移动。
+   */
+  planCardInComposer?: boolean;
 }) {
   const { locale } = useI18n();
   /** 中文界面用人民币符号，其余用美元。 */
@@ -2975,6 +2987,15 @@ export function Transcript({
     const base = precomputedTurns ?? historyTurns;
     return streamingTurns.length > 0 ? [...base, ...streamingTurns] : base;
   }, [precomputedTurns, historyTurns, streamingTurns]);
+
+  /**
+   * 每轮冻结的计划卡片。只依赖**已落盘的消息**（historyTurns + messages），
+   * 流式 token 每帧变化不会重算它；轮次下标与 turns 对齐（流式那条永远在最末尾）。
+   */
+  const roundPlans = useMemo(
+    () => planByRound(historyTurns, messages),
+    [historyTurns, messages],
+  );
 
   /* ---------------- 增量挂载：首屏 20 轮，其余按需 ----------------
      会话刚打开时只渲染尾部窗口，避免一次性 parse/render 上千轮 markdown。
@@ -3389,12 +3410,17 @@ export function Transcript({
         const entryId = entryIds?.[messageIndex];
         /** 只有最后一条属于「正在流式输出」，其余历史行一律稳定。 */
         const live = Boolean(liveTurn) && index === turns.length - 1;
+        /** 本轮计划卡片：跑着时归输入框上方那张，落定后才钉到这一轮末尾。 */
+        const planCard =
+          planCardInComposer && index >= roundPlans.lastRoundStart
+            ? undefined
+            : roundPlans.plans.get(index);
         return (
+          <Fragment key={messageKeys?.[messageIndex] ?? messageIndex}>
           <TurnRow
             /* key 优先用调用方给的稳定 id（流式占位是常量 key）：
                下标会随"新 user 消息插入"而平移，用它做 key 会让 React 复用错节点，
                表现就是"新消息被塞进了上一条消息的 DOM 里"。 */
-            key={messageKeys?.[messageIndex] ?? messageIndex}
             turn={turn}
             index={index}
             isLastOfRound={isLastOfRound}
@@ -3426,6 +3452,12 @@ export function Transcript({
             branchSwitch={branchSwitch}
             onSwitchBranch={onSwitchBranch}
           />
+          {planCard ? (
+            <div className="mb-3 mt-1">
+              <PlanProgressCard progress={planCard} running={false} />
+            </div>
+          ) : null}
+          </Fragment>
         );
       })}
     </div>

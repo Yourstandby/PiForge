@@ -1857,6 +1857,9 @@ function ChatSession({
         onBranch={handleBranchAt}
         branchSwitch={branchSwitchFor}
         onSwitchBranch={handleSwitchBranch}
+        // 进行中/待批准时卡片留在输入框上方，转录里就不重复渲染这一轮的冻结卡片；
+        // 跑完 composer 那张消失，冻结卡片才落到该轮末尾并从此不动。
+        planCardInComposer={Boolean(chat.planProgress)}
       />
     ),
     [
@@ -1867,6 +1870,7 @@ function ChatSession({
       chat.handleFork,
       chat.forkingEntryId,
       chat.nestedToolExecutions,
+      chat.planProgress,
       session?.cwd,
       newSessionCwd,
       onOpenFile,
