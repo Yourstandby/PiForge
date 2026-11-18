@@ -30,10 +30,23 @@ test("重试耗尽后报 failed 并带上次数", () => {
 test("退避重连中报 reconnecting", () => {
   for (const status of ["connecting", "disconnected"] as const) {
     assert.equal(
-      evaluateStreamHealth({ agentRunning: true, status, lastEventAt: 0, now: 1 }).kind,
+      evaluateStreamHealth({ agentRunning: true, status, lastEventAt: 0, now: 1, attempts: 1 }).kind,
       "reconnecting",
     );
   }
+});
+
+test("本轮刚建连的握手阶段（attempts=0）不报重连，避免每次发消息闪提示", () => {
+  assert.equal(
+    evaluateStreamHealth({
+      agentRunning: true,
+      status: "connecting",
+      lastEventAt: 0,
+      now: 1,
+      attempts: 0,
+    }).kind,
+    "ok",
+  );
 });
 
 test("连接在但超过阈值没增量 → stalled", () => {
