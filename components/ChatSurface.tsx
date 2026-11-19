@@ -1492,15 +1492,15 @@ function ChatSession({
    * 结果还没落盘的那些并进来：事件流断过也不会漏（以前只信事件流，一断就啥也不显示）。
    */
   const runningTools = useStickyRunningTools(
-    useMemo(
-      () =>
-        collectRunningTools({
-          messages: chat.messages,
-          agentRunning: chat.agentRunning,
-          phaseTools: chat.agentPhase?.kind === "running_tools" ? chat.agentPhase.tools : null,
-        }),
-      [chat.messages, chat.agentRunning, chat.agentPhase],
-    ),
+    useMemo(() => {
+      // toolEndTick 只是重算触发点：已结束登记表在模块级 Map 里，不是 state。
+      void chat.toolEndTick;
+      return collectRunningTools({
+        messages: chat.messages,
+        agentRunning: chat.agentRunning,
+        phaseTools: chat.agentPhase?.kind === "running_tools" ? chat.agentPhase.tools : null,
+      });
+    }, [chat.messages, chat.agentRunning, chat.agentPhase, chat.toolEndTick]),
   );
 
 

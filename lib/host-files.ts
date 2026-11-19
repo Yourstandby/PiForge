@@ -65,6 +65,32 @@ export function isHostAccessDenied(error: unknown): boolean {
 }
 
 /**
+ * Host 的 ACCESS_DENIED 混着两件事：目标路径不存在（多半是链接指向了别的
+ * 项目，或路径拼错），以及真的越权。以前两者都回 "Access denied"，用户
+ * 看不出该去改什么。这里按 Host 的原文案把它们分开，并把目标路径带回去。
+ */
+const MISSING_TARGET_PATTERN = /is not accessible/i;
+
+export function describeHostAccessDenied(
+  error: unknown,
+  target?: string,
+): { status: number; message: string } | null {
+  if (!isHostAccessDenied(error)) return null;
+  const detail = error instanceof Error ? error.message : "";
+  if (MISSING_TARGET_PATTERN.test(detail)) {
+    return {
+      status: 404,
+      message: target ? `文件不存在：${target}` : "文件不存在或不可读",
+    };
+  }
+  const reason = detail && detail !== "Access denied" ? `：${detail}` : "";
+  return {
+    status: 403,
+    message: target ? `无权访问：${target}${reason}` : `无权访问${reason}`,
+  };
+}
+
+/**
  * 上报「当前项目」：项目隔离开启时，Host 只放行这个目录内的文件访问。
  * 失败不抛：上报不上最多退回旧行为，不能因此卡住 UI。
  */

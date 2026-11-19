@@ -148,6 +148,9 @@ export function FloatingFileViewer({
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const fileName = target.fileName || getFileName(target.filePath);
+  /** 链接可能来自另一个项目的对话：此时右栏项目根下根本没有这个文件。 */
+  const relativePath = getRelativeFilePath(target.filePath, cwd ?? undefined);
+  const outsideProject = Boolean(cwd) && (relativePath.startsWith("/") || /^[A-Za-z]:[\\/]/.test(relativePath));
   const kind = fileKind(fileName);
   const isPreviewable = kind === "image" || kind === "html" || kind === "markdown";
   const isTextEditable = kind === "text" || kind === "html" || kind === "markdown";
@@ -376,7 +379,15 @@ export function FloatingFileViewer({
             <Loader2 size={11} className="animate-spin" aria-hidden="true" /> 读取文件…
           </p>
         ) : error ? (
-          <ErrorNotice message={error} className="block px-3 py-2 text-[11px] text-danger" />
+          <div className="px-3 py-2">
+            <ErrorNotice message={error} className="block text-[11px] text-danger" />
+            {outsideProject && (
+              <p className="mt-1.5 text-[11px] leading-relaxed text-ink-faint">
+                这个路径不在当前项目 <span className="font-mono break-all">{cwd}</span> 内 ——
+                链接多半来自另一个项目的对话。切到那个项目的会话再点，或先把项目切过去。
+              </p>
+            )}
+          </div>
         ) : target.diff ? (
           <pre className="m-0 py-1 font-mono text-[11.5px] leading-5">
             {(diff ?? "").split(/\r?\n/).map((line, index) => {

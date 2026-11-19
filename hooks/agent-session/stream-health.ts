@@ -38,6 +38,10 @@ export function evaluateStreamHealth(input: {
   // 未运行时不关心断流：下一轮 handleSend 会重新 connectEvents。
   if (!agentRunning) return { kind: "ok" };
   if (status === "failed") return { kind: "failed", attempts };
+  // 本轮刚发出的 connect 还在握手阶段（attempts=0）：这是正常开局，不是断流。
+  // 原先这里会报「事件流重连中…（第 0 次）」，于是每次发消息都闪一下提示条，
+  // 看起来像故障，实际只是 SSE 刚建连。真正的重连一定是从 attempts>=1 开始的。
+  if (status === "connecting" && attempts === 0) return { kind: "ok" };
   if (status === "connecting" || status === "disconnected") {
     return { kind: "reconnecting", attempts };
   }

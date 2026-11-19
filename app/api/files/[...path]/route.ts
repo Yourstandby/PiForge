@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "../../../../lib/next-server-shim.ts";
 import fs from "fs";
 import path from "path";
 import { errorMessage, getRequestId, jsonError, logApiError } from "../../../../lib/api-error.ts";
-import { authorizeHostPath, isHostAccessDenied } from "../../../../lib/host-files.ts";
+import { authorizeHostPath, describeHostAccessDenied } from "../../../../lib/host-files.ts";
 import { jsonAgentHostError } from "../../../../lib/agent-host-http.ts";
 import { isWindowsAbsolutePath, normalizeSlashes } from "../../../../lib/path-text.ts";
 import { validateWritablePath } from "../../../../lib/path-policy.ts";
@@ -22,10 +22,16 @@ import {
  * checks allowed roots + writable-path rules. Next performs the IO only on the
  * canonical path returned here.
  */
-function fileAccessError(req: NextRequest, error: unknown, method: string): Response {
-  if (isHostAccessDenied(error)) {
-    return jsonError(req, 403, "Access denied");
-  }
+function fileAccessError(
+  req: NextRequest,
+  error: unknown,
+  method: string,
+  target?: string,
+): Response {
+  // 路径不存在 → 404（附路径），真越权 → 403（附权限原因）：面板上要能看出
+  // 是「链接指到了别的项目」还是「这文件不让读」。
+  const denied = describeHostAccessDenied(error, target);
+  if (denied) return jsonError(req, denied.status, denied.message);
   return jsonAgentHostError(req, error, { route: "/api/files/[...path]", method });
 }
 
@@ -138,7 +144,7 @@ export async function GET(
     try {
       realPath = await authorizeHostPath(filePath, "read");
     } catch (error) {
-      return fileAccessError(request, error, "GET");
+      return fileAccessError(request, error, "GET", filePath);
     }
 
     let stat: fs.Stats;
@@ -298,7 +304,7 @@ export async function POST(
     try {
       targetPath = await authorizeHostPath(filePath, "write");
     } catch (error) {
-      return fileAccessError(request, error, "POST");
+      return fileAccessError(request, error, "POST", filePath);
     }
 
     const writeError = validateWritablePath(targetPath);
@@ -365,7 +371,7 @@ export async function PUT(
     try {
       realPath = await authorizeHostPath(filePath, "write");
     } catch (error) {
-      return fileAccessError(request, error, "PUT");
+      return fileAccessError(request, error, "PUT", filePath);
     }
 
     // Reject writes to version-control metadata, node_modules internals, and
@@ -448,7 +454,7 @@ export async function PATCH(
     try {
       sourcePath = await authorizeHostPath(filePath, op === "copy" ? "read" : "write");
     } catch (error) {
-      return fileAccessError(request, error, "PATCH");
+      return fileAccessError(request, error, "PATCH", filePath);
     }
 
     if (op !== "copy") {
@@ -471,7 +477,7 @@ export async function PATCH(
       try {
         destDir = await authorizeHostPath(to, "write");
       } catch (error) {
-        return fileAccessError(request, error, "PATCH");
+        return fileAccessError(request, error, "PATCH", to);
       }
       destPath = path.join(destDir, path.basename(sourcePath));
     }

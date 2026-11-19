@@ -5,6 +5,7 @@ import {
   mergeRunningToolsWithPinned,
   pinRunningTools,
 } from "./running-tools.ts";
+import { markToolEnded, resetToolClocks } from "./tool-clock.ts";
 
 const call = (id: string, name: string) => ({
   role: "assistant",
@@ -52,6 +53,19 @@ test("已有 toolResult 的 id 不会被事件流的残留拖出来", () => {
     phaseTools: [{ id: "r1", name: "read" }],
   });
   assert.deepEqual(tools, []);
+});
+
+test("事件流报过 end 的调用，即使消息里永远没有 toolResult 也不算 running", () => {
+  // 嵌套调用（codemode 里的 bash）不落 toolResult：卡片早就停了，徽章不能一直挂。
+  resetToolClocks();
+  markToolEnded("n1", 22_000);
+  const tools = collectRunningTools({
+    agentRunning: true,
+    messages: [call("r1", "read"), call("n1", "bash")] as never,
+    phaseTools: [{ id: "n1", name: "bash" }],
+  });
+  assert.deepEqual(names(tools), ["read"]);
+  resetToolClocks();
 });
 
 test("agent 没在跑时一律不算（中止后残留不显示成 running）", () => {

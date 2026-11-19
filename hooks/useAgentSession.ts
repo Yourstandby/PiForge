@@ -212,6 +212,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     tokensAfter: number | null;
   } | null>(null);
   const [agentPhase, setAgentPhase] = useState<AgentPhase>(null);
+  /**
+   * 每次 tool_execution_end 自增一次，只用来给「正在跑什么」的徽章当重算触发点。
+   * 已结束的登记表在 lib/tool-clock.ts（模块级 Map，不是 state），光改它不会渲染。
+   */
+  const [toolEndTick, setToolEndTick] = useState(0);
   const [agentMode, setAgentMode] = useState<AgentMode>(DEFAULT_AGENT_MODE);
   const [canExecutePlan, setCanExecutePlan] = useState(false);
   /** 计划进度卡片开关（desktop-settings，默认开）；关掉时连折叠计算都跳过。 */
@@ -531,6 +536,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (event.type === "tool_execution_end") {
         // 卡片秒表以事件流为准：消息里不一定有能匹配上的 toolResult，只信它会一直数下去。
         markToolEnded(event.toolCallId, event.durationMs);
+        setToolEndTick((tick) => tick + 1);
         const finishedName = event.toolName;
         if (finishedName) {
           setLiveToolOutput((previous) => {
@@ -1127,6 +1133,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     /** 手动重试会话加载（错误卡片上的「重试」按钮）。 */
     loadSession,
     agentPhase,
+    toolEndTick,
     followUpQueue,
     followUpQueueBusy,
     nestedToolExecutions,
