@@ -7,9 +7,11 @@
 **把 Pi Coding Agent 装进一张安静的三栏工作台**<br />
 *A local-first desktop workbench for the Pi coding agent — multi-session, multi-agent, cache-aware.*
 
-Windows-first · Local-first · Electron + Next.js 静态导出 + Agent Host · 零内部端口 · MIT
+[![Release](https://img.shields.io/github/v/release/Yourstandby/PiForge?sort=semver)](https://github.com/Yourstandby/PiForge/releases) [![CI](https://github.com/Yourstandby/PiForge/actions/workflows/ci.yml/badge.svg)](https://github.com/Yourstandby/PiForge/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
-[架构](./docs/ARCHITECTURE.md) · [发布记录](./docs/releases) · [实测数据](./docs/measurements) · [变更日志](./CHANGELOG.md)
+Windows-first · Local-first · Electron + Next.js 静态导出 + Agent Host · 零内部端口
+
+[下载安装包](https://github.com/Yourstandby/PiForge/releases/latest) · [架构](./docs/ARCHITECTURE.md) · [发布记录](./docs/releases) · [实测数据](./docs/measurements) · [变更日志](./CHANGELOG.md)
 
 </div>
 
@@ -21,19 +23,22 @@ PiForge 不是「聊天框套壳」。左栏是项目与会话，中栏是多标
 
 [![PiForge 主界面](./docs/assets/generated/poster-light@2x.png)](./docs/assets/generated/demo.mp4)
 
-## v0.12.0 有什么新的
+## 当前版本 v0.12.1 — 计划模式不再重发上下文
 
-- **项目归你自己管**：左栏项目可重命名、可从侧栏移除。只写本地显示偏好，不删会话、不碰磁盘目录，重新选回同一目录即恢复。
-- **数字先说真话**：用量只报真实 `usage` 累计（不再叠加流式估算），按会话隔离；千以上缩写为 `2.9K` / `69.8K` / `1.0M`。
-- **开关先说默认**：思考等级默认「均衡」；AGENTS.md / CLAUDE.md 注入可按全局 + 项目三态关闭；HANDOFF.md 接续注入可选开启（默认关）。
-- **看门狗更耐心**：无有效进展的停滞阈值默认 90s，且 90s 就是最低档（预设 90 / 120 / 300 / 600 秒），不会再误杀长活。
+- **切 plan 不烧缓存**：计划段落改为尾部 `display:false` 注入，声明集合只由工具预设决定 —— plan 与执行模式的前缀字节完全一致，切进切出不再整段重发历史。
+- **只读改为执行期拦截**：不再靠「不给工具」实现只读，写操作在 `tool_call` 阶段被拒，理由写清 `Plan mode: planning only`。
+- **进度卡片真的会渲染**：折叠函数同时认 `{toolCallId, toolName, input}` 与 `{id, name, arguments}` 两种形状；顺带修好工具调用统计全落 `unknown` 的老问题。
+- **plan 工具常驻**：与 `tool_search` / `desktop_use_tool` 一样恒常驻，不会再被工具存根吞掉 schema。
 
-逐条细节与「默认行为变没变」见 [`CHANGELOG.md`](./CHANGELOG.md)；安装包说明见 [`docs/releases/v0.12.0.md`](./docs/releases/v0.12.0.md)。
+沿袭 v0.12.0：项目可重命名/隐藏、用量只报真实 `usage`、注入开关三态（AGENTS.md / CLAUDE.md 默认可关、HANDOFF.md 默认关）、看门狗停滞阈值默认 90s（下限也是 90s）。
+
+逐条细节与「默认行为变没变」见 [`CHANGELOG.md`](./CHANGELOG.md)；安装包说明见 [`docs/releases/v0.12.1.md`](./docs/releases/v0.12.1.md)。
 
 ## 能力
 
 | | 能力 | 一句话 |
 | --- | --- | --- |
+| ♻️ | **缓存友好的 plan 模式** | 切模式不动前缀，历史不重发；只读约束由执行期拦截保证 |
 | 🩺 | **无进展看门狗** | 程序层盯「有效进展」，卡住亮灯；**零 Token**、零 prompt 注入 |
 | 🖐 | **人工介入** | Skip / 极简询问 / 深度诊断，复用手边已有的队列通路 |
 | 🧠 | **上下文可视化与压缩** | 上下文环 + 四段式摘要，切点永远落在用户轮次上 |
@@ -75,7 +80,9 @@ Electron Main ──协议处理──▶ piforge://app（静态导出，无 Nex
 
 ## 快速开始
 
-需要 **Node.js 20+ / npm 10+**（主要目标平台 Windows 10/11，Linux / macOS 走 CI 验证）。
+**直接用**：到 [Releases](https://github.com/Yourstandby/PiForge/releases/latest) 下载 Windows NSIS 安装包或免安装 ZIP，附 `SHA256SUMS.txt` 可自行校验。
+
+**从源码跑**：需要 **Node.js 20+ / npm 10+**（主要目标平台 Windows 10/11，Linux / macOS 走 CI 验证）。
 
 ```bash
 git clone https://github.com/Yourstandby/PiForge.git
@@ -103,7 +110,7 @@ npm run dev            # 浏览器开发模式 → http://localhost:30141（仅�
 | `npm run smoke:host-reconnect` | Next 断线重连与事件重放 |
 | `npm run smoke:extension-ui` | Extension UI Bridge `confirm` 往返（Host 不挂起） |
 | `npm run smoke:shell` | 静态导出新鲜度 + 打包顺序 |
-| `npm run smoke:prefix-budget` | 前缀预算护栏 |
+| `npm run smoke:prefix-budget` | 前缀预算护栏（切模式不许重发上下文） |
 | `npm run measure:packaged` · `soak:host-heap` | 打包版内存/CPU/端口实测（含门禁） · 30 轮 soak |
 
 数字不放 README 正文：每个指标都有对应命令与存档，见 [`docs/measurements`](./docs/measurements) 与 [`docs/optimizations`](./docs/optimizations)。**提数字之前先给命令**。
