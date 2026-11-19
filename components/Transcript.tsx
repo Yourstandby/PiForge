@@ -517,6 +517,23 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/**
+ * 工具输出规模：非空行数。
+ * 工具本身不产生模型 token，卡片头部只报它「自己吐了多少行输出」。
+ */
+function outputLineCount(text: string): number {
+  const trimmed = text.replace(/\s+$/, "");
+  if (!trimmed) return 0;
+  return trimmed.split("\n").length;
+}
+
+/** 行数缩写：1234 → 1.2k（卡片头部只有几个字的宽度）。 */
+function formatLineCount(lines: number): string {
+  if (lines < 1000) return lines.toLocaleString();
+  if (lines < 1000000) return `${(lines / 1000).toFixed(1)}k`;
+  return `${(lines / 1000000).toFixed(1)}M`;
+}
+
 const TOOL_OUTPUT_PAGE_SIZE = 200;
 
 interface ToolOutputPageView {
@@ -1020,8 +1037,6 @@ function ToolCallCard({
   onToggleOpen,
   streaming = false,
   toolCallId,
-  usage,
-  currencySymbol = "$",
   liveOutput,
   stateKey,
   onUserInteract,
@@ -1041,9 +1056,6 @@ function ToolCallCard({
   onToggleOpen?: () => void;
   /** 该工具仍在执行：右上角显示实时计时，输出区自动跟随到底。 */
   streaming?: boolean;
-  /** 本卡片估算消耗，显示在右下角。 */
-  usage?: BlockUsage | null;
-  currencySymbol?: string;
   /** 执行中的实时输出（pi 的 tool_execution_update），没有时显示"正在执行…"。 */
   liveOutput?: string;
   /** 跨重挂载保存用户的手动展开/收起。 */
@@ -1146,6 +1158,11 @@ function ToolCallCard({
   const decision = useMemo(() => readDecisionDetails(details), [details]);
   const generatedImage = useMemo(() => readImageDetails(details), [details]);
   const persistedOutput = useMemo(() => readPersistedOutput(details), [details]);
+  /** 头部只报这次调用的输出规模；tokens / 金额是模型侧指标，统计在回答行与用量小结。 */
+  const outputLines = useMemo(
+    () => persistedOutput?.lines ?? outputLineCount(liveOutput || output),
+    [persistedOutput, liveOutput, output],
+  );
   const subagent = useMemo(() => readSubagentDetails(details), [details]);
   const spawnPending = name === "spawn_agent" && !result;
   const spawnName = typeof input.name === "string" && input.name.trim() ? input.name.trim() : "agent";
@@ -1250,13 +1267,12 @@ function ToolCallCard({
             }`}
           />
         )}
-        {usage && usage.tokens > 0 && (
-          <span className="shrink-0 text-[10px] tabular-nums text-gray-400">
-            {usage.tokens.toLocaleString()} tokens
-            {(() => {
-              const money = formatMoney(usage.cost, currencySymbol);
-              return money ? ` · ${money}` : "";
-            })()}
+        {outputLines > 0 && (
+          <span
+            className="shrink-0 rounded bg-[#F1F3F7] px-1 py-px font-mono text-[10px] tabular-nums text-ink-faint"
+            title={`本次调用输出 ${outputLines.toLocaleString()} 行`}
+          >
+            {formatLineCount(outputLines)} 行
           </span>
         )}
       </button>
@@ -1665,7 +1681,6 @@ function ToolCardStack({
   items,
   nestedExecutions,
   running,
-  currencySymbol,
   liveOutputs,
   liveOutputFor,
   stateKey,
@@ -1674,7 +1689,6 @@ function ToolCardStack({
   items: RoundProcessTool[];
   nestedExecutions?: Record<string, NestedExecutionView>;
   running: boolean;
-  currencySymbol: string;
   liveOutputs?: Record<string, string>;
   liveOutputFor?: (toolName: string) => string | undefined;
   stateKey?: string;
@@ -1714,13 +1728,6 @@ function ToolCardStack({
           onToggleOpen={() => setOpenIndex((prev) => (prev === index ? null : index))}
           streaming={running && !item.block.result}
           toolCallId={item.block.toolCallId}
-          usage={blockUsage(
-            `${item.block.name} ${JSON.stringify(item.block.input)} ${
-              item.block.result ? resultText(item.block.result) : ""
-            }`,
-            item.usage,
-          )}
-          currencySymbol={currencySymbol}
           liveOutput={liveOutputFor ? liveOutputFor(item.block.name) : liveOutputs?.[item.block.name]}
           stateKey={stateKey ? `${stateKey}:tool:${index}` : undefined}
           onUserInteract={onUserInteract}
@@ -1740,7 +1747,6 @@ function ToolsSection({
   nestedExecutions,
   live,
   finalStarted,
-  currencySymbol,
   liveOutputs,
   liveOutputFor,
   stateKey,
@@ -1750,7 +1756,6 @@ function ToolsSection({
   live: boolean;
   /** 已经开始输出最终 Markdown 文字 → 立刻自动收起。 */
   finalStarted: boolean;
-  currencySymbol: string;
   liveOutputs?: Record<string, string>;
   /** 稳定取值器（父级 ref + useCallback([])）：逐帧读实时输出不会让 memo 失效。 */
   liveOutputFor?: (toolName: string) => string | undefined;
@@ -1795,24 +1800,11 @@ function ToolsSection({
     .map(([name, count]) => `${name} x${count}`)
     .join(", ");
   const failed = items.filter((item) => item.block.result?.isError).length;
-  /** 整个「工具」一栏的合计消耗（只在摘要行右侧安静地显示一次）。 */
-  const totalUsage = items.reduce(
-    (acc, item) => {
-      const usage = blockUsage(
-        `${item.block.name} ${JSON.stringify(item.block.input)} ${
-          item.block.result ? resultText(item.block.result) : ""
-        }`,
-        item.usage,
-      );
-      if (usage) {
-        acc.tokens += usage.tokens;
-        acc.cost += usage.cost;
-      }
-      return acc;
-    },
-    { tokens: 0, cost: 0 },
+  /** 整个「工具」一栏的合计输出规模；tokens / 金额属于模型侧，统计在回答行与用量小结。 */
+  const totalLines = items.reduce(
+    (acc, item) => acc + outputLineCount(item.block.result ? resultText(item.block.result) : ""),
+    0,
   );
-  const totalMoney = formatMoney(totalUsage.cost, currencySymbol);
 
   return (
     <div className="mt-0.5">
@@ -1843,10 +1835,9 @@ function ToolsSection({
           {failed > 0 && <span className="ml-1 text-[#C2554E]">{failed} 个失败</span>}
           {!open && "（点击展开）"}
         </span>
-        {totalUsage.tokens > 0 && (
+        {totalLines > 0 && (
           <span className="shrink-0 text-[10px] tabular-nums text-gray-400">
-            {totalUsage.tokens.toLocaleString()} tokens
-            {totalMoney ? ` · ${totalMoney}` : ""}
+            共 {formatLineCount(totalLines)} 行输出
           </span>
         )}
         <ChevronDown
@@ -1862,7 +1853,6 @@ function ToolsSection({
             items={items}
             nestedExecutions={nestedExecutions}
             running={running}
-            currencySymbol={currencySymbol}
             liveOutputs={liveOutputs}
             liveOutputFor={liveOutputFor}
             stateKey={stateKey}
@@ -1918,7 +1908,6 @@ function ProcessGroupRow({
         nestedExecutions={nestedExecutions}
         live={live}
         finalStarted={finalStarted}
-        currencySymbol={currencySymbol}
         liveOutputs={liveOutputs}
         liveOutputFor={liveOutputFor}
         stateKey={stateKey ? `${stateKey}:tools` : undefined}
@@ -1933,7 +1922,6 @@ function ProcessGroupRow({
           items={group.tools}
           nestedExecutions={nestedExecutions}
           running={running}
-          currencySymbol={currencySymbol}
           liveOutputs={liveOutputs}
           liveOutputFor={liveOutputFor}
           stateKey={stateKey ? `${stateKey}:tools` : undefined}
