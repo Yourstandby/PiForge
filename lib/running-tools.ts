@@ -1,4 +1,5 @@
 import type { AgentMessage } from "@/lib/types";
+import { isToolEnded } from "./tool-clock.ts";
 
 export interface RunningToolRef {
   id: string;
@@ -35,6 +36,7 @@ const LOOKBACK = 80;
  *
  *   1. 只在 `agentRunning` 时才算（中止后残留的 toolCall 不应显示成"在跑"）；
  *   2. 已经有 toolResult 的 toolCall 一律不算（完成态以消息为准，压过事件流）；
+ *   2b. 事件流报过 tool_execution_end 的一律不算（消息侧对不上时唯一能自愈的判据）；
  *   3. `agentPhase` 里有、但消息里还没出现的（刚 start、结果未落盘）也算进来。
  *
  * 结果按 id 去重，名字去重由调用方决定（并行同类工具只显示一次）。
@@ -138,14 +140,17 @@ export function collectRunningTools(input: {
   };
 
   // 消息里"有调用、没结果"的：最可信。倒着扫所以要 reverse 回调用顺序。
+  // 事件流已经报过 end 的一律剔除：消息侧的 toolResult 可能永远匹配不上
+  // （嵌套调用不落结果），否则工具卡早就停了、徽章还在 running。
   for (const call of Array.from(calls.values()).reverse()) {
+    if (isToolEnded(call.id)) continue;
     push(call.id, call.name);
   }
   // 事件流里刚 start、结果还没落盘的。
   for (const tool of phaseTools ?? []) {
     const id = typeof tool?.id === "string" ? tool.id : "";
     const name = typeof tool?.name === "string" ? tool.name.trim() : "";
-    if (id && name) push(id, name);
+    if (id && name && !isToolEnded(id)) push(id, name);
   }
 
   return running;

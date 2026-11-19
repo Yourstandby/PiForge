@@ -52,6 +52,18 @@ export function markToolEnded(toolCallId: string | undefined, durationMs?: numbe
   }
 }
 
+/**
+ * 事件流是否已经报告这一次调用结束。
+ *
+ * 「正在跑什么」的徽章不能只看消息里有没有 toolResult：嵌套调用（codemode 里的
+ * bash）根本不落 toolResult，顶层结果消息也可能被去重扩展改写或延迟，消息侧对不上
+ * 时徽章就会在工具结束之后继续挂着。这个查询是唯一能自愈的判据。
+ */
+export function isToolEnded(toolCallId: string | undefined): boolean {
+  if (!toolCallId) return false;
+  return clocks.get(toolCallId)?.endedAt !== undefined;
+}
+
 /** 仅供测试：清空注册表。 */
 export function resetToolClocks(): void {
   clocks.clear();
