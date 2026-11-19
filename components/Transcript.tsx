@@ -1252,7 +1252,7 @@ function ToolCallCard({
             }`}
           />
         )}
-        {streaming && tokensPerSecond ? (
+        {running && tokensPerSecond ? (
           <span className="shrink-0 rounded bg-[#F1F3F7] px-1 py-px font-mono text-[10px] tabular-nums text-ink-faint">
             {tokensPerSecond} tokens/s
           </span>
@@ -1807,7 +1807,8 @@ function ToolsSection({
     .map(([name, count]) => `${name} x${count}`)
     .join(", ");
   const failed = items.filter((item) => item.block.result?.isError).length;
-  const speed = live && tokensPerSecond && tokensPerSecond > 0 ? tokensPerSecond : null;
+  /** 只在真正还在跑的时候报速度：跑完（含事件流已报 end）立刻消失。 */
+  const speed = running && tokensPerSecond && tokensPerSecond > 0 ? tokensPerSecond : null;
   /** 整个「工具」一栏的合计消耗（只在摘要行右侧安静地显示一次）。 */
   const totalUsage = items.reduce(
     (acc, item) => {
