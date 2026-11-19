@@ -1020,6 +1020,7 @@ function ToolCallCard({
   onToggleOpen,
   streaming = false,
   toolCallId,
+  tokensPerSecond,
   usage,
   currencySymbol = "$",
   liveOutput,
@@ -1039,8 +1040,9 @@ function ToolCallCard({
   open?: boolean;
   /** 受控模式下切换展开。 */
   onToggleOpen?: () => void;
-  /** 该工具仍在执行：右上角显示实时计时，输出区自动跟随到底。 */
+  /** 该工具仍在执行：右上角显示实时速度，输出区自动跟随到底。 */
   streaming?: boolean;
+  tokensPerSecond?: number | null;
   /** 本卡片估算消耗，显示在右下角。 */
   usage?: BlockUsage | null;
   currencySymbol?: string;
@@ -1250,6 +1252,11 @@ function ToolCallCard({
             }`}
           />
         )}
+        {streaming && tokensPerSecond ? (
+          <span className="shrink-0 rounded bg-[#F1F3F7] px-1 py-px font-mono text-[10px] tabular-nums text-ink-faint">
+            {tokensPerSecond} tokens/s
+          </span>
+        ) : null}
         {usage && usage.tokens > 0 && (
           <span className="shrink-0 text-[10px] tabular-nums text-gray-400">
             {usage.tokens.toLocaleString()} tokens
@@ -1665,6 +1672,7 @@ function ToolCardStack({
   items,
   nestedExecutions,
   running,
+  tokensPerSecond,
   currencySymbol,
   liveOutputs,
   liveOutputFor,
@@ -1674,6 +1682,7 @@ function ToolCardStack({
   items: RoundProcessTool[];
   nestedExecutions?: Record<string, NestedExecutionView>;
   running: boolean;
+  tokensPerSecond?: number;
   currencySymbol: string;
   liveOutputs?: Record<string, string>;
   liveOutputFor?: (toolName: string) => string | undefined;
@@ -1714,6 +1723,7 @@ function ToolCardStack({
           onToggleOpen={() => setOpenIndex((prev) => (prev === index ? null : index))}
           streaming={running && !item.block.result}
           toolCallId={item.block.toolCallId}
+          tokensPerSecond={tokensPerSecond}
           usage={blockUsage(
             `${item.block.name} ${JSON.stringify(item.block.input)} ${
               item.block.result ? resultText(item.block.result) : ""
@@ -1740,6 +1750,7 @@ function ToolsSection({
   nestedExecutions,
   live,
   finalStarted,
+  tokensPerSecond,
   currencySymbol,
   liveOutputs,
   liveOutputFor,
@@ -1750,6 +1761,7 @@ function ToolsSection({
   live: boolean;
   /** 已经开始输出最终 Markdown 文字 → 立刻自动收起。 */
   finalStarted: boolean;
+  tokensPerSecond?: number;
   currencySymbol: string;
   liveOutputs?: Record<string, string>;
   /** 稳定取值器（父级 ref + useCallback([])）：逐帧读实时输出不会让 memo 失效。 */
@@ -1795,6 +1807,7 @@ function ToolsSection({
     .map(([name, count]) => `${name} x${count}`)
     .join(", ");
   const failed = items.filter((item) => item.block.result?.isError).length;
+  const speed = live && tokensPerSecond && tokensPerSecond > 0 ? tokensPerSecond : null;
   /** 整个「工具」一栏的合计消耗（只在摘要行右侧安静地显示一次）。 */
   const totalUsage = items.reduce(
     (acc, item) => {
@@ -1843,6 +1856,11 @@ function ToolsSection({
           {failed > 0 && <span className="ml-1 text-[#C2554E]">{failed} 个失败</span>}
           {!open && "（点击展开）"}
         </span>
+        {speed !== null && (
+          <span className="shrink-0 rounded bg-[#F1F3F7] px-1 py-px font-mono text-[10px] tabular-nums text-ink-faint">
+            {speed} tokens/s
+          </span>
+        )}
         {totalUsage.tokens > 0 && (
           <span className="shrink-0 text-[10px] tabular-nums text-gray-400">
             {totalUsage.tokens.toLocaleString()} tokens
@@ -1862,6 +1880,7 @@ function ToolsSection({
             items={items}
             nestedExecutions={nestedExecutions}
             running={running}
+            tokensPerSecond={tokensPerSecond}
             currencySymbol={currencySymbol}
             liveOutputs={liveOutputs}
             liveOutputFor={liveOutputFor}
@@ -1918,6 +1937,7 @@ function ProcessGroupRow({
         nestedExecutions={nestedExecutions}
         live={live}
         finalStarted={finalStarted}
+        tokensPerSecond={tokensPerSecond}
         currencySymbol={currencySymbol}
         liveOutputs={liveOutputs}
         liveOutputFor={liveOutputFor}
@@ -1933,6 +1953,7 @@ function ProcessGroupRow({
           items={group.tools}
           nestedExecutions={nestedExecutions}
           running={running}
+          tokensPerSecond={tokensPerSecond}
           currencySymbol={currencySymbol}
           liveOutputs={liveOutputs}
           liveOutputFor={liveOutputFor}
