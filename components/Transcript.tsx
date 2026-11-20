@@ -26,7 +26,7 @@ import { DiffRows } from "./DiffRows";
 import { getFileName } from "@/lib/file-paths";
 import {
   findFileReferences,
-  parseFileReference,
+  parseLinkableFileReference,
   resolveFileReferencePath,
   resolveHrefFileReference,
   type FileReference,
@@ -43,6 +43,19 @@ import {
 
 type OpenFileHandler = (filePath: string, fileName: string, line?: number) => void;
 
+/**
+ * One visual language for "can I click this?".
+ * Static code is mono + flat + `cursor-text`; anything clickable is mono +
+ * accent + underline + `cursor-pointer`. Same glyphs must never look the same
+ * in both states — that ambiguity is what the transcript got wrong.
+ */
+const INLINE_CODE_BASE = "rounded bg-[#EDF3FD] px-1 py-0.5 font-mono text-[0.92em]";
+const INLINE_CODE_STATIC = `${INLINE_CODE_BASE} cursor-text text-ink`;
+const INLINE_CODE_CLICKABLE = `${INLINE_CODE_BASE} inline cursor-pointer text-accent-strong underline decoration-accent/40 underline-offset-2 transition-colors hover:bg-[#E8EFFB] hover:decoration-accent`;
+
+/** Only these schemes may render as real anchors; everything else is plain text. */
+const SAFE_HREF_SCHEME = /^(https?:|mailto:|tel:)/i;
+
 function FilePathButton({
   reference,
   cwd,
@@ -55,14 +68,14 @@ function FilePathButton({
   children: React.ReactNode;
 }) {
   const resolved = resolveFileReferencePath(reference, cwd);
-  if (!resolved || !onOpenFile) return <code className="rounded bg-[#EDF3FD] px-1 py-0.5 font-mono text-[0.92em] text-ink">{children}</code>;
+  if (!resolved || !onOpenFile) return <code className={INLINE_CODE_STATIC}>{children}</code>;
   const line = reference.line;
   return (
     <button
       type="button"
       onClick={() => onOpenFile(resolved, getFileName(resolved), line)}
       title={`打开 ${resolved}${line ? `:${line}` : ""}`}
-      className="inline cursor-pointer rounded bg-[#EDF3FD] px-1 py-0.5 font-mono text-[0.92em] text-accent-strong underline decoration-accent/30 underline-offset-2 transition-colors hover:bg-[#E8EFFB] hover:decoration-accent"
+      className={INLINE_CODE_CLICKABLE}
     >
       {children}
     </button>
@@ -247,9 +260,12 @@ function createMarkdownComponents(
   );
   return {
   p: ({ children }) => <p className="mb-3 last:mb-0">{linkify(children)}</p>,
-  h1: ({ children }) => <h1 className="mb-3 mt-5 text-[17px] font-semibold first:mt-0">{children}</h1>,
-  h2: ({ children }) => <h2 className="mb-2.5 mt-5 text-[15.5px] font-semibold first:mt-0">{children}</h2>,
-  h3: ({ children }) => <h3 className="mb-2 mt-4 text-[14.5px] font-semibold first:mt-0">{children}</h3>,
+  h1: ({ children }) => <h1 className="mb-3 mt-5 text-[17px] font-semibold first:mt-0">{linkify(children)}</h1>,
+  h2: ({ children }) => <h2 className="mb-2.5 mt-5 text-[15.5px] font-semibold first:mt-0">{linkify(children)}</h2>,
+  h3: ({ children }) => <h3 className="mb-2 mt-4 text-[14.5px] font-semibold first:mt-0">{linkify(children)}</h3>,
+  strong: ({ children }) => <strong className="font-semibold">{linkify(children)}</strong>,
+  em: ({ children }) => <em className="italic">{linkify(children)}</em>,
+  del: ({ children }) => <del className="line-through opacity-70">{linkify(children)}</del>,
   ul: ({ children }) => <ul className="mb-3 list-disc pl-5">{children}</ul>,
   ol: ({ children }) => <ol className="mb-3 list-decimal pl-5">{children}</ol>,
   li: ({ children }) => <li className="mb-1">{linkify(children)}</li>,
@@ -272,12 +288,22 @@ function createMarkdownComponents(
         </button>
       );
     }
+    // Unknown / unsafe schemes (javascript:, data:, bare fragments, bad paths)
+    // must not look like a link — a dead-looking anchor is worse than plain text.
+    if (!href || !SAFE_HREF_SCHEME.test(href.trim())) {
+      return (
+        <span className="text-ink-muted" title="不是可跳转的链接">
+          {children}
+        </span>
+      );
+    }
     return (
       <a
         href={href}
         target="_blank"
         rel="noreferrer"
-        className="text-accent-strong underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
+        title={href}
+        className="cursor-pointer text-accent-strong underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
       >
         {children}
       </a>
@@ -311,7 +337,8 @@ function createMarkdownComponents(
       );
     }
     const raw = String(children);
-    const reference = parseFileReference(raw);
+    // Same rule as prose: `seed.ts` stays plain, `src/seed.ts` or `@seed.ts` is a link.
+    const reference = parseLinkableFileReference(raw);
     if (reference && onOpenFile) {
       return (
         <FilePathButton reference={reference} cwd={cwd} onOpenFile={onOpenFile}>
@@ -319,9 +346,7 @@ function createMarkdownComponents(
         </FilePathButton>
       );
     }
-    return (
-      <code className="rounded bg-[#EDF3FD] px-1 py-0.5 font-mono text-[0.9em] text-ink">{children}</code>
-    );
+    return <code className={INLINE_CODE_STATIC}>{children}</code>;
   },
   hr: () => <hr className="my-5 border-[#E3E8F2]" />,
   table: ({ children }) => (
