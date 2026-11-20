@@ -365,6 +365,12 @@ function ChatSession({
    */
   const [streamHealth, setStreamHealth] = useState<StreamHealth>({ kind: "ok" });
   const getLastAgentEventAt = chat.getLastAgentEventAt;
+  // 本轮开始的时刻：发送消息后 agentRunning 先翻 true、SSE 随后才建连，这段间隙的
+  // status 仍是上一轮的 disconnected，不能被判成「正在重连」（否则每发一条都闪一下）。
+  const runningSinceRef = useRef(0);
+  useEffect(() => {
+    runningSinceRef.current = chat.agentRunning ? Date.now() : 0;
+  }, [chat.agentRunning]);
   useEffect(() => {
     const tick = () => {
       setStreamHealth((prev) => {
@@ -374,6 +380,7 @@ function ChatSession({
           lastEventAt: getLastAgentEventAt(),
           now: Date.now(),
           attempts: chat.reconnectAttempts,
+          runningSince: runningSinceRef.current,
         });
         // 同 kind 只更新字段（趟秒数要变），完全不同时避免无意义重渲染。
         if (prev.kind !== next.kind) return next;

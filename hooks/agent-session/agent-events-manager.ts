@@ -169,6 +169,10 @@ export class AgentEventsManager {
     this.agentRunning = running;
     if (!running) {
       this.disconnect();
+      // 本轮结束：退避计数属于「上一轮的断流」，带进下一轮会让新一轮刚发出的
+      // 那次 connect 之前的间隙（status 还停在 disconnected）被判成「正在重连」，
+      // 于是每次发消息都闪一下断流提示。
+      this.reconnectAttempts = 0;
       this.setStatus("disconnected");
     }
   }
