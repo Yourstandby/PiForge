@@ -23,7 +23,7 @@ test("Composer destructures onRemoveFollowUp (类型里声明 ≠ 真的能用�
 
 test("Composer renders a per-item delete button that calls onRemoveFollowUp", () => {
   const src = read("components/Composer.tsx");
-  assert.equal(src.includes("{onRemoveFollowUp && ("), true, "只有接上回调才渲染删除按钮");
+  assert.equal(src.includes("onRemoveFollowUp && ("), true, "只有接上回调才渲染删除按钮");
   assert.equal(src.includes("onClick={() => onRemoveFollowUp(item.id)}"), true);
   assert.equal(src.includes("删除队列消息"), true, "按钮要有可读的 aria-label/title");
 });
@@ -44,4 +44,55 @@ test("host handles remove_follow_up", () => {
   assert.equal(rpc.includes("case \"remove_follow_up\":"), true);
   const queue = read("agent-host/follow-up-queue.ts");
   assert.equal(/\bremove\(/.test(queue), true);
+});
+
+test("排队消息能原地编辑：Composer 行内输入 → hook → 宿主 update_follow_up", () => {
+  const src = read("components/Composer.tsx");
+  assert.equal(src.includes("onEditFollowUp,"), true, "props 必须在函数参数里解构");
+  assert.equal(src.includes("onEditFollowUp?: (id: string, message: string) => void;"), true);
+  assert.equal(src.includes("onClick={() => startQueueEdit(item.id, item.message)}"), true, "点击文案进编辑态");
+  assert.equal(src.includes("onClick={commitQueueEdit}"), true, "保存按钮");
+  assert.equal(src.includes("编辑队列消息 ${index + 1}"), true, "输入框要有可读 aria-label");
+
+  const surface = read("components/ChatSurface.tsx");
+  assert.equal(surface.includes("onEditFollowUp={chat.handleUpdateFollowUp}"), true);
+
+  const hook = read("hooks/useAgentSession.ts");
+  assert.equal(hook.includes("const handleUpdateFollowUp = useCallback("), true);
+  assert.equal(hook.includes('type: "update_follow_up",'), true);
+  assert.equal(/^\s+handleUpdateFollowUp,$/m.test(hook), true, "hook 返回值里要导出");
+
+  const rpc = read("agent-host/rpc-manager.ts");
+  assert.equal(rpc.includes('case "update_follow_up":'), true);
+  const queue = read("agent-host/follow-up-queue.ts");
+  assert.equal(/\bupdate\(/.test(queue), true);
+});
+
+test("排队消息能立即发送：Composer 按钮 → hook → 宿主 expedite_follow_up", () => {
+  const src = read("components/Composer.tsx");
+  assert.equal(src.includes("onExpediteFollowUp,"), true, "props 必须在函数参数里解构");
+  assert.equal(src.includes("onClick={() => onExpediteFollowUp(item.id)}"), true);
+  assert.equal(src.includes("立即发送队列消息 ${index + 1}"), true);
+
+  const surface = read("components/ChatSurface.tsx");
+  assert.equal(surface.includes("chat.handleExpediteFollowUp(id)"), true);
+
+  const hook = read("hooks/useAgentSession.ts");
+  assert.equal(hook.includes("const handleExpediteFollowUp = useCallback("), true);
+  assert.equal(hook.includes('type: "expedite_follow_up",'), true);
+  assert.equal(/^\s+handleExpediteFollowUp,$/m.test(hook), true, "hook 返回值里要导出");
+
+  const rpc = read("agent-host/rpc-manager.ts");
+  assert.equal(rpc.includes('case "expedite_follow_up":'), true);
+  // 投递失败必须按原位置放回队列，不能有「取出来就没了」的路径。
+  assert.equal(rpc.includes("restoreAt(index, item)"), true);
+  const queue = read("agent-host/follow-up-queue.ts");
+  assert.equal(/\btake\(/.test(queue), true);
+  assert.equal(/\brestoreAt\(/.test(queue), true);
+});
+
+test("排到队首有独立按钮（不用连点上移）", () => {
+  const src = read("components/Composer.tsx");
+  assert.equal(src.includes("moveQueueItem(item.id, 0)"), true);
+  assert.equal(src.includes("插到队首"), true);
 });

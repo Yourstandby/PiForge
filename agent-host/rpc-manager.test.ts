@@ -814,6 +814,167 @@ test("removing a queued follow-up dequeues it in the host and the snapshot stick
   await w.destroy();
 });
 
+test("updating a queued follow-up edits it in place instead of delete+requeue", async () => {
+  let emitInner: ((event: unknown) => void) | null = null;
+  const events: Array<{ type?: string; items?: Array<{ message: string }> }> = [];
+  const inner = makeStubInner({
+    isStreaming: true,
+    sessionManager: {
+      getBranch: () => [],
+      getHeader: () => ({ cwd: "D:/project" }),
+    },
+    subscribe: (cb) => {
+      emitInner = cb;
+      return () => {};
+    },
+    prompt: async () => {},
+  });
+  const w = new AgentSessionWrapper(inner);
+  w.onEvent((event) => events.push(event as (typeof events)[number]));
+  w.start();
+  assert.ok(emitInner);
+
+  const first = await w.send({ type: "follow_up", message: "A" }) as {
+    revision: number;
+    items: Array<{ id: string }>;
+  };
+  const second = await w.send({ type: "follow_up", message: "B" }) as {
+    revision: number;
+    items: Array<{ id: string }>;
+  };
+
+  await assert.rejects(
+    () =>
+      w.send({
+        type: "update_follow_up",
+        id: first.items[0].id,
+        message: "A2",
+        expectedRevision: first.revision - 1,
+      }),
+    /queue changed/i,
+  );
+
+  const snapshot = await w.send({
+    type: "update_follow_up",
+    id: first.items[0].id,
+    message: "  A2  ",
+    expectedRevision: second.revision,
+  }) as { revision: number; items: Array<{ message: string }> };
+  // 就地改：位置不变、内容裁掉首尾空白。
+  assert.deepEqual(snapshot.items.map((item) => item.message), ["A2", "B"]);
+  const lastQueueEvent = [...events].reverse().find((event) => event.type === "follow_up_queue_update");
+  assert.deepEqual(lastQueueEvent?.items?.map((item) => item.message), ["A2", "B"]);
+
+  await assert.rejects(
+    () =>
+      w.send({
+        type: "update_follow_up",
+        id: first.items[0].id,
+        message: "   ",
+        expectedRevision: snapshot.revision,
+      }),
+    /must not be empty/i,
+  );
+
+  await w.destroy();
+});
+
+test("expediting a queued follow-up steers the running loop and dequeues it", async () => {
+  let emitInner: ((event: unknown) => void) | null = null;
+  const steered: string[] = [];
+  const prompts: string[] = [];
+  const inner = makeStubInner({
+    isStreaming: true,
+    sessionManager: {
+      getBranch: () => [],
+      getHeader: () => ({ cwd: "D:/project" }),
+    },
+    subscribe: (cb) => {
+      emitInner = cb;
+      return () => {};
+    },
+    steer: async (message: string) => {
+      steered.push(message);
+    },
+    prompt: async (message: string) => {
+      prompts.push(message);
+    },
+  });
+  const w = new AgentSessionWrapper(inner);
+  w.onEvent(() => {});
+  w.start();
+  assert.ok(emitInner);
+
+  const first = await w.send({ type: "follow_up", message: "skip ahead" }) as {
+    revision: number;
+    items: Array<{ id: string }>;
+  };
+
+  const snapshot = await w.send({
+    type: "expedite_follow_up",
+    id: first.items[0].id,
+    expectedRevision: first.revision,
+  }) as { items: Array<{ message: string }> };
+
+  assert.deepEqual(steered, ["skip ahead"]);
+  assert.deepEqual(prompts, [], "流式中走 steer，不再另开一轮");
+  assert.deepEqual(snapshot.items, [], "立刻发送的那条必须从队列里出队");
+
+  await w.destroy();
+});
+
+test("a queued follow-up that fails to expedite returns to its original slot", async () => {
+  let emitInner: ((event: unknown) => void) | null = null;
+  const inner = makeStubInner({
+    isStreaming: false,
+    sessionManager: {
+      getBranch: () => [],
+      getHeader: () => ({ cwd: "D:/project" }),
+    },
+    subscribe: (cb) => {
+      emitInner = cb;
+      return () => {};
+    },
+    prompt: async () => {
+      throw new Error("prompt boom");
+    },
+  });
+  const w = new AgentSessionWrapper(inner);
+  const events: Array<{ type?: string; items?: Array<{ message: string }> }> = [];
+  w.onEvent((event) => events.push(event as (typeof events)[number]));
+  w.start();
+  assert.ok(emitInner);
+
+  // isStreaming=false 时 follow_up 会被立刻派发，这里先造出「队列里真有两条」的状态。
+  const inner2 = inner as unknown as { isStreaming: boolean };
+  inner2.isStreaming = true;
+  const first = await w.send({ type: "follow_up", message: "keep me" }) as {
+    revision: number;
+    items: Array<{ id: string }>;
+  };
+  const second = await w.send({ type: "follow_up", message: "send me now" }) as {
+    revision: number;
+    items: Array<{ id: string }>;
+  };
+  inner2.isStreaming = false;
+
+  await w.send({
+    type: "expedite_follow_up",
+    id: second.items[1].id,
+    expectedRevision: second.revision,
+  });
+  await flushMicrotasks();
+
+  const lastQueueEvent = [...events].reverse().find((event) => event.type === "follow_up_queue_update");
+  assert.deepEqual(
+    lastQueueEvent?.items?.map((item) => item.message),
+    ["keep me", "send me now"],
+    "开新一轮失败要把消息按原位置放回队列",
+  );
+
+  await w.destroy();
+});
+
 test("agent_error reaches every listener even if an earlier listener throws", async () => {
   const events: unknown[] = [];
   const inner = makeStubInner({
