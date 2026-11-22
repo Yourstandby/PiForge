@@ -1753,12 +1753,20 @@ function ChatSession({
               )}
               {/* 这里是**本轮全部模型调用的输出合计**（含思考与每个工具轮次），
                   不是"这一次请求的新增输入"。写清楚口径，免得看起来像凭空涨了几千。 */}
-              <span
-                className="tabular-nums"
-                title="本轮所有模型调用的输出合计（含思考与工具轮次），不是单次请求的输入"
-              >
-                本轮产出 {formatTokenCount(turnOutputTokens + liveTokens)}
-              </span>
+              {/* 首 token 之前不报「本轮产出 0」：那只是还没开始吐字，
+                  写成 0 会让人以为消息没送到、这轮白跑了。 */}
+              {chat.agentRunning && turnOutputTokens + liveTokens === 0 && tokensPerSecond === 0 ? (
+                <span className="tabular-nums" title="消息已送达宿主，模型还没产出第一个 token">
+                  等待首个 token…
+                </span>
+              ) : (
+                <span
+                  className="tabular-nums"
+                  title="本轮所有模型调用的输出合计（含思考与工具轮次），不是单次请求的输入"
+                >
+                  本轮产出 {formatTokenCount(turnOutputTokens + liveTokens)}
+                </span>
+              )}
               {/* 上下文：一个环就够了——走满=贴满窗口，变红脉冲=已越顶，数字只进 tooltip。 */}
               {chat.contextBudget && (
                 <>

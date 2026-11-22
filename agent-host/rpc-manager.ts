@@ -458,6 +458,14 @@ export class AgentSessionWrapper {
       return;
     }
 
+    if (!completedEvent) {
+      // 迟到 / 重复的 agent_settled（这一轮并没有结束证据）只把状态收干净，
+      // 绝不再去派发下一条排队消息：那会让两条用户消息在同一瞬间落库，
+      // 界面上并排出现两条同一秒的气泡，看起来像「只发了一条却冒出两条」。
+      // 队列不会饿死：下一次真正的 settled 会派发，兜底重试也会兜住。
+      if (this.followUpQueue.snapshot().items.length > 0) this.scheduleQueuedDispatchRetry();
+      return;
+    }
     this.dispatchNextFollowUp(completedEvent);
   }
 
