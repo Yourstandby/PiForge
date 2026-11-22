@@ -2457,6 +2457,8 @@ export interface TranscriptTurnView {
    * 渲染成灰卡片，并从回合导航里剔除，避免「你」说出自己没说过的话。
    */
   systemNote?: boolean;
+  /** 乐观消息还停在「已交给宿主、尚未落库」的状态（steer 提交后有一小段）。 */
+  deliveryPending?: boolean;
 }
 
 /**
@@ -2497,10 +2499,19 @@ function toolResultRefsOf(
   return refs;
 }
 
+/**
+ * 投递状态也是外部状态：乐观消息被宿主接住时 deliveryState 会被原地删掉，
+ * 消息对象引用却不变。不把它算进引用键，缓存就会一直返回「投递中」那一版。
+ */
+function deliveryRefOf(message: AgentMessage): string | null {
+  if (message.role !== "user") return null;
+  return (message as { deliveryState?: string }).deliveryState ?? "delivered";
+}
+
 export function buildTranscriptTurns(messages: AgentMessage[]): TranscriptTurnView[] {
   const results = toolResultsById(messages);
   return buildWithTurnCache<AgentMessage, TranscriptTurnView>(messages, turnCache(), {
-    refsOf: (message) => toolResultRefsOf(message, results),
+    refsOf: (message) => [...toolResultRefsOf(message, results), deliveryRefOf(message)],
     build: (message, index) => buildTranscriptTurn(message, index, results),
   }).filter((turn): turn is TranscriptTurnView => turn !== null);
 }
@@ -2516,8 +2527,9 @@ function buildTranscriptTurn(
     const images = contentImages((message as { content?: unknown }).content);
     const timestamp = (message as { timestamp?: number }).timestamp;
     const systemNote = isInterventionText(text);
+    const deliveryPending = (message as { deliveryState?: string }).deliveryState === "pending";
     return text || images.length > 0
-      ? { role: "user", text, images, blocks: [], messageIndex, timestamp, systemNote }
+      ? { role: "user", text, images, blocks: [], messageIndex, timestamp, systemNote, deliveryPending }
       : null;
   }
   if (message.role === "assistant") {
@@ -2830,8 +2842,21 @@ function TurnRowImpl({
       {turn.role !== "user" && (
         <TurnUsagePair usage={usage} totals={usageTotals} currencySymbol={currencySymbol} locale={locale} />
       )}
-      {time && (
-        <div className="mt-1 text-left text-[10.5px] tabular-nums text-ink-faint">{time}</div>
+      {(time || turn.deliveryPending) && (
+        <div className="mt-1 flex items-center gap-1.5 text-left text-[10.5px] tabular-nums text-ink-faint">
+          {time && <span>{time}</span>}
+          {turn.deliveryPending && (
+            // 「交给宿主」≠「已进会话」：这段空窗里气泡和已送达长得一模一样，
+            // 用户会以为没发出去又按一次（同一秒冒出两条就是这么来的）。
+            <span
+              className="flex items-center gap-1 rounded bg-[#F1F7FF] px-1.5 py-0.5 text-accent-strong"
+              title="消息已交给宿主，还在等这一轮接住它"
+            >
+              <Loader2 size={9} strokeWidth={2.2} className="animate-spin" aria-hidden="true" />
+              投递中…
+            </span>
+          )}
+        </div>
       )}
     </article>
   );
