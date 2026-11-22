@@ -1809,6 +1809,16 @@ function ChatSession({
         queuedFollowUps={chat.followUpQueue.items}
         onReorderFollowUps={chat.handleReorderFollowUps}
         onRemoveFollowUp={chat.handleRemoveFollowUp}
+        onEditFollowUp={chat.handleUpdateFollowUp}
+        onExpediteFollowUp={(id) => {
+          // 失败要明说：那条消息会被宿主按原位置放回队列，别让用户以为发丢了。
+          void chat.handleExpediteFollowUp(id).catch((error) => {
+            setCompactToast({
+              ok: false,
+              text: `立即发送失败：${error instanceof Error ? error.message : String(error)}`,
+            });
+          });
+        }}
         queueBusy={chat.followUpQueueBusy}
         cwd={session?.cwd ?? newSessionCwd ?? null}
       />

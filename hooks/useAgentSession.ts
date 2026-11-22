@@ -842,6 +842,27 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     onPromptError,
   });
 
+  /**
+   * 队列命令失败后的统一善后：先拉宿主状态对齐（revision 冲突 / 出队失败都一样），
+   * 连拉都失败才回滚到本地旧快照。宿主是队列的唯一真相，本地自作主张会分叉。
+   */
+  const resyncFollowUpQueue = useCallback(
+    async (sid: string, previous: FollowUpQueueSnapshot) => {
+      try {
+        const state = await sendAgentCommand<{
+          followUpQueue?: FollowUpQueueSnapshot;
+        }>(sid, { type: "get_state" });
+        if (state.followUpQueue) acceptFollowUpQueue(state.followUpQueue);
+      } catch {
+        if (followUpQueueRef.current.revision === previous.revision) {
+          followUpQueueRef.current = previous;
+          setFollowUpQueue(previous);
+        }
+      }
+    },
+    [acceptFollowUpQueue],
+  );
+
   const handleReorderFollowUps = useCallback(
     async (orderedIds: string[]) => {
       if (followUpQueueBusy) return;
@@ -879,22 +900,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         acceptFollowUpQueue(snapshot);
       } catch (error) {
         console.error("Failed to reorder follow-ups:", error);
-        try {
-          const state = await sendAgentCommand<{
-            followUpQueue?: FollowUpQueueSnapshot;
-          }>(sid, { type: "get_state" });
-          if (state.followUpQueue) acceptFollowUpQueue(state.followUpQueue);
-        } catch {
-          if (followUpQueueRef.current.revision === previous.revision) {
-            followUpQueueRef.current = previous;
-            setFollowUpQueue(previous);
-          }
-        }
+        await resyncFollowUpQueue(sid, previous);
       } finally {
         setFollowUpQueueBusy(false);
       }
     },
-    [acceptFollowUpQueue, followUpQueueBusy, sessionIdRef],
+    [acceptFollowUpQueue, followUpQueueBusy, resyncFollowUpQueue, sessionIdRef],
   );
 
   /**
@@ -926,22 +937,87 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         acceptFollowUpQueue(snapshot);
       } catch (error) {
         console.error("Failed to remove follow-up:", error);
-        try {
-          const state = await sendAgentCommand<{
-            followUpQueue?: FollowUpQueueSnapshot;
-          }>(sid, { type: "get_state" });
-          if (state.followUpQueue) acceptFollowUpQueue(state.followUpQueue);
-        } catch {
-          if (followUpQueueRef.current.revision === previous.revision) {
-            followUpQueueRef.current = previous;
-            setFollowUpQueue(previous);
-          }
-        }
+        await resyncFollowUpQueue(sid, previous);
       } finally {
         setFollowUpQueueBusy(false);
       }
     },
-    [acceptFollowUpQueue, followUpQueueBusy, sessionIdRef],
+    [acceptFollowUpQueue, followUpQueueBusy, resyncFollowUpQueue, sessionIdRef],
+  );
+
+  /**
+   * 原地编辑排队消息：只改文案，位置、附件、排队顺序一律不动。
+   * 本地先乐观改（打字时界面必须立刻跟上），宿主成功后以它的快照为准。
+   */
+  const handleUpdateFollowUp = useCallback(
+    async (id: string, message: string) => {
+      const text = message.trim();
+      if (!text || followUpQueueBusy) return;
+      const previous = followUpQueueRef.current;
+      const target = previous.items.find((item) => item.id === id);
+      if (!target || target.message === text) return;
+      const optimistic: FollowUpQueueSnapshot = {
+        revision: previous.revision,
+        items: previous.items.map((item) => (item.id === id ? { ...item, message: text } : item)),
+      };
+      followUpQueueRef.current = optimistic;
+      setFollowUpQueue(optimistic);
+      const sid = sessionIdRef.current;
+      if (!sid) return;
+      setFollowUpQueueBusy(true);
+      try {
+        const snapshot = await sendAgentCommand<FollowUpQueueSnapshot>(sid, {
+          type: "update_follow_up",
+          id,
+          message: text,
+          expectedRevision: previous.revision,
+        });
+        acceptFollowUpQueue(snapshot);
+      } catch (error) {
+        console.error("Failed to update follow-up:", error);
+        await resyncFollowUpQueue(sid, previous);
+      } finally {
+        setFollowUpQueueBusy(false);
+      }
+    },
+    [acceptFollowUpQueue, followUpQueueBusy, resyncFollowUpQueue, sessionIdRef],
+  );
+
+  /**
+   * 排队消息「立即发送」：流式中走 steer 打断当前这一轮，空闲时直接开新一轮。
+   * 宿主负责保留图片与失败回滚，这里只做乐观出队（失败后以宿主快照为准，
+   * 那条消息会带着原位置回到队列里）。
+   */
+  const handleExpediteFollowUp = useCallback(
+    async (id: string) => {
+      if (followUpQueueBusy) return;
+      const previous = followUpQueueRef.current;
+      if (!previous.items.some((item) => item.id === id)) return;
+      const optimistic: FollowUpQueueSnapshot = {
+        revision: previous.revision,
+        items: previous.items.filter((item) => item.id !== id),
+      };
+      followUpQueueRef.current = optimistic;
+      setFollowUpQueue(optimistic);
+      const sid = sessionIdRef.current;
+      if (!sid) return;
+      setFollowUpQueueBusy(true);
+      try {
+        const snapshot = await sendAgentCommand<FollowUpQueueSnapshot>(sid, {
+          type: "expedite_follow_up",
+          id,
+          expectedRevision: previous.revision,
+        });
+        acceptFollowUpQueue(snapshot);
+      } catch (error) {
+        console.error("Failed to send follow-up now:", error);
+        await resyncFollowUpQueue(sid, previous);
+        throw error;
+      } finally {
+        setFollowUpQueueBusy(false);
+      }
+    },
+    [acceptFollowUpQueue, followUpQueueBusy, resyncFollowUpQueue, sessionIdRef],
   );
 
   // Load session on mount AND on session change.
@@ -1161,6 +1237,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     handleFollowUp: commands.handleFollowUp,
     handleReorderFollowUps,
     handleRemoveFollowUp,
+    handleUpdateFollowUp,
+    handleExpediteFollowUp,
     handleAbortCompaction: commands.handleAbortCompaction,
     handleToolPresetChange,
     handleThinkingLevelChange,

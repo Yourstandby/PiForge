@@ -89,6 +89,49 @@ export class FollowUpQueue {
     return this.snapshot();
   }
 
+  /**
+   * 原地改写一条排队消息：id、位置、附件都不动。
+   * 「删了再排」会丢附件并把顺序弄乱，编辑必须是就地改。
+   */
+  update(id: string, message: string, expectedRevision: number): FollowUpQueueSnapshot {
+    if (expectedRevision !== this.revision) {
+      throw new Error("Follow-up queue changed; refresh and try again");
+    }
+    const index = this.items.findIndex((item) => item.id === id);
+    if (index === -1) throw new Error("Queued follow-up not found");
+    const text = message.trim();
+    if (!text) throw new Error("Queued follow-up message must not be empty");
+    this.items[index] = { ...this.items[index], message: text };
+    this.revision += 1;
+    return this.snapshot();
+  }
+
+  /**
+   * 取出某一条（「立即发送」用），带回它原来的下标：
+   * 投递失败要按原位置放回去，不能把用户排好的队列顺序打乱。
+   */
+  take(
+    id: string,
+    expectedRevision: number,
+  ): { item: QueuedFollowUp; index: number; snapshot: FollowUpQueueSnapshot } {
+    if (expectedRevision !== this.revision) {
+      throw new Error("Follow-up queue changed; refresh and try again");
+    }
+    const index = this.items.findIndex((item) => item.id === id);
+    if (index === -1) throw new Error("Queued follow-up not found");
+    const [item] = this.items.splice(index, 1);
+    this.revision += 1;
+    return { item, index, snapshot: this.snapshot() };
+  }
+
+  /** 把 `take` 取出的消息按原下标插回（越界则夹到末尾）。 */
+  restoreAt(index: number, item: QueuedFollowUp): FollowUpQueueSnapshot {
+    const at = Math.max(0, Math.min(index, this.items.length));
+    this.items.splice(at, 0, item);
+    this.revision += 1;
+    return this.snapshot();
+  }
+
   shift(): { item: QueuedFollowUp; snapshot: FollowUpQueueSnapshot } | null {
     const item = this.items.shift();
     if (!item) return null;
