@@ -27,6 +27,8 @@ export const PLAN_PROGRESS_GUIDELINES: readonly string[] = [
   "- 接到需要多步完成的任务时，先调一次 `plan` 传全量 steps：3–7 步，动词开头的短句（≤16 字），不写文件路径与行号。",
   "- 之后只用 `update: {index, status}` 推进：开始做某步设 active，做完立刻设 done；不要重传全量 steps。",
   "- 只在状态真的变化时调用；步骤增删或顺序变了才重传全量 steps。全部 done 后停止调用。",
+  "- 计划中途变了（需求变了、发现不该这么做、有步骤不再需要）必须显式收尾：把不再做的步骤设 dropped，并在回复里用一句话说明为什么放弃、还剩什么没做。不许直接不提。",
+  "- 轮次结束前自查：清单里还有 pending / active 却不打算继续做时，先标 dropped；留着不收尾，界面会一直显示「未完成」。",
   "- plan 只维护界面进度，不替代正式回复；返回值只有 ok，不要复述它。",
 ];
 
@@ -35,7 +37,9 @@ const StepParams = Type.Object({
     description: "步骤短标题：动词开头，≤16 字，不带文件路径 / 行号",
   }),
   status: Type.Optional(
-    Type.String({ description: "pending | active | done（缺省 pending）" })
+    Type.String({
+      description: "pending | active | done | dropped（放弃的步骤用 dropped，缺省 pending）",
+    })
   ),
 });
 
@@ -49,7 +53,7 @@ const PlanParams = Type.Object({
     Type.Object(
       {
         index: Type.Number({ description: "步骤下标，从 0 开始" }),
-        status: Type.String({ description: "done | active | pending" }),
+        status: Type.String({ description: "done | active | pending | dropped" }),
       },
       { description: "增量推进：只改某一步的状态，比重传全量省 token" }
     )

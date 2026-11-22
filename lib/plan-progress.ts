@@ -11,7 +11,14 @@ export const PLAN_TOOL_NAME = "plan";
 export const PLAN_MAX_STEPS = 20;
 export const PLAN_MAX_TITLE = 40;
 
-export type PlanStepStatus = "pending" | "active" | "done";
+/**
+ * 四种状态，没有第五种。
+ *
+ * dropped 是「主动不做」而不是「没做完」：计划改主意、需求变了、后面几步本来
+ * 就不该实施时，模型必须把那些步标成 dropped 并说明原因，而不是留着 pending
+ * 然后不再提 —— 后者就是「卡片停在 3/6、谁也不知道还做不做」。
+ */
+export type PlanStepStatus = "pending" | "active" | "done" | "dropped";
 
 export interface PlanStep {
   title: string;
@@ -21,13 +28,15 @@ export interface PlanStep {
 export interface PlanProgress {
   steps: PlanStep[];
   done: number;
+  /** 主动放弃的步数：和 done 一样属于已收尾，但不计入完成。 */
+  dropped: number;
   total: number;
-  /** 进行中的那一步；没有 active 时回落到第一个 pending，全做完是 -1。 */
+  /** 进行中的那一步；没有 active 时回落到第一个 pending，全做完 / 全放弃是 -1。 */
   activeIndex: number;
 }
 
 export function isPlanStepStatus(value: unknown): value is PlanStepStatus {
-  return value === "pending" || value === "active" || value === "done";
+  return value === "pending" || value === "active" || value === "done" || value === "dropped";
 }
 
 function normalizeTitle(value: unknown): string | null {
@@ -39,11 +48,13 @@ function normalizeTitle(value: unknown): string | null {
 
 function summarize(steps: PlanStep[]): PlanProgress {
   const done = steps.reduce((n, step) => (step.status === "done" ? n + 1 : n), 0);
+  const dropped = steps.reduce((n, step) => (step.status === "dropped" ? n + 1 : n), 0);
   const active = steps.findIndex((step) => step.status === "active");
   const pending = steps.findIndex((step) => step.status === "pending");
   return {
     steps,
     done,
+    dropped,
     total: steps.length,
     activeIndex: active >= 0 ? active : pending,
   };
@@ -205,6 +216,39 @@ export interface RoundBoundary {
  * 返回的 lastRoundStart 是最后一轮 user 轮次的下标：调用方用它决定
  * 「这一轮的计划还在输入框上方那张活卡片里，别在转录里重复渲染」。
  */
+/** 还没收尾的步骤（既没做完、也没被明确放弃）。 */
+export function planRemainingSteps(progress: PlanProgress): PlanStep[] {
+  return progress.steps.filter(
+    (step) => step.status === "pending" || step.status === "active",
+  );
+}
+
+/** 全部步骤都有终态：做完，或明确放弃。此时卡片不该再挂着"待继续"。 */
+export function isPlanSettled(progress: PlanProgress): boolean {
+  return progress.total > 0 && progress.done + progress.dropped === progress.total;
+}
+
+/**
+ * 计划的分辨指纹：只看步骤标题。
+ * 用来记住「用户已经手动结算过这张卡，别再翻出来」——
+ * 同一轮里模型补一次 update 不该让被放弃的卡片复活。
+ */
+export function planKey(progress: PlanProgress): string {
+  return progress.steps.map((step) => step.title).join(" | ");
+}
+
+export type PlanSettlement = "open" | "done" | "dropped" | "partial";
+
+/**
+ * 结算状态。open 才是问题态：说明计划停在半路，需要用户或模型收尾。
+ * 把"还在跑"和"早就没下文"分开，是这张卡片不再搁置的前提。
+ */
+export function planSettlement(progress: PlanProgress): PlanSettlement {
+  if (planRemainingSteps(progress).length > 0) return "open";
+  if (progress.dropped === 0) return "done";
+  return progress.done === 0 ? "dropped" : "partial";
+}
+
 export function planByRound(
   turns: readonly RoundBoundary[],
   messages: readonly unknown[],

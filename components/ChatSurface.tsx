@@ -1602,6 +1602,10 @@ function ChatSession({
         <PlanProgressCard
           progress={chat.planProgress}
           running={chat.agentRunning}
+          // 计划停在半路时给出口：不点「放弃剩余」这张卡就一直留着，
+          // 点了才结算掉 —— 搁置不再只需要用户自己记住。
+          onResume={chat.agentRunning ? undefined : chat.resumePlan}
+          onAbandon={chat.agentRunning ? undefined : chat.abandonPlan}
           approval={
             chat.agentMode === "plan" && chat.canExecutePlan
               ? {
