@@ -1429,12 +1429,18 @@ function ChatSession({
   /**
    * 实时生成速度（tokens/s）：对 liveTokens 做 0.5s 采样 + 指数滑动平均，
    * 避免每来一个 token 就抖动。思考过程标题栏用它显示速度。
+   *
+   * 口径：「整轮还在跑」≠「这一刻正在吐 token」。一轮里模型会多次停下来
+   * （思考结束转工具、工具跑完等下一次请求、出最终回复），这些空档必须归零，
+   * 否则上一段算出的速率会冻结着一直挂在思考栏/状态条上。
    */
   const [tokensPerSecond, setTokensPerSecond] = useState(0);
   const tokenRateRef = useRef<{ tokens: number; at: number; rate: number }>({ tokens: 0, at: 0, rate: 0 });
+  /** 真正在流式输出的时间窗：整轮结束、或本轮已不在流（转工具/等请求）都算「没在生成」。 */
+  const outputStreaming = chat.agentRunning && chat.streamState.isStreaming;
 
   useEffect(() => {
-    if (!chat.agentRunning) {
+    if (!outputStreaming) {
       tokenRateRef.current = { tokens: 0, at: 0, rate: 0 };
       setTokensPerSecond(0);
       return;
@@ -1444,15 +1450,22 @@ function ChatSession({
     // 新一轮消息（计数回退）或首次采样：只重置基准
     if (!prev.at || liveTokens < prev.tokens) {
       tokenRateRef.current = { tokens: liveTokens, at: now, rate: prev.rate };
-      return;
+    } else {
+      const seconds = (now - prev.at) / 1000;
+      if (seconds >= 0.5) {
+        const instant = (liveTokens - prev.tokens) / seconds;
+        const smoothed = prev.rate > 0 ? prev.rate * 0.6 + instant * 0.4 : instant;
+        tokenRateRef.current = { tokens: liveTokens, at: now, rate: smoothed };
+        setTokensPerSecond(Math.max(0, Math.round(smoothed)));
+      }
     }
-    const seconds = (now - prev.at) / 1000;
-    if (seconds < 0.5) return;
-    const instant = (liveTokens - prev.tokens) / seconds;
-    const smoothed = prev.rate > 0 ? prev.rate * 0.6 + instant * 0.4 : instant;
-    tokenRateRef.current = { tokens: liveTokens, at: now, rate: smoothed };
-    setTokensPerSecond(Math.max(0, Math.round(smoothed)));
-  }, [liveTokens, chat.agentRunning]);
+    // 流中途停顿（流已收尾但状态还没翻/staying silent）：1.2s 没有新 token 即视为停笔。
+    const idle = setTimeout(() => {
+      tokenRateRef.current = { tokens: 0, at: 0, rate: 0 };
+      setTokensPerSecond(0);
+    }, 1200);
+    return () => clearTimeout(idle);
+  }, [liveTokens, outputStreaming]);
 
   /**
    * 实时输入速度（tokens/s）：用户打字时对 draft 做同样的 0.5s 采样 + 指数平滑。
@@ -1727,8 +1740,13 @@ function ChatSession({
                   <span className="text-ink-faint">·</span>
                 </>
               )}
-              <span className="tabular-nums">↓ {tokensPerSecond} tokens/s</span>
-              <span className="text-ink-faint">·</span>
+              {/* 只有真在吐 token 时才报速度：空档（工具执行中）不显示冻结值。 */}
+              {tokensPerSecond > 0 && (
+                <>
+                  <span className="tabular-nums">↓ {tokensPerSecond} tokens/s</span>
+                  <span className="text-ink-faint">·</span>
+                </>
+              )}
               {/* 这里是**本轮全部模型调用的输出合计**（含思考与每个工具轮次），
                   不是"这一次请求的新增输入"。写清楚口径，免得看起来像凭空涨了几千。 */}
               <span
