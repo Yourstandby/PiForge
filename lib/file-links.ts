@@ -101,6 +101,23 @@ export function parseFileReference(raw: string): FileReference | null {
   };
 }
 
+/**
+ * Parse a token that should be *rendered as clickable*.
+ *
+ * `parseFileReference` is deliberately permissive; on screen we only linkify
+ * when the token is unambiguous — it carries a path separator or an explicit
+ * `@` prefix. Without this guard the same word (`seed.ts`) is a link inside
+ * inline code but plain text in a sentence, which is what made the transcript's
+ * clickability look arbitrary.
+ */
+export function parseLinkableFileReference(raw: string): FileReference | null {
+  const reference = parseFileReference(raw);
+  if (!reference) return null;
+  const hasSeparator = reference.path.includes("/") || reference.path.includes("\\");
+  if (hasSeparator || raw.trim().startsWith("@")) return reference;
+  return null;
+}
+
 /** Resolve a parsed reference to an absolute path for the file viewer. */
 export function resolveFileReferencePath(
   reference: FileReference,
@@ -135,12 +152,10 @@ export function findFileReferences(text: string): FileReferenceSegment[] {
     // Avoid matching the tail of a URL (`https://x/y.ts`) or a mid-word token.
     if (before && /[A-Za-z0-9_./\\-]/.test(before)) continue;
 
-    const reference = parseFileReference(raw);
-    if (!reference) continue;
     // Plain prose words only become links when they contain a path separator
     // or an explicit `@` prefix (e.g. `package.json` is still ambiguous).
-    const hasSeparator = reference.path.includes("/") || reference.path.includes("\\");
-    if (!hasSeparator && !raw.startsWith("@")) continue;
+    const reference = parseLinkableFileReference(raw);
+    if (!reference) continue;
 
     if (start > lastIndex) {
       segments.push({ type: "text", value: text.slice(lastIndex, start), start: lastIndex, end: start });

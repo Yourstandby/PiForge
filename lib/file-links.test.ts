@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   findFileReferences,
   parseFileReference,
+  parseLinkableFileReference,
   resolveFileReferencePath,
   resolveHrefFileReference,
 } from "./file-links.ts";
@@ -32,6 +33,22 @@ test("findFileReferences ignores URL tails and keeps surrounding text", () => {
   assert.equal(files.length, 1);
   assert.deepEqual(files[0].reference, { path: "src/index.ts", line: 3 });
   assert.match(segments.map((segment) => segment.value).join(""), /https:\/\/x\.dev\/a\.ts/);
+});
+
+test("clickability is decided by one rule for prose and inline code", () => {
+  // Bare file names are ambiguous -> never clickable...
+  assert.equal(parseLinkableFileReference("seed.ts"), null);
+  assert.equal(parseLinkableFileReference("package.json"), null);
+  // ...unless they carry a separator or an explicit @ prefix.
+  assert.deepEqual(parseLinkableFileReference("legacy/seed.ts:3"), {
+    path: "legacy/seed.ts",
+    line: 3,
+  });
+  assert.deepEqual(parseLinkableFileReference("@seed.ts"), { path: "seed.ts" });
+  // Host/port and bare numbers must never be mistaken for paths.
+  assert.equal(parseLinkableFileReference("127.0.0.1:5275"), null);
+  assert.equal(parseLinkableFileReference("localhost:3000"), null);
+  assert.equal(parseLinkableFileReference("41076"), null);
 });
 
 test("resolves relative and absolute paths", () => {

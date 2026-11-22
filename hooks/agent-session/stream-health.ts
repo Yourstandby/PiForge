@@ -17,6 +17,14 @@ import type { ConnectionStatus } from "./agent-events-manager";
  */
 export const STREAM_STALL_MS = 120_000;
 
+/**
+ * 本轮起步宽限：agentRunning 刚翻成 true 的头几秒里，status 还可能是上一轮留下的
+ * disconnected（handleSend 先 dispatch start，connect 在 await 之后才发生），或者
+ * SSE 刚建连就被浏览器取消重来一次。这些都不是「断流」，本来也不该提示；超过宽限
+ * 仍没连上才报。原先的判定只看 status，于是每次发送都会闪一下提示条。
+ */
+export const STREAM_STARTUP_GRACE_MS = 3_000;
+
 export type StreamHealth =
   | { kind: "ok" }
   | { kind: "reconnecting"; attempts: number }
@@ -30,18 +38,27 @@ export function evaluateStreamHealth(input: {
   now: number;
   attempts?: number;
   stallMs?: number;
+  /** agentRunning 变成 true 的时刻（0/undefined 表示未知，按无宽限处理）。 */
+  runningSince?: number;
+  startupGraceMs?: number;
 }): StreamHealth {
   const { agentRunning, status, lastEventAt, now } = input;
   const attempts = input.attempts ?? 0;
   const stallMs = input.stallMs ?? STREAM_STALL_MS;
+  const graceMs = input.startupGraceMs ?? STREAM_STARTUP_GRACE_MS;
+  const runningSince = input.runningSince ?? 0;
+  const starting = runningSince > 0 && now - runningSince < graceMs;
 
   // 未运行时不关心断流：下一轮 handleSend 会重新 connectEvents。
   if (!agentRunning) return { kind: "ok" };
   if (status === "failed") return { kind: "failed", attempts };
+  // 起步宽限内的「还没连上」是正常开局，不是断流（见 STREAM_STARTUP_GRACE_MS）。
+  if (starting && (status === "connecting" || status === "disconnected")) return { kind: "ok" };
   // 本轮刚发出的 connect 还在握手阶段（attempts=0）：这是正常开局，不是断流。
-  // 原先这里会报「事件流重连中…（第 0 次）」，于是每次发消息都闪一下提示条，
-  // 看起来像故障，实际只是 SSE 刚建连。真正的重连一定是从 attempts>=1 开始的。
-  if (status === "connecting" && attempts === 0) return { kind: "ok" };
+  // 表面上像故障，实际只是 SSE 还没建连。真正的重连一定是从 attempts>=1 开始的。
+  if (attempts === 0 && (status === "connecting" || status === "disconnected")) {
+    return { kind: "ok" };
+  }
   if (status === "connecting" || status === "disconnected") {
     return { kind: "reconnecting", attempts };
   }
