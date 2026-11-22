@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, ChevronDown, ChevronUp, File, Folder, GripVertical, ImagePlus, Paperclip, Square, X } from "lucide-react";
+import { ArrowUp, ArrowUpToLine, ChevronDown, ChevronUp, File, Folder, GripVertical, ImagePlus, Paperclip, Pencil, Square, X, Zap } from "lucide-react";
 import type { AttachedImage } from "./chat-input/types";
 import { processImageFile } from "@/lib/image-attachment";
 import { AttachmentPreview } from "./chat-input/AttachmentPreview";
@@ -147,6 +147,8 @@ export function Composer({
   queueBusy = false,
   onReorderFollowUps,
   onRemoveFollowUp,
+  onEditFollowUp,
+  onExpediteFollowUp,
 }: {
   value: string;
   onValueChange: (value: string) => void;
@@ -165,6 +167,10 @@ export function Composer({
   onReorderFollowUps?: (orderedIds: string[]) => void;
   /** 删除单条排队消息（交给宿主真正出队，本地只是乐观更新）。 */
   onRemoveFollowUp?: (id: string) => void;
+  /** 原地改写排队消息：位置、附件、顺序都不动。 */
+  onEditFollowUp?: (id: string, message: string) => void;
+  /** 立即发送：不等前面几条，流式中直接打断当前这一轮投递。 */
+  onExpediteFollowUp?: (id: string) => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -514,6 +520,39 @@ export function Composer({
     clearInput();
   };
 
+  /** 行内编辑：正在改的那条 + 它的草稿。 */
+  const [editingQueueId, setEditingQueueId] = useState<string | null>(null);
+  const [queueDraft, setQueueDraft] = useState("");
+
+  const startQueueEdit = (id: string, message: string) => {
+    if (queueBusy) return;
+    setEditingQueueId(id);
+    setQueueDraft(message);
+  };
+
+  const cancelQueueEdit = () => {
+    setEditingQueueId(null);
+    setQueueDraft("");
+  };
+
+  const commitQueueEdit = () => {
+    const id = editingQueueId;
+    if (!id) return;
+    const text = queueDraft.trim();
+    cancelQueueEdit();
+    // 清空 = 不改（不是删除）：删除有单独的按钮，别让误删留在编辑路径上。
+    if (!text) return;
+    onEditFollowUp?.(id, text);
+  };
+
+  // 那条被别处删掉/发出去了：退出编辑态，别对着幽灵行打字。
+  useEffect(() => {
+    if (editingQueueId && !queuedFollowUps.some((item) => item.id === editingQueueId)) {
+      setEditingQueueId(null);
+      setQueueDraft("");
+    }
+  }, [editingQueueId, queuedFollowUps]);
+
   const moveQueueItem = (id: string, targetIndex: number) => {
     if (!onReorderFollowUps || queueBusy) return;
     const currentIndex = queuedFollowUps.findIndex((item) => item.id === id);
@@ -693,33 +732,125 @@ export function Composer({
                 />
               )}
               <span className="shrink-0 text-ink-faint">队列 {index + 1}</span>
-              <span className="min-w-0 flex-1 truncate">{item.message}</span>
-              {(item.attachmentCount ?? 0) > 0 && (
-                <span className="shrink-0 text-ink-faint">📎 {item.attachmentCount}</span>
-              )}
-              {onReorderFollowUps && (
-                <span className="flex shrink-0 items-center">
-                  <button
-                    type="button"
-                    onClick={() => moveQueueItem(item.id, index - 1)}
-                    disabled={queueBusy || index === 0}
-                    aria-label={`上移队列消息 ${index + 1}`}
-                    className="flex h-5 w-5 items-center justify-center rounded text-ink-faint hover:bg-[#ECECEF] hover:text-ink disabled:opacity-30"
-                  >
-                    <ChevronUp size={11} strokeWidth={2} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => moveQueueItem(item.id, index + 1)}
-                    disabled={queueBusy || index === queuedFollowUps.length - 1}
-                    aria-label={`下移队列消息 ${index + 1}`}
-                    className="flex h-5 w-5 items-center justify-center rounded text-ink-faint hover:bg-[#ECECEF] hover:text-ink disabled:opacity-30"
-                  >
-                    <ChevronDown size={11} strokeWidth={2} />
-                  </button>
+              {editingQueueId === item.id ? (
+                <input
+                  autoFocus
+                  value={queueDraft}
+                  onChange={(event) => setQueueDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                      event.preventDefault();
+                      commitQueueEdit();
+                    } else if (event.key === "Escape") {
+                      event.preventDefault();
+                      cancelQueueEdit();
+                    }
+                  }}
+                  aria-label={`编辑队列消息 ${index + 1}`}
+                  className="min-w-0 flex-1 rounded border border-[#CBD5E1] bg-white px-1.5 py-0.5 text-[11px] text-ink outline-none focus:border-accent"
+                />
+              ) : (
+                <span
+                  className={`min-w-0 flex-1 truncate ${
+                    onEditFollowUp && !queueBusy ? "cursor-text" : ""
+                  }`}
+                  title={onEditFollowUp ? "点击编辑这条排队消息" : item.message}
+                  onClick={() => {
+                    if (onEditFollowUp) startQueueEdit(item.id, item.message);
+                  }}
+                >
+                  {item.message}
                 </span>
               )}
-              {onRemoveFollowUp && (
+              {(item.attachmentCount ?? 0) > 0 && (
+                <span className="shrink-0 text-ink-faint" title="这条消息带图片附件（编辑时不动它）">
+                  📎 {item.attachmentCount}
+                </span>
+              )}
+              {editingQueueId === item.id ? (
+                <span className="flex shrink-0 items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={commitQueueEdit}
+                    aria-label={`保存队列消息 ${index + 1}`}
+                    title="保存（Enter）"
+                    className="rounded px-1 py-0.5 text-[11px] font-medium text-accent-strong hover:bg-[#ECECEF]"
+                  >
+                    保存
+                  </button>
+                  <button
+                    type="button"
+                    onClick={cancelQueueEdit}
+                    aria-label={`取消编辑队列消息 ${index + 1}`}
+                    title="取消（Esc）"
+                    className="rounded px-1 py-0.5 text-[11px] text-ink-faint hover:bg-[#ECECEF] hover:text-ink"
+                  >
+                    取消
+                  </button>
+                </span>
+              ) : (
+                <>
+                {onEditFollowUp && (
+                  <button
+                    type="button"
+                    onClick={() => startQueueEdit(item.id, item.message)}
+                    disabled={queueBusy}
+                    aria-label={`编辑队列消息 ${index + 1}`}
+                    title="编辑这条排队消息"
+                    className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-ink-faint hover:bg-[#ECECEF] hover:text-ink disabled:opacity-30"
+                  >
+                    <Pencil size={11} strokeWidth={2} />
+                  </button>
+                )}
+                {onExpediteFollowUp && (
+                  <button
+                    type="button"
+                    onClick={() => onExpediteFollowUp(item.id)}
+                    disabled={queueBusy}
+                    aria-label={`立即发送队列消息 ${index + 1}`}
+                    title="立即发送：打断当前这一轮，马上把这条发出去"
+                    className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-ink-faint hover:bg-[#EAF6EF] hover:text-[#2F855A] disabled:opacity-30"
+                  >
+                    <Zap size={11} strokeWidth={2} />
+                  </button>
+                )}
+                {onReorderFollowUps && index > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => moveQueueItem(item.id, 0)}
+                    disabled={queueBusy}
+                    aria-label={`把队列消息 ${index + 1} 插到队首`}
+                    title="插到队首：排到所有排队消息之前"
+                    className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-ink-faint hover:bg-[#ECECEF] hover:text-ink disabled:opacity-30"
+                  >
+                    <ArrowUpToLine size={11} strokeWidth={2} />
+                  </button>
+                )}
+                {onReorderFollowUps && (
+                  <span className="flex shrink-0 items-center">
+                    <button
+                      type="button"
+                      onClick={() => moveQueueItem(item.id, index - 1)}
+                      disabled={queueBusy || index === 0}
+                      aria-label={`上移队列消息 ${index + 1}`}
+                      className="flex h-5 w-5 items-center justify-center rounded text-ink-faint hover:bg-[#ECECEF] hover:text-ink disabled:opacity-30"
+                    >
+                      <ChevronUp size={11} strokeWidth={2} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => moveQueueItem(item.id, index + 1)}
+                      disabled={queueBusy || index === queuedFollowUps.length - 1}
+                      aria-label={`下移队列消息 ${index + 1}`}
+                      className="flex h-5 w-5 items-center justify-center rounded text-ink-faint hover:bg-[#ECECEF] hover:text-ink disabled:opacity-30"
+                    >
+                      <ChevronDown size={11} strokeWidth={2} />
+                    </button>
+                  </span>
+                )}
+                </>
+              )}
+              {editingQueueId !== item.id && onRemoveFollowUp && (
                 <button
                   type="button"
                   onClick={() => onRemoveFollowUp(item.id)}

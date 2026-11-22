@@ -19,6 +19,8 @@ const AGENT_COMMAND_TYPE_LIST = [
   "follow_up",
   "reorder_follow_ups",
   "remove_follow_up",
+  "update_follow_up",
+  "expedite_follow_up",
   "get_tools",
   "set_tools",
   "abort_compaction",

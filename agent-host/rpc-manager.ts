@@ -991,6 +991,59 @@ export class AgentSessionWrapper {
         return this.emitFollowUpQueue(snapshot);
       }
 
+      case "update_follow_up": {
+        // 就地改内容：位置/附件/顺序都保留，避免「删了重排」把图片弄丢。
+        const snapshot = this.followUpQueue.update(
+          command.id as string,
+          command.message as string,
+          command.expectedRevision as number,
+        );
+        return this.emitFollowUpQueue(snapshot);
+      }
+
+      /**
+       * 排队消息「立即发送」：不等前面几条，也不等这一轮自然收尾。
+       * 流式中 → steer（最高优先级，图片一起带上）；已经空闲 → 直接开新一轮。
+       * 两条都不成必须按原位置放回队列，绝不能把用户写的消息弄丢。
+       */
+      case "expedite_follow_up": {
+        const { item, index, snapshot } = this.followUpQueue.take(
+          command.id as string,
+          command.expectedRevision as number,
+        );
+        this.emitFollowUpQueue(snapshot);
+        const images = item.images?.length ? { images: item.images } : undefined;
+        let streaming = false;
+        try {
+          streaming = this.inner.isStreaming;
+        } catch {
+          streaming = false;
+        }
+        if (streaming) {
+          try {
+            await this.inner.steer(item.message, item.images?.length ? item.images : undefined);
+            return this.followUpQueue.snapshot();
+          } catch (error) {
+            // steer 失败多半是循环刚好收尾：继续走下面的「直接开新一轮」。
+            this.emitAgentError(error instanceof Error ? error.message : String(error));
+          }
+        }
+        try {
+          await this._binding.catch(() => undefined);
+          if (this.resourcesChanged) await this.reloadResources();
+        } catch (error) {
+          this.emitFollowUpQueue(this.followUpQueue.restoreAt(index, item));
+          throw error;
+        }
+        // prompt 是后台跑的（不能 await 到整轮结束才回命令响应），
+        // 但它**拒绝**了就说明这一轮根本没起来：按原位置放回队列，别把消息吃掉。
+        void this.inner.prompt(item.message, images).catch((error) => {
+          this.emitFollowUpQueue(this.followUpQueue.restoreAt(index, item));
+          this.emitAgentError(error instanceof Error ? error.message : String(error));
+        });
+        return this.followUpQueue.snapshot();
+      }
+
       case "get_tools": {
         const all: ToolInfo[] = this.inner.getAllTools();
         const active = new Set<string>(this.inner.getActiveToolNames());
