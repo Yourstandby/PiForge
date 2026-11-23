@@ -305,6 +305,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const handlePendingPromptQueued = useCallback(
     (item: { id: string; message: string }) => {
       pendingPromptsRef.current.push(item);
+      /**
+       * 新的一轮一发出，上一轮的 livePlan 立刻作废。
+       *
+       * livePlan 只是「正在跑的这一轮」的进度快照，它靠 agent_start 事件清零；
+       * 而从按下发送到 agent_start 抵达之间有 1–2s 的 Host 往返。这期间
+       * planProgress 会拿上一轮那张已经 5/5 的计划冒充本轮进度：输入框上方挂着
+       * 一张"已完成"的卡（转录里同一张冻结卡又被 planCardInComposer 抑制），
+       * 等 agent_start 到了才消失、然后漂回转录末尾 —— 就是用户看到的"残留
+       * 跟着流式往下走"。新用户消息在同一批 setState 里落进 messages，
+       * sinceLastUser 边界随之推进，这里清干净就不会再翻出上一轮。
+       */
+      setLivePlan(null);
     },
     [],
   );

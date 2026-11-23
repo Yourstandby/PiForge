@@ -40,6 +40,17 @@ test("canonical prompt events replace pending bubbles and reserve one entry id",
   assert.match(block, /setEntryIds\(\(prev\) => \[\.\.\.prev, undefined/);
 });
 
+// 上一轮那张计划卡只能活在「它自己那一轮」：livePlan 靠 agent_start 清零，
+// 而从发送到 agent_start 抵达有 Host 往返延迟，期间它会冒充本轮进度挂在输入框
+// 上方（转录里的冻结卡同时被抑制），看起来就是卡片跟着流式漂了一下。
+test("新提示词一发出就清掉上一轮的 livePlan", () => {
+  const block = source.slice(
+    source.indexOf("const handlePendingPromptQueued"),
+    source.indexOf("const handlePendingPromptFailed")
+  );
+  assert.match(block, /setLivePlan\(null\);/);
+});
+
 test("transcript reload invalidates optimistic delivery refs before replacing messages", () => {
   const block = source.slice(
     source.indexOf("const loadSession = useCallback"),
