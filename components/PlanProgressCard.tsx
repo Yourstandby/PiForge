@@ -6,6 +6,7 @@ import {
   planRemainingSteps,
   planSettlement,
   type PlanProgress,
+  type PlanStep,
 } from "@/lib/plan-progress";
 
 /**
@@ -43,6 +44,8 @@ export function PlanProgressCard({
   onAbandon?: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  /** 已完成的分组默认收起：展开列表时先看"还剩什么"，而不是先看成绩单。 */
+  const [showDone, setShowDone] = useState(false);
   const { steps, done, dropped, total } = progress;
   const allDone = total > 0 && done === total;
   /** open = 还有没做完的步：这才是需要结算的状态。 */
@@ -57,6 +60,64 @@ export function PlanProgressCard({
 
   const percent = total > 0 ? Math.round((done / total) * 100) : 0;
   const current = progress.activeIndex >= 0 ? steps[progress.activeIndex] : null;
+
+  /** 待办/进行中在前，已完成收进折叠组。 */
+  const items = steps.map((step, index) => ({ step, index }));
+  const openItems = items.filter((item) => item.step.status !== "done");
+  const doneItems = items.filter((item) => item.step.status === "done");
+
+  /**
+   * 「完成」和「放弃」必须用两套视觉语言：
+   * 勾选框说"做完了"，删除线只说"这条取消了"。原实现两者共用
+   * text-ink-faint + line-through，于是"做完"看起来像"被删掉"，
+   * 汉字中横还会被那条 1px 细线切碎，灰字（#9ca3af）也只有 2.6:1。
+   */
+  const renderStep = ({ step, index }: { step: PlanStep; index: number }) => {
+    const active = !allDone && index === progress.activeIndex;
+    const isDropped = step.status === "dropped";
+    return (
+      <li
+        key={String(index) + "-" + step.title}
+        className="flex items-start gap-1.5 text-[12px] leading-5"
+      >
+        <span
+          aria-hidden="true"
+          className={[
+            "mt-[3px] flex size-[13px] shrink-0 items-center justify-center rounded-[4px] border",
+            step.status === "done"
+              ? "border-accent bg-accent text-white"
+              : isDropped
+                ? "border-[#D7DBE3] bg-[#F1F2F5] text-ink-faint"
+                : active
+                  ? "border-accent bg-[#F5F9FF]"
+                  : "border-[#D7DBE3] bg-white",
+          ].join(" ")}
+        >
+          {step.status === "done" ? (
+            <Check size={9} strokeWidth={3.2} />
+          ) : isDropped ? (
+            <Minus size={9} strokeWidth={3} />
+          ) : active && live ? (
+            <Loader2 size={9} strokeWidth={2.6} className="animate-spin text-accent" />
+          ) : active ? (
+            <span className="size-[4px] rounded-full bg-ink-faint" />
+          ) : null}
+        </span>
+        <span
+          className={[
+            "min-w-0",
+            isDropped
+              ? "text-ink-faint line-through"
+              : active && live
+                ? "text-ink"
+                : "text-ink-muted",
+          ].join(" ")}
+        >
+          {step.title}
+        </span>
+      </li>
+    );
+  };
 
   return (
     <div
@@ -118,55 +179,43 @@ export function PlanProgressCard({
       </div>
 
       {open && (
-        <ul className="flex flex-col gap-1 pt-0.5">
-          {steps.map((step, index) => {
-            const active = !allDone && index === progress.activeIndex;
-            const isDone = step.status === "done";
-            const isDropped = step.status === "dropped";
-            return (
-              <li
-                key={String(index) + "-" + step.title}
-                className="flex items-start gap-1.5 text-[12px] leading-5"
+        <div className="flex flex-col gap-1 pt-0.5">
+          {openItems.length > 0 && (
+            <ul className="flex flex-col gap-1">{openItems.map(renderStep)}</ul>
+          )}
+          {doneItems.length > 0 && (
+            <div className="flex flex-col gap-1">
+              <button
+                type="button"
+                onClick={() => setShowDone((prev) => !prev)}
+                aria-expanded={showDone}
+                className="flex items-start gap-1.5 text-left text-[12px] leading-5"
               >
                 <span
                   aria-hidden="true"
-                  className={[
-                    "mt-[3px] flex size-[13px] shrink-0 items-center justify-center rounded-[4px] border",
-                    isDone
-                      ? "border-accent bg-accent text-white"
-                      : isDropped
-                        ? "border-[#D7DBE3] bg-[#F1F2F5] text-ink-faint"
-                        : active
-                          ? "border-accent bg-[#F5F9FF]"
-                          : "border-[#D7DBE3] bg-white",
-                  ].join(" ")}
+                  className="mt-[3px] flex size-[13px] shrink-0 items-center justify-center rounded-[4px] border border-accent bg-accent text-white"
                 >
-                  {isDone ? (
-                    <Check size={9} strokeWidth={3.2} />
-                  ) : isDropped ? (
-                    <Minus size={9} strokeWidth={3} />
-                  ) : active && live ? (
-                    <Loader2 size={9} strokeWidth={2.6} className="animate-spin text-accent" />
-                  ) : active ? (
-                    <span className="size-[4px] rounded-full bg-ink-faint" />
-                  ) : null}
+                  <Check size={9} strokeWidth={3.2} />
                 </span>
-                <span
+                <span className="min-w-0 flex-1 truncate text-ink-muted">
+                  已完成 {doneItems.length} 步
+                </span>
+                <ChevronDown
+                  size={11}
+                  strokeWidth={2}
+                  aria-hidden="true"
                   className={[
-                    "min-w-0",
-                    isDone || isDropped
-                      ? "text-ink-faint line-through"
-                      : active && live
-                        ? "text-ink"
-                        : "text-ink-muted",
+                    "mt-[4px] shrink-0 text-ink-faint transition-transform",
+                    showDone ? "rotate-180" : "",
                   ].join(" ")}
-                >
-                  {step.title}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
+                />
+              </button>
+              {showDone && (
+                <ul className="flex flex-col gap-1">{doneItems.map(renderStep)}</ul>
+              )}
+            </div>
+          )}
+        </div>
       )}
 
       {!approval && canSettle && (
