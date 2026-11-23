@@ -319,7 +319,7 @@ function createMarkdownComponents(
         src={url}
         alt={alt ?? ""}
         loading="lazy"
-        className="my-2 max-h-80 rounded-lg border border-[#E3E8F2] bg-white object-contain"
+        className={`my-2 ${CHAT_IMAGE_SIZE} rounded-lg border border-[#E3E8F2] bg-white object-contain`}
       />
     );
   },
@@ -372,6 +372,18 @@ function userText(message: AgentMessage): string {
   // 图片缩放说明是给模型看的机器注记，不要混在用户原话里重复一遍。
   return stripImageDimensionNotes(text);
 }
+
+/**
+ * 对话里图片的唯一尺寸口径：限高 + 限宽。
+ *
+ * 消息图（用户气泡 / 助手正文 / markdown 内联）必须共用同一个常量：以前三处
+ * 分别写死 max-h-64 / max-h-72 / max-h-80，同一张图在不同气泡里就是三个大小。
+ * 而且只限高不限宽也不行——按高度换算出的宽度一旦超过气泡，flex 项（min-width:auto）
+ * 不肯收缩，宽图会被滚动容器横向裁掉半张。
+ */
+const CHAT_IMAGE_SIZE = "max-h-64 max-w-full";
+/** 工具产出图（生成图片的结果）单独一档，比消息图大一档；同样必须限宽。 */
+const TOOL_IMAGE_SIZE = "max-h-72 max-w-full";
 
 type TurnBlock =
   | { kind: "thinking"; text: string }
@@ -428,7 +440,9 @@ function ClickableImage({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="block cursor-zoom-in border-0 bg-transparent p-0"
+        // 外壳也要能收缩：图片是 flex 项，外壳不带 min-w-0 / max-w-full 时
+        // 内容宽度会把气泡撑破，宽图被滚动容器横向裁掉。
+        className="block max-w-full min-w-0 cursor-zoom-in border-0 bg-transparent p-0"
         title={alt}
         aria-label={alt}
       >
@@ -1361,7 +1375,7 @@ function ToolCallCard({
               key={index}
               src={src}
               alt={`工具输出图片 ${index + 1}`}
-              className="max-h-72 rounded-md border border-[#E3E8F2] object-contain"
+              className={`${TOOL_IMAGE_SIZE} rounded-md border border-[#E3E8F2] object-contain`}
             />
           ))}
         </div>
@@ -2107,7 +2121,7 @@ function AssistantBlocks({
               key={`plain-img-${index}`}
               src={block.src}
               alt="模型输出图片"
-              className="my-2 max-h-80 rounded-lg border border-[#E3E8F2] object-contain"
+              className={`my-2 ${CHAT_IMAGE_SIZE} rounded-lg border border-[#E3E8F2] object-contain`}
             />
           ) : block.kind === "text" ? (
             <ReactMarkdown
@@ -2443,6 +2457,8 @@ export interface TranscriptTurnView {
    * 渲染成灰卡片，并从回合导航里剔除，避免「你」说出自己没说过的话。
    */
   systemNote?: boolean;
+  /** 乐观消息还停在「已交给宿主、尚未落库」的状态（steer 提交后有一小段）。 */
+  deliveryPending?: boolean;
 }
 
 /**
@@ -2483,10 +2499,19 @@ function toolResultRefsOf(
   return refs;
 }
 
+/**
+ * 投递状态也是外部状态：乐观消息被宿主接住时 deliveryState 会被原地删掉，
+ * 消息对象引用却不变。不把它算进引用键，缓存就会一直返回「投递中」那一版。
+ */
+function deliveryRefOf(message: AgentMessage): string | null {
+  if (message.role !== "user") return null;
+  return (message as { deliveryState?: string }).deliveryState ?? "delivered";
+}
+
 export function buildTranscriptTurns(messages: AgentMessage[]): TranscriptTurnView[] {
   const results = toolResultsById(messages);
   return buildWithTurnCache<AgentMessage, TranscriptTurnView>(messages, turnCache(), {
-    refsOf: (message) => toolResultRefsOf(message, results),
+    refsOf: (message) => [...toolResultRefsOf(message, results), deliveryRefOf(message)],
     build: (message, index) => buildTranscriptTurn(message, index, results),
   }).filter((turn): turn is TranscriptTurnView => turn !== null);
 }
@@ -2502,8 +2527,9 @@ function buildTranscriptTurn(
     const images = contentImages((message as { content?: unknown }).content);
     const timestamp = (message as { timestamp?: number }).timestamp;
     const systemNote = isInterventionText(text);
+    const deliveryPending = (message as { deliveryState?: string }).deliveryState === "pending";
     return text || images.length > 0
-      ? { role: "user", text, images, blocks: [], messageIndex, timestamp, systemNote }
+      ? { role: "user", text, images, blocks: [], messageIndex, timestamp, systemNote, deliveryPending }
       : null;
   }
   if (message.role === "assistant") {
@@ -2780,7 +2806,9 @@ function TurnRowImpl({
                   key={imageIndex}
                   src={src}
                   alt={`用户图片 ${imageIndex + 1}`}
-                  className="max-h-64 rounded-md border border-[#E7E9EE] object-contain"
+                  // 用户气泡的图片：既限高也不许超出气泡宽度（缺 max-w-full 时
+                  // 按高度换算出的大宽度会把气泡撑破、被容器裁成半张）。
+                  className={`${CHAT_IMAGE_SIZE} rounded-md border border-[#E7E9EE] object-contain`}
                 />
               ))}
             </div>
@@ -2814,8 +2842,21 @@ function TurnRowImpl({
       {turn.role !== "user" && (
         <TurnUsagePair usage={usage} totals={usageTotals} currencySymbol={currencySymbol} locale={locale} />
       )}
-      {time && (
-        <div className="mt-1 text-left text-[10.5px] tabular-nums text-ink-faint">{time}</div>
+      {(time || turn.deliveryPending) && (
+        <div className="mt-1 flex items-center gap-1.5 text-left text-[10.5px] tabular-nums text-ink-faint">
+          {time && <span>{time}</span>}
+          {turn.deliveryPending && (
+            // 「交给宿主」≠「已进会话」：这段空窗里气泡和已送达长得一模一样，
+            // 用户会以为没发出去又按一次（同一秒冒出两条就是这么来的）。
+            <span
+              className="flex items-center gap-1 rounded bg-[#F1F7FF] px-1.5 py-0.5 text-accent-strong"
+              title="消息已交给宿主，还在等这一轮接住它"
+            >
+              <Loader2 size={9} strokeWidth={2.2} className="animate-spin" aria-hidden="true" />
+              投递中…
+            </span>
+          )}
+        </div>
       )}
     </article>
   );

@@ -133,6 +133,7 @@ import {
   listHerdrAgents,
   onHerdrChange,
   sendHerdrMessage,
+  spawnHerdrAgent,
   stopAllHerdrAgents,
   stopHerdrAgent,
   wakeFleetAgent,
@@ -1714,6 +1715,40 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
             }),
           )
           .catch((error: unknown) => fail(state, frame.id, "INTERNAL", errorText(error)));
+        return;
+      }
+      /**
+       * 面板手动派生：与模型调 `herdr_spawn` 走同一个 spawnHerdrAgent，
+       * 区别只是 parentSessionId 由渲染层给（没有父会话就落回 "desktop"）。
+       * cwd 必须先过正常文件策略，避免面板变成任意路径启动器。
+       */
+      case "herdr.spawn": {
+        const name = readString(params, "name");
+        const task = readString(params, "task");
+        const cwd = readString(params, "cwd");
+        if (!name || !task || !cwd) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "name, task and cwd are required");
+          return;
+        }
+        const timeoutMs = typeof params.timeoutMs === "number" ? params.timeoutMs : undefined;
+        void authorizePath(cwd, "write")
+          .then((authorized: string) => {
+            const agent = spawnHerdrAgent({
+              name,
+              task,
+              cwd: authorized,
+              parentSessionId: readString(params, "parentSessionId") ?? "desktop",
+              ...(timeoutMs ? { timeoutMs } : {}),
+            });
+            result(state, frame.id, { agent });
+          })
+          .catch((error: unknown) => {
+            if (error instanceof AccessDeniedError) {
+              fail(state, frame.id, "ACCESS_DENIED", error.message);
+              return;
+            }
+            fail(state, frame.id, "INTERNAL", errorText(error));
+          });
         return;
       }
       case "herdr.stop": {

@@ -12,7 +12,14 @@ import type { SessionInfo, SessionTreeNode, UserMessage } from "@/lib/types";
 import type { FollowUpQueueSnapshot } from "@/lib/follow-up-queue";
 import type { PrefixAuditView } from "@/lib/token-guard";
 import { formatCodemodeProgressFromResult } from "@/lib/codemode-progress";
-import { applyPlanCall, planFromMessages, type PlanProgress } from "@/lib/plan-progress";
+import {
+  applyPlanCall,
+  isPlanSettled,
+  planFromMessages,
+  planKey,
+  planRemainingSteps,
+  type PlanProgress,
+} from "@/lib/plan-progress";
 import {
   calculateSessionActivity,
   calculateSessionStats,
@@ -226,6 +233,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
    * 历史轮次靠 planFromMessages 从消息里重建，所以这里只服务「正在跑的这一轮」。
    */
   const [livePlan, setLivePlan] = useState<PlanProgress | null>(null);
+  /**
+   * 用户点过"放弃剩余"的那份计划的指纹（planKey）。
+   * 存在前端而不是改成 dropped 写回会话：结算是一次 UI 决定，不该为了
+   * 关掉一行卡片就再跑一轮 agent（花钱、还可能把计划重写一遍）。
+   */
+  const [abandonedPlanKey, setAbandonedPlanKey] = useState<string | null>(null);
   const [extensionUiRequest, setExtensionUiRequest] =
     useState<ExtensionUiRequestEvent | null>(null);
   const [extensionUiNotify, setExtensionUiNotify] = useState<{
@@ -1037,6 +1050,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     setActiveLeafId(null);
     setMessages([]);
     setLivePlan(null);
+    setAbandonedPlanKey(null);
     setEntryIds([]);
     setToolPreset(reset.toolPreset);
     setThinkingLevel(reset.thinkingLevel);
@@ -1157,15 +1171,51 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
    * 历史消息里的 plan 调用不重复渲染，卡片永远只有一张。
    */
   /**
-   * 停机后不再挂着上一轮的计划卡片：本轮已结束、也没在等用户批准时直接不渲染，
-   * 位置还给输入框（旧计划留在会话历史里，再点"继续"会被重新折出来）。
-   * 计划模式下的"批准并执行"是例外 —— 那是等用户操作，不是残留。
+   * 计划卡片的去留。
+   *
+   * 旧实现是「本轮结束且不在等批准 → 直接不渲染」，于是计划停在 3/6 时
+   * 卡片凭空消失：用户不知道还剩什么，模型也不会再提，任务就此搁置。
+   * 现在只有**已有终态**的计划才收起：
+   *   - 全部 done / 全部 dropped → 收（位置还给输入框）
+   *   - 用户点过「放弃剩余」→ 收（记在 abandonedPlanKey 里）
+   *   - 其余没做完的 → 留着，并由卡片给出「继续执行 / 放弃剩余」两个出口
    */
   const planProgress = useMemo(() => {
     if (!planProgressEnabled) return null;
-    if (!agentRunning && !canExecutePlan) return null;
-    return livePlan ?? planFromMessages(messages, { sinceLastUser: true });
-  }, [messages, livePlan, planProgressEnabled, agentRunning, canExecutePlan]);
+    const progress = livePlan ?? planFromMessages(messages, { sinceLastUser: true });
+    if (!progress) return null;
+    if (agentRunning || canExecutePlan) return progress;
+    if (isPlanSettled(progress)) return null;
+    if (abandonedPlanKey && abandonedPlanKey === planKey(progress)) return null;
+    return progress;
+  }, [
+    messages,
+    livePlan,
+    planProgressEnabled,
+    agentRunning,
+    canExecutePlan,
+    abandonedPlanKey,
+  ]);
+
+  /** 「继续执行」：还剩什么就让它接着做，不重述整份计划。 */
+  const resumePlan = useCallback(() => {
+    if (agentRunning) return;
+    if (canExecutePlan) {
+      void commands.handleExecutePlan();
+      return;
+    }
+    const remaining = planProgress ? planRemainingSteps(planProgress) : [];
+    const titles = remaining.map((step) => step.title).join("、");
+    void commands.handleSend(
+      titles ? `继续执行计划里剩下的步骤：${titles}` : "继续执行计划里剩下的步骤",
+    );
+  }, [agentRunning, canExecutePlan, commands, planProgress]);
+
+  /** 「放弃剩余」：把这张卡结算掉，不再挡住输入框。 */
+  const abandonPlan = useCallback(() => {
+    if (!planProgress) return;
+    setAbandonedPlanKey(planKey(planProgress));
+  }, [planProgress]);
 
   return {
     // State
@@ -1184,6 +1234,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     canExecutePlan,
     planProgress,
     planProgressEnabled,
+    resumePlan,
+    abandonPlan,
     extensionUiRequest,
     extensionUiNotify,
     trustPrompt,

@@ -19,7 +19,24 @@ export async function POST(req: Request) {
   const originError = validateRequestOrigin(req);
   if (originError) return jsonError(req, 403, originError);
   try {
-    const body = (await req.json()) as { action?: unknown; id?: unknown };
+    const body = (await req.json()) as {
+      action?: unknown;
+      id?: unknown;
+      name?: unknown;
+      task?: unknown;
+      cwd?: unknown;
+    };
+    // 面板手动派生舰队 Agent（与模型 herdr_spawn 同一通道）。
+    if (body.action === "spawn") {
+      const name = typeof body.name === "string" ? body.name.trim() : "";
+      const task = typeof body.task === "string" ? body.task.trim() : "";
+      const cwd = typeof body.cwd === "string" ? body.cwd.trim() : "";
+      if (!name || !task || !cwd) {
+        return jsonError(req, 400, "action=spawn requires name, task and cwd");
+      }
+      const agent = await getAgentHostClient().call("herdr.spawn", { name, task, cwd });
+      return NextResponse.json(agent, { headers: { "x-request-id": getRequestId(req) } });
+    }
     if (body.action !== "stop" || typeof body.id !== "string" || !body.id.trim()) {
       return jsonError(req, 400, "action=stop and id are required");
     }

@@ -21,6 +21,21 @@ test("latestRequestStale returns true once a newer request bumps the ref (M3)", 
   assert.equal(stale(), true);
 });
 
+// 运行中的回合会反复重取同一个会话（工具轮次抖动 / 宿主正在写盘）。一次拿到空
+// 上下文就把 messages 抹掉，界面会永久失去历史——本轮结束前没有别的重载路径。
+test("同一个会话重取到空上下文时保留已上屏的对话", () => {
+  assert.match(source, /const keepShown =\s*sameSession && nextMessages\.length === 0 && shownCountRef\.current > 0/);
+  assert.match(source, /if \(!keepShown\) \{/);
+});
+
+test("一次取不到会话（d === null）不清空已上屏的对话", () => {
+  const start = source.indexOf("if (d === null)");
+  const end = source.indexOf("const nextMessages");
+  assert.ok(start > 0 && end > start, "d === null 分支应仍存在");
+  const branch = source.slice(start, end);
+  assert.doesNotMatch(branch, /setMessages\(/);
+});
+
 // Wiring: loadSession and loadContext must each install a stale guard so a
 // slow response cannot overwrite newer state (M3).
 test("loadSession/loadContext wire per-request stale guards", () => {

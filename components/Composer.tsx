@@ -23,6 +23,13 @@ import {
 } from "@/lib/slash-commands";
 
 const MAX_HEIGHT = 200;
+/**
+ * 同一条消息的重复提交窗口。
+ *
+ * 双击发送、Enter 连按、以及「以为没发出去又按一次」都会落到同一段文本上；
+ * 不拦就会并排出现两条同一秒、同内容的用户消息，看起来像消息被复制了。
+ */
+const DUPLICATE_SUBMIT_MS = 800;
 
 interface FileSuggestion {
   path: string;
@@ -192,6 +199,7 @@ export function Composer({
   const [historyIndex, setHistoryIndex] = useState<number | null>(null);
   // Text the user had typed before starting to browse history.
   const historyDraftRef = useRef("");
+  const lastSubmitRef = useRef<{ key: string; at: number }>({ key: "", at: 0 });
 
   useEffect(() => {
     setHistory(readPromptHistory());
@@ -503,6 +511,14 @@ export function Composer({
       focusCaretAtEnd();
       return;
     }
+    // 同一段话（含附件张数）800ms 内只发一次：重复的那次直接丢掉，
+    // 绝不让界面出现两条同一秒的重复气泡。
+    const submitKey = `${text}\u0000${images.length}`;
+    const now = Date.now();
+    if (lastSubmitRef.current.key === submitKey && now - lastSubmitRef.current.at < DUPLICATE_SUBMIT_MS) {
+      return;
+    }
+    lastSubmitRef.current = { key: submitKey, at: now };
     const attached = images.length > 0 ? images : undefined;
     if (text) rememberPrompt(text);
     if (busy) {

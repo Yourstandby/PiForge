@@ -2,10 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   applyPlanCall,
+  isPlanSettled,
   PLAN_MAX_STEPS,
   planByRound,
   planFromMessages,
   planInRange,
+  planKey,
+  planRemainingSteps,
+  planSettlement,
   readPlanSteps,
   readPlanUpdate,
 } from "./plan-progress.ts";
@@ -277,6 +281,70 @@ test("planByRound：每轮各自冻结一张卡片，钉在该轮最后一条轮
     laterMessages,
   );
   assert.deepEqual(later.plans.get(2), plans.get(2));
+});
+
+test("dropped 是终态：算收尾、不算完成", () => {
+  const progress = planFromMessages([
+    assistantCall({
+      steps: [
+        { title: "读代码", status: "done" },
+        { title: "改代码", status: "dropped" },
+        { title: "跑测试", status: "dropped" },
+      ],
+    }),
+  ]);
+  assert.ok(progress);
+  assert.equal(progress.done, 1);
+  assert.equal(progress.dropped, 2);
+  assert.equal(progress.activeIndex, -1, "没有 pending / active 时不该再指向某一步");
+  assert.equal(isPlanSettled(progress), true);
+  assert.equal(planSettlement(progress), "partial");
+  assert.deepEqual(planRemainingSteps(progress), []);
+});
+
+test("update 能把不再做的步骤标成 dropped（模型改主意的显式出口）", () => {
+  let progress = applyPlanCall(null, { steps: [{ title: "a" }, { title: "b" }, { title: "c" }] });
+  assert.ok(progress);
+  assert.equal(planSettlement(progress), "open");
+  assert.equal(isPlanSettled(progress), false);
+
+  progress = applyPlanCall(progress, { update: { index: 1, status: "dropped" } });
+  progress = applyPlanCall(progress, { update: { index: 2, status: "dropped" } });
+  assert.ok(progress);
+  assert.equal(progress.dropped, 2);
+  assert.equal(isPlanSettled(progress), false, "还有第 0 步没做完，没结算");
+  assert.deepEqual(
+    planRemainingSteps(progress).map((step) => step.title),
+    ["a"],
+  );
+  assert.equal(planSettlement(progress), "open");
+});
+
+test("全放弃 → dropped；全做完 → done", () => {
+  const dropped = planFromMessages([
+    assistantCall({ steps: [{ title: "a", status: "dropped" }, { title: "b", status: "dropped" }] }),
+  ]);
+  assert.ok(dropped);
+  assert.equal(planSettlement(dropped), "dropped");
+  assert.equal(dropped.activeIndex, -1);
+
+  const done = planFromMessages([
+    assistantCall({ steps: [{ title: "a", status: "done" }, { title: "b", status: "done" }] }),
+  ]);
+  assert.ok(done);
+  assert.equal(planSettlement(done), "done");
+  assert.equal(done.dropped, 0);
+});
+
+test("planKey 只看步骤标题：同一份计划指纹稳定，改了标题才算新计划", () => {
+  const a = planFromMessages([assistantCall({ steps: [{ title: "读代码" }, { title: "改代码" }] })]);
+  const b = planFromMessages([
+    assistantCall({ steps: [{ title: "读代码", status: "done" }, { title: "改代码", status: "active" }] }),
+  ]);
+  const c = planFromMessages([assistantCall({ steps: [{ title: "读代码" }, { title: "写测试" }] })]);
+  assert.ok(a && b && c);
+  assert.equal(planKey(a), planKey(b));
+  assert.notEqual(planKey(a), planKey(c));
 });
 
 test("planByRound：没有 plan 调用的轮次不产生卡片", () => {

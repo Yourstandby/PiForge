@@ -663,6 +663,34 @@ function ChatSession({
     return () => window.clearTimeout(timer);
   }, [chat.error, session]);
 
+  /**
+   * 「运行中但一条历史都没有」的自愈。
+   *
+   * 这条链路上最坏的表现是静默空白：对话区只剩一句「正在思考…」，用户以为整个
+   * 应用卡死了。历史取空几乎都是宿主正在写盘的瞬时竞态，所以运行期间补几次重取
+   * （1.5s 起、最长 6s 退避，共 6 次），历史一回来就停。
+   */
+  useEffect(() => {
+    if (!session || !chat.agentRunning || messages.length > 0) return;
+    let cancelled = false;
+    let timer = 0;
+    let attempt = 0;
+    const schedule = () => {
+      if (cancelled || attempt >= 6) return;
+      timer = window.setTimeout(() => {
+        if (cancelled) return;
+        attempt += 1;
+        void loadSessionRef.current(session.id, false, true);
+        schedule();
+      }, Math.min(attempt * 1_500, 6_000));
+    };
+    schedule();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [session, chat.agentRunning, messages.length]);
+
   const showTranscript = messages.length > 0 || session !== null || Boolean(chat.error);
   /** 真·加载失败（没有任何消息可显示）：用极简卡片替代整个对话界面。 */
   const loadFailed = Boolean(chat.error) && messages.length === 0;
@@ -1602,6 +1630,10 @@ function ChatSession({
         <PlanProgressCard
           progress={chat.planProgress}
           running={chat.agentRunning}
+          // 计划停在半路时给出口：不点「放弃剩余」这张卡就一直留着，
+          // 点了才结算掉 —— 搁置不再只需要用户自己记住。
+          onResume={chat.agentRunning ? undefined : chat.resumePlan}
+          onAbandon={chat.agentRunning ? undefined : chat.abandonPlan}
           approval={
             chat.agentMode === "plan" && chat.canExecutePlan
               ? {
@@ -1749,12 +1781,20 @@ function ChatSession({
               )}
               {/* 这里是**本轮全部模型调用的输出合计**（含思考与每个工具轮次），
                   不是"这一次请求的新增输入"。写清楚口径，免得看起来像凭空涨了几千。 */}
-              <span
-                className="tabular-nums"
-                title="本轮所有模型调用的输出合计（含思考与工具轮次），不是单次请求的输入"
-              >
-                本轮产出 {formatTokenCount(turnOutputTokens + liveTokens)}
-              </span>
+              {/* 首 token 之前不报「本轮产出 0」：那只是还没开始吐字，
+                  写成 0 会让人以为消息没送到、这轮白跑了。 */}
+              {chat.agentRunning && turnOutputTokens + liveTokens === 0 && tokensPerSecond === 0 ? (
+                <span className="tabular-nums" title="消息已送达宿主，模型还没产出第一个 token">
+                  等待首个 token…
+                </span>
+              ) : (
+                <span
+                  className="tabular-nums"
+                  title="本轮所有模型调用的输出合计（含思考与工具轮次），不是单次请求的输入"
+                >
+                  本轮产出 {formatTokenCount(turnOutputTokens + liveTokens)}
+                </span>
+              )}
               {/* 上下文：一个环就够了——走满=贴满窗口，变红脉冲=已越顶，数字只进 tooltip。 */}
               {chat.contextBudget && (
                 <>
@@ -2005,6 +2045,25 @@ function ChatSession({
 
               {chat.agentRunning && !streaming && (
                 <p className="text-[12px] text-ink-faint">PiForge 正在思考…</p>
+              )}
+
+              {/* 运行中却一条历史都没有：说清原因并给出重试出口，不留静默空白。 */}
+              {chat.agentRunning && messages.length === 0 && (
+                <div
+                  data-history-missing="true"
+                  role="status"
+                  className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-[#FAFAFB] px-3 py-2 text-[11.5px] leading-relaxed text-ink-muted"
+                >
+                  <span>这段对话的历史还没取回来（本地引擎正在写本轮），先显示本轮进度。</span>
+                  <button
+                    type="button"
+                    onClick={() => void retrySessionLoad()}
+                    disabled={retrying || !session}
+                    className="rounded-md border border-border bg-white px-2 py-0.5 text-[11px] font-medium text-ink-muted transition-colors duration-150 hover:bg-[#ECECEF] hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {retrying ? "重试中…" : "重新加载"}
+                  </button>
+                </div>
               )}
             </div>
             {/* 底部哨兵：IntersectionObserver 的唯一观测目标。

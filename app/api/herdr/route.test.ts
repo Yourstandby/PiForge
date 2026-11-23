@@ -26,6 +26,34 @@ test("GET /api/herdr proxies herdr.list", async () => {
   }
 });
 
+test("POST /api/herdr spawns a fleet agent from the panel", async () => {
+  const stub = stubClient(() => ({ agent: { id: "herdr-2", name: "audit" } }));
+  try {
+    const missing = await POST(
+      new Request("http://localhost/api/herdr", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "spawn", name: "audit", task: "do it" }),
+      }),
+    );
+    assert.equal(missing.status, 400);
+
+    const good = await POST(
+      new Request("http://localhost/api/herdr", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "spawn", name: "audit", task: "do it", cwd: "D:/repo" }),
+      }),
+    );
+    assert.equal(good.status, 200);
+    assert.deepEqual(await good.json(), { agent: { id: "herdr-2", name: "audit" } });
+    assert.equal(stub.calls[0]?.method, "herdr.spawn");
+    assert.deepEqual(stub.calls[0]?.params, { name: "audit", task: "do it", cwd: "D:/repo" });
+  } finally {
+    stub.restore();
+  }
+});
+
 test("POST /api/herdr validates stop requests", async () => {
   const stub = stubClient(() => ({ ok: true }));
   try {

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { GitBranch, Loader2, Network, Square } from "lucide-react";
 import type { OrchestratorTaskView } from "@contract/domains/orchestrator";
 import { ErrorNotice } from "./ErrorNotice";
+import { AgentSpawnTrigger, type AgentSpawnDraft } from "./AgentSpawnTrigger";
 
 const STATUS_COLOR: Record<string, string> = {
   starting: "#9A6B1F",
@@ -96,8 +97,11 @@ function Node({ node, depth, stopping, onStop }: { node: TreeNode; depth: number
   );
 }
 
-/** Read-only orchestration tree; worker lifecycle stays in the Host. */
-export function OrchestratorPanel() {
+/**
+ * 编排面板：worker 仍在 Host 的独立进程 + worktree 里跑，这里补一个
+ * 「手动派生」入口（否则只能等主 Agent 调 orchestrator_spawn）。
+ */
+export function OrchestratorPanel({ cwd = null }: { cwd?: string | null }) {
   const [tasks, setTasks] = useState<OrchestratorTaskView[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [stopping, setStopping] = useState<string | null>(null);
@@ -143,6 +147,17 @@ export function OrchestratorPanel() {
     }
   }, [load]);
 
+  const spawn = useCallback(async ({ name, task }: AgentSpawnDraft) => {
+    const response = await fetch("/api/orchestrator", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "spawn", name, task, cwd, parentSessionId: "desktop" }),
+    });
+    const data = (await response.json()) as { error?: string };
+    if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
+    await load();
+  }, [cwd, load]);
+
   const roots = useMemo(() => buildTree(tasks), [tasks]);
 
   return (
@@ -154,10 +169,18 @@ export function OrchestratorPanel() {
           fallback={<span className="block px-1.5 py-1 text-[11px] text-ink-faint">正在等待本地引擎就绪…</span>}
         />
       )}
+      <AgentSpawnTrigger
+        label="新建 Worker"
+        placeholder="给 worker 一份自包含的简报：路径、验收标准、必须跑的验证。它在独立 worktree 里干活，看不到当前对话。"
+        submitLabel="派生"
+        hint="与 orchestrator_spawn 同一条通道：独立 Git worktree + 独立进程，最多同时 4 个，改完以分支形式返回。"
+        disabledReason={cwd ? null : "先在左侧选中一个项目，worker 需要一个 Git 仓库"}
+        onSubmit={spawn}
+      />
       {tasks.length === 0 ? (
         <p className="px-1.5 py-2 text-[11px] leading-5 text-ink-faint">
           <Network size={12} className="mr-1 inline" aria-hidden="true" />
-          暂无 Worker。主 Agent 可用 <code className="font-mono text-[10.5px]">orchestrator_spawn</code> 在独立 Git worktree + 独立进程中并行执行任务。
+          暂无 Worker。用上方「新建 Worker」手动派生，或等主 Agent 调 <code className="font-mono text-[10.5px]">orchestrator_spawn</code> 在独立 Git worktree + 独立进程中并行执行任务。
         </p>
       ) : roots.map((root) => (
         <Node key={root.task.id} node={root} depth={0} stopping={stopping} onStop={(id) => void stop(id)} />

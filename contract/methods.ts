@@ -441,6 +441,10 @@ export interface AgentHostMethods {
     params: Record<string, never>;
     result: { agents: HerdrAgentView[] };
   };
+  "herdr.spawn": {
+    params: { name: string; task: string; cwd: string; parentSessionId?: string; timeoutMs?: number };
+    result: { agent: HerdrAgentView };
+  };
   "herdr.stop": {
     params: { id: string };
     result: { ok: boolean };
@@ -678,6 +682,7 @@ export const IMPLEMENTED_HOST_METHODS = [
   "sessions.switchBranch",
   "workspace.cloneSession",
   "herdr.list",
+  "herdr.spawn",
   "herdr.stop",
   "fleet.list",
   "fleet.save",
