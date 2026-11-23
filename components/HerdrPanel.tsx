@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Bot, Loader2, Square } from "lucide-react";
 import type { HerdrAgentView } from "@contract/domains/herdr";
 import { ErrorNotice } from "./ErrorNotice";
+import { AgentSpawnTrigger, type AgentSpawnDraft } from "./AgentSpawnTrigger";
 
 function duration(agent: HerdrAgentView): string {
   const ms = agent.endedAt ? agent.durationMs : Date.now() - agent.startedAt;
@@ -20,8 +21,11 @@ const STATUS_COLOR: Record<string, string> = {
   exited: "#9CA3AF",
 };
 
-/** Read-only Herdr fleet panel; lifecycle controls stay in the Host. */
-export function HerdrPanel() {
+/**
+ * Herdr 舰队面板：Agent 生命周期仍在 Host 里跑，这里只补一个
+ * 「手动派生」入口（等主 Agent 主动调 herdr_spawn 就永远是空面板）。
+ */
+export function HerdrPanel({ cwd = null }: { cwd?: string | null }) {
   const [agents, setAgents] = useState<HerdrAgentView[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [stopping, setStopping] = useState<string | null>(null);
@@ -102,6 +106,17 @@ export function HerdrPanel() {
     }
   };
 
+  const spawn = useCallback(async ({ name, task }: AgentSpawnDraft) => {
+    const res = await fetch("/api/herdr", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "spawn", name, task, cwd }),
+    });
+    const data = (await res.json()) as { error?: string };
+    if (!res.ok || data.error) throw new Error(data.error ?? `HTTP ${res.status}`);
+    await load();
+  }, [cwd, load]);
+
   return (
     <div
       className="flex flex-col gap-1 px-1.5 py-1"
@@ -116,10 +131,18 @@ export function HerdrPanel() {
           fallback={<span className="block px-1.5 py-1 text-[11px] text-ink-faint">正在等待本地引擎就绪…</span>}
         />
       )}
+      <AgentSpawnTrigger
+        label="新建舰队 Agent"
+        placeholder="写清一个能独立完成的任务：目标、要改哪些文件、怎么验证。它看不到当前对话。"
+        submitLabel="派生"
+        hint="与主 Agent 的 herdr_spawn 同一条通道：独立会话、继承工具、跑完即退出。舰队最多同时 4 个。"
+        disabledReason={cwd ? null : "先在左侧选中一个项目，Agent 需要一个工作目录"}
+        onSubmit={spawn}
+      />
       {agents.length === 0 ? (
         <p className="px-1.5 py-2 text-[11px] leading-5 text-ink-faint">
           <Bot size={12} className="mr-1 inline" aria-hidden="true" />
-          舰队为空。主 Agent 可用 <code className="font-mono text-[10.5px]">herdr_spawn</code> 派生持久子 Agent。
+          舰队为空。用上方「新建舰队 Agent」手动派驻，或等主 Agent 调 <code className="font-mono text-[10.5px]">herdr_spawn</code> 派生持久子 Agent。
         </p>
       ) : (
         agents.map((agent) => (

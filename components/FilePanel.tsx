@@ -434,13 +434,13 @@ export function FilePanel({
 
         {tab === "fleet" && (
           <div className="h-full overflow-y-auto py-1">
-            <HerdrPanel />
+            <HerdrPanel cwd={cwd} />
           </div>
         )}
 
         {tab === "orchestrator" && (
           <div className="h-full overflow-y-auto py-1">
-            <OrchestratorPanel />
+            <OrchestratorPanel cwd={cwd} />
           </div>
         )}
 
