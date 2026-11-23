@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentMessage, SessionTreeNode } from "../../lib/types";
 import type { SessionBranches } from "@contract/domains/sessions";
 import type { FollowUpQueueSnapshot } from "../../lib/follow-up-queue";
@@ -61,6 +61,18 @@ export function useSessionLoader(isNew: boolean) {
   const loadReqIdRef = useRef(0);
   const loadContextReqIdRef = useRef(0);
   const branchReqIdRef = useRef(0);
+  /**
+   * 上一次成功上屏的会话 id + 当前对话条数。
+   *
+   * 用来区分「换了一个会话」和「同一个会话重新取了一次」：运行中的回合会反复打断
+   * 重取（工具轮次抖动、宿主正在追加写盘），这时候一次返回空上下文**不等于**对话
+   * 没了 —— 抹掉之后本轮结束前没有任何重载路径，界面就只剩一句「正在思考…」。
+   */
+  const loadedSidRef = useRef<string | null>(null);
+  const shownCountRef = useRef(0);
+  useEffect(() => {
+    shownCountRef.current = messages.length;
+  }, [messages.length]);
 
   const loadBranches = useCallback(async (sid: string, filePath?: string | null) => {
     const requestId = ++branchReqIdRef.current;
@@ -84,18 +96,28 @@ export function useSessionLoader(isNew: boolean) {
       if (stale()) return null;
       if (d === null) {
         if (showLoading) {
+          // 一次没取到不等于会话没了：换会话/真删除由调用方自己清空，
+          // 这里清掉就是「历史凭空消失」，而且没有任何后续重载能救回来。
           setData(null);
           setActiveLeafId(null);
-          setMessages([]);
           setBranches(null);
           setError(null);
         }
         return null;
       }
+      const nextMessages = d.context.messages;
+      const sameSession = loadedSidRef.current === sid;
+      loadedSidRef.current = sid;
+      // 同一个会话、这次拿到空上下文、而界面本来有内容 → 典型的「宿主正在写盘」
+      // 竞态。保留已有对话，别把整段历史抹成空白。
+      const keepShown =
+        sameSession && nextMessages.length === 0 && shownCountRef.current > 0;
       setData(d);
       setActiveLeafId(d.leafId);
-      setMessages(d.context.messages);
-      setEntryIds(d.context.entryIds ?? []);
+      if (!keepShown) {
+        setMessages(nextMessages);
+        setEntryIds(d.context.entryIds ?? []);
+      }
       setError(null);
       // Fire-and-forget: the tree powers the inline 1/2 switchers.
       void loadBranches(sid, d.filePath);

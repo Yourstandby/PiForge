@@ -663,6 +663,34 @@ function ChatSession({
     return () => window.clearTimeout(timer);
   }, [chat.error, session]);
 
+  /**
+   * 「运行中但一条历史都没有」的自愈。
+   *
+   * 这条链路上最坏的表现是静默空白：对话区只剩一句「正在思考…」，用户以为整个
+   * 应用卡死了。历史取空几乎都是宿主正在写盘的瞬时竞态，所以运行期间补几次重取
+   * （1.5s 起、最长 6s 退避，共 6 次），历史一回来就停。
+   */
+  useEffect(() => {
+    if (!session || !chat.agentRunning || messages.length > 0) return;
+    let cancelled = false;
+    let timer = 0;
+    let attempt = 0;
+    const schedule = () => {
+      if (cancelled || attempt >= 6) return;
+      timer = window.setTimeout(() => {
+        if (cancelled) return;
+        attempt += 1;
+        void loadSessionRef.current(session.id, false, true);
+        schedule();
+      }, Math.min(attempt * 1_500, 6_000));
+    };
+    schedule();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [session, chat.agentRunning, messages.length]);
+
   const showTranscript = messages.length > 0 || session !== null || Boolean(chat.error);
   /** 真·加载失败（没有任何消息可显示）：用极简卡片替代整个对话界面。 */
   const loadFailed = Boolean(chat.error) && messages.length === 0;
@@ -2017,6 +2045,25 @@ function ChatSession({
 
               {chat.agentRunning && !streaming && (
                 <p className="text-[12px] text-ink-faint">PiForge 正在思考…</p>
+              )}
+
+              {/* 运行中却一条历史都没有：说清原因并给出重试出口，不留静默空白。 */}
+              {chat.agentRunning && messages.length === 0 && (
+                <div
+                  data-history-missing="true"
+                  role="status"
+                  className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-[#FAFAFB] px-3 py-2 text-[11.5px] leading-relaxed text-ink-muted"
+                >
+                  <span>这段对话的历史还没取回来（本地引擎正在写本轮），先显示本轮进度。</span>
+                  <button
+                    type="button"
+                    onClick={() => void retrySessionLoad()}
+                    disabled={retrying || !session}
+                    className="rounded-md border border-border bg-white px-2 py-0.5 text-[11px] font-medium text-ink-muted transition-colors duration-150 hover:bg-[#ECECEF] hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {retrying ? "重试中…" : "重新加载"}
+                  </button>
+                </div>
               )}
             </div>
             {/* 底部哨兵：IntersectionObserver 的唯一观测目标。
