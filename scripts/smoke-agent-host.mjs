@@ -221,8 +221,9 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     const watchdog = await client.waitFor((frame) => frame.kind === "res" && frame.id === 91);
     assert.equal(watchdog.ok, true, JSON.stringify(watchdog.error));
     assert.equal(watchdog.result.enabled, true);
-    // 默认阈值 20s（面板可在 15/30/60/90 秒间运行期切换）。
-    assert.equal(watchdog.result.config.stallMs, 20_000);
+    // 默认阈值 90s，也是可选下限（面板可在 90/120/300/600 秒间运行期切换）。
+    // v0.12.0 把默认值从 20s 提到 90s 并设成最低档，这条断言当时漏改。
+    assert.equal(watchdog.result.config.stallMs, 90_000);
     assert.deepEqual(watchdog.result.tasks, []);
     assert.deepEqual(watchdog.result.notices, []);
 
