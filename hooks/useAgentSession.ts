@@ -46,7 +46,10 @@ import {
   type ThinkingLevelOption,
 } from "./agent-session/session-lifecycle-reset";
 import { useSessionModelTools } from "./agent-session/use-session-model-tools";
-import { useSessionCommands } from "./agent-session/use-session-commands";
+import {
+  useSessionCommands,
+  type PromptErrorContext,
+} from "./agent-session/use-session-commands";
 import type {
   AttachedImage,
   ChatInputHandle,
@@ -111,6 +114,15 @@ function clearPendingDelivery(message: UserMessage): UserMessage {
   return delivered;
 }
 
+/**
+ * 宿主**明确拒收**（会话忙 / 重载 / 断线）：这条消息从没进过会话。
+ * 不能清成「已送达」——清掉之后气泡和正常消息长得一模一样，
+ * 用户就会一直等一个不会来的回复。标记出来，气泡上才有「未送达」。
+ */
+function markDeliveryFailed(message: UserMessage): UserMessage {
+  return { ...message, deliveryState: "failed" };
+}
+
 export interface UseAgentSessionOptions {
   session: SessionInfo | null;
   newSessionCwd: string | null;
@@ -135,7 +147,7 @@ export interface UseAgentSessionOptions {
   /** 当前标签页是否可见：用于滚动位置记忆与首次贴底。 */
   active?: boolean;
   /** 发送失败时的提示回调（宿主 / 网络错误），避免“输入没反应”。 */
-  onPromptError?: (message: string) => void;
+  onPromptError?: (message: string, context?: PromptErrorContext) => void;
 }
 
 export function useAgentSession(opts: UseAgentSessionOptions) {
@@ -295,7 +307,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         prev.map((message) => {
           if (message.role !== "user" || message.clientMessageId !== id)
             return message;
-          return clearPendingDelivery(message);
+          return markDeliveryFailed(message);
         }),
       );
     },
@@ -330,7 +342,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         prev.map((message) => {
           if (message.role !== "user" || message.clientMessageId !== id)
             return message;
-          return clearPendingDelivery(message);
+          return markDeliveryFailed(message);
         }),
       );
     },
@@ -1287,6 +1299,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     initialScrollDoneRef,
     // Actions
     handleSend: commands.handleSend,
+    handleRetryDelivery: commands.handleRetryDelivery,
     handleAgentModeChange: commands.handleAgentModeChange,
     handleExecutePlan: commands.handleExecutePlan,
     dismissPlan: commands.dismissPlan,

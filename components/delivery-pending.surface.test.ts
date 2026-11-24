@@ -16,8 +16,11 @@ const read = (file: string) => readFileSync(join(root, file), "utf8");
 test("轮次视图带上投递态", () => {
   const src = read("components/Transcript.tsx");
   assert.ok(/deliveryPending\?: boolean;/.test(src), "TranscriptTurnView 要声明 deliveryPending");
-  assert.ok(src.includes('(message as { deliveryState?: string }).deliveryState === "pending"'), "从消息上读 deliveryState");
-  assert.ok(/systemNote, deliveryPending \}/.test(src), "用户轮次要把它带进视图");
+  assert.ok(
+    src.includes('const deliveryState = (message as { deliveryState?: string }).deliveryState;'),
+    "从消息上读 deliveryState",
+  );
+  assert.ok(/systemNote,\s*deliveryPending,/.test(src), "用户轮次要把它带进视图");
 });
 
 test("投递态变化必须让轮次缓存失效", () => {
@@ -34,4 +37,19 @@ test("界面把「投递中」显式标出来", () => {
   assert.ok(src.includes("{turn.deliveryPending && ("), "只有投递中的轮次才显示标记");
   assert.ok(src.includes("投递中…"), "要有可读文案");
   assert.ok(src.includes('title="消息已交给宿主，还在等这一轮接住它"'), "悬停要说明是在等哪一步");
+});
+
+test("宿主拒收的消息必须标成「未送达」，不能长得像已送达", () => {
+  const transcript = read("components/Transcript.tsx");
+  assert.ok(transcript.includes('deliveryState === "failed"'), "要能把 failed 读成失败态");
+  assert.ok(/deliveryFailed\?: boolean;/.test(transcript), "视图要声明 deliveryFailed");
+  assert.ok(transcript.includes("{turn.deliveryFailed && ("), "失败轮次要显式标出");
+  assert.ok(transcript.includes("未送达"), "要有可读文案");
+
+  const session = read("hooks/useAgentSession.ts");
+  assert.ok(session.includes("function markDeliveryFailed("), "失败要落成失败态，而不是清成已送达");
+  assert.ok(/return markDeliveryFailed\(message\);/.test(session), "失败回调要走标记而不是清除");
+
+  const surface = read("components/ChatSurface.tsx");
+  assert.ok(surface.includes("chat.handleRetryDelivery("), "失败提示要能一键重试");
 });

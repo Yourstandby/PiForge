@@ -99,7 +99,18 @@ export type UseSessionCommandsOptions = {
   onPendingPromptQueued: (item: { id: string; message: string }) => void;
   onPendingPromptFailed: (id: string) => void;
   /** 发送失败时的提示（宿主 / 网络错误），避免“输入没反应”。 */
-  onPromptError?: (message: string) => void;
+  onPromptError?: (message: string, context?: PromptErrorContext) => void;
+};
+
+/**
+ * 发送失败时回给界面的上下文：原文（含图片）留在手里，才能就地「重试」，
+ * 而不是让用户把整条消息重打一遍。
+ */
+export type PromptErrorContext = {
+  /** 失败那条乐观气泡的 clientMessageId —— 重试前先撤掉它，免得出现两条。 */
+  clientMessageId?: string;
+  text: string;
+  images?: AttachedImage[];
 };
 
 /**
@@ -166,6 +177,13 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
     onPromptError,
   } = opts;
   const promptDispatchStateRef = useRef<PromptDispatchState>({ current: false });
+  /**
+   * 运行中再次发送的去处。`handleFollowUp` 定义在下面（它要读排队快照），
+   * 这里用 ref 转一手：撞上「还在跑」时把消息排进队列，而不是静默丢弃。
+   */
+  const followUpHandlerRef = useRef<
+    ((message: string, images?: AttachedImage[]) => Promise<void>) | null
+  >(null);
 
   useEffect(() => {
     if (!agentRunning) finishPromptDispatch(promptDispatchStateRef.current);
@@ -216,7 +234,27 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
     async (message: string, images?: AttachedImage[]) => {
       const msgTrimmed = message.trim();
       if (!msgTrimmed && !images?.length) return;
-      if (agentRunning) return;
+      if (agentRunning) {
+        // 以前这里直接 return：上一轮的 agent_end 丢了、或前端 agentRunning 比宿主
+        // 滞后时，用户按发送一个字都不发、界面也不报错 —— 就是「发出去了但没有
+        // 下一步动作」。现在一律进排队：宿主真的空闲会立刻开新一轮，忙就等这一轮
+        // 收尾，消息在队列里可见、可编辑、可立即发送，绝不丢。
+        const enqueue = followUpHandlerRef.current;
+        if (!enqueue) {
+          onPromptError?.("上一轮还没结束，稍后再发一次。", { text: message, images });
+          return;
+        }
+        try {
+          await enqueue(message, images);
+        } catch (e) {
+          console.error("Failed to queue while running:", e);
+          onPromptError?.(e instanceof Error ? e.message : String(e), {
+            text: message,
+            images,
+          });
+        }
+        return;
+      }
 
       if (!images?.length && msgTrimmed.startsWith("/")) {
         const parts = msgTrimmed.slice(1).split(/\s+/);
@@ -414,7 +452,11 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
         }
       } catch (e) {
         console.error("Failed to send message:", e);
-        onPromptError?.(e instanceof Error ? e.message : String(e));
+        onPromptError?.(e instanceof Error ? e.message : String(e), {
+          clientMessageId,
+          text: message,
+          images,
+        });
         finishPromptDispatch(promptDispatchStateRef.current);
         onPendingPromptFailed(clientMessageId);
         setAgentRunning(false);
@@ -672,6 +714,25 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
     },
     [onFollowUpQueueSnapshot, sessionIdRef]
   );
+  followUpHandlerRef.current = handleFollowUp;
+
+  /**
+   * 失败气泡上的「重试」：先撤掉那条没送到的乐观气泡（它从没进过会话，
+   * 留着只会和重试出来的新气泡撞成两条），再走一次正常发送。
+   */
+  const handleRetryDelivery = useCallback(
+    async (clientMessageId: string, message: string, images?: AttachedImage[]) => {
+      setMessages((prev) =>
+        prev.filter(
+          (item) =>
+            item.role !== "user" ||
+            (item as UserMessage).clientMessageId !== clientMessageId,
+        ),
+      );
+      await handleSend(message, images);
+    },
+    [handleSend, setMessages]
+  );
 
   const handleAbortCompaction = useCallback(async () => {
     const sid = sessionIdRef.current;
@@ -685,6 +746,7 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
 
   return {
     handleSend,
+    handleRetryDelivery,
     handleAbort,
     handleFork,
     handleBranchAt,

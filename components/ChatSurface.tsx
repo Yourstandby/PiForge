@@ -29,6 +29,7 @@ import { collectRunningTools } from "@/lib/running-tools";
 import { useStickyRunningTools } from "@/hooks/useStickyRunningTools";
 import { estimateTokens } from "@/lib/live-usage";
 import { Composer } from "./Composer";
+import type { AttachedImage } from "./chat-input/types";
 import { ExtensionUiDialog } from "./ExtensionUiDialog";
 import { ModalSurface } from "./ModalSurface";
 import { RunningToolsBadge } from "./RunningToolsBadge";
@@ -239,6 +240,16 @@ function ChatSession({
 
   // 全局瞬时提示（压缩结果 / 引擎掉线 / 发送失败共用）。
   const [compactToast, setCompactToast] = useState<{ ok: boolean; info?: boolean; text: string } | null>(null);
+  /**
+   * 发送失败的原文与原因。气泡留在转录里只是「看起来发出去了」，
+   * 这条提示常驻到用户重试或忽略为止（toast 会消失，它不会）。
+   */
+  const [failedDelivery, setFailedDelivery] = useState<{
+    clientMessageId: string;
+    text: string;
+    images?: AttachedImage[];
+    error: string;
+  } | null>(null);
 
   const chat = useAgentSession({
     session,
@@ -252,10 +263,25 @@ function ChatSession({
     onSessionRenamed: () => onSessionRenamed?.(),
     onNewSession,
     // 发送失败不能静默：气泡留在原地却什么都不发生，看起来就是「输入没反应」。
-    onPromptError: (message) => setCompactToast({ ok: false, text: message }),
+    onPromptError: (message, context) => {
+      setCompactToast({ ok: false, text: message });
+      if (context?.clientMessageId) {
+        setFailedDelivery({
+          clientMessageId: context.clientMessageId,
+          text: context.text,
+          images: context.images,
+          error: message,
+        });
+      }
+    },
   });
 
   const currentModel = chat.displayModel ?? null;
+
+  /** 宿主真的接住了这一轮（agentRunning 翻 true）：失败提示自动让位。 */
+  useEffect(() => {
+    if (chat.agentRunning) setFailedDelivery(null);
+  }, [chat.agentRunning]);
 
   /**
    * 私密场景：把**当前会话**也切到本地模型。只换新会话、当前会话还连着云端，
@@ -1750,6 +1776,35 @@ function ChatSession({
       {/* 一行横向铺开：token 统计在前，running 徽章（`order-last`）在后。
           布局稳定化：token 块恒挂载（空转时 `invisible` 只保留占位），
           否则工具结束后的 sticky 窗口里它一整块卸载，徽章会瞬移到行首。 */}
+      {failedDelivery && (
+        <div
+          role="alert"
+          className="mb-1 flex max-w-full items-center gap-2 self-start rounded-lg border border-[#F5D3D3] bg-white px-2.5 py-1.5 text-[12px] text-danger shadow-[0_1px_3px_rgba(15,23,42,0.06)]"
+        >
+          <AlertCircle size={13} strokeWidth={2} className="shrink-0" aria-hidden="true" />
+          <span className="min-w-0 truncate" title={failedDelivery.error}>
+            这条消息没有发出去：{failedDelivery.error}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              const retry = failedDelivery;
+              setFailedDelivery(null);
+              void chat.handleRetryDelivery(retry.clientMessageId, retry.text, retry.images);
+            }}
+            className="shrink-0 rounded-md bg-[#FDF1F1] px-1.5 py-0.5 text-[11.5px] font-medium text-danger transition-colors hover:bg-[#FADDDD]"
+          >
+            重试
+          </button>
+          <button
+            type="button"
+            onClick={() => setFailedDelivery(null)}
+            className="shrink-0 rounded-md px-1.5 py-0.5 text-[11.5px] text-ink-muted transition-colors hover:bg-[#F3EDE3]"
+          >
+            忽略
+          </button>
+        </div>
+      )}
       {(runningTools.length > 0 || chat.agentRunning || inputTokensPerSecond > 0) && (
         <div className="mb-1 flex min-h-[18px] max-w-full min-w-0 shrink-0 flex-nowrap items-center gap-1.5 self-start">
           <div

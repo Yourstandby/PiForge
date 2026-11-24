@@ -2503,6 +2503,8 @@ export interface TranscriptTurnView {
   systemNote?: boolean;
   /** 乐观消息还停在「已交给宿主、尚未落库」的状态（steer 提交后有一小段）。 */
   deliveryPending?: boolean;
+  /** 宿主明确拒收（会话忙 / 正在重载 / 连接断了）：这条消息根本没进会话。 */
+  deliveryFailed?: boolean;
 }
 
 /**
@@ -2571,9 +2573,21 @@ function buildTranscriptTurn(
     const images = contentImages((message as { content?: unknown }).content);
     const timestamp = (message as { timestamp?: number }).timestamp;
     const systemNote = isInterventionText(text);
-    const deliveryPending = (message as { deliveryState?: string }).deliveryState === "pending";
+    const deliveryState = (message as { deliveryState?: string }).deliveryState;
+    const deliveryPending = deliveryState === "pending";
+    const deliveryFailed = deliveryState === "failed";
     return text || images.length > 0
-      ? { role: "user", text, images, blocks: [], messageIndex, timestamp, systemNote, deliveryPending }
+      ? {
+          role: "user",
+          text,
+          images,
+          blocks: [],
+          messageIndex,
+          timestamp,
+          systemNote,
+          deliveryPending,
+          deliveryFailed,
+        }
       : null;
   }
   if (message.role === "assistant") {
@@ -2886,7 +2900,7 @@ function TurnRowImpl({
       {turn.role !== "user" && (
         <TurnUsagePair usage={usage} totals={usageTotals} currencySymbol={currencySymbol} locale={locale} />
       )}
-      {(time || turn.deliveryPending) && (
+      {(time || turn.deliveryPending || turn.deliveryFailed) && (
         <div className="mt-1 flex items-center gap-1.5 text-left text-[10.5px] tabular-nums text-ink-faint">
           {time && <span>{time}</span>}
           {turn.deliveryPending && (
@@ -2898,6 +2912,17 @@ function TurnRowImpl({
             >
               <Loader2 size={9} strokeWidth={2.2} className="animate-spin" aria-hidden="true" />
               投递中…
+            </span>
+          )}
+          {turn.deliveryFailed && (
+            // 宿主拒收 = 这句话没进会话。不标出来的话，气泡和正常消息一模一样，
+            // 用户就会一直等一个不会来的回复（「发出去了但没有下一步」）。
+            <span
+              className="flex items-center gap-1 rounded bg-[#FDF1F1] px-1.5 py-0.5 text-danger"
+              title="宿主没有接收这条消息（会话忙 / 正在重载 / 连接断开），需要重发"
+            >
+              <TriangleAlert size={9} strokeWidth={2.2} aria-hidden="true" />
+              未送达
             </span>
           )}
         </div>
