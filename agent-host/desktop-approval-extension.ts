@@ -28,6 +28,11 @@ import {
   type PrefixSnapshot,
 } from "./prompt-prefix.ts";
 import {
+  MCP_SERVERS_SECTION,
+  stabilizeMcpSection,
+  type McpSectionLatch,
+} from "./mcp-prefix-section.ts";
+import {
   TOOL_USE_TOOL_NAME,
   buildToolStubs,
   selectDeclaredTools,
@@ -128,6 +133,13 @@ export function createDesktopApprovalFactory(modeRef: AgentModeRef): ExtensionFa
      * 不重算、不重排，保证同一状态下每次请求的工具声明字节级一致。
      */
     let latchedLoadout: { key: string; tools: string[] } | null = null;
+    /**
+     * MCP 段字节锁存（前缀缓存根治）：`sections.mcp_servers` 由 MCP 扩展每轮按 live
+     * 状态重渲染，间接服务器（codemode / deferred）第一轮不等连接 → 描述缺失，
+     * 连上后 `connection.instructions` 补进来，这段字节就变了 → 整段历史按未命中重发。
+     * 按「服务器名 + 暴露方式」签名锁存：签名不变就沿用旧字节，真改了配置才换一次。
+     */
+    let latchedMcpSection: McpSectionLatch | null = null;
     /**
      * 前缀审计：记录上一轮真正发出去的前缀各段内容。
      * 缓存被打破时能直接告诉你是哪一段在动，而不是只给一个哈希。
@@ -272,6 +284,24 @@ export function createDesktopApprovalFactory(modeRef: AgentModeRef): ExtensionFa
         const sections = event.systemPromptOptions.sections ?? {};
         if (sections.cwd !== STATIC_CWD_SECTION) {
           event.systemPromptOptions.sections = { ...sections, cwd: STATIC_CWD_SECTION };
+        }
+      }
+      /**
+       * MCP 段字节稳定：只改 `sections` 里这一段的字节，不动 MCP 扩展的加载 / 发现路径
+       * —— 工具照样是按需连接、经 codemode / tool_search 发现（见 mcp-prefix-section.ts）。
+       */
+      {
+        const sections = event.systemPromptOptions.sections;
+        const rendered = sections?.[MCP_SERVERS_SECTION];
+        if (sections && rendered) {
+          const stabilized = stabilizeMcpSection(rendered, latchedMcpSection);
+          latchedMcpSection = stabilized.latch;
+          if (stabilized.section !== rendered) {
+            event.systemPromptOptions.sections = {
+              ...sections,
+              [MCP_SERVERS_SECTION]: stabilized.section as string,
+            };
+          }
         }
       }
       const contextBlock = stripCwd ? userContextBlock({ cwd: modeRef.getCwd?.() }) : null;
