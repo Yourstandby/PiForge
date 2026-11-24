@@ -190,3 +190,127 @@ export function resolveHrefFileReference(
   if (!resolved) return null;
   return { path: resolved, line: reference.line, column: reference.column };
 }
+
+/** URL / host:port shapes that must stay clickable no matter where they appear. */
+const URL_RE = /(?:https?:\/\/|www\.)[^\s<>"'`，。、；：！？（）【】「」『』《》\\]+/g;
+const HOST_PORT_RE = /(?:localhost|127\.0\.0\.1|\[::1\]):\d{1,5}(?:\/[^\s<>"'`，。、；：！？（）【】「」『』《》\\]*)?/g;
+const TRAILING_PUNCTUATION_RE = /[.,;:!?'"’”…，。、；：！？）】」』》]+$/;
+
+/** A text / file-reference / URL segment of chat prose. */
+export interface ChatLinkSegment {
+  type: "text" | "file" | "url";
+  value: string;
+  start: number;
+  end: number;
+  reference?: FileReference;
+  /** Absolute URL to open (always carries an explicit scheme). */
+  url?: string;
+}
+
+function trimTrailingPunctuation(value: string): string {
+  let out = value;
+  for (;;) {
+    const next = out.replace(TRAILING_PUNCTUATION_RE, "");
+    if (next === out) break;
+    out = next;
+  }
+  const openParen = (out.match(/\(/g) ?? []).length;
+  const closeParen = (out.match(/\)/g) ?? []).length;
+  if (closeParen > openParen && out.endsWith(")")) out = out.slice(0, -1);
+  const openBracket = (out.match(/\[/g) ?? []).length;
+  const closeBracket = (out.match(/\]/g) ?? []).length;
+  if (closeBracket > openBracket && out.endsWith("]")) out = out.slice(0, -1);
+  return out;
+}
+
+/** Normalize one raw token into an absolute URL, or null when it is not one. */
+export function parseLinkableUrl(raw: string): string | null {
+  const token = trimTrailingPunctuation(raw.trim());
+  if (!token) return null;
+  if (/^https?:\/\//i.test(token)) return token;
+  if (/^www\./i.test(token)) return `https://${token}`;
+  if (/^(?:localhost|127\.0\.0\.1|\[::1\]):\d{1,5}(?:\/|$)/i.test(token)) return `http://${token}`;
+  return null;
+}
+
+interface LinkSpan {
+  start: number;
+  end: number;
+  type: "file" | "url";
+  value: string;
+  reference?: FileReference;
+  url?: string;
+}
+
+function collectUrlSpans(text: string): LinkSpan[] {
+  const spans: LinkSpan[] = [];
+  const scan = (pattern: RegExp) => {
+    const matcher = new RegExp(pattern.source, "g");
+    let match: RegExpExecArray | null;
+    while ((match = matcher.exec(text)) !== null) {
+      const start = match.index;
+      const value = trimTrailingPunctuation(match[0]);
+      const url = parseLinkableUrl(value);
+      if (!url || !value) continue;
+      // A URL glued to a preceding word (`seehttp://…`) is not a link.
+      const before = start > 0 ? text[start - 1] : "";
+      if (before && /[A-Za-z0-9_@\/\\-]/.test(before)) continue;
+      spans.push({ start, end: start + value.length, type: "url", value, url });
+    }
+  };
+  scan(URL_RE);
+  scan(HOST_PORT_RE);
+  return spans;
+}
+
+function overlaps(a: { start: number; end: number }, b: { start: number; end: number }): boolean {
+  return a.start < b.end && b.start < a.end;
+}
+
+/**
+ * Split chat prose into clickable segments: bare URLs / `host:port` and local
+ * file references, in source order. URLs win over file references so that
+ * `https://x/y.ts` never turns into half-URL half-path.
+ */
+export function findChatLinks(text: string): ChatLinkSegment[] {
+  if (!text) return [];
+  const spans: LinkSpan[] = collectUrlSpans(text);
+
+  for (const segment of findFileReferences(text)) {
+    if (segment.type !== "file" || !segment.reference) continue;
+    const candidate = { start: segment.start, end: segment.end };
+    if (spans.some((span) => overlaps(span, candidate))) continue;
+    spans.push({ ...candidate, type: "file", value: segment.value, reference: segment.reference });
+  }
+
+  if (spans.length === 0) return [{ type: "text", value: text, start: 0, end: text.length }];
+
+  spans.sort((a, b) => a.start - b.start || b.end - a.end);
+  const segments: ChatLinkSegment[] = [];
+  let cursor = 0;
+  for (const span of spans) {
+    if (span.start < cursor) continue;
+    if (span.start > cursor) {
+      segments.push({
+        type: "text",
+        value: text.slice(cursor, span.start),
+        start: cursor,
+        end: span.start,
+      });
+    }
+    segments.push({
+      type: span.type,
+      value: span.value,
+      start: span.start,
+      end: span.end,
+      ...(span.reference ? { reference: span.reference } : {}),
+      ...(span.url ? { url: span.url } : {}),
+    });
+    cursor = span.end;
+  }
+  if (cursor < text.length) {
+    segments.push({ type: "text", value: text.slice(cursor), start: cursor, end: text.length });
+  }
+  return segments;
+}
+

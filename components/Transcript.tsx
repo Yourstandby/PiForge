@@ -25,7 +25,8 @@ import { useTypedText } from "@/hooks/useSmoothTypewriter";
 import { DiffRows } from "./DiffRows";
 import { getFileName } from "@/lib/file-paths";
 import {
-  findFileReferences,
+  findChatLinks,
+  parseLinkableUrl,
   parseLinkableFileReference,
   resolveFileReferencePath,
   resolveHrefFileReference,
@@ -82,6 +83,25 @@ function FilePathButton({
   );
 }
 
+/** Link look shared by prose URLs, inline-code URLs and Markdown links. */
+const EXTERNAL_LINK_CLASS =
+  "inline cursor-pointer break-words text-accent-strong underline decoration-accent/40 underline-offset-2 transition-colors hover:decoration-accent";
+
+/** Bare URLs in prose open in the system browser (the shell handler allows http/https). */
+function ExternalLink({ url, children }: { url: string; children: React.ReactNode }) {
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      title={url}
+      className={EXTERNAL_LINK_CLASS}
+    >
+      {children}
+    </a>
+  );
+}
+
 function FileLinkText({
   text,
   cwd,
@@ -91,24 +111,31 @@ function FileLinkText({
   cwd?: string | null;
   onOpenFile?: OpenFileHandler;
 }) {
-  if (!onOpenFile) return <>{text}</>;
-  const segments = findFileReferences(text);
+  const segments = findChatLinks(text);
   return (
     <>
-      {segments.map((segment, index) =>
-        segment.type === "file" && segment.reference ? (
-          <FilePathButton
-            key={index}
-            reference={segment.reference}
-            cwd={cwd}
-            onOpenFile={onOpenFile}
-          >
-            {segment.value}
-          </FilePathButton>
-        ) : (
-          <span key={index}>{segment.value}</span>
-        ),
-      )}
+      {segments.map((segment, index) => {
+        if (segment.type === "url" && segment.url) {
+          return (
+            <ExternalLink key={index} url={segment.url}>
+              {segment.value}
+            </ExternalLink>
+          );
+        }
+        if (segment.type === "file" && segment.reference && onOpenFile) {
+          return (
+            <FilePathButton
+              key={index}
+              reference={segment.reference}
+              cwd={cwd}
+              onOpenFile={onOpenFile}
+            >
+              {segment.value}
+            </FilePathButton>
+          );
+        }
+        return <span key={index}>{segment.value}</span>;
+      })}
     </>
   );
 }
@@ -288,9 +315,11 @@ function createMarkdownComponents(
         </button>
       );
     }
-    // Unknown / unsafe schemes (javascript:, data:, bare fragments, bad paths)
-    // must not look like a link — a dead-looking anchor is worse than plain text.
-    if (!href || !SAFE_HREF_SCHEME.test(href.trim())) {
+    // `www.example.com` is a URL the model forgot to scheme; everything else
+    // unknown / unsafe (javascript:, data:, bare fragments) stays plain text —
+    // a dead-looking anchor is worse than plain text.
+    const safeHref = /^www\./i.test(href?.trim() ?? "") ? `https://${href!.trim()}` : href;
+    if (!safeHref || !SAFE_HREF_SCHEME.test(safeHref.trim())) {
       return (
         <span className="text-ink-muted" title="不是可跳转的链接">
           {children}
@@ -299,10 +328,10 @@ function createMarkdownComponents(
     }
     return (
       <a
-        href={href}
+        href={safeHref}
         target="_blank"
         rel="noreferrer"
-        title={href}
+        title={safeHref}
         className="cursor-pointer text-accent-strong underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
       >
         {children}
@@ -337,6 +366,21 @@ function createMarkdownComponents(
       );
     }
     const raw = String(children);
+    // A URL inside inline code (`http://localhost:5275`) is still meant to be opened.
+    const codeUrl = parseLinkableUrl(raw);
+    if (codeUrl) {
+      return (
+        <a
+          href={codeUrl}
+          target="_blank"
+          rel="noreferrer"
+          title={codeUrl}
+          className={INLINE_CODE_CLICKABLE}
+        >
+          {children}
+        </a>
+      );
+    }
     // Same rule as prose: `seed.ts` stays plain, `src/seed.ts` or `@seed.ts` is a link.
     const reference = parseLinkableFileReference(raw);
     if (reference && onOpenFile) {
