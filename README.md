@@ -10,7 +10,7 @@
 [![Release](https://img.shields.io/github/v/release/Yourstandby/PiForge?sort=semver)](https://github.com/Yourstandby/PiForge/releases)
 [![CI](https://github.com/Yourstandby/PiForge/actions/workflows/ci.yml/badge.svg)](https://github.com/Yourstandby/PiForge/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
-[![Pi Core](https://img.shields.io/badge/pi--coding--agent-1.5.0-111)](https://github.com/earendil-works/pi)
+[![Pi Core](https://img.shields.io/badge/pi--coding--agent-1.6.0-111)](https://github.com/earendil-works/pi)
 
 v0.12.2 · Windows / macOS / Linux · 内置 Pi Coding Agent，无需单独安装
 
@@ -80,7 +80,7 @@ PiForge 把这一整套搬进一个原生窗口：
 - **MCP**：全局 `~/.pi/agent/mcp.json` 与项目 `<cwd>/.pi/mcp.json` 两级配置，可视化增删与资源浏览。
 - **Skills / Extensions / Plugins**：统一 UI 管理启用、诊断与安装。
 - **模型与供应商**：多模型随时切换、辅助模型（小模型干杂活）、自动路由、自定义 OpenAI 兼容 provider。
-- **Pi 核心可换**：三个 `@earendil-works/pi-*` 包精确锁定 1.5.0，界面内可查询与切换版本。
+- **Pi 核心可换**：三个 `@earendil-works/pi-*` 包精确锁定 1.6.0，界面内可查询与切换版本。
 
 ---
 
