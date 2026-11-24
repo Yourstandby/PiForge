@@ -12,7 +12,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![Pi Core](https://img.shields.io/badge/pi--coding--agent-1.5.0-111)](https://github.com/earendil-works/pi)
 
-v0.12.1 · Windows / macOS / Linux · 内置 Pi Coding Agent，无需单独安装
+v0.12.2 · Windows / macOS / Linux · 内置 Pi Coding Agent，无需单独安装
 
 </div>
 
@@ -84,20 +84,18 @@ PiForge 把这一整套搬进一个原生窗口：
 
 ---
 
-## 最新版本 v0.12.1
+## 最新版本 v0.12.2
 
-主题：**切 plan 不再烧掉整段缓存，进度卡片第一次真的会出现。**
+主题：**运行中不再看着像卡死，排队消息想改就改，计划不烂尾。**
 
-- 计划段落改为尾部注入，plan / 执行模式前缀字节一致，切换不再重发 ≈N tok 的历史。
-- 只读约束从「不给工具」改为执行期拦截，拒绝理由写明 `Plan mode: planning only`。
-- 计划进度卡片兼容真实会话的 `{id, name, arguments}` 形状（此前一次都不会渲染），
-  「工具调用统计」里落进 unknown 的部分一并修好。
-- `plan` 工具与 `tool_search` / `desktop_use_tool` 一样恒常驻，不再被工具存根吞掉 schema。
+- 跑工具时不再把对话历史抹成空白；真没历史时给「重新加载」并按 1.5s→6s 退避自动补取。
+- 排队消息可**编辑**（保留附件与位置）、可**⚡ 立即发送**、可**⏫ 插到队首**。
+- 计划停在半路不再消失：未完成就留着卡片，给「继续执行 / 放弃剩余」两个出口；
+  完成态去掉删除线，已完成步折叠成一行。
+- `mcp_servers` 段字节按签名锁存，MCP 连上后不再打破前缀缓存。
+- 舰队 / 编排面板补 `AgentSpawnTrigger` 手动派生入口，不必等主 Agent 调工具。
 
-代价说清楚：plan 模式下模型现在能看到 write / edit / MCP / 插件工具的 schema，调用会被拦下。
-这是换前缀缓存的必要取舍。
-
-完整变更：[CHANGELOG.md](./CHANGELOG.md) · [docs/releases/v0.12.1.md](./docs/releases/v0.12.1.md)
+完整变更：[CHANGELOG.md](./CHANGELOG.md) · [docs/releases/v0.12.2.md](./docs/releases/v0.12.2.md)
 
 ---
 

@@ -43,7 +43,7 @@
 
 Windows 安装包当前未代码签名，Release Notes 必须披露 SmartScreen 提示。GitHub Actions 打的 macOS 包同样未签名、未公证，Release Notes 必须披露 Gatekeeper 提示。Linux 的 `.deb` 安装包通过 electron-updater 的 `DebUpdater` 自动更新：应用内下载新 `.deb` 后经 `dpkg -i` 或 `apt --allow-unauthenticated` 安装，安装时需要 root 授权提示。下载完整性由 `latest-linux.yml` 的 SHA512 校验（与 Windows NSIS 相同），但 `.deb` 本身未做 debsig，系统包管理器不会再验包签名。自动更新依赖 Release 资产中的 `latest-linux.yml`，漏传则 Linux 端收不到更新。Release Notes 必须披露未签名 deb 与 root 安装。
 
-截至 2026-11-04：最新桌面 GitHub Release 是 [`v0.12.0`](https://github.com/Yourstandby/PiForge/releases/tag/v0.12.0)（上一个公开版本为 `v0.11.2`），包含 Windows NSIS + ZIP、macOS Universal DMG + ZIP、Linux `x64` deb 及三份 `latest*.yml`，共 12 个资产 + `SHA256SUMS.txt`。`v0.11.3` / `v0.11.4` 只在本地打过 tag、从未推送，其内容合并进 `v0.12.0` 发布；发布前务必确认本地未推送的旧 tag 不会连带推送。Issue / PR 约定见 [CONTRIBUTING.md](../CONTRIBUTING.md)。
+截至 2026-11-24：最新桌面 GitHub Release 是 [`v0.12.2`](https://github.com/Yourstandby/PiForge/releases/tag/v0.12.2)（上一个公开版本为 `v0.12.1`），包含 Windows NSIS + ZIP、macOS Universal DMG + ZIP、Linux `x64` deb 及三份 `latest*.yml`，共 12 个资产 + `SHA256SUMS.txt`。`v0.11.3` / `v0.11.4` 只在本地打过 tag、从未推送，其内容合并进 `v0.12.0` 发布；发布前务必确认本地未推送的旧 tag 不会连带推送。Issue / PR 约定见 [CONTRIBUTING.md](../CONTRIBUTING.md)。
 
 ## npm Release
 
