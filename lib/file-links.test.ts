@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  findChatLinks,
   findFileReferences,
+  parseLinkableUrl,
   parseFileReference,
   parseLinkableFileReference,
   resolveFileReferencePath,
@@ -69,4 +71,59 @@ test("resolves markdown hrefs", () => {
     column: undefined,
   });
   assert.equal(resolveHrefFileReference("https://example.com", "D:/Pi"), null);
+});
+
+test("parseLinkableUrl normalizes bare URLs and host:port", () => {
+  assert.equal(parseLinkableUrl("http://127.0.0.1:7878"), "http://127.0.0.1:7878");
+  assert.equal(parseLinkableUrl("https://example.com/a.ts"), "https://example.com/a.ts");
+  assert.equal(parseLinkableUrl("www.example.com"), "https://www.example.com");
+  assert.equal(parseLinkableUrl("localhost:5275"), "http://localhost:5275");
+  assert.equal(parseLinkableUrl("http://localhost:5275/"), "http://localhost:5275/");
+  // Trailing prose punctuation never enters the href.
+  assert.equal(parseLinkableUrl("http://localhost:5275/。"), "http://localhost:5275/");
+  assert.equal(parseLinkableUrl("(http://localhost:5275)"), null);
+  assert.equal(parseLinkableUrl("seed.ts"), null);
+  assert.equal(parseLinkableUrl("127.0.0.1:5275"), "http://127.0.0.1:5275");
+});
+
+test("findChatLinks links bare URLs in prose", () => {
+  const segments = findChatLinks("后端 → http://127.0.0.1:7878 已启动");
+  assert.deepEqual(
+    segments.map((segment) => [segment.type, segment.value]),
+    [
+      ["text", "后端 → "],
+      ["url", "http://127.0.0.1:7878"],
+      ["text", " 已启动"],
+    ],
+  );
+  assert.equal(segments[1].url, "http://127.0.0.1:7878");
+});
+
+test("findChatLinks keeps sentence punctuation out of the link", () => {
+  const segments = findChatLinks("浏览器打开 http://localhost:5275/ 即可。");
+  const url = segments.find((segment) => segment.type === "url");
+  assert.equal(url?.value, "http://localhost:5275/");
+  assert.equal(segments[segments.length - 1].value, " 即可。");
+});
+
+test("findChatLinks prefers a whole URL over the file reference inside it", () => {
+  const segments = findChatLinks("见 https://example.com/a/b.ts 的说明");
+  assert.equal(segments.filter((segment) => segment.type === "url").length, 1);
+  assert.equal(segments.filter((segment) => segment.type === "file").length, 0);
+});
+
+test("findChatLinks keeps host:port and file references side by side", () => {
+  const segments = findChatLinks("localhost:5275 日志 logs/vite-dev.log");
+  assert.deepEqual(
+    segments.filter((segment) => segment.type !== "text").map((segment) => [segment.type, segment.value]),
+    [
+      ["url", "localhost:5275"],
+      ["file", "logs/vite-dev.log"],
+    ],
+  );
+});
+
+test("findChatLinks does not linkify a URL glued to a word", () => {
+  const segments = findChatLinks("seehttp://example.com");
+  assert.deepEqual(segments.map((segment) => segment.type), ["text"]);
 });
