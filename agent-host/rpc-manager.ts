@@ -152,7 +152,16 @@ export class AgentSessionWrapper {
    * 这里用「事件静默」做兜底：超过阈值仍无任何事件就当作已经 settled。
    */
   private settleWatchdog: ReturnType<typeof setInterval> | null = null;
-  private lastAgentEventAt = 0;
+  private lastAgentEventAt = Date.now();
+  /** 本轮 prompt 的发起时刻，和 lastAgentEventAt 一起算「多久没动静」。 */
+  private runStartedAt = Date.now();
+  /**
+   * 静默多久判定为僵尸流。长工具（编译、装依赖）跑着的时候同样没有事件，
+   * 所以阈值必须比正常长工具久：宁可晚一点自愈，也不能误杀正在干活的这一轮。
+   */
+  static stuckSilenceMs = 90_000;
+  /** abort 之后最多等这么久，让 SDK 的 isStreaming 复位。 */
+  static stuckAbortWaitMs = 5_000;
   /** 最后一次首轮预热的结果（get_state 里上报，便于排查"为什么没预热"）。 */
   private prewarm: PrewarmResult | null = null;
   /** 静默多久判定 settled 丢失。测试里会调小。 */
@@ -411,6 +420,7 @@ export class AgentSessionWrapper {
 
     const snapshot = this.emitFollowUpQueue(claimed.snapshot);
     const { item } = claimed;
+    this.runStartedAt = Date.now();
     try {
       const run = () => this.inner.prompt(item.message, item.images?.length ? { images: item.images } : undefined);
       const prompt = this.resourcesChanged ? this.reloadResources().then(run) : run();
@@ -424,6 +434,60 @@ export class AgentSessionWrapper {
       this.handleQueuedPromptFailure(item, completedEvent, error);
     }
     return snapshot;
+  }
+
+  /**
+   * 僵尸流自愈。
+   *
+   * pi 的 `isStreaming` 只在自己 runWithLifecycle 的 finally 里复位。一旦模型连接
+   * 静默断掉（fetch 永不 settle，也不抛错），这一位会永久停在 true —— 之后每条
+   * prompt 都被上面的 backstop 当成「Session is streaming」拒收，用户只能重启应用。
+   *
+   * 判据刻意保守：必须「没有待收尾的 agent_end」且「静默超过 stuckSilenceMs」
+   * 才算僵尸，否则一律当真在跑（长工具静默是合法的）。
+   *
+   * @returns true 表示现在可以发新的 prompt（本来空闲，或已把僵尸流掐掉）。
+   */
+  private async recoverStuckStream(): Promise<boolean> {
+    let streaming = false;
+    try {
+      streaming = this.inner.isStreaming;
+    } catch {
+      return true;
+    }
+    if (!streaming) return true;
+    // 这一轮还在等 agent_settled，说明是正常收尾路径，别抢。
+    if (this.pendingAgentEnd) return false;
+    const silentMs = Date.now() - Math.max(this.lastAgentEventAt, this.runStartedAt);
+    if (silentMs < AgentSessionWrapper.stuckSilenceMs) return false;
+
+    console.warn("[agent-host] stuck stream detected; aborting", this.sessionId, `silent ${Math.round(silentMs / 1000)}s`);
+    try {
+      await this.inner.abort();
+    } catch (error) {
+      console.error("[agent-host] abort on stuck stream failed:", error);
+    }
+    if (await this.waitForStreamingStop(AgentSessionWrapper.stuckAbortWaitMs)) {
+      console.warn("[agent-host] stuck stream recovered", this.sessionId);
+      return true;
+    }
+    // abort 都掐不停：这轮是真死在里面了。抛出去让前端给用户一个明确动作，
+    // 而不是让每条消息都无声地撞同一堵墙。
+    throw new Error("SESSION_STUCK: 上一轮回复已卡死，宿主强制结束失败，请重启应用。");
+  }
+
+  /** 轮询等待 isStreaming 变 false；超时返回 false。 */
+  private async waitForStreamingStop(timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      try {
+        if (!this.inner.isStreaming) return true;
+      } catch {
+        return true;
+      }
+      if (Date.now() >= deadline) return false;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
   }
 
   /** 启动/复用一个 1s 轮询：静默太久就把 pendingAgentEnd 当作已 settled 收尾。 */
@@ -794,7 +858,7 @@ export class AgentSessionWrapper {
         // instead of relying on pi's internal isStreaming handling.
         // 只挡「真在跑的一轮」。资源重载不再拒收：上面那次 reloadResources() 会等
         // 已经在跑的那次结束再发，用户在这个窗口里按发送不该丢消息。
-        if (this.inner.isStreaming) throw new Error("Session is streaming");
+        if (!(await this.recoverStuckStream())) throw new Error("Session is streaming");
         if (this.resourcesChanged) await this.reloadResources();
         try {
           await this._binding;
@@ -806,6 +870,7 @@ export class AgentSessionWrapper {
         // Name the session from its first message while the turn runs, so the
         // `session_info_changed` event lands on an open SSE stream.
         void this.maybeGenerateSessionTitle(command.message as string);
+        this.runStartedAt = Date.now();
         // Fire and forget — events come via subscribe
         const promptImages = command.images as Array<{ type: "image"; data: string; mimeType: string }> | undefined;
         this.inner.prompt(command.message as string, promptImages?.length ? { images: promptImages } : undefined)
