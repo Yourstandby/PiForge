@@ -104,3 +104,27 @@ test("handleFork guards against an empty entryId", () => {
   );
   assert.match(block, /if \(!sid \|\| !entryId\) return;/);
 });
+
+test("重试被「还在跑」挡回来时，先强制结束再发", () => {
+  const block = source.slice(
+    source.indexOf("const handleRetryDelivery"),
+    source.indexOf("const handleAbortCompaction"),
+  );
+  const busyIdx = block.indexOf("isSessionBusyError(lastError)");
+  const sendIdx = block.indexOf("await handleSend(message, images)");
+  assert.ok(busyIdx >= 0, "重试必须识别「还在跑」这类错误");
+  assert.ok(block.includes("forceStopStream(sid)"), "忙的时候要先强制结束这一轮");
+  assert.ok(sendIdx > busyIdx, "必须结束后再重发，否则会再撞同一堵墙");
+});
+
+test("强制结束会 abort 并等宿主真的不再流式", () => {
+  const block = source.slice(
+    source.indexOf("const forceStopStream"),
+    source.indexOf("const handleFork"),
+  );
+  const abortIdx = block.indexOf('{ type: "abort" }');
+  const pollIdx = block.indexOf('{ type: "get_state" }');
+  assert.ok(abortIdx >= 0, "先 abort");
+  assert.ok(pollIdx > abortIdx, "abort 后 isStreaming 还没复位，必须轮询 get_state 再放行");
+});
+

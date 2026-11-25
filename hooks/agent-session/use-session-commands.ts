@@ -20,6 +20,7 @@ import {
   tryStartPromptDispatch,
   type PromptDispatchState,
 } from "./prompt-dispatch-gate";
+import { isSessionBusyError } from "./session-busy";
 
 export type { AttachedImage };
 
@@ -563,6 +564,34 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
     }
   }, [connectEvents, dispatch, loadSession, sessionIdRef, setAgentPhase, setAgentRunning]);
 
+  /**
+   * 强制结束这一轮，并等宿主真的不再流式。
+   *
+   * `abort` 只是给 SDK 发信号，`isStreaming` 是之后才异步复位的；紧接着发
+   * prompt 仍会撞上同一堵 "Session is streaming" 墙。所以 abort 之后轮询
+   * `get_state`，等 Host 说 isStreaming=false 再放行。超时也放行：让这次发送
+   * 自己去暴露真失败，而不是把用户卡在按钮上。
+   */
+  const forceStopStream = useCallback(async (sid: string): Promise<void> => {
+    try {
+      await sendAgentCommand(sid, { type: "abort" });
+    } catch (e) {
+      console.error("Force stop failed:", e);
+      return;
+    }
+    const deadline = Date.now() + 6000;
+    for (;;) {
+      try {
+        const state = await sendAgentCommand<{ isStreaming?: boolean }>(sid, { type: "get_state" });
+        if (!state?.isStreaming) return;
+      } catch {
+        return;
+      }
+      if (Date.now() >= deadline) return;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }, []);
+
   const handleFork = useCallback(
     async (entryId: string) => {
       const sid = sessionIdRef.current;
@@ -721,7 +750,12 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
    * 留着只会和重试出来的新气泡撞成两条），再走一次正常发送。
    */
   const handleRetryDelivery = useCallback(
-    async (clientMessageId: string, message: string, images?: AttachedImage[]) => {
+    async (
+      clientMessageId: string,
+      message: string,
+      images?: AttachedImage[],
+      lastError?: string,
+    ) => {
       setMessages((prev) =>
         prev.filter(
           (item) =>
@@ -729,9 +763,13 @@ export function useSessionCommands(opts: UseSessionCommandsOptions) {
             (item as UserMessage).clientMessageId !== clientMessageId,
         ),
       );
+      // 上次是被「还在跑」挡回来的：原样重发只会再撞一次同一堵墙。
+      // 先把这一轮强制结束掉（含僵尸流），等 Host 确认空闲再发。
+      const sid = sessionIdRef.current;
+      if (sid && isSessionBusyError(lastError)) await forceStopStream(sid);
       await handleSend(message, images);
     },
-    [handleSend, setMessages]
+    [forceStopStream, handleSend, sessionIdRef, setMessages]
   );
 
   const handleAbortCompaction = useCallback(async () => {
