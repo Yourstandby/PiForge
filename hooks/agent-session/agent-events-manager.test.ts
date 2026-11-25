@@ -4,7 +4,7 @@ import { AgentEventsManager, type AgentEvent } from "./agent-events-manager.ts";
 
 class MockEventSource {
   url: string;
-  onmessage: ((e: { data: string }) => void) | null = null;
+  onmessage: ((e: { data: string; lastEventId?: string }) => void) | null = null;
   onerror: (() => void) | null = null;
   onopen: (() => void) | null = null;
   closed = false;
@@ -123,6 +123,33 @@ describe("AgentEventsManager", () => {
       const es2 = MockEventSource.instances[1];
       assert.equal(es2.url, "/api/agent/session-123/events");
       assert.equal(es2.closed, false);
+
+      manager.cleanup();
+    } finally {
+      mock.timers.reset();
+    }
+  });
+
+  test("重连时带上已收到的最后一个序号，host 从那里续发（不丢增量）", () => {
+    mock.timers.enable({ apis: ["setTimeout"] });
+    try {
+      const manager = new AgentEventsManager(10);
+      manager.setAgentRunning(true);
+      manager.connect("session-123");
+
+      const es1 = MockEventSource.instances[0];
+      es1.onmessage!({ data: JSON.stringify({ type: "agent_start" }), lastEventId: "7" });
+      es1.onmessage!({ data: JSON.stringify({ type: "message_update" }), lastEventId: "9" });
+
+      es1.onerror!();
+      mock.timers.tick(15);
+
+      const es2 = MockEventSource.instances[1];
+      assert.equal(es2.url, "/api/agent/session-123/events?lastEventId=9");
+
+      // 换会话必须清零：序号是按会话递增的。
+      manager.connect("session-456");
+      assert.equal(MockEventSource.instances.at(-1)!.url, "/api/agent/session-456/events");
 
       manager.cleanup();
     } finally {
