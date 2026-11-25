@@ -25,6 +25,16 @@ export const STREAM_STALL_MS = 120_000;
  */
 export const STREAM_STARTUP_GRACE_MS = 3_000;
 
+/**
+ * 「连上了，但这一轮一个真实事件都没收到」的阈值。
+ *
+ * 这就是用户看到的「等待首个 token…」卡死：SSE 是 200/connected，界面却一条增量
+ * 都没有，host 那边其实已经在跑（刷新一下从磁盘重载就全看见了）。这种形态不需要
+ * 等 STREAM_STALL_MS 的 120s —— 12s 就该重连 + 从磁盘补内容。
+ * 已经在流式/工具轮次里的时候仍用 STREAM_STALL_MS，容忍长工具不吐日志。
+ */
+export const STREAM_FIRST_EVENT_MS = 12_000;
+
 export type StreamHealth =
   | { kind: "ok" }
   | { kind: "reconnecting"; attempts: number }
@@ -38,6 +48,12 @@ export function evaluateStreamHealth(input: {
   now: number;
   attempts?: number;
   stallMs?: number;
+  firstEventMs?: number;
+  /**
+   * 最近一次**真正投递到界面**的事件时间戳。lastEventAt 会被 connect()/retryNow()
+   * 重置，那是重连簿记，不能用来证明"有数据到过"。
+   */
+  lastRealEventAt?: number;
   /** agentRunning 变成 true 的时刻（0/undefined 表示未知，按无宽限处理）。 */
   runningSince?: number;
   startupGraceMs?: number;
@@ -64,7 +80,14 @@ export function evaluateStreamHealth(input: {
   }
 
   // connected：连接在，但没有增量 —— 缓冲/订阅错位的典型形态。
-  if (!lastEventAt) return { kind: "ok" };
-  const idleMs = now - lastEventAt;
-  return idleMs >= stallMs ? { kind: "stalled", idleMs } : { kind: "ok" };
+  const delivered = input.lastRealEventAt ?? lastEventAt;
+  if (!delivered) return { kind: "ok" };
+  const idleMs = now - delivered;
+  // 本轮开始后一条都没到过（典型「等待首个 token」卡死）：用短阈值；
+  // 已经在流式里只是暂时没增量（长工具/长思考）：用 stallMs。
+  const nothingThisTurn = runningSince > 0 && delivered < runningSince;
+  const threshold = nothingThisTurn
+    ? input.firstEventMs ?? STREAM_FIRST_EVENT_MS
+    : stallMs;
+  return idleMs >= threshold ? { kind: "stalled", idleMs } : { kind: "ok" };
 }

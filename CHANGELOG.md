@@ -3,7 +3,37 @@
 迁移条目按「改了什么 / 默认行为变没变 / 开关怎么用」组织。详细数据见 `docs/measurements/`
 （三个口径：记录型 provider、真实 deepseek 会话、重复场景 A/B，三者不要混读）。
 
-## 未发布 — Pi 核心升到 1.6.0
+## v0.12.3 — 事件流卡在「等待首个 token」（刷新才看得见）
+
+主题：**host 的投递水位会把「投给一个已经没人消费的订阅」也算成已送达；下一轮续发
+就从那条之后开始，浏览器从没收到的那段永久丢失。界面于是停在「等待首个 token」，
+刷新一下（从磁盘重载 transcript）全都在。**
+
+### 改了什么
+
+- **不再产生孤儿 host 订阅**（`lib/agent-host-client.ts`）：`subscribeAgent` 里
+  `agent.subscribe` 的 await 期间浏览器可能已经取消 SSE（`close()` 把 hub 摘掉），
+  之后这次订阅仍然落地 —— 事件照发、没人收、水位照涨。现在建订阅前后都校验 hub
+  身份，发现已被摘掉就立刻 `agent.unsubscribe`。`close()` 也改成只在映射还是自己
+  那一个时才删除，避免并发时误删别人刚建好的 hub。
+- **续发水位按「真的交到监听者手里」算**：`agentListenerSeq` 记录每个会话最后一
+  个真正投递给 SSE 监听者的事件号，且跨 hub 存活。没有显式 `fromSeq` 时用它续发，
+  不再盲信 host 的 `lastDeliveredSeq`。
+- **route 在建订阅前就挂 abort**（`app/api/agent/[id]/events/route.ts`）：浏览器在
+  await 期间取消也能把 `closed` 置位，并退掉刚建好的订阅。
+- **卡死自愈**（`hooks/agent-session/stream-health.ts` + `components/ChatSurface.tsx`）：
+  新增 `STREAM_FIRST_EVENT_MS = 12s` 与「真实增量时间戳」（`getLastRealEventAt`，
+  `connect()/retryNow()` 的重连簿记不再污染判定）。本轮一条真实事件都没收到时
+  12s 就判定卡住，自动「重连（带浏览器真实水位，host 从 buffer 续发）+ 从磁盘重载
+  本轮已产出内容」；两次之间至少隔 15s、每轮最多 4 次。已经在流式/工具轮次里的
+  场景仍用原来的 120s 长阈值。
+
+### 默认行为变没变
+
+- 变了：卡住时不再需要手动刷新或点停止，界面 12s 内自己恢复。
+- 不变：事件流协议、host 侧续发语义（Next 重启后从未投递处续发）、界面文案与开关。
+
+## v0.12.3 — Pi 核心升到 1.6.0
 
 主题：**上游三包 1.5.0 → 1.6.0，扩展渲染契约跟进，顺手修掉一条早就红了的冒烟断言。**
 
@@ -31,6 +61,27 @@
   `find` 工具的 path pattern 改为相对搜索目录（`src/*.ts` 不再匹配 `pkg/src/a.ts`，跨层要写
   `**/src/*.ts`）；GPT-6.2 两档模型不接受 reasoning effort `none` / `minimal`，
   即「思考等级 off」在这两个模型上不可用。
+
+## v0.12.3 — 发送链路：不再「发出去没动静」
+
+### 改了什么
+
+- **撞上「还在跑」不再静默丢弃**：`handleSend` 遇到 `agentRunning` 为真直接 `return`。
+  上一轮的 `agent_end` 丢了、或前端状态比宿主滞后时，用户按发送一个字都不发、界面也不
+  报错。现在改走排队（可见 / 可编辑 / 可立即发送），宿主真空闲时会立刻开新一轮。
+- **发送闸门会自己过期**（`PROMPT_DISPATCH_STALE_MS = 8s`）：原来只在出错或
+  `agentRunning` 翻 false 时释放，一次丢事件就能把它永久卡住，之后每条消息都被静默吞掉。
+- **失败会留下来**：宿主拒收的消息标 `deliveryState: "failed"`，气泡下方显示「未送达」，
+  输入框上方常驻「这条消息没有发出去：<原因>」+ 重试 / 忽略。重试先撤掉那条从没进过会话
+  的乐观气泡再重发，不会冒出两条一样的消息。
+- **宿主不再拒收重载中的消息**：`reloadResources()` 从「并发就抛 Session is reloading」
+  改成复用同一个在途 promise；`prompt` 的 `isStreaming || reloadingResources` 硬拒收窄成
+  只挡 `isStreaming`。config-watcher 一次会话能刷十几次重载，正好撞上就丢一条消息。
+
+### 默认行为变没变
+
+- 不变：工具集、模型、会话目录、看门狗阈值、主题与布局。
+- 变了：运行中按发送进排队（以前是静默丢弃）；被宿主拒收的气泡会带「未送达」标记。
 
 ## v0.12.2 — 对话不丢、排队能改、计划有收尾
 

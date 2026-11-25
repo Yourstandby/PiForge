@@ -21,3 +21,18 @@ test("agent events route proxies the host stream and keeps the JSON error contra
   assert.match(source, /agent\.keepAlive/);
   assert.match(source, /subscription\?\.close\(\)/);
 });
+
+test("host 管道抖动不关 SSE 流（否则长工具跑着时会反复弹断流重连）", () => {
+  // 只有客户端彻底关闭才收流；reconnecting / idle / connecting 一律继续挂着等续发。
+  assert.match(
+    source,
+    /onStatusChange\(\(status\) => \{\s*if \(status === ["']closed["']\) cleanup\(\);/,
+  );
+  assert.doesNotMatch(source, /if \(status !== ["']ready["']\) cleanup\(\)/);
+});
+
+test("浏览器重连可从 ?lastEventId= 续发，keepAlive 失败需要连续多次才收流", () => {
+  assert.match(source, /searchParams\.get\(["']lastEventId["']\)/);
+  assert.match(source, /KEEP_ALIVE_MAX_FAILURES/);
+  assert.match(source, /KEEP_ALIVE_TIMEOUT_MS/);
+});

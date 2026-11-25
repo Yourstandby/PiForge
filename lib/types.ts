@@ -52,7 +52,7 @@ export interface UserMessage {
   timestamp?: number;
   /** Client-only delivery metadata; never persisted to the session JSONL. */
   clientMessageId?: string;
-  deliveryState?: "pending";
+  deliveryState?: "pending" | "failed";
 }
 
 export interface AssistantMessage {

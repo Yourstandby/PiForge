@@ -122,6 +122,24 @@ export class AgentEventsManager {
   private status: ConnectionStatus = "disconnected";
   /** 最近一次真正收到事件的时间戳；heartbeat 注释帧不更新它。 */
   private lastEventAt = 0;
+  /**
+   * 最近一次**真正投递到界面**的增量时间戳。
+   *
+   * 与 lastEventAt 的区别：connect()/retryNow() 会把 lastEventAt 手动重置成"现在"
+   * （免得刚重连就弹卡死提示），于是它无法分辨"连上了但一个字节都没来"。卡死自愈
+   * 必须靠这个只由 onmessage 更新的时间戳。
+   */
+  private lastRealEventAt = 0;
+  /**
+   * 已经收到的最后一个事件序号（SSE 的 id:）。
+   *
+   * 重连时把它带给服务端，host 就从「浏览器真正拿到的那一条」之后续发。
+   * 不带的话 host 会从「它自己最后投递的序号」续发——两者在断流瞬间并不相等，
+   * 中间那几条会永久消失（界面少一段内容，刷新一下才又出现）。
+   */
+  private lastSeq = 0;
+  /** lastSeq 属于哪个会话；换会话必须清零，序号是按会话递增的。 */
+  private lastSeqSid: string | null = null;
 
   constructor(reconnectDelay = 1000) {
     this.reconnectDelay = reconnectDelay;
@@ -141,6 +159,11 @@ export class AgentEventsManager {
   /** 最近一次收到真实增量事件的时间戳（用于"连上了但一个字节都没来"的卡死判定）。 */
   getLastEventAt() {
     return this.lastEventAt;
+  }
+
+  /** 最近一次真实增量到达的时间（未被 connect 的重连簿记污染）。 */
+  getLastRealEventAt() {
+    return this.lastRealEventAt;
   }
 
   /**
@@ -204,7 +227,14 @@ export class AgentEventsManager {
     this.setStatus("connecting");
     this.lastEventAt = Date.now();
 
-    const es = new EventSource(`/api/agent/${encodeURIComponent(sid)}/events`);
+    if (this.lastSeqSid !== sid) {
+      this.lastSeq = 0;
+      this.lastSeqSid = sid;
+    }
+    const base = `/api/agent/${encodeURIComponent(sid)}/events`;
+    const es = new EventSource(
+      this.lastSeq > 0 ? `${base}?lastEventId=${this.lastSeq}` : base
+    );
     this.eventSource = es;
 
     es.onopen = () => {
@@ -218,6 +248,9 @@ export class AgentEventsManager {
       try {
         const event = JSON.parse(e.data) as AgentEvent;
         this.lastEventAt = Date.now();
+        this.lastRealEventAt = Date.now();
+        const seq = Number(e.lastEventId);
+        if (Number.isFinite(seq) && seq > 0) this.lastSeq = seq;
         // 开发期流式诊断：确认 SSE 是"一小块一小块"到达的。
         // F12 → Network → EventStream 应能与这里的日志一一对应。
         if (process.env.NODE_ENV !== "production" && event.type === "message_update") {
@@ -281,6 +314,9 @@ export class AgentEventsManager {
   cleanup() {
     this.disconnect();
     this.sid = null;
+    this.lastSeq = 0;
+    this.lastSeqSid = null;
     this.handleAgentEvent = null;
+    this.lastRealEventAt = 0;
     this.setStatus("disconnected");
   }}

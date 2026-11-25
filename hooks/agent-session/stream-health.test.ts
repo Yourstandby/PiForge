@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   evaluateStreamHealth,
+  STREAM_FIRST_EVENT_MS,
   STREAM_STALL_MS,
   STREAM_STARTUP_GRACE_MS,
 } from "./stream-health.ts";
@@ -118,6 +119,53 @@ test("超过起步宽限仍没连上，照旧报 reconnecting", () => {
     runningSince: now - STREAM_STARTUP_GRACE_MS - 1,
   });
   assert.equal(health.kind, "reconnecting");
+});
+
+test("本轮一条真实增量都没有 → 用短阈值判卡死（等待首个 token）", () => {
+  const now = 1_000_000;
+  const runningSince = now - STREAM_FIRST_EVENT_MS - 1;
+  // lastEventAt 被 connect() 重置成"现在"——那是重连簿记，不能证明数据到过。
+  const health = evaluateStreamHealth({
+    agentRunning: true,
+    status: "connected",
+    lastEventAt: now - 5,
+    lastRealEventAt: runningSince - 1_000,
+    now,
+    runningSince,
+  });
+  assert.equal(health.kind, "stalled");
+});
+
+test("本轮刚开始几秒、还没有增量 → 不误报卡死", () => {
+  const now = 1_000_000;
+  const runningSince = now - 5_000;
+  assert.equal(
+    evaluateStreamHealth({
+      agentRunning: true,
+      status: "connected",
+      lastEventAt: now - 5,
+      lastRealEventAt: runningSince - 1_000,
+      now,
+      runningSince,
+    }).kind,
+    "ok",
+  );
+});
+
+test("本轮已经流过增量、只是暂时安静 → 仍用 120s 长阈值", () => {
+  const now = 1_000_000;
+  const runningSince = now - 300_000;
+  assert.equal(
+    evaluateStreamHealth({
+      agentRunning: true,
+      status: "connected",
+      lastEventAt: now - STREAM_FIRST_EVENT_MS - 5_000,
+      lastRealEventAt: now - STREAM_FIRST_EVENT_MS - 5_000,
+      now,
+      runningSince,
+    }).kind,
+    "ok",
+  );
 });
 
 test("刚连上还没来事件（lastEventAt=0）不误报", () => {

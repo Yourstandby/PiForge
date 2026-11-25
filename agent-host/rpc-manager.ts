@@ -160,6 +160,8 @@ export class AgentSessionWrapper {
   private suppressQueuedDispatchOnSettled = false;
   private resourcesChanged = false;
   private reloadingResources = false;
+  /** 在途的资源重载；并发调用复用同一个 promise，不再互相拒收。 */
+  private reloadPromise: Promise<void> | null = null;
   private pendingCodemode: boolean | undefined;
   /**
    * codemode 呈现模式的可变载体（直接交给 SDK 的 createCodemodeExtension）。
@@ -268,19 +270,36 @@ export class AgentSessionWrapper {
     this.resourcesChanged = true;
   }
 
+  /**
+   * 在途 reload 直接复用，不再抛「Session is reloading」。
+   *
+   * config-watcher 会在改设置 / 装扩展 / 写 bin 时把会话标脏（实测十几分钟能刷
+   * 十几次），而 prompt / set_model 都会先走这里。以前并发调用直接抛错：用户正好
+   * 在这个窗口里按发送，消息就被宿主原地拒收 —— 界面上就是「消息发出去了，但没有
+   * 任何下一步」。现在第二个调用等第一个跑完，谁都不丢。
+   */
   private async reloadResources(): Promise<void> {
-    if (this.reloadingResources) throw new Error("Session is reloading");
-    if (!this.resourcesChanged || !this.inner.reload) return;
-    this.reloadingResources = true;
-    this.resourcesChanged = false;
+    if (this.reloadPromise) return this.reloadPromise;
+    const reload = this.inner.reload;
+    if (!this.resourcesChanged || !reload) return;
+    const inFlight = (async () => {
+      this.reloadingResources = true;
+      this.resourcesChanged = false;
+      try {
+        await reload.call(this.inner);
+        this.applyAgentMode(this._agentMode);
+      } catch (error) {
+        this.resourcesChanged = true;
+        throw error;
+      } finally {
+        this.reloadingResources = false;
+      }
+    })();
+    this.reloadPromise = inFlight;
     try {
-      await this.inner.reload();
-      this.applyAgentMode(this._agentMode);
-    } catch (error) {
-      this.resourcesChanged = true;
-      throw error;
+      await inFlight;
     } finally {
-      this.reloadingResources = false;
+      if (this.reloadPromise === inFlight) this.reloadPromise = null;
     }
   }
   setAgentMode(mode: AgentMode): void {
@@ -773,7 +792,9 @@ export class AgentSessionWrapper {
         // after a dropped agent_end) must not start a second agent loop in
         // parallel with the in-flight one. Reject deterministically here
         // instead of relying on pi's internal isStreaming handling.
-        if (this.inner.isStreaming || this.reloadingResources) throw new Error("Session is streaming or reloading");
+        // 只挡「真在跑的一轮」。资源重载不再拒收：上面那次 reloadResources() 会等
+        // 已经在跑的那次结束再发，用户在这个窗口里按发送不该丢消息。
+        if (this.inner.isStreaming) throw new Error("Session is streaming");
         if (this.resourcesChanged) await this.reloadResources();
         try {
           await this._binding;
