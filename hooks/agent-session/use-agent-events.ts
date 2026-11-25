@@ -56,11 +56,17 @@ export function useAgentEvents({ agentRunning }: UseAgentEventsOptions) {
     return managerRef.current?.getLastEventAt() ?? 0;
   }, []);
 
+  /** 真实增量时间戳（不含 connect/retryNow 的重连簿记），卡死自愈用。 */
+  const getLastRealAgentEventAt = useCallback(() => {
+    return managerRef.current?.getLastRealEventAt() ?? 0;
+  }, []);
+
   return {
     handleAgentEventRef,
     connectEvents,
     reconnectEvents,
     getLastAgentEventAt,
+    getLastRealAgentEventAt,
     connectionStatus,
     reconnectAttempts,
   };

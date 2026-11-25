@@ -391,6 +391,7 @@ function ChatSession({
    */
   const [streamHealth, setStreamHealth] = useState<StreamHealth>({ kind: "ok" });
   const getLastAgentEventAt = chat.getLastAgentEventAt;
+  const getLastRealAgentEventAt = chat.getLastRealAgentEventAt;
   // 本轮开始的时刻：发送消息后 agentRunning 先翻 true、SSE 随后才建连，这段间隙的
   // status 仍是上一轮的 disconnected，不能被判成「正在重连」（否则每发一条都闪一下）。
   const runningSinceRef = useRef(0);
@@ -404,6 +405,9 @@ function ChatSession({
           agentRunning: chat.agentRunning,
           status: chat.connectionStatus,
           lastEventAt: getLastAgentEventAt(),
+          // 真·增量时间戳：connect 会重置 lastEventAt，用它判定「等待首个 token」
+          // 会把"刚建好连接"误当成"数据已经到了"。
+          lastRealEventAt: getLastRealAgentEventAt(),
           now: Date.now(),
           attempts: chat.reconnectAttempts,
           runningSince: runningSinceRef.current,
@@ -419,7 +423,34 @@ function ChatSession({
     tick();
     const timer = setInterval(tick, 2000);
     return () => clearInterval(timer);
-  }, [chat.agentRunning, chat.connectionStatus, chat.reconnectAttempts, getLastAgentEventAt]);
+  }, [chat.agentRunning, chat.connectionStatus, chat.reconnectAttempts, getLastAgentEventAt, getLastRealAgentEventAt]);
+
+  /**
+   * 卡死自愈：连上了但事件一条都不来（host 投递水位错位 / 订阅没接上）时，用户
+   * 唯一的出路本来是手动刷新页面 —— 刷新走的是磁盘 transcript，所以"看得见"。
+   * 这里把它自动化：重连（带浏览器真实水位，host 会从 buffer 续发漏掉的那段）+
+   * 从磁盘重载本轮已产出的内容。两次之间至少隔 15s、每轮最多 4 次，避免抖动循环。
+   */
+  const autoRepairRef = useRef({ attempts: 0, lastAt: 0 });
+  const reconnectEvents = chat.reconnectEvents;
+  const reloadSession = chat.loadSession;
+  const agentRunning = chat.agentRunning;
+  useEffect(() => {
+    const sid = session?.id;
+    if (!agentRunning) {
+      autoRepairRef.current = { attempts: 0, lastAt: 0 };
+      return;
+    }
+    if (streamHealth.kind !== "stalled" || !sid) return;
+    const state = autoRepairRef.current;
+    if (state.attempts >= 4) return;
+    const now = Date.now();
+    if (state.lastAt > 0 && now - state.lastAt < 15_000) return;
+    state.attempts += 1;
+    state.lastAt = now;
+    reconnectEvents();
+    void reloadSession(sid);
+  }, [streamHealth, agentRunning, reconnectEvents, reloadSession, session?.id]);
 
   useEffect(() => {
     if (!compactToast) return;

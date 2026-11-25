@@ -107,6 +107,17 @@ class PipeAgentHostClient implements AgentHostClient {
   private readonly statusListeners = new Set<(status: AgentHostClient["status"]) => void>();
   private readonly hubs = new Map<GlobalTopic, TopicHub>();
   private readonly agentHubs = new Map<string, AgentHub>();
+  /**
+   * 每个会话「最后一个真正交到监听者手里」的事件序号。
+   *
+   * host 侧的水位（session-events 的 lastDeliveredSeq）是"投给任意订阅就算送达"，
+   * 它会把"投给一个已经把本地监听者摘掉的孤儿订阅"也算成已送达。这里只统计真的
+   * 被某个 SSE 监听者收到的事件，而且**跨 hub 存活**：hub 会随最后一条 SSE 关闭而
+   * 被删除，但下一次订阅必须从这个水位续发，否则落在"hub 已删、host 订阅还在"之间
+   * 的那段事件会被永久跳过 —— 界面停在「等待首个 token」，只有刷新（从磁盘重载
+   * transcript）才看得见内容。
+   */
+  private readonly agentListenerSeq = new Map<string, number>();
   private readonly hostSubscriptions = new Map<string, HostSubscriptionRef>();
   private readonly earlyEvents = new Map<string, EarlyEvent[]>();
   private connectPromise: Promise<void> | null = null;
@@ -250,8 +261,19 @@ class PipeAgentHostClient implements AgentHostClient {
       await this.ensureAgentSubscription(sessionId, options.fromSeq);
     } catch (error) {
       hub.listeners.delete(handler);
-      if (hub.listeners.size === 0) this.agentHubs.delete(sessionId);
+      if (hub.listeners.size === 0 && this.agentHubs.get(sessionId) === hub) {
+        this.agentHubs.delete(sessionId);
+      }
       throw error;
+    }
+
+    // 建订阅期间浏览器可能已经取消了 SSE（close() 把 hub 摘了），但这次
+    // agent.subscribe 还是落到了 host 上。孤儿订阅会继续吃掉事件、把 host 的投递
+    // 水位推到浏览器没收到的位置，这里补一刀，立刻退掉它。
+    if (this.agentHubs.get(sessionId) !== hub || !hub.listeners.has(handler)) {
+      const orphan = hub.hostSubscriptionId;
+      hub.hostSubscriptionId = null;
+      this.dropHostSubscription(orphan, "agent");
     }
 
     const agentHub = hub;
@@ -268,17 +290,12 @@ class PipeAgentHostClient implements AgentHostClient {
       close: (): void => {
         agentHub.listeners.delete(handler);
         if (agentHub.listeners.size > 0) return;
-        this.agentHubs.delete(sessionId);
+        // 只摘自己那一个：close 可能与新的 subscribe 并发，无条件 delete 会把别人
+        // 刚建好的 hub（和它的 host 订阅）一起变成孤儿。
+        if (this.agentHubs.get(sessionId) === agentHub) this.agentHubs.delete(sessionId);
         const subscriptionId = agentHub.hostSubscriptionId;
         agentHub.hostSubscriptionId = null;
-        if (subscriptionId) {
-          this.hostSubscriptions.delete(subscriptionId);
-          if (this.currentStatus === "ready") {
-            void this.call("agent.unsubscribe", { subscriptionId }).catch(() => {
-              // Host may already be gone; the subscription dies with the pipe.
-            });
-          }
-        }
+        this.dropHostSubscription(subscriptionId, "agent");
       },
     };
   }
@@ -297,8 +314,28 @@ class PipeAgentHostClient implements AgentHostClient {
     }
     this.hubs.clear();
     this.agentHubs.clear();
+    this.agentListenerSeq.clear();
     this.hostSubscriptions.clear();
     this.earlyEvents.clear();
+  }
+
+  /**
+   * 退掉一个 host 订阅并在 host 侧注销（幂等）。
+   *
+   * 只在连接 ready 时发 unsubscribe：连接断了的话订阅随管道一起没了，补发只会
+   * 又多一次必然失败的调用。
+   */
+  private dropHostSubscription(
+    subscriptionId: string | null,
+    kind: "agent" | "topic",
+  ): void {
+    if (!subscriptionId) return;
+    this.hostSubscriptions.delete(subscriptionId);
+    if (this.closed || this.currentStatus !== "ready") return;
+    const method = kind === "agent" ? "agent.unsubscribe" : "host.unsubscribe";
+    void this.call(method, { subscriptionId }).catch(() => {
+      // Host may already be gone; the subscription dies with the pipe.
+    });
   }
 
   private async ensureTopicSubscription(topic: GlobalTopic): Promise<void> {
@@ -333,13 +370,26 @@ class PipeAgentHostClient implements AgentHostClient {
     if (hub.hostSubscriptionId) return;
     if (hub.pending) return hub.pending;
 
+    // 没有显式水位时，从"真的送到过监听的最后一条"之后开始。host 自己的水位会把
+    // 投给孤儿订阅的事件也算成已送达，照它续发就会跳过浏览器从来没收到的那一段
+    // （表现就是界面卡在「等待首个 token」，刷新才看得见）。
+    const listenerSeq = this.agentListenerSeq.get(sessionId);
+    const startSeq =
+      fromSeq ?? (listenerSeq !== undefined ? listenerSeq + 1 : undefined);
+
     const pending = (async () => {
       await this.ensureConnected(DEFAULT_CALL_TIMEOUT_MS);
-      if (hub.hostSubscriptionId) return;
+      // await 期间 hub 可能已被 close() 摘掉（浏览器取消 SSE）：这时再建 host 订阅
+      // 只会得到一个没人消费的孤儿，所以建之前和建之后都要确认 hub 还是当前那一个。
+      if (this.agentHubs.get(sessionId) !== hub || hub.hostSubscriptionId) return;
       const subscribeResult = await this.call(
         "agent.subscribe",
-        fromSeq === undefined ? { sessionId } : { sessionId, fromSeq },
+        startSeq === undefined ? { sessionId } : { sessionId, fromSeq: startSeq },
       );
+      if (this.agentHubs.get(sessionId) !== hub) {
+        this.dropHostSubscription(subscribeResult.subscriptionId, "agent");
+        return;
+      }
       hub.hostSubscriptionId = subscribeResult.subscriptionId;
       hub.lastSeq = subscribeResult.lastSeq;
       this.hostSubscriptions.set(subscribeResult.subscriptionId, { kind: "agent", sessionId });
@@ -540,7 +590,13 @@ class PipeAgentHostClient implements AgentHostClient {
     const hub = this.agentHubs.get(sessionId);
     if (!hub) return;
     hub.lastSeq = seq;
-    for (const listener of [...hub.listeners]) {
+    const listeners = [...hub.listeners];
+    // 只有真的交给过监听者，才算"浏览器收到了"。
+    if (listeners.length > 0) {
+      const seen = this.agentListenerSeq.get(sessionId) ?? 0;
+      if (seq > seen) this.agentListenerSeq.set(sessionId, seq);
+    }
+    for (const listener of listeners) {
       try {
         listener(event, seq);
       } catch (error) {

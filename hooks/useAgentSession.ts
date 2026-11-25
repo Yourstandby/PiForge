@@ -401,6 +401,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     connectEvents,
     reconnectEvents,
     getLastAgentEventAt,
+    getLastRealAgentEventAt,
     connectionStatus,
     reconnectAttempts,
   } = useAgentEvents({ agentRunning });
@@ -1322,6 +1323,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     connectEvents,
     reconnectEvents,
     getLastAgentEventAt,
+    getLastRealAgentEventAt,
     connectionStatus,
     reconnectAttempts,
   };

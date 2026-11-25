@@ -112,6 +112,11 @@ export async function GET(
       const sendEvent = (seq: number, event: unknown) =>
         send(`id: ${seq}\ndata: ${JSON.stringify(event)}\n\n`);
 
+      // 先挂 abort：浏览器在建立订阅的 await 期间取消 SSE 时也必须把 closed 置位，
+      // 否则那条 agent.subscribe 会变成一个没人消费的孤儿订阅（事件照发、界面收
+      // 不到，host 的投递水位却被推高）。
+      req.signal?.addEventListener("abort", cleanup);
+
       sendData({ type: "connected", sessionId: id });
 
       try {
@@ -125,7 +130,9 @@ export async function GET(
         return;
       }
       if (closed) {
-        subscription?.close();
+        // 订阅建好之前浏览器就走了：立刻退掉，别让它留在 host 上吃事件。
+        subscription.close();
+        subscription = undefined;
         return;
       }
 

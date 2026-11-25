@@ -59,6 +59,20 @@ describe("AgentEventsManager", () => {
     assert.deepEqual(events[0], { type: "agent_start", foo: "bar" });
   });
 
+  test("getLastRealEventAt 只在真实事件到达时前进（connect/retryNow 不算）", () => {
+    const manager = new AgentEventsManager();
+    manager.connect("session-1");
+    assert.equal(manager.getLastRealEventAt(), 0);
+
+    // 重连簿记会刷新 getLastEventAt，但它不能证明"有数据到过"。
+    manager.retryNow();
+    assert.equal(manager.getLastRealEventAt(), 0);
+
+    const es = MockEventSource.instances[MockEventSource.instances.length - 1];
+    es.onmessage!({ data: JSON.stringify({ type: "agent_start" }), lastEventId: "7" });
+    assert.ok(manager.getLastRealEventAt() > 0);
+  });
+
   test("handles JSON parsing errors gracefully", () => {
     const manager = new AgentEventsManager();
     const events: AgentEvent[] = [];
