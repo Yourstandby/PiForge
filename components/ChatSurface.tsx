@@ -16,6 +16,7 @@ import { StreamHealthBanner } from "./StreamHealthBanner";
 import { RetryNotice } from "./RetryNotice";
 import { PlanProgressCard } from "./PlanProgressCard";
 import { evaluateStreamHealth, type StreamHealth } from "@/hooks/agent-session/stream-health";
+import { promptErrorText, retryActionLabel } from "@/hooks/agent-session/session-busy";
 import { useSessionSplitHint } from "@/hooks/useSessionSplitHint";
 import { useSessionScope } from "@/hooks/useSessionScope";
 import { conversationToMarkdown } from "@/lib/conversation-markdown";
@@ -1750,7 +1751,7 @@ function ChatSession({
           ) : (
             <AlertCircle size={13} strokeWidth={2} className="shrink-0" aria-hidden="true" />
           )}
-          {compactToast.text}
+          {promptErrorText(compactToast.text)}
         </div>
       )}
       {/* 后台引擎没起来时给一句提示，但**不做成白色卡片**：
@@ -1813,19 +1814,25 @@ function ChatSession({
           className="mb-1 flex max-w-full items-center gap-2 self-start rounded-lg border border-[#F5D3D3] bg-white px-2.5 py-1.5 text-[12px] text-danger shadow-[0_1px_3px_rgba(15,23,42,0.06)]"
         >
           <AlertCircle size={13} strokeWidth={2} className="shrink-0" aria-hidden="true" />
-          <span className="min-w-0 truncate" title={failedDelivery.error}>
-            这条消息没有发出去：{failedDelivery.error}
+          <span className="min-w-0 truncate" title={promptErrorText(failedDelivery.error)}>
+            这条消息没有发出去：{promptErrorText(failedDelivery.error)}
           </span>
           <button
             type="button"
             onClick={() => {
               const retry = failedDelivery;
               setFailedDelivery(null);
-              void chat.handleRetryDelivery(retry.clientMessageId, retry.text, retry.images);
+              // 把上次的错误一起带上：忙/卡死时重试要先强制结束这一轮。
+              void chat.handleRetryDelivery(
+                retry.clientMessageId,
+                retry.text,
+                retry.images,
+                retry.error,
+              );
             }}
             className="shrink-0 rounded-md bg-[#FDF1F1] px-1.5 py-0.5 text-[11.5px] font-medium text-danger transition-colors hover:bg-[#FADDDD]"
           >
-            重试
+            {retryActionLabel(failedDelivery.error)}
           </button>
           <button
             type="button"

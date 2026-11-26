@@ -1353,3 +1353,103 @@ test("set_model reloads pending resources before resolving the model", async () 
     await w.destroy();
   }
 });
+
+// ============================================================================
+// 僵尸流自愈：pi 的 isStreaming 只在自己的 finally 里复位。模型连接静默断掉时
+// 这一位会永久停在 true，之后每条 prompt 都被 backstop 拒收 —— 用户只能重启。
+// ============================================================================
+
+test("prompt recovers a stuck (silent) stream instead of rejecting forever", async () => {
+  const originalSilence = AgentSessionWrapper.stuckSilenceMs;
+  const originalWait = AgentSessionWrapper.stuckAbortWaitMs;
+  AgentSessionWrapper.stuckSilenceMs = 0;
+  AgentSessionWrapper.stuckAbortWaitMs = 200;
+  try {
+    let aborted = 0;
+    const prompts: string[] = [];
+    const inner = makeStubInner({ isStreaming: true, prompt: async (message) => { prompts.push(message); } }) as unknown as {
+      isStreaming: boolean;
+      abort: () => Promise<void>;
+    };
+    inner.abort = async () => {
+      aborted += 1;
+      inner.isStreaming = false;
+    };
+    const w = new AgentSessionWrapper(inner as never);
+    w.start();
+    try {
+      await w.send({ type: "prompt", message: "hi" });
+      await flushMicrotasks();
+      assert.equal(aborted, 1, "僵尸流必须先被 abort，而不是把消息丢回去");
+      assert.deepEqual(prompts, ["hi"], "恢复后这条消息要照常发出去");
+    } finally {
+      await w.destroy();
+    }
+  } finally {
+    AgentSessionWrapper.stuckSilenceMs = originalSilence;
+    AgentSessionWrapper.stuckAbortWaitMs = originalWait;
+  }
+});
+
+test("abort that cannot clear the stream surfaces SESSION_STUCK, not SESSION_BUSY", async () => {
+  const originalSilence = AgentSessionWrapper.stuckSilenceMs;
+  const originalWait = AgentSessionWrapper.stuckAbortWaitMs;
+  AgentSessionWrapper.stuckSilenceMs = 0;
+  AgentSessionWrapper.stuckAbortWaitMs = 150;
+  try {
+    const inner = makeStubInner({ isStreaming: true });
+    const w = new AgentSessionWrapper(inner);
+    w.start();
+    try {
+      await assert.rejects(w.send({ type: "prompt", message: "hi" }), /SESSION_STUCK/);
+    } finally {
+      await w.destroy();
+    }
+  } finally {
+    AgentSessionWrapper.stuckSilenceMs = originalSilence;
+    AgentSessionWrapper.stuckAbortWaitMs = originalWait;
+  }
+});
+
+test("a live stream (recent events) is still rejected, never aborted", async () => {
+  let aborted = 0;
+  const inner = makeStubInner({ isStreaming: true }) as unknown as {
+    abort: () => Promise<void>;
+  };
+  inner.abort = async () => {
+    aborted += 1;
+  };
+  const w = new AgentSessionWrapper(inner as never);
+  w.start();
+  try {
+    await assert.rejects(w.send({ type: "prompt", message: "hi" }), /Session is streaming/);
+    assert.equal(aborted, 0, "刚发出去的一轮不能被误杀");
+  } finally {
+    await w.destroy();
+  }
+});
+
+test("a pending agent_end blocks recovery: that turn is settling, not stuck", async () => {
+  let receive: (event: unknown) => void = () => {};
+  let aborted = 0;
+  const inner = makeStubInner({
+    isStreaming: true,
+    subscribe: (cb) => { receive = cb; return () => {}; },
+  }) as unknown as { abort: () => Promise<void> };
+  inner.abort = async () => {
+    aborted += 1;
+  };
+  const originalSilence = AgentSessionWrapper.stuckSilenceMs;
+  AgentSessionWrapper.stuckSilenceMs = 0;
+  const w = new AgentSessionWrapper(inner as never);
+  w.start();
+  try {
+    receive({ type: "agent_end", messages: [] });
+    await assert.rejects(w.send({ type: "prompt", message: "hi" }), /Session is streaming/);
+    assert.equal(aborted, 0);
+  } finally {
+    AgentSessionWrapper.stuckSilenceMs = originalSilence;
+    await w.destroy();
+  }
+});
+
