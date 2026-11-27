@@ -9,6 +9,7 @@ import { BrainCircuit, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, Corn
 import type { AgentMessage, AssistantMessage, ToolResultMessage } from "@/lib/types";
 import { diffStats } from "@/lib/diff-lines";
 import { stripImageDimensionNotes } from "@/lib/image-dimension-note";
+import { normalizeMarkdownSource } from "@/lib/markdown-source";
 import { buildWithTurnCache, type TurnCacheEntry } from "@/lib/transcript-turn-cache";
 import { isInterventionText } from "@/contract/intervention-marker";
 import { PLAN_TOOL_NAME, planByRound } from "@/lib/plan-progress";
@@ -2121,7 +2122,7 @@ function AssistantBlocks({
     return (
       <>
         <ReactMarkdown {...MARKDOWN_PLUGINS} components={markdownComponents}>
-          {turn.text}
+          {normalizeMarkdownSource(turn.text)}
         </ReactMarkdown>
       </>
     );
@@ -2173,7 +2174,7 @@ function AssistantBlocks({
               {...MARKDOWN_PLUGINS}
               components={markdownComponents}
             >
-              {block.text}
+              {normalizeMarkdownSource(block.text)}
             </ReactMarkdown>
           ) : null,
         )}
@@ -2224,7 +2225,7 @@ function AssistantBlocks({
             {...MARKDOWN_PLUGINS}
             components={markdownComponents}
           >
-            {block.text}
+            {normalizeMarkdownSource(block.text)}
           </ReactMarkdown>
         ) : null,
       )}
@@ -2237,7 +2238,9 @@ function AssistantBlocks({
           </div>
           <div className="text-[14px] leading-7 text-ink">
             <ReactMarkdown {...MARKDOWN_PLUGINS} components={markdownComponents}>
-              {(blocks[finalTextIndex] as Extract<TurnBlock, { kind: "text" }>).text}
+              {normalizeMarkdownSource(
+                (blocks[finalTextIndex] as Extract<TurnBlock, { kind: "text" }>).text,
+              )}
             </ReactMarkdown>
           </div>
         </div>

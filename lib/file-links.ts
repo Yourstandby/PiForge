@@ -207,7 +207,7 @@ export interface ChatLinkSegment {
   url?: string;
 }
 
-function trimTrailingPunctuation(value: string): string {
+export function trimTrailingPunctuation(value: string): string {
   let out = value;
   for (;;) {
     const next = out.replace(TRAILING_PUNCTUATION_RE, "");
