@@ -26,6 +26,12 @@ export interface OrchestratorTaskView {
   toolCalls: SubagentToolCallView[];
   filesChanged: string[];
   verification: SubagentVerification;
+  /** 是否授予 worker `bash`。默认 false：命令没有路径围栏。 */
+  allowBash: boolean;
+  /** 该 worker 的分支被合回主干的时刻，未合并为 null。 */
+  mergedAt: number | null;
+  /** 合并产生的提交（短哈希），未合并为 null。 */
+  mergedCommit: string | null;
   error?: string;
 }
 
@@ -37,4 +43,6 @@ export interface OrchestratorSpawnInput {
   parentTaskId?: string | null;
   targetCwd?: string;
   branchName?: string;
+  /** 显式申请 `bash`。默认不给：命令执行没有路径围栏。 */
+  allowBash?: boolean;
 }

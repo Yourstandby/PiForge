@@ -22,7 +22,19 @@ import type {
 } from "./orchestrator-protocol.ts";
 import { checkSubagentVerification } from "./subagent-verification.ts";
 
-const WORKER_TOOLS = ["read", "write", "edit", "grep", "find", "ls", "bash"];
+/**
+ * Worker 默认工具集：**不含 `bash`**。
+ *
+ * 写文件的三个工具在 Host 侧共享 `authorizePath` 策略，而命令执行没有任何路径
+ * 围栏 —— 一个 `cd ..` 就能改到主干或别的 worktree。所以默认只给读写与检索，
+ * 需要跑命令时由 spawn 调用方显式申请 `allowBash`。
+ */
+export const WORKER_TOOLS: readonly string[] = ["read", "write", "edit", "grep", "find", "ls"];
+export const WORKER_TOOLS_WITH_BASH: readonly string[] = [...WORKER_TOOLS, "bash"];
+
+export function resolveWorkerTools(allowBash: boolean | undefined): string[] {
+  return [...(allowBash === true ? WORKER_TOOLS_WITH_BASH : WORKER_TOOLS)];
+}
 
 function emit(message: OrchestratorWorkerMessage): void {
   process.stdout.write(`${JSON.stringify(message)}\n`);
@@ -65,7 +77,9 @@ function workerPrompt(config: OrchestratorWorkerConfig): string {
     `Task: ${config.task}`,
     `Worktree: ${config.cwd}`,
     "Work only inside this worktree. Do not touch sibling worktrees or the parent repository.",
-    "You may edit files and run commands in this worktree. Verify your changes with tests or a build when possible.",
+    config.allowBash === true
+      ? "You may edit files and run commands (bash is enabled) in this worktree. Verify your changes with tests or a build when possible."
+      : "You may edit files in this worktree, but bash is NOT available: use read/grep/find/ls/write/edit only, and state clearly in your report what you could not verify without running commands.",
     "Finish with a concise report: what changed, files/paths, commands run, verification evidence, and any remaining risk.",
   ].join("\n");
 }
@@ -101,7 +115,7 @@ async function main(): Promise<void> {
     sessionManager: SessionManager.create(config.cwd, undefined),
     resourceLoader,
     modelRuntime: runtime,
-    tools: WORKER_TOOLS,
+    tools: resolveWorkerTools(config.allowBash),
     ...(model ? { model } : {}),
     ...(config.thinkingLevel ? { thinkingLevel: config.thinkingLevel as ThinkingLevel } : {}),
   });

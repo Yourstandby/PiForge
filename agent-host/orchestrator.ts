@@ -31,6 +31,8 @@ import type {
   OrchestratorWorkerConfig,
   OrchestratorWorkerMessage,
 } from "./orchestrator-protocol.ts";
+import { mergeOrchestratorBranch, MergeBackError, type MergeBackResult } from "./orchestrator-merge.ts";
+import type { GitRunner } from "../lib/git-worktree.ts";
 
 const MAX_WORKERS = 4;
 const MAX_RETAINED = 20;
@@ -75,7 +77,18 @@ const records = new Map<string, TaskRecord>();
 const listeners = new Set<(task: OrchestratorTaskView) => void>();
 
 export class OrchestratorError extends Error {
-  readonly code: "E_INVALID_PARAMS" | "E_LIMIT" | "E_WORKTREE" | "E_WORKER";
+  readonly code:
+    | "E_INVALID_PARAMS"
+    | "E_LIMIT"
+    | "E_WORKTREE"
+    | "E_WORKER"
+    | "E_NOT_FINISHED"
+    | "E_NOT_GIT"
+    | "E_DETACHED"
+    | "E_DIRTY_TREE"
+    | "E_NOTHING_TO_MERGE"
+    | "E_CONFLICT"
+    | "E_MERGE_FAILED";
 
   constructor(code: OrchestratorError["code"], message: string) {
     super(message);
@@ -302,6 +315,9 @@ export async function spawnOrchestratorTask(
       toolCalls: [],
       filesChanged: [],
       verification: { verified: false, reason: "waiting for worker", evidence: [], checkedAt: Date.now() },
+      allowBash: input.allowBash === true,
+      mergedAt: null,
+      mergedCommit: null,
     },
     handle: null,
     timer: null,
@@ -334,6 +350,7 @@ export async function spawnOrchestratorTask(
       cwd: record.view.cwd,
       parentSessionId: record.view.parentSessionId,
       parentTaskId: record.view.parentTaskId,
+      allowBash: record.view.allowBash,
     };
 
     record.handle = launch(config, {
@@ -408,6 +425,54 @@ export async function spawnOrchestratorTask(
     }
     notify(record);
     throw new OrchestratorError("E_WORKTREE", `${record.view.error}`);
+  }
+}
+
+/**
+ * Merge a finished worker's branch back into the parent checkout.
+ *
+ * 只允许「已结束」的 worker：跑着的时候合进去，等于把半成品揉进主干。
+ * 脏工作区 / 冲突 / 空分支都在 mergeOrchestratorBranch 里拒绝，这里只负责
+ * 状态校验与广播，让编排面板立刻看到合并结果。
+ */
+export async function mergeBackOrchestratorTask(
+  id: string,
+  deps: { git?: GitRunner } = {},
+): Promise<MergeBackResult> {
+  const record = records.get(id);
+  if (!record) throw new OrchestratorError("E_INVALID_PARAMS", `unknown worker: ${id}`);
+  if (!isTerminalStatus(record.view.status)) {
+    throw new OrchestratorError(
+      "E_NOT_FINISHED",
+      `worker ${record.view.name} is still ${record.view.status}; wait for it to finish or stop it first`,
+    );
+  }
+  if (!record.view.repoRoot || !record.view.branchName) {
+    throw new OrchestratorError("E_INVALID_PARAMS", `worker ${record.view.name} has no branch to merge`);
+  }
+  if (record.view.mergedAt !== null) {
+    return {
+      repoRoot: record.view.repoRoot,
+      branchName: record.view.branchName,
+      targetBranch: "",
+      commit: record.view.mergedCommit ?? "",
+      files: [...record.view.filesChanged],
+    };
+  }
+  try {
+    const result = await mergeOrchestratorBranch(
+      { repoRoot: record.view.repoRoot, branchName: record.view.branchName },
+      deps.git ? { git: deps.git } : {},
+    );
+    record.view.mergedAt = Date.now();
+    record.view.mergedCommit = result.commit;
+    notify(record);
+    return result;
+  } catch (error) {
+    if (error instanceof MergeBackError) {
+      throw new OrchestratorError(error.code, error.message);
+    }
+    throw error;
   }
 }
 
