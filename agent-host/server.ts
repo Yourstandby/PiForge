@@ -193,6 +193,7 @@ import { isInterventionAction, shouldInterruptTool } from "./intervention.ts";
 
 import {
   listOrchestratorTasks,
+  mergeBackOrchestratorTask,
   onOrchestratorChange,
   OrchestratorError,
   spawnOrchestratorTask,
@@ -921,6 +922,34 @@ export function createAgentHostServer(options: AgentHostServerOptions): AgentHos
           return;
         }
         void stopOrchestratorTask(id).then((ok) => result(state, frame.id, { ok }));
+        return;
+      }
+      case "orchestrator.merge": {
+        const id = readString(params, "id");
+        if (!id) {
+          fail(state, frame.id, "E_INVALID_PARAMS", "id is required");
+          return;
+        }
+        void mergeBackOrchestratorTask(id)
+          .then((merge) => result(state, frame.id, { merge }))
+          .catch((error: unknown) => {
+            const message = errorText(error);
+            if (!(error instanceof OrchestratorError)) {
+              fail(state, frame.id, "INTERNAL", message);
+              return;
+            }
+            // 合并失败的原因决定了用户下一步动作：脏工作区要提交、冲突要手动解、
+            // 还在跑要等。别一律降级成 INTERNAL 让界面只剩一句英文。
+            const code =
+              error.code === "E_NOT_FINISHED" ? "E_BACKPRESSURE"
+              : error.code === "E_DIRTY_TREE" ? "WORKTREE_DIRTY"
+              : error.code === "E_CONFLICT" ? "MERGE_CONFLICT"
+              : error.code === "E_NOT_GIT" ? "NOT_GIT_REPOSITORY"
+              : error.code === "E_DETACHED" ? "INVALID_BRANCH"
+              : error.code === "E_INVALID_PARAMS" || error.code === "E_NOTHING_TO_MERGE" ? "E_INVALID_PARAMS"
+              : "INTERNAL";
+            fail(state, frame.id, code, message);
+          });
         return;
       }
       case "plugins.reload": {

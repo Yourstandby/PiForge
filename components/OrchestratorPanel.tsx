@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { GitBranch, Loader2, Network, Square } from "lucide-react";
+import { GitBranch, GitMerge, Loader2, Network, Square } from "lucide-react";
 import type { OrchestratorTaskView } from "@contract/domains/orchestrator";
 import { ErrorNotice } from "./ErrorNotice";
 import { AgentSpawnTrigger, type AgentSpawnDraft } from "./AgentSpawnTrigger";
@@ -45,7 +45,19 @@ function buildTree(tasks: OrchestratorTaskView[]): TreeNode[] {
   return roots;
 }
 
-function Node({ node, depth, stopping, onStop }: { node: TreeNode; depth: number; stopping: string | null; onStop: (id: string) => void }) {
+/** worker 已经结束、但分支还没合回主干 —— 成果还留在它的 worktree 里。 */
+function canMerge(task: OrchestratorTaskView): boolean {
+  return !task.mergedAt && Boolean(task.branchName) && ["exited", "stopped", "crashed"].includes(task.status);
+}
+
+function Node({ node, depth, stopping, merging, onStop, onMerge }: {
+  node: TreeNode;
+  depth: number;
+  stopping: string | null;
+  merging: string | null;
+  onStop: (id: string) => void;
+  onMerge: (id: string) => void;
+}) {
   const { task } = node;
   const [expanded, setExpanded] = useState(true);
   return (
@@ -76,6 +88,34 @@ function Node({ node, depth, stopping, onStop }: { node: TreeNode; depth: number
         <div className="mt-1 flex items-center gap-2 pl-5 text-[10px] text-ink-faint">
           <span className="rounded bg-[#F5F5F7] px-1 py-0.5">{task.status}</span>
           {task.branchName && <span className="inline-flex items-center gap-0.5 truncate"><GitBranch size={9} />{task.branchName}</span>}
+          {task.allowBash && (
+            <span
+              title="该 worker 被授予 bash：worktree 只是工作目录，不是沙箱，命令可以写到仓库外"
+              className="rounded-full border border-[#F0D2CC] bg-[#FDF6F5] px-1 py-0.5 text-[9px] font-medium text-[#B0443C]"
+            >
+              bash
+            </span>
+          )}
+          {task.mergedAt ? (
+            <span
+              title={task.mergedCommit ? `已合回主干，提交 ${task.mergedCommit}` : "已合回主干"}
+              className="rounded-full border border-[#CBE6D5] bg-[#F2FBF5] px-1 py-0.5 text-[9px] font-medium text-[#2F7A55]"
+            >
+              已合回{task.mergedCommit ? ` ${task.mergedCommit}` : ""}
+            </span>
+          ) : canMerge(task) ? (
+            <button
+              type="button"
+              onClick={() => onMerge(task.id)}
+              disabled={merging === task.id}
+              title="把该 worker 的分支 git merge --no-ff 合回当前 checkout；工作区脏或冲突会被拒绝并回报原因"
+              aria-label={`合回 ${task.name}`}
+              className="inline-flex items-center gap-0.5 rounded-full border border-[#D9DEE8] bg-white px-1.5 py-0.5 text-[9px] font-medium text-ink-muted hover:bg-[#F5F7FB] disabled:opacity-60"
+            >
+              {merging === task.id ? <Loader2 size={8} className="animate-spin" /> : <GitMerge size={8} />}
+              合回
+            </button>
+          ) : null}
           {task.filesChanged.length > 0 && <span>{task.filesChanged.length} 个变更</span>}
           {task.workerPid && <span>pid {task.workerPid}</span>}
         </div>
@@ -90,7 +130,7 @@ function Node({ node, depth, stopping, onStop }: { node: TreeNode; depth: number
       </div>
       {expanded && node.children.map((child) => (
         <div key={child.task.id} className="mt-1">
-          <Node node={child} depth={depth + 1} stopping={stopping} onStop={onStop} />
+          <Node node={child} depth={depth + 1} stopping={stopping} merging={merging} onStop={onStop} onMerge={onMerge} />
         </div>
       ))}
     </div>
@@ -105,6 +145,7 @@ export function OrchestratorPanel({ cwd = null }: { cwd?: string | null }) {
   const [tasks, setTasks] = useState<OrchestratorTaskView[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [stopping, setStopping] = useState<string | null>(null);
+  const [merging, setMerging] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -147,6 +188,25 @@ export function OrchestratorPanel({ cwd = null }: { cwd?: string | null }) {
     }
   }, [load]);
 
+  const merge = useCallback(async (id: string) => {
+    setMerging(id);
+    try {
+      const response = await fetch("/api/orchestrator", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "merge", id }),
+      });
+      const data = (await response.json()) as { error?: string };
+      if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
+      setError(null);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setMerging(null);
+    }
+  }, [load]);
+
   const spawn = useCallback(async ({ name, task }: AgentSpawnDraft) => {
     const response = await fetch("/api/orchestrator", {
       method: "POST",
@@ -183,7 +243,7 @@ export function OrchestratorPanel({ cwd = null }: { cwd?: string | null }) {
           暂无 Worker。用上方「新建 Worker」手动派生，或等主 Agent 调 <code className="font-mono text-[10.5px]">orchestrator_spawn</code> 在独立 Git worktree + 独立进程中并行执行任务。
         </p>
       ) : roots.map((root) => (
-        <Node key={root.task.id} node={root} depth={0} stopping={stopping} onStop={(id) => void stop(id)} />
+        <Node key={root.task.id} node={root} depth={0} stopping={stopping} merging={merging} onStop={(id) => void stop(id)} onMerge={(id) => void merge(id)} />
       ))}
     </div>
   );

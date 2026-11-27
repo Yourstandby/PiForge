@@ -163,6 +163,19 @@ export interface AgentHostMethods {
     params: { id: string };
     result: { ok: boolean };
   };
+  /** 把已结束 worker 的分支合回当前 checkout（面板「合回」按钮 / orchestrator_merge_back）。 */
+  "orchestrator.merge": {
+    params: { id: string };
+    result: {
+      merge: {
+        repoRoot: string;
+        branchName: string;
+        targetBranch: string;
+        commit: string;
+        files: string[];
+      };
+    };
+  };
 
   // ---- managed background processes ----
   "processes.list": {
@@ -638,6 +651,7 @@ export const IMPLEMENTED_HOST_METHODS = [
   "orchestrator.spawn",
   "orchestrator.list",
   "orchestrator.stop",
+  "orchestrator.merge",
   "processes.list",
   "processes.start",
   "processes.stop",
