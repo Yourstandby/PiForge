@@ -14,12 +14,15 @@ import type {
 } from "./sdk-adapter.ts";
 import {
   listOrchestratorTasks,
+  mergeBackOrchestratorTask,
   spawnOrchestratorTask,
   OrchestratorError,
 } from "./orchestrator.ts";
+import type { MergeBackResult } from "./orchestrator-merge.ts";
 
 export const ORCHESTRATOR_SPAWN_TOOL = "orchestrator_spawn";
 export const ORCHESTRATOR_STATUS_TOOL = "orchestrator_status";
+export const ORCHESTRATOR_MERGE_TOOL = "orchestrator_merge_back";
 
 const SpawnParams = Type.Object({
   task: Type.String({
@@ -28,6 +31,14 @@ const SpawnParams = Type.Object({
   name: Type.Optional(Type.String({ description: "Short human-readable worker name (e.g. auth-refactor)." })),
   targetCwd: Type.Optional(Type.String({ description: "Optional absolute worktree path. Defaults to a Host-owned scratch worktree." })),
   branchName: Type.Optional(Type.String({ description: "Optional Git branch for the isolated worktree." })),
+  allowBash: Type.Optional(Type.Boolean({
+    description:
+      "Grant the worker shell execution. Off by default: a worktree is only a working directory, not a sandbox, so bash can write outside it. Enable only when the task genuinely needs to run commands.",
+  })),
+});
+
+const MergeParams = Type.Object({
+  id: Type.String({ description: "Worker id from orchestrator_spawn or orchestrator_status." }),
 });
 
 const StatusParams = Type.Object({
@@ -103,6 +114,7 @@ export function createDesktopOrchestratorFactory(): ExtensionFactory {
             ...(params.name ? { name: params.name } : {}),
             ...(params.targetCwd ? { targetCwd: params.targetCwd } : {}),
             ...(params.branchName ? { branchName: params.branchName } : {}),
+            ...(params.allowBash ? { allowBash: true } : {}),
             parentSessionId: ctx.sessionManager.getSessionId(),
           });
           return {
@@ -143,6 +155,48 @@ export function createDesktopOrchestratorFactory(): ExtensionFactory {
           content: [{ type: "text" as const, text: tasks.map(summary).join("\n\n---\n\n") }],
           details: { kind: "orchestrator", ok: true, tasks },
         };
+      },
+    });
+
+    registerDomainAction(pi, "orchestrator", "merge", {
+      name: ORCHESTRATOR_MERGE_TOOL,
+      label: "Merge Worktree Worker",
+      description:
+        "Merge a finished worker's branch back into the current checkout with 'git merge --no-ff'. " +
+        "Refuses while the worker is still running, when the checkout has uncommitted changes, or when the branch has nothing new; " +
+        "on conflict it aborts the merge and reports the conflicting files.",
+      promptSnippet: "Merge a finished worker branch back into this checkout",
+      promptGuidelines: [
+        "Call orchestrator_status first and only merge workers that have finished.",
+        "Commit or stash your own changes before merging — a dirty checkout is rejected, not stashed.",
+        "After merging, run the project's checks before telling the user the work is done.",
+      ],
+      parameters: MergeParams,
+      defaultActive: false,
+      async execute(_toolCallId, params): Promise<{
+        content: Array<{ type: "text"; text: string }>;
+        details: { kind: string; ok: boolean; merge?: MergeBackResult; error?: string };
+      }> {
+        try {
+          const result = await mergeBackOrchestratorTask(params.id);
+          const files = result.files.length > 0 ? result.files.slice(0, 40).join("\n  ") : "(no file list reported)";
+          return {
+            content: [{
+              type: "text" as const,
+              text: [
+                `Merged ${result.branchName} into ${result.targetBranch || "current branch"} as ${result.commit}.`,
+                `Files:\n  ${files}`,
+              ].join("\n"),
+            }],
+            details: { kind: "orchestrator", ok: true, merge: result },
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return {
+            content: [{ type: "text" as const, text: `Could not merge: ${message}` }],
+            details: { kind: "orchestrator", ok: false, error: message },
+          };
+        }
       },
     });
   };

@@ -43,6 +43,7 @@ import {
   type PrewarmResult,
 } from "./cache-warming.ts";
 import { canonicalToolOrder } from "./prompt-prefix.ts";
+import { isLateStreamEvent, startsNewRun } from "./late-events.ts";
 import { desktopProcessInlineExtension } from "./desktop-process-extension.ts";
 import { desktopPowerShellInlineExtension } from "./desktop-powershell-extension.ts";
 import { desktopDomainInlineExtension } from "./desktop-domain-extension.ts";
@@ -166,6 +167,21 @@ export class AgentSessionWrapper {
   private prewarm: PrewarmResult | null = null;
   /** 静默多久判定 settled 丢失。测试里会调小。 */
   static settleSilenceMs = 20_000;
+  /**
+   * 放弃一轮之后的「迟到事件」窗口截止时间。
+   *
+   * abort 之后底层流不会立刻静默：它还会吐 `message_update` / `tool_execution_*`，
+   * 这些属于已经结束的那一轮。放任投递会把上一轮的半句话追加进新气泡、让工具卡片
+   * 重新变成「执行中」。窗口在收到新一轮 agent_start / turn_start 时关闭，最迟
+   * `lateEventWindowMs` 后自动过期（事件名不匹配时也不会永久丢弃）。
+   */
+  private lateEventWindowUntil = 0;
+  static lateEventWindowMs = 3_000;
+
+  /** 开窗：被放弃那一轮的残留事件从这里开始不再投递给前端。 */
+  private openLateEventWindow(): void {
+    this.lateEventWindowUntil = Date.now() + AgentSessionWrapper.lateEventWindowMs;
+  }
   private suppressQueuedDispatchOnSettled = false;
   private resourcesChanged = false;
   private reloadingResources = false;
@@ -344,6 +360,17 @@ export class AgentSessionWrapper {
     this.unsubscribe = this.inner.subscribe((event: AgentEvent) => {
       this.lastAgentEventAt = Date.now();
       this.resetIdleTimer();
+      if (this.lateEventWindowUntil > 0) {
+        if (startsNewRun(event.type)) {
+          // 新一轮真的开始了：窗口的意义到此为止。
+          this.lateEventWindowUntil = 0;
+        } else if (Date.now() >= this.lateEventWindowUntil) {
+          this.lateEventWindowUntil = 0;
+        } else if (isLateStreamEvent(event.type)) {
+          // 被放弃那一轮的迟到增量：不投递、不进看门狗、不影响队列。
+          return;
+        }
+      }
       // 无进展看门狗：纯观测（同步、O(1)、无 IO），既不改事件也不发消息。
       // 它只在自己的内存状态里记时间戳，绝不触碰 prompt / 对话历史。
       observeAgentEvent(this.sessionId, event);
@@ -467,6 +494,7 @@ export class AgentSessionWrapper {
     } catch (error) {
       console.error("[agent-host] abort on stuck stream failed:", error);
     }
+    this.openLateEventWindow();
     if (await this.waitForStreamingStop(AgentSessionWrapper.stuckAbortWaitMs)) {
       console.warn("[agent-host] stuck stream recovered", this.sessionId);
       return true;
@@ -885,6 +913,7 @@ export class AgentSessionWrapper {
         this.suppressQueuedDispatchOnSettled = true;
         try {
           await this.inner.abort();
+          this.openLateEventWindow();
           return null;
         } catch (error) {
           this.suppressQueuedDispatchOnSettled = false;
