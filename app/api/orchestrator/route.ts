@@ -54,6 +54,16 @@ export async function POST(req: Request) {
       });
       return NextResponse.json(data, { headers: { "x-request-id": requestId } });
     }
+    // 面板手动把已完成 worker 的分支合回当前 checkout（与 orchestrator_merge_back 同一通道）。
+    if (body.action === "merge") {
+      const originError = validateRequestOrigin(req);
+      if (originError) return NextResponse.json({ error: originError }, { status: 403 });
+      if (typeof body.id !== "string" || !body.id) {
+        return NextResponse.json({ error: "action=merge requires id" }, { status: 400 });
+      }
+      const data = await getAgentHostClient().call("orchestrator.merge", { id: body.id });
+      return NextResponse.json(data, { headers: { "x-request-id": requestId } });
+    }
     if (body.action !== "stop" || typeof body.id !== "string") {
       return NextResponse.json({ error: "action=stop and id are required" }, { status: 400 });
     }
