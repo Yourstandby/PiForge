@@ -4,204 +4,194 @@
 
 # PiForge
 
-**给 Pi Coding Agent 配一张安静的三栏工作台**
+**A quiet three-column workbench for the Pi coding agent**
 *Local-first desktop workbench for the Pi coding agent — multi-session, multi-agent, cache-aware.*
+
+**English** · [简体中文](./README.zh-CN.md)
 
 [![Release](https://img.shields.io/github/v/release/Yourstandby/PiForge?sort=semver)](https://github.com/Yourstandby/PiForge/releases)
 [![CI](https://github.com/Yourstandby/PiForge/actions/workflows/ci.yml/badge.svg)](https://github.com/Yourstandby/PiForge/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![Pi Core](https://img.shields.io/badge/pi--coding--agent-1.6.0-111)](https://github.com/earendil-works/pi)
 
-v0.12.2 · Windows / macOS / Linux · 内置 Pi Coding Agent，无需单独安装
+v0.12.2 · Windows / macOS / Linux · Pi Coding Agent bundled, nothing else to install
 
 </div>
 
 ---
 
-## 这是什么
+## What is this
 
-Agent 在终端里跑得很好，直到你同时开三个项目、想看清它到底烧了多少 token、想在中途叫停一次写操作，
-或者想让它自己再拉两个子 Agent 去调研 —— 终端就开始捉襟见肘。
+Agents work fine in a terminal — until you have three projects open, want to see exactly how many tokens are burning, want to stop a write mid-flight, or want the agent to spin up two read-only researchers on its own. That is where a terminal starts to pinch.
 
-PiForge 把这一整套搬进一个原生窗口：
+PiForge moves the whole loop into a native window:
 
-- **左栏**：按工作目录归组的项目与历史会话
-- **中间**：多标签对话、实时流式、运行中队列
-- **右栏**：文件树与查看器、内置浏览器、终端、Git、Agent 舰队、编排、插件
+- **Left column**: projects grouped by working directory, plus their session history
+- **Center**: multi-tab conversations, live streaming, queued follow-ups
+- **Right column**: file tree and viewer, built-in browser, terminal, Git, agent fleet, orchestrator, plugins
 
-主 Agent 负责改代码，子 Agent 只读调研与审计，各自独立上下文。推理、文件读写、会话记录全部留在本机。
+The main agent writes code; sub-agents only read and research, each with an isolated context. Inference, file access and session logs all stay on your machine.
 
 ---
 
-## 功能
+## Features
 
-### 会话与工作台
+### Sessions and workbench
 
-| 功能 | 说明 |
+| Feature | What it does |
 |---|---|
-| **多标签对话** | 同一项目并发多条会话，标签可切换、可关闭、可恢复 |
-| **项目归你管** | 项目按 CWD 自动归组，可重命名、可从侧栏移除 —— 只写本地偏好，不删会话、不碰目录 |
-| **双轨分支** | 物理 Fork（独立会话文件）与会话内回退两条路径，配合分支导航器对比不同试错结果 |
-| **会话导出** | 任意会话导出为 HTML 或 Markdown，便于归档与分享 |
-| **右侧工作区** | 文件树 / 查看器、内置浏览器（含域名权限）、终端、Git 面板（worktree、branch clone）、舰队、编排、插件、MCP 资源 |
-| **原生外壳** | 系统托盘常驻、关闭窗口先问（最小化到托盘 / 退出，可记住选择）、自动更新检查 |
-| **外观与语言** | 浅色 / 深色 / Glacier 三套主题，中文 / English 界面（可跟随系统） |
+| **Multi-tab chat** | Run several sessions against one project in parallel — switch, close and restore tabs |
+| **Projects you control** | Projects are grouped by CWD automatically; rename or hide them from the sidebar. Only local preferences change — no session is deleted, no directory is touched |
+| **Two kinds of branching** | Physical fork (a separate session file) and in-session rewind, with a branch navigator to compare different attempts |
+| **Session export** | Export any session to HTML or Markdown for archiving and sharing |
+| **Right-hand workspace** | File tree / viewer, built-in browser with per-domain permissions, terminal, Git panel (worktrees, branch clones), fleet, orchestrator, plugins, MCP resources |
+| **Native shell** | Lives in the system tray, asks before closing (minimize to tray or quit, choice remembered), checks for updates |
+| **Appearance and language** | Light / dark / Glacier themes, Chinese / English UI (follow-system supported) |
 
-### 上下文与成本
+### Context and cost
 
-- **缓存友好的 plan 模式**：工具声明只由工具预设决定，计划段落以尾部 `display:false` 消息注入 ——
-  在 plan 与执行模式之间来回切换，请求前缀字节不变，不会整段重发历史（v0.12.1）。
-- **上下文可视化与压缩**：环形占用量提示 + 四段式摘要，压缩摘要固定中文、默认只接管正文。
-- **Token 账本**：只累计真实 `usage`，按会话隔离；流式阶段没有数字就不显示数字。
-  用量按 < 1000 精确、≥ 1000 一位小数缩写（`2.9K` / `69.8K`）。
-- **无进展看门狗**：默认 90 秒无有效进展才亮红灯（预设 90 / 120 / 300 / 600 秒），长活不再被误杀。
-- **可测的预算**：`npm run measure:prefix` / `measure:long-session` / `measure:increment`
-  给出前缀命中率与单轮增量，数字归档在 `docs/measurements/`。
+- **Cache-friendly plan mode**: the tool declaration is decided by the preset alone, and the plan section is injected as a trailing `display:false` message — flipping between plan and execute keeps the request prefix byte-identical, so history is never resent wholesale (v0.12.1).
+- **Context visibility and compaction**: a ring gauge for occupancy plus a four-part summary; the compaction summary is always Chinese and by default only takes over the body.
+- **Token ledger**: sums only real `usage`, isolated per session; during streaming, no number is shown until there is one. Values are exact below 1000 and abbreviated to one decimal at or above (`2.9K` / `69.8K`).
+- **No-progress watchdog**: lights up only after 90 seconds without meaningful progress (presets 90 / 120 / 300 / 600 s), so long jobs are no longer killed by mistake.
+- **Measurable budgets**: `npm run measure:prefix` / `measure:long-session` / `measure:increment` report prefix hit rate and per-turn increment; numbers are archived in `docs/measurements/`.
 
-### 模式与安全边界
+### Modes and safety boundaries
 
-- **plan / ask / full 三模式**：plan 只能读，写操作在执行期被拒（理由 `Plan mode: planning only`）；
-  ask 对敏感工具先弹确认；full 全速执行。模式随会话持久化。
-- **工具预设**：`none` / `default` / `full` 三档，决定模型能看到哪些工具。
-- **文件授权链路**：访问范围按授权根目录 + 路径策略校验，「文件不存在」与「越权」分开报。
-- **codemode 默认 `only`**：脚本在沙箱 worker 里跑，不默认放开全部能力。
-- **扩展 UI 原生桥**：扩展的 confirm / select / input / editor / notify 走原生弹窗，不退回终端。
+- **plan / ask / full**: plan can only read — writes are rejected during execution (reason `Plan mode: planning only`); ask confirms sensitive tools first; full runs unrestricted. The mode persists with the session.
+- **Tool presets**: `none` / `default` / `full`, deciding which tools the model can even see.
+- **File authorization chain**: scope is validated against authorized roots plus a path policy, and "file does not exist" is reported separately from "outside the sandbox".
+- **codemode defaults to `only`**: scripts run inside a sandboxed worker; full capability is not granted by default.
+- **Native bridge for extension UI**: extension confirm / select / input / editor / notify render as native dialogs instead of falling back to the terminal.
 
-### 多智能体
+### Multi-agent
 
-- **子 Agent**：`spawn_agent` 拉出独立上下文的只读调研者；结果带「有无测试/构建证据」标记，
-  未验证的结果不会被当成已验证。
-- **常驻舰队**：`herdr_*` 工具管理多个长期 Agent，各自会话、各自状态。
-- **编排**：并行 worker 在独立 Git worktree 里干活，报告与改动文件回到主会话。
-- **可观测**：运行中工具徽章、工具调用统计、流健康提示（重连与握手阶段分开表达）。
+- **Sub-agents**: `spawn_agent` creates read-only researchers with their own context; results are tagged with whether test/build evidence exists, so unverified output is never presented as verified.
+- **Persistent fleet**: `herdr_*` tools manage long-lived agents, each with its own session and state.
+- **Orchestration**: parallel workers run in isolated Git worktrees and report back with their changed files.
+- **Observability**: badges for running tools, tool-call statistics, and stream health hints (reconnect and handshake failures are reported separately).
 
-### 扩展生态
+### Extension ecosystem
 
-- **MCP**：全局 `~/.pi/agent/mcp.json` 与项目 `<cwd>/.pi/mcp.json` 两级配置，可视化增删与资源浏览。
-- **Skills / Extensions / Plugins**：统一 UI 管理启用、诊断与安装。
-- **模型与供应商**：多模型随时切换、辅助模型（小模型干杂活）、自动路由、自定义 OpenAI 兼容 provider。
-- **Pi 核心可换**：三个 `@earendil-works/pi-*` 包精确锁定 1.6.0，界面内可查询与切换版本。
+- **MCP**: two config levels — global `~/.pi/agent/mcp.json` and per-project `<cwd>/.pi/mcp.json` — with visual add/remove and resource browsing.
+- **Skills / Extensions / Plugins**: one UI for enabling, diagnostics and installation.
+- **Models and providers**: switch models at any time, auxiliary models for small chores, automatic routing, custom OpenAI-compatible providers.
+- **Swappable Pi core**: the three `@earendil-works/pi-*` packages are pinned to exactly 1.6.0, and versions can be inspected and switched from the UI.
 
 ---
 
-## 最新版本 v0.12.2
+## Latest release v0.12.2
 
-主题：**运行中不再看着像卡死，排队消息想改就改，计划不烂尾。**
+Theme: **running no longer looks stuck, queued messages are editable, plans no longer rot.**
 
-- 跑工具时不再把对话历史抹成空白；真没历史时给「重新加载」并按 1.5s→6s 退避自动补取。
-- 排队消息可**编辑**（保留附件与位置）、可**⚡ 立即发送**、可**⏫ 插到队首**。
-- 计划停在半路不再消失：未完成就留着卡片，给「继续执行 / 放弃剩余」两个出口；
-  完成态去掉删除线，已完成步折叠成一行。
-- `mcp_servers` 段字节按签名锁存，MCP 连上后不再打破前缀缓存。
-- 舰队 / 编排面板补 `AgentSpawnTrigger` 手动派生入口，不必等主 Agent 调工具。
+- Conversations are no longer blanked out while tools run; when there truly is no history you get a "reload" button, with automatic retries backing off from 1.5s to 6s.
+- Queued messages can be **edited** (attachments and position preserved), **⚡ sent immediately**, or **⏫ moved to the front of the queue**.
+- A plan that stops halfway no longer disappears: unfinished plans keep their card with "continue" and "drop the rest" exits; completed steps lose their strikethrough and fold into a single line.
+- The `mcp_servers` section is latched byte-for-byte by signature, so connecting to an MCP server no longer breaks the prefix cache.
+- The fleet and orchestrator panels gain a manual `AgentSpawnTrigger` entry, so you need not wait for the main agent to call a tool.
 
-完整变更：[CHANGELOG.md](./CHANGELOG.md) · [docs/releases/v0.12.2.md](./docs/releases/v0.12.2.md)
+Full changes: [CHANGELOG.md](./CHANGELOG.md) · [docs/releases/v0.12.2.md](./docs/releases/v0.12.2.md)
 
 ---
 
-## 安装
+## Install
 
-从 [Releases](https://github.com/Yourstandby/PiForge/releases) 下载对应安装包：
+Download the installer for your platform from [Releases](https://github.com/Yourstandby/PiForge/releases):
 
-| 平台 | 产物 | 首次运行 |
+| Platform | Artifact | First run |
 |---|---|---|
-| Windows | `PiForge-Setup-x.y.z.exe` / `PiForge.zip` | SmartScreen 拦截时选「更多信息 → 仍要运行」 |
-| macOS | `.dmg`（Universal，Intel + Apple Silicon） | 右键 →「打开」，或 `xattr -dr com.apple.quarantine /Applications/PiForge.app` |
-| Linux | `.AppImage` / `.deb` | AppImage 直接运行；deb 未签名，需 `sudo dpkg -i` |
+| Windows | `PiForge-Setup-x.y.z.exe` / `PiForge.zip` | If SmartScreen blocks it, choose "More info → Run anyway" |
+| macOS | `.dmg` (Universal, Intel + Apple Silicon) | Right-click → Open, or `xattr -dr com.apple.quarantine /Applications/PiForge.app` |
+| Linux | `.AppImage` / `.deb` | Run the AppImage directly; the deb is unsigned, so use `sudo dpkg -i` |
 
-> 安装包尚未做代码签名，系统会拦截，属预期行为；请用上面的方式手动信任。
+> The installers are not code-signed yet, so the OS will block them — this is expected. Use the steps above to trust them manually.
 
-## 从源码运行
+## Run from source
 
-要求 **Node 24**（与 CI 同版本）与 npm，Windows / macOS / Linux 均可。
+Requires **Node 24** (same as CI) and npm. Windows / macOS / Linux all work.
 
 ```bash
 git clone git@github.com:Yourstandby/PiForge.git
 cd PiForge
 npm install
 
-npm run dev            # 浏览器模式：http://localhost:30141
-npm run dev:electron   # Electron 窗口
+npm run dev            # browser mode: http://localhost:30141
+npm run dev:electron   # Electron window
 ```
 
-> `dev:electron` 加载的是 `out/` 下的静态导出。若 `out/` 落后于 `app/ components/ lib/ hooks/ public/`，
-> 前置护栏会直接报错并提示先跑 `npm run build:static` —— 否则你会一直对着旧 UI 调试。
-> 只想警告不拦：`PIFORGE_SKIP_STATIC_FRESHNESS=1`。
+> `dev:electron` loads the static export in `out/`. If `out/` is older than `app/ components/ lib/ hooks/ public/`, a pre-flight guard fails loudly and tells you to run `npm run build:static` first — otherwise you would keep debugging against a stale UI.
+> To warn without blocking: `PIFORGE_SKIP_STATIC_FRESHNESS=1`.
 
-常用脚本：
+Common scripts:
 
-| 脚本 | 用途 |
+| Script | Purpose |
 |---|---|
-| `npm run dev` / `dev:electron` | 浏览器 / 桌面开发模式 |
-| `npm run build:static` | Next 静态导出到 `out/` |
-| `npm run build:agent-host` / `build:electron` | 编译 Host / 主进程 |
-| `npm run dist` | 完整打包（静态导出 + Host + Electron + 安装包 + 冒烟） |
-| `npm run lint` / `npm test` | 静态检查 / 单元测试 |
-| `npm run smoke:agent-host` | Host 启动与 RPC 冒烟 |
-| `npm run measure:prefix` | 前缀缓存命中率度量 |
+| `npm run dev` / `dev:electron` | Browser / desktop dev mode |
+| `npm run build:static` | Next static export into `out/` |
+| `npm run build:agent-host` / `build:electron` | Build the host / main process |
+| `npm run dist` | Full build (static export + host + Electron + installers + smoke) |
+| `npm run lint` / `npm test` | Lint / unit tests |
+| `npm run smoke:agent-host` | Host startup and RPC smoke test |
+| `npm run measure:prefix` | Prefix cache hit-rate measurement |
 
 ---
 
-## 架构
+## Architecture
 
-**三进程 + 单管道，无内部端口。**
+**Three processes, one pipe, no internal ports.**
 
 <pre><code>
-┌──────────────┐   preload RPC    ┌──────────────┐   命名管道    ┌────────────────┐
+┌──────────────┐   preload RPC    ┌──────────────┐   named pipe   ┌────────────────┐
 │  Renderer    │ ◀──────────────▶ │ Electron     │ ◀───────────▶ │  Agent Host    │
-│  (Next.js)   │                  │ Main         │               │  Pi SDK / 工具  │
+│  (Next.js)   │                  │ Main         │               │  Pi SDK / tools │
 └──────────────┘                  └──────────────┘               └────────────────┘
        ▲                                  │
-       └──── piforge://app（静态导出）──────┘
+       └──── piforge://app (static export) ┘
 </code></pre>
 
-| 进程 | 职责 | 禁止 |
+| Process | Responsibility | Must not |
 |---|---|---|
-| **Renderer**（Next.js） | UI 渲染、交互、通过 preload 桥发 RPC | 直接 import Pi SDK、spawn 进程、读写 `~/.pi/agent/` |
-| **Electron Main** | 窗口、托盘、更新、`piforge://` 协议转发 | 承载业务逻辑、绕过 Host 读写会话 |
-| **Agent Host** | AgentSession、工具执行、受管进程、LTM、文件授权、子 Agent、MCP | 渲染 UI、依赖 Next 运行时 |
+| **Renderer** (Next.js) | Render the UI, handle interaction, send RPC over the preload bridge | Import the Pi SDK, spawn processes, read or write `~/.pi/agent/` |
+| **Electron Main** | Windows, tray, updates, `piforge://` protocol forwarding | Hold business logic, bypass the host to read or write sessions |
+| **Agent Host** | AgentSession, tool execution, managed processes, LTM, file authorization, sub-agents, MCP | Render UI, depend on the Next runtime |
 
-- 打包后渲染进程加载 `piforge://app/` 静态资源，`/api/**` 由主进程经命名管道转给 Host ——
-  没有 localhost 端口可连，CSP 也不需要为任何端口开口子。
-- Host 默认以 `ELECTRON_RUN_AS_NODE` 子进程启动（`PIFORGE_HOST_TRANSPORT=utility` 可切 Electron UtilityProcess），
-  堆上限、env 隔离与退出语义都有单测守着。
-- 边界契约与演进理由见 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)。
+- In a packaged build the renderer loads static assets from `piforge://app/`, and `/api/**` is forwarded by the main process to the host over a named pipe — there is no localhost port to connect to, and the CSP needs no port exception.
+- The host starts by default as an `ELECTRON_RUN_AS_NODE` child process (`PIFORGE_HOST_TRANSPORT=utility` switches to Electron UtilityProcess); heap limits, env isolation and exit semantics are covered by unit tests.
+- The boundary contract and the reasoning behind it live in [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
 
 ---
 
-## 质量与验证
+## Quality and verification
 
 ```bash
-npm run lint     # eslint，0 error 为基线
-npx tsc --noEmit # 类型检查
-npm test         # node:test：lib / agent-host / electron / hooks / components / scripts
+npm run lint     # eslint, zero errors is the baseline
+npx tsc --noEmit # type check
+npm test         # node:test: lib / agent-host / electron / hooks / components / scripts
 ```
 
-仓库里还有一组不靠人工盯的冒烟脚本：`smoke:static-fresh`、`smoke:packaged-static`、
-`smoke:packaged-layout`、`smoke:agent-isolation`、`smoke:extension-ui`、`smoke:host-reconnect`；
-启动耗时、进程内存、增量 token 都有对应度量脚本，历史数据在 `docs/measurements/`。
+The repository also ships smoke scripts that need no human watching: `smoke:static-fresh`, `smoke:packaged-static`, `smoke:packaged-layout`, `smoke:agent-isolation`, `smoke:extension-ui`, `smoke:host-reconnect`. Startup time, process memory and incremental tokens each have measurement scripts, and the history is kept in `docs/measurements/`.
 
-## 目录结构
+## Repository layout
 
-| 目录 | 内容 |
+| Directory | Contents |
 |---|---|
-| `app/` `components/` `hooks/` | Next.js 渲染层：三栏界面、对话、面板与设置 |
-| `lib/` | 跨进程共享逻辑：模式与工具策略、路径授权、会话模型、格式化 |
-| `agent-host/` | Agent Host：Pi SDK 适配、工具、MCP、子 Agent、LTM、看门狗 |
-| `electron/` | 主进程：窗口、托盘、`piforge://` 协议、命名管道桥、更新 |
-| `contract/` | 主进程 ↔ Host 的类型化协议 |
-| `scripts/` | 构建、冒烟、度量、发布脚本 |
-| `docs/` | 架构契约、发布说明、度量与研究记录 |
-| `bench/` | 启动与资源基准 |
+| `app/` `components/` `hooks/` | Next.js renderer: three-column shell, chat, panels and settings |
+| `lib/` | Logic shared across processes: modes and tool policy, path authorization, session model, formatting |
+| `agent-host/` | Agent host: Pi SDK adapter, tools, MCP, sub-agents, LTM, watchdog |
+| `electron/` | Main process: windows, tray, `piforge://` protocol, named-pipe bridge, updates |
+| `contract/` | Typed protocol between the main process and the host |
+| `scripts/` | Build, smoke, measurement and release scripts |
+| `docs/` | Architecture contract, release notes, measurement and research records |
+| `bench/` | Startup and resource benchmarks |
 
-## 文档
+## Documentation
 
-- [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) —— 三进程边界与通信契约
-- [CHANGELOG.md](./CHANGELOG.md) —— 逐版本「改了什么 / 默认行为变没变」
-- [docs/releases/](./docs/releases) —— 各版本发布说明与安装提示
-- [docs/measurements/](./docs/measurements) —— 前缀缓存、增量、启动与内存数据
-- [CONTRIBUTING.md](./CONTRIBUTING.md) / [AGENTS.md](./AGENTS.md) —— 参与开发与给 Agent 的工程约定
+- [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — three-process boundaries and the communication contract
+- [CHANGELOG.md](./CHANGELOG.md) — per-release "what changed / did any default change"
+- [docs/releases/](./docs/releases) — release notes and install tips for each version
+- [docs/measurements/](./docs/measurements) — prefix cache, increment, startup and memory data
+- [CONTRIBUTING.md](./CONTRIBUTING.md) / [AGENTS.md](./AGENTS.md) — contributing, and the engineering conventions agents must follow
 
-## 许可证
+## License
 
-MIT License，详见 [LICENSE](./LICENSE)。
+MIT License, see [LICENSE](./LICENSE).
