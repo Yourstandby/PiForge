@@ -1,772 +1,856 @@
 # Changelog
 
-迁移条目按「改了什么 / 默认行为变没变 / 开关怎么用」组织。详细数据见 `docs/measurements/`
-（三个口径：记录型 provider、真实 deepseek 会话、重复场景 A/B，三者不要混读）。
-
-## v0.12.3 — 事件流卡在「等待首个 token」（刷新才看得见）
-
-主题：**host 的投递水位会把「投给一个已经没人消费的订阅」也算成已送达；下一轮续发
-就从那条之后开始，浏览器从没收到的那段永久丢失。界面于是停在「等待首个 token」，
-刷新一下（从磁盘重载 transcript）全都在。**
-
-### 改了什么
-
-- **不再产生孤儿 host 订阅**（`lib/agent-host-client.ts`）：`subscribeAgent` 里
-  `agent.subscribe` 的 await 期间浏览器可能已经取消 SSE（`close()` 把 hub 摘掉），
-  之后这次订阅仍然落地 —— 事件照发、没人收、水位照涨。现在建订阅前后都校验 hub
-  身份，发现已被摘掉就立刻 `agent.unsubscribe`。`close()` 也改成只在映射还是自己
-  那一个时才删除，避免并发时误删别人刚建好的 hub。
-- **续发水位按「真的交到监听者手里」算**：`agentListenerSeq` 记录每个会话最后一
-  个真正投递给 SSE 监听者的事件号，且跨 hub 存活。没有显式 `fromSeq` 时用它续发，
-  不再盲信 host 的 `lastDeliveredSeq`。
-- **route 在建订阅前就挂 abort**（`app/api/agent/[id]/events/route.ts`）：浏览器在
-  await 期间取消也能把 `closed` 置位，并退掉刚建好的订阅。
-- **卡死自愈**（`hooks/agent-session/stream-health.ts` + `components/ChatSurface.tsx`）：
-  新增 `STREAM_FIRST_EVENT_MS = 12s` 与「真实增量时间戳」（`getLastRealEventAt`，
-  `connect()/retryNow()` 的重连簿记不再污染判定）。本轮一条真实事件都没收到时
-  12s 就判定卡住，自动「重连（带浏览器真实水位，host 从 buffer 续发）+ 从磁盘重载
-  本轮已产出内容」；两次之间至少隔 15s、每轮最多 4 次。已经在流式/工具轮次里的
-  场景仍用原来的 120s 长阈值。
-
-### 默认行为变没变
-
-- 变了：卡住时不再需要手动刷新或点停止，界面 12s 内自己恢复。
-- 不变：事件流协议、host 侧续发语义（Next 重启后从未投递处续发）、界面文案与开关。
-
-## v0.12.3 — Pi 核心升到 1.6.0
-
-主题：**上游三包 1.5.0 → 1.6.0，扩展渲染契约跟进，顺手修掉一条早就红了的冒烟断言。**
-
-### 改了什么
-
-- **`@earendil-works/pi-ai` / `pi-coding-agent` / `pi-mcp` 精确锁定 1.6.0**（三包必须同版本，
-  上游 1.6.0 的依赖里 `pi-ai` / `pi-mcp` / `pi-tui` 也都钉在 1.6.0）。
-- **跟进扩展组件破坏性变更**：1.6.0 起组件 `render()` 返回 `readonly string[]`，`Container` 在子节点
-  不变时返回同一个缓存数组 —— 任何「原地改 `super.render()` 结果」的写法都会踩到。核对结果：
-  PiForge 没有 `Container` 子类、也没有 `super.render()` 原地修改，`agent-host/` 只经
-  `sdk-adapter.ts` 这一个接缝 import 上游，所以代码零改动。
-- **修掉 `smoke:agent-host` 里过期的看门狗断言**：脚本仍断言默认 `stallMs === 20_000`，而
-  `agent-host/watchdog.ts` 从 v0.12.0 起默认 90_000、且 90s 是最低档。这条冒烟自 v0.12.0
-  起一直是红的（与本次升级无关），现在改成 90_000 并写明原因。
-- **补回 v0.12.2 在合并时丢掉的 CHANGELOG 小节**：`## v0.12.2` 标题与「排队消息 / 计划模式 /
-  面板与缓存」三组条目在解冲突时被整段删掉了（`未发布` 收成 v0.12.2 的那 58 行），只留下
-  「图片尺寸」那几条孤儿条目。现在按发布提交原文恢复。
-- README 徽章与「Pi 核心可换」一行的版本号同步到 1.6.0。
-
-### 默认行为变没变
-
-- 不变：PiForge 自己的看门狗默认值（90s）、界面、工具集、开关、会话目录
-  （`~/.pi/agent/sessions`）都不变；升级只替换运行时。
-- 变了（来自上游 1.6.0）：`openai` / `azure` / `openai-codex` 的默认模型换成 GPT-6.2 Sol（同价）；
-  `find` 工具的 path pattern 改为相对搜索目录（`src/*.ts` 不再匹配 `pkg/src/a.ts`，跨层要写
-  `**/src/*.ts`）；GPT-6.2 两档模型不接受 reasoning effort `none` / `minimal`，
-  即「思考等级 off」在这两个模型上不可用。
-
-## v0.12.3 — 发送链路：不再「发出去没动静」
-
-### 改了什么
-
-- **撞上「还在跑」不再静默丢弃**：`handleSend` 遇到 `agentRunning` 为真直接 `return`。
-  上一轮的 `agent_end` 丢了、或前端状态比宿主滞后时，用户按发送一个字都不发、界面也不
-  报错。现在改走排队（可见 / 可编辑 / 可立即发送），宿主真空闲时会立刻开新一轮。
-- **发送闸门会自己过期**（`PROMPT_DISPATCH_STALE_MS = 8s`）：原来只在出错或
-  `agentRunning` 翻 false 时释放，一次丢事件就能把它永久卡住，之后每条消息都被静默吞掉。
-- **失败会留下来**：宿主拒收的消息标 `deliveryState: "failed"`，气泡下方显示「未送达」，
-  输入框上方常驻「这条消息没有发出去：<原因>」+ 重试 / 忽略。重试先撤掉那条从没进过会话
-  的乐观气泡再重发，不会冒出两条一样的消息。
-- **宿主不再拒收重载中的消息**：`reloadResources()` 从「并发就抛 Session is reloading」
-  改成复用同一个在途 promise；`prompt` 的 `isStreaming || reloadingResources` 硬拒收窄成
-  只挡 `isStreaming`。config-watcher 一次会话能刷十几次重载，正好撞上就丢一条消息。
-
-### 默认行为变没变
-
-- 不变：工具集、模型、会话目录、看门狗阈值、主题与布局。
-- 变了：运行中按发送进排队（以前是静默丢弃）；被宿主拒收的气泡会带「未送达」标记。
-
-## v0.12.2 — 对话不丢、排队能改、计划有收尾
-
-主题：**运行中不再看着像卡死，排队消息想改就改，计划不烂尾，MCP 连上也不再打破前缀缓存。**
-
-上一个公开版本是 v0.12.1。本版没有新开关，全部是行为修复 + 两个补入口的小功能。
-
-### 改了什么
-
-**对话转录**
-
-- **运行中不再把对话历史抹成空白**：`useSessionLoader` 有两条路径会静默 `setMessages([])` ——
-  `fetchSession` 返回 null（宿主忙 / 写盘竞态）时，以及同一会话重取到空 `context.messages` 时。
-  运行中的回合会反复重取，一撞上就永久空白（本轮结束前只有 `agent_end` 会触发重载，而那正是
-  还没发生的事）。现在这两种情况都保留已上屏对话；运行中且 0 条历史时给出说明 + 「重新加载」，
-  并按 1.5s→6s 退避自动补取 6 次。
-- **tokens/s 不再冻结**：思考 / 流式结束后速率归零，不再挂着上一秒的数字；工具卡上的 tokens/s
-  只在运行中显示，跑完立刻消失。
-- **不再闪「事件流重连中」**：发送后 `agentRunning` 先翻 true、`connectEvents` 在 await 之后才跑，
-  这段间隙读到的是上一轮的 `disconnected` 与残留的 `reconnectAttempts`。现在本轮结束即清零
-  计数，且 `evaluateStreamHealth` 给 3s 起步宽限，`attempts=0` 的 connecting / disconnected
-  一律视为正常开局。
-- **可点击性判定与视觉统一**：正文与 inline code 共用 `parseLinkableFileReference`，裸文件名
-  （`seed.ts`）一律纯文本，只有带分隔符或 `@` 前缀才成链接；可点 = accent + 下划线 + `cursor-pointer`，
-  不可点 = `cursor-text`。外链只放行 http / https / mailto / tel，其余 scheme 降级为纯文本。
-- **图片尺寸收成两个常量**：消息图（用户气泡 / 助手正文 / markdown 内联）统一走
-  `CHAT_IMAGE_SIZE = "max-h-64 max-w-full"`，工具产出图走 `TOOL_IMAGE_SIZE = "max-h-72 max-w-full"`。
-  此前四处分别写死 `max-h-64 / 72 / 80`，同一张参考图在不同气泡里就是三个大小；而且都只限高
-  不限宽 —— 按高度换算出的宽度超过气泡时，flex 项（`min-width:auto`）不肯收缩，宽图会被滚动
-  容器横向裁掉半张。图片外壳同时补 `max-w-full` / `min-w-0`。
-- **同一段话 800ms 内只提交一次**（`DUPLICATE_SUBMIT_MS`）：双击发送、Enter 连按、以及
-  「以为没发出去又按一次」都不会再产生两条同一秒的重复气泡。
-- **首 token 之前不再显示「本轮产出 0」**：改成「等待首个 token…」，并说明消息已送达宿主。
-- **投递态可见**：steer / 排队提交后气泡下方显示「投递中…」，被宿主接住（`deliveryState` 被清掉）
-  即消失；投递态同时进轮次缓存的引用键，标记不会卡在界面上。
-- **宿主侧**：没有「这一轮结束」证据的迟到 / 重复 `agent_settled` 不再派发下一条排队消息，
-  只收尾并交给兜底重试，避免两条排队消息在同一瞬间落库。
-
-**排队消息**
-
-- **可编辑**：点击文案或铅笔进入行内编辑（Enter 保存 / Esc 取消），就地改文案并保留 id、位置与
-  附件（以前只能删了重打，附件和顺序一起丢）。编辑态隐藏删除按钮，避免误删。
-- **⚡ 立即发送**：流式中走 steer，空闲则直接开新一轮；steer 失败退成新 prompt，prompt 也被拒
-  则原样回队。
-- **⏫ 插到队首**：宿主队列新增 `update` / `take` / `restoreAt`，`take` 带回原下标，
-  投递失败按原位置放回；新增 `update_follow_up` / `expedite_follow_up` 命令。
-
-**计划模式**
-
-- **计划不再静默搁置**：旧实现「本轮结束且不在等批准」直接返回 null，计划停在 3/6 就地消失，
-  用户不知道还剩什么、模型也不会再提。现在未结算且已停机 → 「未完成」标签 + 「继续执行 /
-  放弃剩余」两个出口；`dropped` 成为终态（不算完成），`abandonPlan` 按 planKey 本地结算，
-  不额外跑一轮。
-- **完成态不再划删除线**：`done` 只降到 `text-ink-muted`（4.8:1），完成由实心勾选框表达；
-  `line-through` 只留给 `dropped`。展开列表时已完成步收成「已完成 N 步」一行。
-- **卡片不再残留 1-2s**：`livePlan` 只服务「正在跑的这一轮」，改在 prompt 入队时清零，不再等
-  `agent_start` 抵达 —— 那之间 `planProgress` 会拿上一轮已完成的卡冒充本轮进度。
-
-**面板与缓存**
-
-- **舰队 / 编排面板补手动派生入口**：`AgentSpawnTrigger`（名称可留空自动取名 + 任务简报），
-  面板把当前项目 cwd 传给 Host；新增 RPC `herdr.spawn`（cwd 先过文件策略），
-  `/api/herdr` 与 `/api/orchestrator` 的 POST 各加 `action=spawn`。
-- **`mcp_servers` 段字节锁存**：MCP 扩展每轮按 live 状态重渲染该段，间接服务器（codemode /
-  deferred）首轮不等连接，连上后 `connection.instructions` 补进描述 —— 这段字节一变就是整段
-  历史未命中重发。现在按「服务器名 + 暴露方式」签名锁存首次字节，签名不变就沿用旧字节，
-  真改配置（增删 / 开关服务器）才换一次。加载与发现路径没有动。
-
-### 默认行为变没变
-
-- 变了：助手正文 / markdown 内联图片的最大高度从 320 降到 256，与用户气泡同一口径；
-  所有对话图片的宽度都不再溢出气泡（以前会横向被裁）。工具产出图仍是 288。
-- 变了：计划卡片在「未完成 + 已停机」时会一直留着，直到点「继续执行」或「放弃剩余」。
-- 变了：`tokens/s` 只在运行中显示，跑完归零而不是冻结；计划完成态不再有删除线。
-- 不变：点击看大图、灯箱缩放平移下载、附件预览；plan 仍只能读不能写，批准流程不变；
-  MCP 的加载、发现与配置读写路径不变。
-
-## v0.12.1 — 计划模式不再重发上下文
-
-主题：**切 plan 不再烧掉整段缓存，进度卡片第一次真的会出现。**
-
-### 改了什么
-
-- **切到 / 切出 plan 不再作废请求前缀**：过去 plan 模式会同时改 system prompt（追加计划段落）
-  和工具数组（plan 单独全量装载 + 声明集合收窄），两处都在前缀里，于是下一次请求整段历史重发
-  （界面表现为「前缀已失效，本次请求将重发 ≈N tok」）。现在声明集合只由工具预设决定、与模式无关，
-  计划段落改为尾部 display:false 消息注入 —— plan 与执行模式的前缀字节完全一致。
-- **只读约束改为执行期拦截**：plan 模式不再靠「不给工具」实现只读，而是 tool_call 里按
-  PLAN_TOOLS / isPlanAllowedDomainCall 拒绝写操作，拒绝理由写清
-  `Plan mode: planning only`（不再复用误导性的 `Blocked by user`）。
-- **计划进度卡片修复**：会话里的工具调用块是 {id, name, arguments}，折叠函数此前只认
-  {toolCallId, toolName, input}，真实会话里一次都匹配不上 → 卡片永不渲染。两种形状都认。
-  同一形状 bug 也让「工具调用统计」全部落进 unknown，一并修好。
-- **plan 工具常驻声明**：它原本可能被工具存根（只留名字），模型拿不到 schema 就不会调用；
-  现在与 tool_search / desktop_use_tool 一样恒常驻。
-
-### 默认行为变没变
-
-- 变了：**plan 模式下模型能看到 write / edit / MCP / 插件工具的 schema**，调用会被执行期拦下。
-  这是换取整段前缀缓存的必要代价 —— 只要声明随模式变化，切换就必然重发上下文。
-- 不变：plan 仍然只能读、不能写；批准流程、计划卡片位置与交互都不变。
-
-## v0.12.0 — 项目归用户管 · 数字与开关说真话
-
-主题：**左栏项目自己做主，用量与看门狗先说真话，注入开关先说默认**。
-
-本版把 v0.11.3 / v0.11.4 两次未公开发布的版本一并带上线（GitHub 上一个公开版本是 v0.11.2），
-逐条记录仍保留在下方同名小节；本节只写本次新增的东西与跨版本汇总。
-
-### 改了什么
-
-**文档与发布**
-
-- **README 全量重写**：Pi 核心版本对齐到 `1.5.0`，新增 v0.12.0 亮点、开关默认值一览、
-  `dev:electron` 静态产物护栏提示与未签名安装包披露，删掉过期数字与旧说法。
-- **新增 `docs/releases/v0.12.0.md`**：CI 的 `desktop-packages.yml` 在没有现成 Release 时
-  用它做 Release Notes，三端安装提示（SmartScreen / Gatekeeper / deb 未签名需 root）写全。
-
-**开发体验**
-
-- **`dev:electron` 前置护栏**（`scripts/check-dev-static-freshness.mjs`、单测
-  `dev-static-freshness.test.mjs`）：`out/` 比 `app/` `components/` `lib/` `hooks/`
-  `public/` 或根配置旧时直接报错，提示先跑 `npm run build:static`。渲染进程加载的是
-  `piforge://app/` 下的静态导出，只重编主进程就会一直跑旧 UI。容差 5s；
-  `--warn` 或 `PIFORGE_SKIP_STATIC_FRESHNESS=1` 只警告不拦。
-
-### 0.11.3 / 0.11.4 一并上线（摘要）
-
-- **用量说真话**：费用只报真实 `usage` 累计，按会话隔离；流式事件按帧合并，工具卡秒表
-  tick 局部化；打字 / 切会话 / 切面板的重渲染剪枝。
-- **注入开关三态**：AGENTS.md / CLAUDE.md 注入可关（默认开），HANDOFF.md 接续注入可选
-  （默认关），均为「全局 + 项目级」三态；压缩摘要固定中文、默认只接管正文。
-- **默认值**：新会话思考等级 low → medium（均衡）；看门狗停滞阈值默认 20s → 90s，
-  且 90s 成为最低档（预设 90 / 120 / 300 / 600 秒）。
-- **项目归用户管**：左栏项目可重命名、可从侧栏移除（只写 `pi-sidebar-projects-v1`
-  本地偏好，不删会话、不碰目录）。
-- **调用预算按批次**：提示词与运行时护栏改「简单 1 批 / 普通 2–3 批 / 调研 3–4 批」，
-  单批并行上限 12；到顶先交付结论。
-- **关闭窗口先问**：「最小化到托盘 / 退出程序」原生询问框，可记住选择；托盘可随时改回。
-- **用量数字缩写**：< 1000 精确，≥ 1000 一位小数（`2.9K` / `69.8K`），≥ 999,950 进位 `1.0M`。
-- **Pi 核心 1.5.0**：三个 `@earendil-works/pi-*` 精确锁定，适配 `clientRegistration` 类型；
-  工具参数校验改由上游 `pi-schema` 执行（我们的工具都是普通 JSON Schema，行为不变）。
-
-### 默认行为变没变
-
-- **变了**（从 0.11.2 直接升级时最明显的五处）：看门狗红灯从约 25s 推到约 100s 且不能再低于
-  90s；新会话思考等级默认均衡；点关闭窗口开始询问；项目可以改名 / 隐藏；用量条只显示真实
-  usage（流式阶段没有数字就是没有数字）。
-- **没变**：三进程边界、零内部端口、文件授权链路、codemode 默认 `only`、主题与布局。
-
-### 验证
-
-- `npm run lint` → 0 error / 8 warning（均为既有的未使用变量与 hook 依赖告警）。
-- `NODE_OPTIONS=--max-old-space-size=6144 npx tsc --noEmit` → 通过。
-- `npm test` → 1599 项，1595 通过 / 0 失败 / 4 跳过。
-
-## v0.11.4 — 项目可改名可移除 · 看门狗看长活
-
-主题：**左栏项目归用户自己管，看门狗别误杀长活**。四件事：项目重命名 / 从侧栏移除、
-看门狗停滞阈值默认 90s 且以 90s 为最低档、用量数字千以上缩写、Pi 核心升到 1.5.0。
-
-### 改了什么
-
-**左栏项目**
-
-- **项目重命名**（`components/session-sidebar/ProjectGroup.tsx`、`components/SessionSidebar.tsx`）：
-  悬停行尾 `⋯` 或右键项目行 →「重命名项目」，行内输入框回车提交、Esc 取消。只改左栏显示名，
-  磁盘目录与会话归属都不动；改成空或改回文件夹原名 = 恢复默认。
-- **从侧栏移除**（同上）：「从侧栏移除」把项目从常规区和「其他项目」收纳盒里一起摘掉。
-  只写一条本地偏好（`pi-sidebar-projects-v1` 的 `hiddenProjects`），不删会话、不碰目录；
-  以后用「新建项目」重新选回同一目录即自动恢复显示。
-- 自定义名称同处持久化（`projectNames`），解析时逐项校验、非法值丢弃
-  （`components/session-sidebar/projects.ts`）。
-
-**看门狗**
-
-- **停滞阈值默认 90s，90s 同时是最低档**（`agent-host/watchdog.ts`）：默认值 20s → 90s，
-  运行期下限 5s → 90s（`watchdog.configure` 传更小的值会被钳到 90s，上限仍 10min）。
-  扫描周期仍 5s、连续 2 次超阈值升级，因此默认约 100s 无有效进展才亮红灯。
-- **下拉框预设改为 90 / 120 / 300 / 600 秒**（`hooks/useWatchdogStatus.ts`）；本地存过的旧值
-  （15/30/60s）读取时钳进新区间，避免面板显示一个 Host 会改写的数字。
-
-**用量**
-
-- 用量两行与「本轮产出」：< 1000 精确整数，≥ 1000 用一位小数缩写（`2.9K` / `69.8K`），
-  ≥ 999,950 进位到 `1.0M`。规则集中到 `lib/token-format.ts`。
-
-**Pi 核心**
-
-- `@earendil-works/pi-*` 1.4.0 → 1.5.0（精确锁定，传递依赖新增 `pi-schema`）。上游破坏性变更
-  （工具参数改由 pi-schema 校验、pi-ai 不再透出 TypeBox）不影响 PiForge：我们没有用
-  `Type.Refine` / `BigInt` / `Undefined` / codec 定义工具参数。唯一适配是 `agent-host/mcp-service.ts`
-  的 `clientRegistration` 类型跟随上游放宽到 `"auto" | "dcr" | "cimd"`（该字段不参与 PiForge 自己的
-  loopback 登录流程）。
-
-**开发体验**
-
-- **`dev:electron` 前端产物护栏**（`scripts/check-dev-static-freshness.mjs`、
-  `scripts/lib/dev-static-freshness.mjs`，单测 `dev-static-freshness.test.mjs`）：
-  `out/` 比 `app/` `components/` `lib/` `hooks/` `public/` 或根配置旧时直接报错退出，
-  提示 `npm run build:static`。渲染进程加载的是 `piforge://app/` 下的静态导出，
-  `dev:electron` 只重编主进程与 agent-host，不重建导出 —— 不重建就一直在跑旧 UI
-  （本次项目重命名 / 移除就是这样被误判成"功能没做"）。容差 5s，忽略单测、文档、
-  构建产物与依赖；`--warn` 或 `PIFORGE_SKIP_STATIC_FRESHNESS=1` 只警告不拦。
-
-### 默认行为变没变
-
-- **项目名与可见性**：不变。旧数据没有这两个字段 → 原样显示，除非你自己改名 / 移除。
-- **看门狗**：变了。默认红灯从约 25s 推到约 100s，且不能再调到 90s 以下。想更迟钝可选
-  120 / 300 / 600 秒。
-- **用量数字**：只换显示，计费口径不变。
-- **Pi 核心**：接口与行为不变；工具参数校验改由 pi-schema 执行（我们全部是普通 JSON Schema 工具）。
-
-## v0.11.3 — 用量说真话 · 注入与预算收口
-
-主题：**数字先说真话，开关先说默认**。主区修「用量条虚高 / 流式卡顿」，
-设置侧把 prompt 注入收成「全局 + 项目级三态」，并调整了几处默认值。
-
-### 改了什么
-
-**用量与渲染**
-
-- **费用只报真实 usage 累计**（`lib/live-usage.ts`、`components/UsageStrip.tsx`）：
-  去掉流式阶段的估算叠加，没收到 usage 就不显示数字。
-- **实时用量按会话隔离**（`components/ChatSurface.tsx`）：别的会话在跑，不再累加到
-  当前会话的用量条。
-- **流式事件按帧合并**（`hooks/useAgentSession.ts`、`components/Transcript.tsx`）：
-  同一帧内的增量只提交一次；工具卡秒表 tick 局部化，不再整树重渲染。
-- **重渲染剪枝**（`components/Workbench.tsx`、`SessionSidebar.tsx`、
-  `components/session-sidebar/SessionTree.tsx`）：打字 / 切会话 / 切面板卡顿收口。
-
-**默认值与 prompt 注入**
-
-- **思考等级默认 medium**（`agent-host/settings-defaults.ts`、`lib/thinking-level.ts`）：
-  新会话默认从 low 改为「均衡」。
-- **压缩摘要固定中文且更简洁**（`agent-host/compaction-plan.ts`）：默认只接管摘要正文。
-- **上下文文件注入开关**（`lib/project-settings.ts`、`agent-host/rpc-manager.ts`）：
-  AGENTS.md / CLAUDE.md 可关，全局 + 项目级三态（跟随全局 / 开 / 关），**默认开**。
-- **HANDOFF.md 接续注入**（`lib/handoff.ts`）：项目根或 `docs/` 下的 HANDOFF.md 可注入
-  系统提示词，**默认关**。
-
-**界面**
-
-- **开发环境开关改为状态胶囊**（`components/DevEnvironmentConfig.tsx`）：去掉滑块几何，
-  彻底消除小尺寸下的溢出。
-
-### 关闭窗口先问「最小化到托盘 / 退出程序」
-
-#### 改了什么
-
-- **主窗口关闭**（`electron/main.ts`）：点 X 不再静默隐藏，改为原生询问框 ——
-  「最小化到托盘 / 退出程序」，勾选「记住我的选择」后不再询问；Esc / 关掉询问框
-  一律按最小化处理，不会误触杀进程。
-- **偏好文件**（`electron/close-preference.ts`）：`<userData>/close-preference.json`，
-  取值为 `ask | minimize | quit`，损坏或非法值回落 `ask`。与
-  `agentDir/desktop-settings.json` 分开存 —— 打包后 Main 只有 `electron/dist`，不能
-  import `lib/`。
-- **托盘菜单**（`electron/tray.ts`）：「关闭窗口时」单选项（每次询问 / 最小化到托盘 /
-  退出程序），可随时改回来，不必手删 json。
-
-#### 默认行为变没变
-
-- 首次运行（无偏好文件）→ 每次点关闭都询问，与 0.9.x 的「静默隐藏」不同。
-- 选「退出程序」走正常退出流程（`before-quit` → Host 排空 → 回收子进程树），
-  不是 `app.exit(0)`，所以不会有孤儿 dev server。
-- 托盘图标的「退出」仍然直接退出，不询问。
-
-#### 验证
-
-- `npx tsc -p electron/tsconfig.json --noEmit` 通过；
-- `node --test electron/close-preference.test.ts` 6/6 通过；
-- `npx eslint electron/{main,tray,close-preference}.ts` 无告警。
-
-#### 调用预算从「次数」改成「批次」
-
-主题：**合并调用才是加速手段**。pi 同一条助手消息里的多个 tool call 本就并行执行，
-墙钟时间由往返次数决定；按调用次数卡预算只会逼模型在批次中途停下、重开一轮重发全量上下文。
-
-##### 改了什么
-
-- **提示词**（`agent-host/prompts/output-style.ts`，`BATCHING_RULES` 7 → 8 条）：新增
-  「合并调用（第一优先）」与「写操作不混批」；「调用预算（写死）」改为批次口径（简单 1 批 /
-  普通 2–3 批 / 调研 3–4 批，单批并行 ≤12）；「第 4 次自检」改为「每批自检」。
-- **运行时护栏**（`agent-host/desktop-tool-guard-extension.ts`）：`TURN_BUDGET` 4/8 → 12/24
-  （≈1 个满载批次后自检、≈2 个满载批次后收口），`DEFAULT_TOOL_GUARD.maxParallel` 8 → 12，
-  两条提醒文案同步改批次口径。
-
-##### 默认行为变没变
-
-- 软约束不变：仍是「到顶先交付可验证结论、剩余待办留给下一轮」，只是阈值按批次量级放大。
-- 无新开关；`PIFORGE_TOOL_MAX_PARALLEL` 仍可覆盖单批并行上限。
-
-- **前缀预算**（`scripts/smoke-prefix-budget.mjs`）：`--max-prefix` 7600 → 7660。第 1 版措辞
-  把前缀顶到 CI 实测 7774（token guards 红），压缩后回到 7585；7660 = 实测 + ~1% 余量。
-  注意本地 Windows 的 sys 段比 CI 高约 430 tok，这个 smoke 本地跑会红，以 CI 数字为准。
-
-##### 验证
+**English** · [简体中文](./CHANGELOG.zh-CN.md)
+
+Entries are organized around "what changed / did any default change / how to use the switches". Detailed data lives in `docs/measurements/` (three separate lenses — a recording provider, a real deepseek session, and an A/B of repeated scenarios — do not mix them).
+
+## v0.12.3 — event stream stuck at "waiting for the first token" (only a refresh showed content)
+
+Theme: **the host's delivery watermark counted "delivered to a subscription nobody consumes any more" as delivered; the next round then resumed after that entry, so the segment the browser never received was lost for good. The UI sat at "waiting for the first token", and one refresh (reloading the transcript from disk) brought everything back.**
+
+### What changed
+
+- **No more orphan host subscriptions** (`lib/agent-host-client.ts`): while `subscribeAgent` awaited
+  `agent.subscribe`, the browser could already have cancelled the SSE (`close()` removes the hub), and that
+  subscription still landed — events kept flowing, nobody received them, the watermark kept rising. Now the hub
+  identity is verified before and after creating the subscription; if the hub has already been removed,
+  `agent.unsubscribe` runs immediately. `close()` now deletes a mapping only when it is still its own, so a
+  concurrent call cannot wipe out a hub someone else just created.
+- **The resume watermark counts what actually reached a listener**: `agentListenerSeq` records, per session, the
+  last event genuinely delivered to an SSE listener, and it survives across hubs. Without an explicit `fromSeq`,
+  resume uses it instead of blindly trusting the host's `lastDeliveredSeq`.
+- **The route registers abort before creating the subscription** (`app/api/agent/[id]/events/route.ts`): a browser
+  cancelling during the await can still set `closed` and release the subscription that was just created.
+- **Self-healing when stuck** (`hooks/agent-session/stream-health.ts` + `components/ChatSurface.tsx`): new
+  `STREAM_FIRST_EVENT_MS = 12s` plus a "real increment timestamp" (`getLastRealEventAt`; reconnect bookkeeping
+  from `connect()/retryNow()` no longer pollutes the decision). When a round receives no real event at all, the
+  stream is declared stuck after 12s and the UI automatically reconnects (with the browser's real watermark, so
+  the host resumes from its buffer) and reloads the round's output from disk; attempts are at least 15s apart and
+  capped at 4 per round. Scenarios already inside a streaming or tool turn keep the previous 120s threshold.
+
+### Did default behavior change
+
+- Yes: when stuck you no longer have to refresh manually or press stop; the UI recovers by itself within 12s.
+- No: the event stream protocol, host-side resume semantics (resume from the last undelivered point after a Next
+  restart), UI copy and switches.
+
+## v0.12.3 — Pi core upgraded to 1.6.0
+
+Theme: **the three upstream packages move 1.5.0 → 1.6.0, the extension render contract follows, and one long-red
+smoke assertion gets fixed along the way.**
+
+### What changed
+
+- **`@earendil-works/pi-ai` / `pi-coding-agent` / `pi-mcp` pinned to exactly 1.6.0** (the three packages must share
+  a version; upstream 1.6.0's own dependency set also pins `pi-ai` / `pi-mcp` / `pi-tui` to 1.6.0).
+- **Following the breaking change in extension components**: from 1.6.0, a component's `render()` returns
+  `readonly string[]`, and `Container` returns the same cached array when its children are unchanged — any code that
+  mutates the result of `super.render()` in place will hit this. Audit result: PiForge has no `Container` subclass
+  and no in-place mutation of `super.render()`; `agent-host/` imports upstream through exactly one seam,
+  `sdk-adapter.ts`, so no code change was needed.
+- **Fixing the stale watchdog assertion in `smoke:agent-host`**: the script still asserted the default
+  `stallMs === 20_000`, while `agent-host/watchdog.ts` has defaulted to 90_000 since v0.12.0 and 90s is the lowest
+  preset. That smoke has been red since v0.12.0 (unrelated to this upgrade); it now asserts 90_000 with the reason
+  written down.
+- **Restoring the CHANGELOG section v0.12.2 lost during a merge**: the `## v0.12.2` heading and the three groups of
+  entries ("queued messages / plan mode / panels and caching") were deleted wholesale while resolving a conflict
+  (the `Unreleased` section was collapsed into those 58 lines of v0.12.2), leaving only the orphaned "image sizing"
+  items. They are restored here from the release commit's original text.
+- README badges and the version in the "swappable Pi core" line now say 1.6.0.
+
+### Did default behavior change
+
+- No: PiForge's own watchdog default (90s), UI, tool set, switches and session directory
+  (`~/.pi/agent/sessions`) are unchanged; the upgrade only swaps the runtime.
+- Yes (from upstream 1.6.0): the default model of `openai` / `azure` / `openai-codex` becomes GPT-6.2 Sol (same
+  price); the `find` tool's path pattern is now relative to the searched directory (`src/*.ts` no longer matches
+  `pkg/src/a.ts`; cross-level matches need `**/src/*.ts`); the two GPT-6.2 tiers do not accept reasoning effort
+  `none` / `minimal`, so "thinking off" is unavailable on those models.
+
+## v0.12.3 — send path: no more "sent, but nothing happened"
+
+### What changed
+
+- **Hitting "still running" no longer drops the message silently**: `handleSend` returned early whenever
+  `agentRunning` was true. If the previous round's `agent_end` was lost, or the frontend state lagged behind the
+  host, pressing send sent nothing and showed no error. It now goes down the queue path (visible / editable /
+  immediately sendable), and when the host really is idle a new round starts at once.
+- **The send gate expires on its own** (`PROMPT_DISPATCH_STALE_MS = 8s`): it used to be released only on error or
+  when `agentRunning` flipped to false, so a single lost event could wedge it forever and every later message was
+  silently swallowed.
+- **Failures stay visible**: a message the host rejects is marked `deliveryState: "failed"`, shows "not delivered"
+  under the bubble, and keeps a persistent "this message was not sent: <reason>" row above the input with retry /
+  dismiss. Retry first removes the optimistic bubble that never entered the session, then resends — you never end up
+  with two identical messages.
+- **The host no longer rejects messages during a resource reload**: `reloadResources()` changed from "throw
+  `Session is reloading` when concurrent" to reusing the same in-flight promise; the hard rejection of `prompt` on
+  `isStreaming || reloadingResources` narrowed to block `isStreaming` only. The config watcher can trigger a dozen
+  reloads in one session, and hitting one used to lose a message.
+
+### Did default behavior change
+
+- No: tool set, models, session directory, watchdog thresholds, theme and layout.
+- Yes: pressing send while a round is running queues the message (it used to be dropped silently); a bubble the host
+  rejected carries the "not delivered" mark.
+
+## v0.12.2 — conversations stop disappearing, queued messages are editable, plans get an ending
+
+Theme: **running no longer looks stuck, queued messages are editable, plans no longer rot, and a connected MCP server no longer breaks the prefix cache.**
+
+The previous public version was v0.12.1. There are no new switches in this release — everything is a behavior fix
+plus two small entry points that were missing.
+
+### What changed
+
+**Transcript**
+
+- **Conversation history is no longer blanked out while running**: `useSessionLoader` had two paths that silently
+  called `setMessages([])` — when `fetchSession` returned null (host busy / write race) and when a re-fetch of the
+  same session returned an empty `context.messages`. A running round re-fetches repeatedly, so hitting one of them
+  produced permanent blankness (only `agent_end` reloads before the round ends, and that is precisely the thing that
+  has not happened yet). Both cases now keep what is already on screen; while running with genuinely zero history,
+  the UI explains the situation, offers "reload", and retries automatically 6 times with 1.5s→6s backoff.
+- **tokens/s no longer freezes**: the rate drops to zero when thinking / streaming ends instead of hanging onto last
+  second's number; the tokens/s on a tool card only shows while running and disappears the moment it finishes.
+- **No more flashing "reconnecting event stream"**: after send, `agentRunning` flips to true first while
+  `connectEvents` runs after an await, so that gap read the previous round's `disconnected` and leftover
+  `reconnectAttempts`. The counter now resets the moment the round ends, `evaluateStreamHealth` grants a 3s grace at
+  the start, and connecting / disconnected with `attempts=0` is always treated as a normal start.
+- **Clickability rules unified with the visuals**: body text and inline code share `parseLinkableFileReference`; a
+  bare file name (`seed.ts`) is always plain text, and only a separator or an `@` prefix makes a link. Clickable =
+  accent + underline + `cursor-pointer`; not clickable = `cursor-text`. External links allow only http / https /
+  mailto / tel; every other scheme degrades to plain text.
+- **Image sizing collapsed into two constants**: message images (user bubbles / assistant body / markdown inline) use
+  `CHAT_IMAGE_SIZE = "max-h-64 max-w-full"`, tool-produced images use `TOOL_IMAGE_SIZE = "max-h-72 max-w-full"`.
+  Four places used to hardcode `max-h-64 / 72 / 80`, so the same reference image appeared in three sizes in different
+  bubbles; and all of them capped height but not width — when the width derived from the height exceeded the bubble,
+  the flex item (`min-width:auto`) refused to shrink and wide images were clipped sideways by the scroll container.
+  Image wrappers also gained `max-w-full` / `min-w-0`.
+- **One submit per 800ms of the same text** (`DUPLICATE_SUBMIT_MS`): double-clicking send, mashing Enter, or "thought
+  it did not go through so pressed again" no longer produces two duplicate bubbles in the same second.
+- **No more "0 produced this round" before the first token**: it now reads "waiting for the first token…" and states
+  that the message reached the host.
+- **Delivery state is visible**: after a steer / queued submit the bubble shows "delivering…" until the host takes it
+  (`deliveryState` cleared); the state is part of the round cache's reference key, so the mark cannot stick on screen.
+- **Host side**: a late or duplicate `agent_settled` with no evidence that the round ended no longer dispatches the
+  next queued message; it only closes the round and hands off to the fallback retry, avoiding two queued messages
+  landing in the database at the same instant.
+
+**Queued messages**
+
+- **Editable**: clicking the text or the pencil opens inline editing (Enter saves / Esc cancels), changing the text in
+  place while keeping the id, position and attachments (previously you had to delete and retype, losing both
+  attachments and order). Delete is hidden while editing to avoid accidental loss.
+- **⚡ Send now**: steers during streaming, starts a new round when idle; a failed steer degrades to a new prompt, and
+  if that is rejected too the message goes back into the queue unchanged.
+- **⏫ Move to the front**: the host queue gained `update` / `take` / `restoreAt`; `take` returns the original index
+  and a failed delivery puts the message back where it was; new commands `update_follow_up` / `expedite_follow_up`.
+
+**Plan mode**
+
+- **Plans are no longer shelved silently**: the old implementation returned null once "the round ended and it was not
+  waiting for approval", so a plan stopped at 3/6 vanished on the spot — the user did not know what remained and the
+  model would never bring it up again. Now an unsettled plan on a stopped agent gets a "not finished" label plus two
+  exits, "continue" and "drop the rest"; `dropped` is a terminal state (not counted as done), and `abandonPlan`
+  settles locally by planKey without spending another round.
+- **Completed steps lose the strikethrough**: `done` only drops to `text-ink-muted` (4.8:1) and completion is expressed
+  by a filled checkbox; `line-through` is reserved for `dropped`. When the list is expanded, finished steps collapse
+  into a single "N steps done" line.
+- **The card no longer lingers for 1-2s**: `livePlan` only serves the round that is running; it is cleared when the
+  prompt is enqueued instead of waiting for `agent_start` to arrive — in that window `planProgress` would pass off the
+  previous round's finished card as this round's progress.
+
+**Panels and caching**
+
+- **The fleet / orchestrator panels gained a manual spawn entry**: `AgentSpawnTrigger` (name may be left empty to
+  auto-name, plus a task brief); the panel passes the current project cwd to the host; new RPC `herdr.spawn` (cwd goes
+  through the file policy first); the POST handlers of `/api/herdr` and `/api/orchestrator` each accept
+  `action=spawn`.
+- **The `mcp_servers` section is byte-latched**: the MCP extension re-renders that section from live state every
+  round; indirect servers (codemode / deferred) do not wait for a connection in the first round, and once connected
+  `connection.instructions` is added to the description — any change to those bytes means the whole history misses and
+  is resent. The first bytes are now latched under a signature of "server name + exposure mode" and reused while the
+  signature holds; only a real configuration change (adding / removing / toggling a server) swaps them once. The load
+  and discovery paths are untouched.
+
+### Did default behavior change
+
+- Yes: the maximum height of assistant-body / markdown inline images drops from 320 to 256, matching user bubbles; no
+  conversation image overflows the bubble horizontally any more (they used to be clipped). Tool-produced images stay
+  at 288.
+- Yes: a plan card in "not finished + agent stopped" now stays until you press "continue" or "drop the rest".
+- Yes: `tokens/s` only shows while running and drops to zero instead of freezing; completed plan steps no longer have
+  a strikethrough.
+- No: click-to-enlarge, lightbox zoom / pan / download, attachment preview; plan is still read-only and the approval
+  flow is unchanged; the MCP load, discovery and config read/write paths are unchanged.
+
+## v0.12.1 — plan mode no longer resends context
+
+Theme: **switching into plan no longer burns the whole cache, and the progress card actually appears for the first time.**
+
+### What changed
+
+- **Entering / leaving plan no longer invalidates the request prefix**: plan mode used to change both the system prompt
+  (appending a plan section) and the tool array (plan loaded in full on its own plus a narrowed declaration set);
+  both live in the prefix, so the next request resent the whole history (visible as "prefix invalidated, this request
+  will resend ≈N tok"). The declaration set is now decided solely by the tool preset, independent of mode, and the
+  plan section is injected as a trailing `display:false` message — plan and execute produce byte-identical prefixes.
+- **The read-only constraint moved to execution time**: plan mode no longer implements read-only by withholding tools;
+  `tool_call` rejects writes via `PLAN_TOOLS` / `isPlanAllowedDomainCall`, with the reason `Plan mode: planning only`
+  spelled out (no longer the misleading `Blocked by user`).
+- **Plan progress card fixed**: tool call blocks in a session are `{id, name, arguments}`, while the folding function
+  only understood `{toolCallId, toolName, input}`, so nothing ever matched in a real session and the card never
+  rendered. Both shapes are accepted now. The same shape bug pushed every entry of "tool call statistics" into
+  `unknown`, which is fixed too.
+- **The plan tool is always declared**: it could be reduced to a stub (name only), and without a schema the model would
+  not call it; it is now always present, like `tool_search` / `desktop_use_tool`.
+
+### Did default behavior change
+
+- Yes: **in plan mode the model can see the schema of write / edit / MCP / plugin tools**, and calls are blocked at
+  execution time. This is the necessary price for whole-prefix caching — as long as declarations vary with mode,
+  switching necessarily resends context.
+- No: plan is still read-only; the approval flow, the plan card's position and its interactions are unchanged.
+
+## v0.12.0 — projects belong to the user · numbers and switches tell the truth
+
+Theme: **the left column is yours to manage, usage and the watchdog tell the truth first, injection switches state their defaults first.**
+
+This release also ships the two versions that were never published separately (v0.11.3 / v0.11.4). The last public
+release on GitHub was v0.11.2; the per-item records are kept in their own sections below, and this section only covers
+what is new here plus the cross-version summary.
+
+### What changed
+
+**Docs and release**
+
+- **README fully rewritten**: the Pi core version lines up with `1.5.0`, and it gained the v0.12.0 highlights, a table
+  of switch defaults, the `dev:electron` static-artifact guard note and the unsigned-installer disclosure; stale
+  numbers and old claims were removed.
+- **`docs/releases/v0.12.0.md` added**: CI's `desktop-packages.yml` uses it as the Release Notes when no release exists
+  yet, with install notes for all three platforms (SmartScreen / Gatekeeper / unsigned deb needing root).
+
+**Developer experience**
+
+- **`dev:electron` pre-flight guard** (`scripts/check-dev-static-freshness.mjs`, unit test
+  `dev-static-freshness.test.mjs`): when `out/` is older than `app/` `components/` `lib/` `hooks/` `public/` or the
+  root config, it fails loudly and tells you to run `npm run build:static`. The renderer loads the static export under
+  `piforge://app/`, so rebuilding only the main process means you keep running the old UI. Tolerance is 5s;
+  `--warn` or `PIFORGE_SKIP_STATIC_FRESHNESS=1` only warns.
+
+### 0.11.3 / 0.11.4 shipped together (summary)
+
+- **Usage tells the truth**: cost reports only accumulated real `usage`, isolated per session; streaming events are
+  coalesced per frame, the tool-card stopwatch tick is localized; re-renders from typing / switching sessions /
+  switching panels are pruned.
+- **Injection switches in three states**: AGENTS.md / CLAUDE.md injection can be turned off (on by default), HANDOFF.md
+  continuation injection is opt-in (off by default), both as "global + project-level" three-state settings; the
+  compaction summary is always Chinese and by default only takes over the body.
+- **Defaults**: new sessions' thinking level moves low → medium (balanced); the watchdog stall threshold goes 20s → 90s
+  by default, and 90s becomes the lowest preset (presets 90 / 120 / 300 / 600 s).
+- **Projects belong to the user**: left-column projects can be renamed and hidden from the sidebar (writes only the
+  `pi-sidebar-projects-v1` local preference, deletes no session and touches no directory).
+- **Call budget by batch**: prompt and runtime guard now say "1 batch for simple / 2–3 for ordinary / 3–4 for research",
+  with at most 12 parallel calls per batch; at the ceiling, deliver conclusions first.
+- **Ask before closing the window**: a native dialog offers "minimize to tray / quit", with a remember-my-choice
+  option; the tray can change it back at any time.
+- **Usage number abbreviation**: exact below 1000, one decimal at or above (`2.9K` / `69.8K`), carries to `1.0M` at
+  ≥ 999,950.
+- **Pi core 1.5.0**: the three `@earendil-works/pi-*` packages pinned exactly, with the `clientRegistration` type
+  adapted; tool argument validation now runs in upstream `pi-schema` (all our tools are plain JSON Schema, so behavior
+  is unchanged).
+
+### Did default behavior change
+
+- **Yes** (the five most visible when upgrading straight from 0.11.2): the watchdog goes red at about 100s instead of
+  about 25s and can no longer go below 90s; new sessions default to balanced thinking; closing the window now asks;
+  projects can be renamed / hidden; the usage strip shows only real usage (during streaming, no number means no number).
+- **No**: the three-process boundary, zero internal ports, the file authorization chain, codemode defaulting to
+  `only`, themes and layout.
+
+### Verification
+
+- `npm run lint` → 0 errors / 8 warnings (all pre-existing unused-variable and hook-dependency warnings).
+- `NODE_OPTIONS=--max-old-space-size=6144 npx tsc --noEmit` → passes.
+- `npm test` → 1599 items, 1595 passed / 0 failed / 4 skipped.
+
+## v0.11.4 — projects can be renamed and hidden · the watchdog watches long jobs
+
+Theme: **the left column's projects are yours to manage, and the watchdog stops killing long jobs by mistake**. Four things: rename / hide projects, watchdog stall threshold defaulting to 90s with 90s as the floor, usage numbers abbreviated above one thousand, and Pi core moving to 1.5.0.
+
+### What changed
+
+**Left-column projects**
+
+- **Rename a project** (`components/session-sidebar/ProjectGroup.tsx`, `components/SessionSidebar.tsx`): the `⋯` at
+  the end of a hovered row, or a right-click on the project row → "rename project"; an inline input submits on Enter
+  and cancels on Esc. Only the displayed name in the left column changes; the directory on disk and session ownership
+  stay put. An empty name or the original folder name restores the default.
+- **Remove from sidebar** (same files): "remove from sidebar" takes the project out of both the regular area and the
+  "other projects" folder. It writes a single local preference (`hiddenProjects` in `pi-sidebar-projects-v1`), deletes
+  no session and touches no directory; picking the same directory again with "new project" restores it.
+- Custom names persist in the same place (`projectNames`), validated item by item on parse with invalid values dropped
+  (`components/session-sidebar/projects.ts`).
+
+**Watchdog**
+
+- **Stall threshold defaults to 90s, and 90s is also the floor** (`agent-host/watchdog.ts`): default 20s → 90s, runtime
+  floor 5s → 90s (a smaller value passed to `watchdog.configure` is clamped to 90s, the upper bound stays 10min). The
+  scan period is still 5s with two consecutive over-threshold scans to escalate, so by default it goes red after about
+  100s without meaningful progress.
+- **Dropdown presets are now 90 / 120 / 300 / 600 seconds** (`hooks/useWatchdogStatus.ts`); older locally stored values
+  (15/30/60s) are clamped into the new range on read, so the panel never shows a number the host will rewrite.
+
+**Usage**
+
+- The two usage lines and "produced this round": exact integers below 1000, one-decimal abbreviation at or above
+  (`2.9K` / `69.8K`), carrying to `1.0M` at ≥ 999,950. The rules are centralized in `lib/token-format.ts`.
+
+**Pi core**
+
+- `@earendil-works/pi-*` 1.4.0 → 1.5.0 (pinned exactly; transitive dependencies gain `pi-schema`). Upstream breaking
+  changes (tool arguments validated by pi-schema, pi-ai no longer exposing TypeBox) do not affect PiForge: we never used
+  `Type.Refine` / `BigInt` / `Undefined` / codec-defined tool arguments. The only adaptation is in
+  `agent-host/mcp-service.ts`, where the `clientRegistration` type widens with upstream to `"auto" | "dcr" | "cimd"`
+  (that field does not participate in PiForge's own loopback login flow).
+
+**Developer experience**
+
+- **`dev:electron` frontend-artifact guard** (`scripts/check-dev-static-freshness.mjs`,
+  `scripts/lib/dev-static-freshness.mjs`, unit test `dev-static-freshness.test.mjs`): when `out/` is older than `app/`
+  `components/` `lib/` `hooks/` `public/` or the root config, it fails and exits, telling you to run
+  `npm run build:static`. The renderer loads the static export under `piforge://app/`, and `dev:electron` only rebuilds
+  the main process and agent-host, never the export — without a rebuild you keep running the old UI (that is exactly
+  how this round's rename / remove work was misjudged as "not implemented"). Tolerance is 5s, ignoring unit tests,
+  docs, build artifacts and dependencies; `--warn` or `PIFORGE_SKIP_STATIC_FRESHNESS=1` only warns.
+
+### Did default behavior change
+
+- **Project names and visibility**: no. Old data has neither field → shown as before, unless you rename or hide it.
+- **Watchdog**: yes. The default red light moves from about 25s to about 100s and cannot be set below 90s again. If you
+  want it even more forgiving, choose 120 / 300 / 600 seconds.
+- **Usage numbers**: display only; billing semantics are unchanged.
+- **Pi core**: interfaces and behavior unchanged; tool argument validation now runs in pi-schema (all our tools are
+  plain JSON Schema).
+## v0.11.3 — usage tells the truth · injection and budgets tightened
+
+Theme: **numbers tell the truth first, switches state their defaults first**. The main area fixes "inflated usage strip / streaming jank", the settings side tightens prompt injection into "global + project-level three-state", and a few defaults are adjusted.
+
+### What changed
+
+**Usage and rendering**
+
+- **Cost reports only accumulated real usage** (`lib/live-usage.ts`, `components/UsageStrip.tsx`): the estimate added
+  during streaming is gone; without `usage` there is no number.
+- **Live usage is isolated per session** (`components/ChatSurface.tsx`): another session running no longer adds to the
+  current session's usage strip.
+- **Streaming events are coalesced per frame** (`hooks/useAgentSession.ts`, `components/Transcript.tsx`): increments
+  within one frame are committed once; the tool-card stopwatch tick is localized instead of re-rendering the whole tree.
+- **Re-render pruning** (`components/Workbench.tsx`, `SessionSidebar.tsx`,
+  `components/session-sidebar/SessionTree.tsx`): jank from typing / switching sessions / switching panels is addressed.
+
+**Defaults and prompt injection**
+
+- **Thinking level defaults to medium** (`agent-host/settings-defaults.ts`, `lib/thinking-level.ts`): new sessions
+  default from low to "balanced".
+- **The compaction summary is always Chinese and more concise** (`agent-host/compaction-plan.ts`): by default it only
+  takes over the summary body.
+- **Context file injection switches** (`lib/project-settings.ts`, `agent-host/rpc-manager.ts`): AGENTS.md / CLAUDE.md
+  can be turned off, global + project-level three-state (follow global / on / off), **on by default**.
+- **HANDOFF.md continuation injection** (`lib/handoff.ts`): a HANDOFF.md at the project root or under `docs/` can be
+  injected into the system prompt, **off by default**.
+
+**Interface**
+
+- **The dev-environment switch became a status pill** (`components/DevEnvironmentConfig.tsx`): the slider geometry is
+  gone, eliminating overflow at small sizes completely.
+
+### Ask before closing the window: "minimize to tray / quit"
+
+#### What changed
+
+- **Main window close** (`electron/main.ts`): clicking X no longer hides silently but opens a native dialog —
+  "minimize to tray / quit"; ticking "remember my choice" stops the asking. Esc or dismissing the dialog always
+  minimizes, so the process is never killed by accident.
+- **Preference file** (`electron/close-preference.ts`): `<userData>/close-preference.json`, values
+  `ask | minimize | quit`, falling back to `ask` when corrupt or invalid. Kept separate from
+  `agentDir/desktop-settings.json` — after packaging, main only has `electron/dist` and cannot import `lib/`.
+- **Tray menu** (`electron/tray.ts`): radio items under "when closing the window" (ask every time / minimize to tray /
+  quit), changeable at any time without hand-editing the json.
+
+#### Did default behavior change
+
+- First run (no preference file) → every close asks, unlike 0.9.x's silent hide.
+- Choosing "quit" goes through the normal quit flow (`before-quit` → host drain → child process tree reaped), not
+  `app.exit(0)`, so there are no orphan dev servers.
+- "Quit" in the tray icon still quits directly without asking.
+
+#### Verification
+
+- `npx tsc -p electron/tsconfig.json --noEmit` passes;
+- `node --test electron/close-preference.test.ts` 6/6 passes;
+- `npx eslint electron/{main,tray,close-preference}.ts` reports nothing.
+
+#### Call budget changes from "count" to "batches"
+
+Theme: **batching calls is the actual speed-up**. Multiple tool calls in one assistant message already run in
+parallel in pi, and wall-clock time is decided by round trips; budgeting by call count only forces the model to stop
+mid-batch and start a new round that resends the whole context.
+
+##### What changed
+
+- **Prompt** (`agent-host/prompts/output-style.ts`, `BATCHING_RULES` 7 → 8 items): new "batch calls (first priority)"
+  and "do not mix writes into a batch"; "call budget (hard-coded)" reworded in batches (1 for simple / 2–3 for
+  ordinary / 3–4 for research, at most 12 parallel per batch); "self-check at call 4" became "self-check after each
+  batch".
+- **Runtime guard** (`agent-host/desktop-tool-guard-extension.ts`): `TURN_BUDGET` 4/8 → 12/24 (self-check after about
+  one full batch, wrap up after about two), `DEFAULT_TOOL_GUARD.maxParallel` 8 → 12, and both reminder strings reworded
+  in batches.
+
+##### Did default behavior change
+
+- The soft constraint is unchanged: still "deliver a verifiable conclusion at the ceiling, leave the rest of the todo
+  for the next round" — only the thresholds scale with batch size.
+- No new switches; `PIFORGE_TOOL_MAX_PARALLEL` still overrides the per-batch parallel limit.
+
+- **Prefix budget** (`scripts/smoke-prefix-budget.mjs`): `--max-prefix` 7600 → 7660. The first wording pushed the
+  prefix to 7774 as measured in CI (token guards red); after tightening it came back to 7585; 7660 = measured + ~1%
+  headroom. Note that the local Windows sys section is about 430 tok larger than in CI, so this smoke goes red locally
+  — trust the CI numbers.
+
+##### Verification
 
 - `node --test --test-force-exit agent-host/desktop-tool-guard-extension.test.ts agent-host/desktop-output-style-extension.test.ts` → 21/21
-- `npx eslint`（四个改动文件）→ 无输出
+- `npx eslint` (the four changed files) → no output
 
-## v0.11.2 — 会话按时间分桶（计数与内容同源）
+## v0.11.2 — sessions bucketed by time (counts and content from one source)
 
-主题：**点开就能看见，数字先说真话**。侧栏会话不再靠「显示全部 / 加载更多」逐段揭示，
-改成按时间分桶收纳，折叠头显示的就是点开后的真实条数。
+Theme: **what you open is what you see, and numbers tell the truth first**. The sidebar no longer reveals sessions piecemeal through "show all / load more" but files them into time buckets, and the collapsed header shows the real count you get when you open it.
 
-### 改了什么
+### What changed
 
-- **首屏一次取满**（`lib/sessions-cache.ts`）：`SESSION_PAGE_SIZE` 20 → 200（服务端单次上限）。
-  分页退回只兜「会话总数超过一页」的极端情况，不再驱动滚动加载。
-- **时间分桶**（`components/session-sidebar/date-groups.ts` 重写）：今天 / 昨天 / 过去 7 天按天，
-  12 个月内按自然月（`2026年10月`），更早按自然年（`2025年`）；无法解析时间的归「时间未知」
-  并排在最后。`older` 垃圾桶取消 —— 月 / 年维度不再在数据层就被抹掉。
-- **计数只数根会话**：`SessionDateGroup.count` 与 `nodes` 同源，分支子会话不重复计数。
-- **默认只展开今天 / 昨天**，其余桶收起；点开是纯 `setState`，不发请求、不会空。
-- **删掉三处互相打架的旧机制**：`autoLoadPaused`（只要还有项目停在预览态就静默停掉滚动加载，
-  于是滚到底什么都不会发生）、滚动哨兵、「显示全部 N 条」按钮。
+- **First screen fetches everything at once** (`lib/sessions-cache.ts`): `SESSION_PAGE_SIZE` 20 → 200 (the server-side
+  single-request cap). Pagination remains only as a fallback for the extreme case of "more sessions than one page" and
+  no longer drives scroll loading.
+- **Time buckets** (`components/session-sidebar/date-groups.ts` rewritten): today / yesterday / the past 7 days by day,
+  within 12 months by calendar month (`October 2026`), older by calendar year (`2025`); unparseable timestamps go to
+  "unknown time" at the very end. The `older` bin is gone — month and year dimensions are no longer erased in the data
+  layer.
+- **Counts count root sessions only**: `SessionDateGroup.count` comes from the same source as `nodes`, so branch
+  sub-sessions are not counted twice.
+- **Only today / yesterday expand by default**; the rest are collapsed. Expanding is pure `setState` — no request, and
+  never an empty one.
+- **Three fighting mechanisms removed**: `autoLoadPaused` (which silently stopped scroll loading whenever any project
+  sat in preview state, so scrolling to the bottom did nothing), the scroll sentinel, and the "show all N" button.
 
-### 默认行为变没变
+### Did default behavior change
 
-默认可见会话数从「每项目 5 条」变成一页上限内的全部，且折叠即可见 —— 这是**有意改变的默认**。
-会话总数超过一页时底部才出现「加载更早的会话」；它不显示数字，因为服务端的 `total` 含
-`%TEMP%` 下的 piforge-probe / ab-control 临时会话，显示出来会是假数字。
+The number of sessions visible by default goes from "5 per project" to everything within one page, visible on
+collapse — an **intentional default change**. "Load older sessions" only appears at the bottom when the total exceeds
+one page; it shows no number, because the server's `total` includes temporary piforge-probe / ab-control sessions under
+`%TEMP%` and would be a fake number.
 
-### 验证
+### Verification
 
-- `npx tsc --noEmit` 通过；`npm run lint` 通过；
-- `node --test components/session-sidebar/*.test.ts lib/session-reader.paging.test.ts lib/sessions-cache.test.ts` → 27/27；
-- 实测 `/api/sessions?limit=200`：冷启动约 400ms，info 缓存命中后 23ms。
+- `npx tsc --noEmit` passes; `npm run lint` passes;
+- `node --test components/session-sidebar/*.test.ts lib/session-reader.paging.test.ts lib/sessions-cache.test.ts` → 27/27;
+- Measured `/api/sessions?limit=200`: about 400ms cold, 23ms once the info cache is warm.
 
-## v0.11.1 — 贴图卡顿 / 秒表 / 流健康 / 项目隔离（默认关）
+## v0.11.1 — paste lag / stopwatch / stream health / project isolation (off by default)
 
-主题：**修 0.11.0 漏掉的三处「看着像卡死」**，并补一个默认关闭的项目级文件隔离。
-不涉及调用预算与工具默认值；`v0.11.0` 的内容通过合并 `v0.11.0` tag 一并保留。
+Theme: **fixing the three "looks stuck" spots 0.11.0 missed**, plus a project-level file isolation that is off by default. Call budget and tool defaults are untouched; the content of `v0.11.0` is preserved by merging the `v0.11.0` tag.
 
-### 改了什么
+### What changed
 
-- **贴图不再卡主线程**（`lib/image-attachment.ts`）：缩放改走 `createImageBitmap` 的 resize
-  选项（解码 + 重采样在工作线程），主线程只搬小图；24×24 抽样探测透明，只有真透明才 PNG
-  （其余 JPEG 0.92），GIF/SVG 原样发送；额外生成 160px 缩略图 `previewUrl` 与降采样整图
-  `fullUrl`，`ImageBitmap` 显式 `close()`。
-- **贴图交互**（`components/Composer.tsx`）：粘贴后先同步插入「处理中」占位，多图串行 + 每张让
-  一帧；处理中禁止发送；移除/发送/卸载时两个 object URL 一并 revoke。
-- **工具卡秒表**（`lib/tool-clock.ts` / `components/Transcript.tsx`）：耗时以 `tool_execution_end`
-  为准完成即冻结，不再跟着最新调用一直数。
-- **流健康**（`hooks/agent-session/stream-health.ts` + `components/StreamHealthBanner.tsx`）：区分
-  `reconnecting` / `failed` / `stalled`（30 s 无真实增量），事件流断了明确告知，不再停在
-  「PiForge 正在思考…」。
-- **项目隔离**（新开关，默认关）：`desktop-settings.json` 的 `projectIsolation`；Host 的
-  `authorizePath(target, op, scope?)` 在开启时要求路径落在当前项目内，无当前项目即 fail-closed；
-  新增 RPC `files.setScope` + Next 路由 `/api/files/scope`（Workbench 上报活动 cwd），
-  `file-index` / `git` / `statusline` / `processes` 各自把 cwd 当 scope。
+- **Pasting images no longer blocks the main thread** (`lib/image-attachment.ts`): scaling goes through
+  `createImageBitmap`'s resize options (decode + resample on a worker thread) and the main thread only moves small
+  images; transparency is probed with a 24×24 sample, only genuinely transparent images stay PNG (the rest are JPEG at
+  0.92), GIF/SVG are sent as-is; a 160px thumbnail `previewUrl` and a downsampled full image `fullUrl` are generated,
+  and the `ImageBitmap` is explicitly `close()`d.
+- **Paste interaction** (`components/Composer.tsx`): a "processing" placeholder is inserted synchronously, multiple
+  images are handled serially with one frame yielded per image, sending is blocked while processing, and both object
+  URLs are revoked on remove / send / unmount.
+- **Tool-card stopwatch** (`lib/tool-clock.ts` / `components/Transcript.tsx`): duration is finalized from
+  `tool_execution_end` and frozen on completion instead of counting along with the latest call.
+- **Stream health** (`hooks/agent-session/stream-health.ts` + `components/StreamHealthBanner.tsx`): distinguishes
+  `reconnecting` / `failed` / `stalled` (30 s with no real increment) and says plainly when the event stream breaks
+  instead of sitting at "PiForge is thinking…".
+- **Project isolation** (new switch, off by default): `projectIsolation` in `desktop-settings.json`; the host's
+  `authorizePath(target, op, scope?)` requires the path to be inside the current project when enabled, and fails closed
+  without a current project; new RPC `files.setScope` + Next route `/api/files/scope` (Workbench reports the active cwd),
+  with `file-index` / `git` / `statusline` / `processes` each treating cwd as their scope.
 
-### 默认行为变没变
+### Did default behavior change
 
-只有一处新开关，且**默认关**：不打开「项目隔离」时文件授权行为与 0.11.0 完全一致。
+Only one new switch, and it is **off by default**: with "project isolation" not enabled, file authorization behaves
+exactly as in 0.11.0.
 
-## v0.11.0 — 调用预算与卡顿收口（工具开销 / codemode / 界面计时 / 冒烟脚本）
+## v0.11.0 — call budget and jank tightened up (tool overhead / codemode / UI timing / smoke scripts)
 
-主题：**把「卡住」变成看得见的数字**。每用户轮工具调用预算写死（<8 次，第 4 次自检），
-工具固定开销整体压缩，codemode 恢复逐条声明并回传脚本内进度；界面修掉「点了没反应」
-「一上翻被拽回」「工具卡一直跳秒」；度量与冒烟脚本不再静默挂死。
+Theme: **turning "stuck" into visible numbers**. The per-user-turn tool call budget is hard-coded (<8 calls, self-check at the 4th), fixed tool overhead is compressed overall, codemode returns to declaring tools one by one and reports in-script progress, the UI fixes "clicked and nothing happened", "scrolling up yanks me back" and "the tool card keeps ticking", and measurement / smoke scripts no longer hang silently.
 
-### 改了什么
+### What changed
 
-- **调用预算**：`BATCHING_RULES` 拆出「调用预算（写死）」与「中途自检」（简单 ≤4 / 普通 ≤8 /
-  调研 ≤10、第 4 次自检、禁 `du -sh` 与全量 `grep -r`、`timeout 30`）；tool-guard 新增
-  `TURN_BUDGET` + `createTurnBudgetTracker()`，第 4/8 次在结果尾部追加提醒，`before_agent_start`
-  复位，codemode 嵌套调用不重复计数。
-- **工具开销**：输出预算默认 4000→24000 字符（头尾各 9000、400 行，`read` 档位不缩放，
-  二次裁剪幂等）；超时默认 120/900→45/300 s；调度器重型 4/2→6/4。
-- **codemode**：池上限可配（设置页 > `PI_CODEMODE_MAX_WORKERS` > 2）；默认模式 `only`→`on`；
-  脚本内调用进度折成一行经 liveOutput 回传；超时/取消时观察扩展推断 `slot held (pool=N)` 日志；
-  附 `scripts/hotfix/hotfix-codemode.{ps1,sh}` 打包版热修复脚本。
-- **界面**：工具卡耗时完成即冻结（`lib/tool-clock.ts`，`toolCallId` 模块级 Map，优先 pi 的
-  `durationMs`）；标签切换/侧栏会话点击改为同步提交（去掉被流式更新打断的 `startTransition`）；
-  滚动监听 deps 补 `showTranscript`、取消平滑滚动改 `behavior:'instant'`；介入文本加 `[系统提示]`
-  前缀，渲染为灰色系统卡、不进回合导航。
-- **会话侧栏**：首屏给每个项目补一条最新会话并返回 `nextOffset` 游标，历史项目分组不再整块消失。
-- **脚本不再静默挂死**：等帧 60 s 硬期限、host 退出/断连立即 reject 并把退出码并入错误
-  （`HOST_EXIT_GRACE_MS=700`）；新增 `scripts/lib/host-spawn.mjs`（`spawnNodeHost` / `hostChildEnv`），
-  12 个脚本改走工厂，stdin 护栏只写一处；`smoke:prefix-budget` 每步输出进度 + 硬超时
-  （`PIFORGE_SMOKE_STEP_TIMEOUT_MS`，Windows 用 `taskkill /F /T`）。
+- **Call budget**: `BATCHING_RULES` split into "call budget (hard-coded)" and "mid-run self-check" (simple ≤4 / ordinary
+  ≤8 / research ≤10, self-check at call 4, no `du -sh` and no full `grep -r`, `timeout 30`); tool-guard gained
+  `TURN_BUDGET` + `createTurnBudgetTracker()`, appending a reminder at calls 4 and 8, reset on `before_agent_start`,
+  with nested codemode calls not double-counted.
+- **Tool overhead**: the output budget default goes 4000 → 24000 characters (9000 from each end, 400 lines, the `read`
+  tier not scaled, second trimming idempotent); timeouts go 120/900 → 45/300 s; scheduler heavy slots 4/2 → 6/4.
+- **codemode**: pool size configurable (settings page > `PI_CODEMODE_MAX_WORKERS` > 2); default mode `only` → `on`;
+  in-script call progress is folded into one line and returned through liveOutput; on timeout / cancellation the
+  observation extension logs an inferred `slot held (pool=N)`; hotfix scripts for packaged builds ship as
+  `scripts/hotfix/hotfix-codemode.{ps1,sh}`.
+- **Interface**: a tool card's duration freezes on completion (`lib/tool-clock.ts`, a module-level Map keyed by
+  `toolCallId`, preferring pi's `durationMs`); tab switching / sidebar session clicks commit synchronously (the
+  `startTransition` that streaming updates kept interrupting is gone); the scroll listener's deps gain
+  `showTranscript` and smooth scrolling becomes `behavior:'instant'`; intervention text gets a `[system prompt]` prefix
+  and renders as a gray system card that stays out of turn navigation.
+- **Session sidebar**: the first screen adds each project's newest session and returns a `nextOffset` cursor, so
+  historical project groups no longer vanish wholesale.
+- **Scripts no longer hang silently**: a 60 s hard deadline waiting for frames, immediate rejection on host exit /
+  disconnect with the exit code folded into the error (`HOST_EXIT_GRACE_MS=700`); new
+  `scripts/lib/host-spawn.mjs` (`spawnNodeHost` / `hostChildEnv`) with 12 scripts moved onto the factory and the stdin
+  guard written in one place; `smoke:prefix-budget` prints progress per step and has a hard timeout
+  (`PIFORGE_SMOKE_STEP_TIMEOUT_MS`, using `taskkill /F /T` on Windows).
 
-### 默认行为变没变
+### Did default behavior change
 
-变了，五处：codemode 默认 `on`（工具逐条声明）；无 `timeout` 的 shell 调用 45 s（重型 300 s）
-被打断；输出预算 24000 字符；每用户轮软上限 4 / 硬上限 8（仅结果尾部追加提醒，不拦截）；
-调度器重型配额 6 / 4。
+Yes, in five places: codemode defaults to `on` (tools declared one by one); shell calls without `timeout` are
+interrupted at 45 s (300 s for heavy ones); the output budget is 24000 characters; the soft cap per user turn is 4 and
+the hard cap 8 (reminders appended to the result only, nothing blocked); the scheduler's heavy quota is 6 / 4.
 
-### 开关怎么用
+### How to use the switches
 
-- 输出预算 `PIFORGE_TOOL_OUTPUT_CHARS`；超时 `PIFORGE_TOOL_GUARD=0` 或 `PIFORGE_TOOL_TIMEOUT_*`；
-  调度器 `PIFORGE_TOOL_SCHEDULER=0` 或 `PIFORGE_SCHED_*`。
-- codemode 模式与 worker 池上限在设置页「扩展与 MCP → Codemode」（后者也可用
-  `PI_CODEMODE_MAX_WORKERS`）。
-- 调试日志 `PIFORGE_DEBUG_TOOL_GUARD=1` / `PIFORGE_DEBUG_TOOL_SCHEDULER=1`。
-- 完整说明见 [`docs/releases/v0.11.0.md`](docs/releases/v0.11.0.md)。
+- Output budget `PIFORGE_TOOL_OUTPUT_CHARS`; timeouts `PIFORGE_TOOL_GUARD=0` or `PIFORGE_TOOL_TIMEOUT_*`; scheduler
+  `PIFORGE_TOOL_SCHEDULER=0` or `PIFORGE_SCHED_*`.
+- The codemode mode and worker pool cap are in the settings page under "extensions and MCP → Codemode" (the latter
+  also via `PI_CODEMODE_MAX_WORKERS`).
+- Debug logs `PIFORGE_DEBUG_TOOL_GUARD=1` / `PIFORGE_DEBUG_TOOL_SCHEDULER=1`.
+- Full notes in [`docs/releases/v0.11.0.md`](docs/releases/v0.11.0.md).
 
-## v0.10.0 — 边界收口（分支 / 排队 / 看门狗 / 工具调度与超时）
+## v0.10.0 — boundaries tightened (branches / queue / watchdog / tool scheduling and timeouts)
 
-主题：**点了要有反应**。前端把「点了没反应」「点了要等」逐个拆掉；Host 侧新增工具执行
-调度器与 shell 超时硬护栏。默认行为有变的三处见「默认行为变没变」。
+Theme: **clicking should react**. The frontend removes "clicked and nothing happened" and "clicked and had to wait" one by one; the host side gains a tool execution scheduler and a hard shell timeout guard. Three default-behavior changes are listed under "did default behavior change".
 
-### 改了什么
+### What changed
 
-- **分支**：下拉改用 `getBranches` 的完整分支图（旧实现依赖只含当前路径的 `tree`，
-  `hasBranch()` 恒 false）；多根 `.jsonl` 先合成虚拟根再判分支；切分支可勾「蒸馏要离开的分支」
-  （`navigateTree(target, { summarize: true })`，结论以 `branch_summary` 接回目标节点，不破坏前缀缓存）；
-  流式期间禁用分支/派生并给出原因，失败不再只打 console。
-- **排队消息**：可删除（hover 变红），Host 按 revision 出队，前端乐观更新 + 冲突重拉。
-- **看门狗**：`agent.intervene` 同步受理立即回执、投递走后台；强制跳过时工具已跑 >10 s 先
-  `abortBash()` 再投递；卡顿只标到真正卡住的那一行（`stuckToolCallIds`）；`verdict` 缺失时
-  不渲染结论条（兼容旧 Host）。
-- **文件授权走独立 RPC 连接**（`lib/host-files.ts` + `__piforgeFilesHostClient`）：不再和 agent
-  事件流共用主连接，工具跑着也能点文件。
-- **工具执行调度器**（`agent-host/desktop-tool-scheduler-extension.ts`，默认开）：全局 heavy 4 /
-  light 12、单会话 heavy 2 / light 6，超额在本调用的 `tool_call` 钩子里排队；60 s 等不到槽位就
-  放弃排队照常执行，15 min 强制回收，`session_shutdown` 清空；codemode / tool_search / 嵌套调用豁免。
-- **shell 超时硬护栏**（`agent-host/desktop-tool-guard-extension.ts`，默认开）：`tool_call` 阶段
-  补 `input.timeout`（普通 120 s、重型 900 s，上限 600 / 900），非法值修正而非抛错；单批并行 >8
-  时只在该批首个超限调用结果尾部提醒一次。
-- **提示词**：`BATCHING_RULES` 增补「同一批并行 ≤ 8」「重型命令显式传 `timeout`」，探索改成
-  「先 `rg -l` 拿文件名再定向 `read`」。仍是静态常量，前缀 +26 字符。
-- **度量**：`npm run measure:prefix -- --summary` 只打 ≤10 行决策数字。
-- **打包版 Host 不加载扩展（严重）**：单文件 bundle 漏了 Pi SDK 的 `PI_BUNDLED_NODE` define，
-  SDK 以为自己在跑未打包的 dist 树，按 bundle 路径算 alias 加载 `~/.pi/agent/extensions/*`，
-  失败被吞掉——Host 就绪、RPC 全通，但用户扩展一条不生效（v0.9.2 起）。已修并加
-  `smoke:extension-ui-bundled` 护栏；`dist` / `pack` 也补上 `smoke-packaged-standalone`
-  （之前只有 macOS 跑）。
+- **Branches**: the dropdown uses `getBranches`'s full graph (the old implementation relied on `tree`, which only holds
+  the current path, so `hasBranch()` was always false); multiple root `.jsonl` files are merged into a virtual root
+  before deciding branching; switching branches can tick "distill the branch being left"
+  (`navigateTree(target, { summarize: true })`, with the conclusion reattached to the target node as `branch_summary`
+  without breaking the prefix cache); branching / forking is disabled during streaming with a stated reason, and failures
+  no longer go only to the console.
+- **Queued messages**: deletable (red on hover); the host dequeues by revision, the frontend updates optimistically and
+  refetches on conflict.
+- **Watchdog**: `agent.intervene` accepts synchronously and returns a receipt immediately while delivery runs in the
+  background; on a forced skip, a tool already running >10 s gets `abortBash()` first, then delivery; the stall marker
+  points only at the line that is really stuck (`stuckToolCallIds`); the verdict bar is not rendered when `verdict` is
+  missing (compatible with older hosts).
+- **File authorization uses its own RPC connection** (`lib/host-files.ts` + `__piforgeFilesHostClient`): no longer
+  shares the main connection with agent events, so files can be clicked while tools run.
+- **Tool execution scheduler** (`agent-host/desktop-tool-scheduler-extension.ts`, on by default): global heavy 4 /
+  light 12, per-session heavy 2 / light 6; over-quota calls queue inside that call's `tool_call` hook; after waiting
+  60 s without a slot the call gives up on queuing and runs normally, forced reclamation at 15 min, cleared on
+  `session_shutdown`; codemode / tool_search / nested calls are exempt.
+- **Hard shell timeout guard** (`agent-host/desktop-tool-guard-extension.ts`, on by default): the `tool_call` stage
+  fills in `input.timeout` (120 s ordinary, 900 s heavy, caps 600 / 900); invalid values are corrected rather than
+  thrown; when a batch runs more than 8 in parallel, only the first over-limit call in that batch gets a reminder at the
+  end of its result.
+- **Prompt**: `BATCHING_RULES` gains "at most 8 parallel in one batch" and "pass `timeout` explicitly for heavy
+  commands"; exploration becomes "`rg -l` first for file names, then targeted `read`". Still a static constant, +26
+  characters on the prefix.
+- **Measurement**: `npm run measure:prefix -- --summary` prints at most 10 decision numbers.
+- **Packaged host loaded no extensions (severe)**: the single-file bundle missed the Pi SDK's `PI_BUNDLED_NODE` define,
+  so the SDK thought it was running in an unbundled dist tree and resolved aliases by bundle path, loading
+  `~/.pi/agent/extensions/*` and swallowing the failures — the host was ready and every RPC worked, but not one user
+  extension took effect (since v0.9.2). Fixed, with a `smoke:extension-ui-bundled` guard added; `dist` / `pack` also
+  gained `smoke-packaged-standalone` (previously only macOS ran it).
 
-### 默认行为变没变
+### Did default behavior change
 
-变了，三处：
+Yes, in three places:
 
-1. 不显式传 `timeout` 的 shell 调用会在 120 s（重型 900 s）被打断；常驻进程 / 全量打包请显式传
-   `timeout`。
-2. 同一 Host 内并行工具调用开始按全局与单会话配额排队（只延后执行，参数与结果不变）。
-3. 逐项功能未变：分支下拉的可见性变多属修 bug；蒸馏开关仍**默认关**。
+1. A shell call without an explicit `timeout` is interrupted at 120 s (900 s for heavy ones); long-lived processes and
+   full packaging must pass `timeout` explicitly.
+2. Parallel tool calls within one host now queue against the global and per-session quotas (execution is delayed only;
+   arguments and results are unchanged).
+3. No individual feature changed: the branch dropdown's added visibility is a bug fix; the distillation switch is still
+   **off by default**.
 
-### 开关怎么用
+### How to use the switches
 
-- 关掉调度器：`PIFORGE_TOOL_SCHEDULER=0`；配额与等待走 `PIFORGE_SCHED_*`（`GLOBAL_HEAVY` /
-  `GLOBAL_LIGHT` / `SESSION_HEAVY` / `SESSION_LIGHT` / `MAX_WAIT_MS` / `QUEUE_HINT_MS` / `MAX_HOLD_MS`）。
-- 关掉超时护栏：`PIFORGE_TOOL_GUARD=0`；阈值走 `PIFORGE_TOOL_TIMEOUT_SECONDS` /
-  `PIFORGE_TOOL_TIMEOUT_HEAVY_SECONDS` / `PIFORGE_TOOL_TIMEOUT_MAX_SECONDS` / `PIFORGE_TOOL_MAX_PARALLEL`。
-- 蒸馏：分支下拉里的开关，写在 `localStorage["piforge:branch-distill"]`。
-- 完整说明见 [`docs/releases/v0.10.0.md`](docs/releases/v0.10.0.md)。
+- Turn off the scheduler: `PIFORGE_TOOL_SCHEDULER=0`; quotas and waiting go through `PIFORGE_SCHED_*` (`GLOBAL_HEAVY` /
+  `GLOBAL_LIGHT` / `SESSION_HEAVY` / `SESSION_LIGHT` / `MAX_WAIT_MS` / `QUEUE_HINT_MS` / `MAX_HOLD_MS`).
+- Turn off the timeout guard: `PIFORGE_TOOL_GUARD=0`; thresholds go through `PIFORGE_TOOL_TIMEOUT_SECONDS` /
+  `PIFORGE_TOOL_TIMEOUT_HEAVY_SECONDS` / `PIFORGE_TOOL_TIMEOUT_MAX_SECONDS` / `PIFORGE_TOOL_MAX_PARALLEL`.
+- Distillation: the switch in the branch dropdown, stored in `localStorage["piforge:branch-distill"]`.
+- Full notes in [`docs/releases/v0.10.0.md`](docs/releases/v0.10.0.md).
 
-## v0.9.4 — 调用压缩（工具调用次数 / 思考预算）
+## v0.9.4 — call compaction (tool call count / thinking budget)
 
-主题：**同样的任务少问几轮**。不删工具、不降能力，只压缩「模型往返次数」和「thinking 占 output」。
+Theme: **fewer round trips for the same task**. No tools removed, no capability reduced — only the number of model round trips and the share of output spent thinking are compressed.
 
-### 改了什么
+### What changed
 
-- **codemode 默认开启，且默认 `only`**（`lib/desktop-settings.ts`）：普通工具不再声明给模型，
-  改由一次脚本批量调用（`createCodemodeExtension({ mode })` 下发，**不写** `~/.pi/agent/settings.json`）。
-  `agent.updateCodemode` 契约新增可选 `mode`，设置页切换后下一条消息生效（SDK 的 `getMode` 惰性读取）。
-- **提示词新增四条批量/预算约束**（`agent-host/prompts/output-style.ts` 的 `BATCHING_RULES`）：
-  批量优先、先引用后补测、调用预算（≤15 次模型调用 / ≤45 次工具调用，接近上限先交付结论再问）、
-  报错先读完 traceback 再改。纯静态常量，只进一次前缀。
-- **截断续读引导改写**（`agent-host/tool-output-budget.ts`）：从「grep/sed 逐段读」改成
-  「一次 codemode 脚本批量读，或用 `tool_history_get` 翻页」。只在被截断时出现，稳态零成本。
-- **Host 首次启动补写 `defaultThinkingLevel: "low"`**（`agent-host/settings-defaults.ts`）：
-  只在该键缺失时写一次，原子写，解析失败即放弃；之后在常规设置里改回来即可。
-  不写 `thinkingBudgets`——pi 的 low 预算本来就是 2048。
+- **codemode is on by default, and defaults to `only`** (`lib/desktop-settings.ts`): ordinary tools are no longer
+  declared to the model; they are called in one batched script instead (delivered by
+  `createCodemodeExtension({ mode })`, and **not** written to `~/.pi/agent/settings.json`). The
+  `agent.updateCodemode` contract gains an optional `mode`; a change in the settings page takes effect on the next
+  message (the SDK reads `getMode` lazily).
+- **Four new batching / budget constraints in the prompt** (`BATCHING_RULES` in
+  `agent-host/prompts/output-style.ts`): batching first, quote before re-testing, call budget (≤15 model calls / ≤45
+  tool calls, deliver conclusions before asking when near the ceiling), read the whole traceback before changing code.
+  Static constants, entering the prefix once.
+- **Truncation continuation guidance rewritten** (`agent-host/tool-output-budget.ts`): from "read it in pieces with
+  grep/sed" to "read it in one codemode script batch, or page with `tool_history_get`". It only appears when something
+  was truncated, so steady state costs nothing.
+- **The host writes `defaultThinkingLevel: "low"` on first start** (`agent-host/settings-defaults.ts`): once, only when
+  the key is missing, with an atomic write and a parse failure aborting it; change it back in the regular settings
+  afterwards. `thinkingBudgets` is not written — pi's low budget is 2048 anyway.
 
-### 默认行为变没变
+### Did default behavior change
 
-变了，三处：新会话默认走 codemode（可在「扩展与 MCP → Codemode」关掉或切回「照常声明工具」）；
-新会话默认思考等级 low（常规设置可改）；首次启动会写一行 `defaultThinkingLevel`。
-工具集、审批策略、工具输出预算、`onDemandDomains` 均未改动。
+Yes, in three places: new sessions go through codemode by default (it can be turned off, or set back to "declare tools
+as usual", in "extensions and MCP → Codemode"); new sessions default to thinking level low (changeable in the regular
+settings); the first start writes one `defaultThinkingLevel` line. The tool set, approval policy, tool output budget and
+`onDemandDomains` are untouched.
 
-### 开关怎么用
+### How to use the switches
 
-- 关掉批量层：「扩展与 MCP → Codemode」开关置为关闭（工具恢复直呼，脚本仍可用）。
-- 只想让工具照常声明、不要 `only`：同页「工具呈现方式」选「照常声明工具」（`codemodeMode: "on"`）。
-- 思考预算：常规设置 → 默认思考等级（写回 `~/.pi/agent/settings.json`）。
+- Turn off the batching layer: set the "extensions and MCP → Codemode" switch to off (tools are called directly again,
+  scripts still work).
+- Want tools declared as usual without `only`: pick "declare tools as usual" on the same page (`codemodeMode: "on"`).
+- Thinking budget: regular settings → default thinking level (written back to `~/.pi/agent/settings.json`).
 
-## v0.9.4 — 夜晚模式
+## v0.9.4 — night mode
 
-### 改了什么
+### What changed
 
-- 常规设置新增「夜晚模式」：跟随系统 / 浅色 / 深色，写入 `localStorage["pi-theme"]`，
-  `<html data-theme>` + `color-scheme` 由内联启动脚本先落一次（无闪烁），
-  `components/ThemeBoot.tsx` 挂载后校正并在「跟随系统」时监听 `prefers-color-scheme`。
-- `app/globals.css`：新增 `:root[data-theme="dark"]` 令牌组（`--color-*` 与旧 `--bg/--text` 系列）；
-  规则区里写死的浅色字面量统一换成令牌；历史组件里的 `bg-white` / `bg-[#hex]` 等字面量由
-  文件末尾的映射表兜底（`scripts/gen-dark-remap.mjs` 生成）。
-- 顺手修掉两处硬编码浅色：`components/FilePanel.tsx` 的 `explorerTokens`（行内覆盖了全局令牌，
-  导致文件树在夜晚模式下仍用深色字）；`ChatSurface` 空会话画布改用 `--empty-canvas`。
+- The regular settings gain "night mode": follow system / light / dark, written to `localStorage["pi-theme"]`;
+  `<html data-theme>` + `color-scheme` are applied first by an inline boot script (no flash), and
+  `components/ThemeBoot.tsx` corrects them on mount and watches `prefers-color-scheme` when set to "follow system".
+- `app/globals.css`: a new `:root[data-theme="dark"]` token group (`--color-*` plus the older `--bg/--text` series);
+  hardcoded light literals in the rules are replaced with tokens; literals such as `bg-white` / `bg-[#hex]` in older
+  components are caught by a mapping table at the end of the file (generated by `scripts/gen-dark-remap.mjs`).
+- Two hardcoded light spots fixed along the way: `explorerTokens` in `components/FilePanel.tsx` (it overrode global
+  tokens inline, leaving the file tree with dark text in night mode) and the empty-session canvas in `ChatSurface`,
+  which now uses `--empty-canvas`.
 
-### 默认行为变没变
+### Did default behavior change
 
-没变：默认仍是浅色霜蓝（`system` 时按系统偏好）。不想要夜晚模式可忽略该设置项。
+No: the default is still light frost-blue (following the system preference when set to `system`). Ignore the setting if
+you do not want night mode.
 
-## v0.9.2 — agent-host 冷启动 bundle · 上下文硬顶随窗口缩放
+## v0.9.2 — agent-host cold-start bundle · context hard cap scales with the window
 
-主题：**冷启动从 32s 回到秒级**。host 打单文件 bundle，上下文预算改成跟模型窗口联动。
+Theme: **cold start back from 32s to the sub-second range**. The host is bundled into a single file, and the context budget now follows the model window.
 
-### 改了什么
+### What changed
 
-- agent-host 打 esbuild 单文件 bundle（`agent-host/bundle/host.mjs`）：冷启动不再逐文件解析
-  5,917 个 ESM 模块（图加载 3.1–3.5 s → 0.70–0.74 s）。缺 bundle 时自动回退逐文件树。
-- 新增零依赖阶段打点（`agent-host/host-phases.ts`，`[agent-host] [phase] <name> ms=<n> delta=<n>`），
-  `bench/startup_stats.py` 解析 `main.log` 出每次启动的 p50/p95 与阶段表。
-- **压缩策略默认交回 pi**：不再注册 PiForge 自研的桌面压缩扩展，触发与摘要都走
-  pi 原生 `shouldCompact` + `DEFAULT_COMPACTION_SETTINGS`（reserve 16k / keepRecent 20k）。
-  自研的「窗口 / 预算 / 硬顶」触发只在 `PIFORGE_DESKTOP_COMPACTION=1` 时接管，
-  代码与单测保留，随时可 A/B。
-- 预算提示从百分比改为 `已用 / 窗口 token`，分母只有模型窗口，不掺任何压缩硬顶。
-- 消息区懒渲染改双阈值滞回（水合 1200px / 卸载 2000px，单阈值会在边界反复抖），
-  上滚即锁住贴底接管，解除点是真正距底 < 40px。
+- agent-host is bundled into a single esbuild file (`agent-host/bundle/host.mjs`): cold start no longer parses 5,917 ESM
+  modules one by one (module graph load 3.1–3.5 s → 0.70–0.74 s). A missing bundle falls back to the per-file tree.
+- Zero-dependency phase timings added (`agent-host/host-phases.ts`, `[agent-host] [phase] <name> ms=<n> delta=<n>`);
+  `bench/startup_stats.py` parses `main.log` into p50/p95 and a phase table per start.
+- **Compaction defaults back to pi**: PiForge's own desktop compaction extension is no longer registered; triggering and
+  summarizing both go through pi's native `shouldCompact` + `DEFAULT_COMPACTION_SETTINGS` (reserve 16k / keepRecent
+  20k). The self-built "window / budget / hard cap" triggers only take over when `PIFORGE_DESKTOP_COMPACTION=1`; the
+  code and unit tests are kept, ready for A/B at any time.
+- The budget hint changes from a percentage to `used / window tokens`, whose denominator is the model window alone and
+  includes no compaction cap.
+- The message area's lazy rendering moves to a dual-threshold hysteresis (hydrate 1200px / unmount 2000px — a single
+  threshold oscillates at the boundary), scroll-up locks the sticky-bottom takeover, and it is only released when the
+  real distance from the bottom is < 40px.
 
-### 默认行为变没变
+### Did default behavior change
 
-- 工具名、参数形状、UI 协议、session 文件格式、`Startup timing:` 字段名全部未变。
-- 默认压缩**完全由 pi 决定**（窗口 − 16k reserve，保留最近 20k token）；PiForge 侧
-  不再有任何绝对 token 硬顶，也不再抢占 `session_before_compact` 改写摘要。
-- 打包产物多一个 `resources/standalone/agent-host/host.mjs`（约 15 MB）；
-  `standalone/node_modules` 仍保留（Next standalone 与用户扩展还在用它）。
+- Tool names, argument shapes, the UI protocol, the session file format and the `Startup timing:` field names are all
+  unchanged.
+- Default compaction is **entirely decided by pi** (window − 16k reserve, keeping the last 20k tokens); PiForge no
+  longer has any absolute token cap and no longer preempts `session_before_compact` to rewrite the summary.
+- Packaged output gains one `resources/standalone/agent-host/host.mjs` (about 15 MB); `standalone/node_modules` stays
+  (Next standalone and user extensions still use it).
 
-### 开关怎么用
+### How to use the switches
 
-- 回到逐文件入口：删掉 `agent-host/bundle/host.mjs` 后重跑 `npm run build:standalone`，自动回退。
-- 单独重打 bundle：`npm run bundle:agent-host`；只测启动：`python bench/startup_stats.py`。
-- `PIFORGE_DESKTOP_COMPACTION=1` → 回到自研压缩触发（窗口 3 轮 / 45% 预算 / 120k 硬顶 + 四段式摘要）；
-  不设 = 交给 pi 原生策略。
+- Back to the per-file entry point: delete `agent-host/bundle/host.mjs` and rerun `npm run build:standalone` — it falls
+  back automatically.
+- Rebuild just the bundle: `npm run bundle:agent-host`; measure only startup: `python bench/startup_stats.py`.
+- `PIFORGE_DESKTOP_COMPACTION=1` → back to the self-built compaction triggers (3-round window / 45% budget / 120k hard
+  cap + four-part summary); unset = delegate to pi's native policy.
 
-### 数字
+### Numbers
 
-| 项 | 改前 | 改后 |
+| Item | Before | After |
 | --- | --- | --- |
-| host ready（app ready 起算） | 2670 / 2796 ms | **1194 / 1064 / 867** → p50 1064、p95 1194 |
-| ESM 模块图加载 | 3.1–3.5 s（5,917 文件） | 0.70–0.74 s |
-| UI 可交互（static app url loaded） | p50 982 ms | p50 785 ms |
-| 全新拷贝 + 全新 userData 首启（G2 代理） | — | 1799 ms |
-| 单测 | — | 1 398 项：1 394 通过 / 0 失败 / 4 跳过 |
+| host ready (from app ready) | 2670 / 2796 ms | **1194 / 1064 / 867** → p50 1064, p95 1194 |
+| ESM module graph load | 3.1–3.5 s (5,917 files) | 0.70–0.74 s |
+| UI interactive (static app url loaded) | p50 982 ms | p50 785 ms |
+| Fresh copy + fresh userData first start (G2 proxy) | — | 1799 ms |
+| Unit tests | — | 1,398 items: 1,394 passed / 0 failed / 4 skipped |
 
-详细阶段表与前后对比见 `docs/releases/v0.9.2.md` 与 `docs/optimizations/host-cold-start-bundle.md`。
+The detailed phase table and before/after comparison are in `docs/releases/v0.9.2.md` and
+`docs/optimizations/host-cold-start-bundle.md`.
 
-## v0.9.1 — 子 Agent 轮数阀门修复 · 输出契约 · Pi 核心 1.4.0
+## v0.9.1 — sub-agent turn valve fixed · output contract · Pi core 1.4.0
 
-主题：**子 Agent 不再两轮被判死**。只改阀门、结算顺序与失败回包，不动并行架构与提示词契约。
+Theme: **sub-agents are no longer declared dead after two turns**. Only the valve, the settlement order and the failure response change; the parallel architecture and the prompt contract stay.
 
-### 改了什么
+### What changed
 
-- 子 Agent 轮数上限 **3 → 6**（`PIFORGE_SUBAGENT_MAX_TURNS` 可覆盖），判据修成 `used <= maxTurns`，
-  第 `maxTurns+1` 轮才拦；结算顺序改为「空转 → 上下文 → 轮数」，让 progress-guard 有机会生效。
-- `ok:false` 回包改为结构化 `need_help`（turns / last_action / reason / next_steps），不再只剩 `Cancelled`。
-- 子 Agent 输出契约固化：`patch` 必须是可 `git apply` 的 diff；JSON 只约束最终回复；
-  `PIFORGE_SUBAGENT_PROMPT=legacy|contract`（默认 `contract`）可回退。
-- Pi 核心 `@earendil-works/pi-*` 1.1.0 → 1.4.0（精确锁定）；接口适配只落在 `agent-host/sdk-adapter.ts`。
-- 新增每周自动升级雷达 `.github/workflows/pi-auto-upgrade.yml`（只提 PR，不发版）。
+- The sub-agent turn limit goes **3 → 6** (`PIFORGE_SUBAGENT_MAX_TURNS` overrides), the predicate is fixed to
+  `used <= maxTurns` so only turn `maxTurns+1` is blocked, and settlement is reordered to "idling → context → turns"
+  so progress-guard gets a chance to act.
+- The `ok:false` response becomes a structured `need_help` (turns / last_action / reason / next_steps) instead of a bare
+  `Cancelled`.
+- The sub-agent output contract is fixed: `patch` must be a diff that `git apply` accepts; JSON only constrains the
+  final reply; `PIFORGE_SUBAGENT_PROMPT=legacy|contract` (default `contract`) rolls back.
+- Pi core `@earendil-works/pi-*` 1.1.0 → 1.4.0 (pinned exactly); interface adaptation stays entirely in
+  `agent-host/sdk-adapter.ts`.
+- A weekly auto-upgrade radar is added: `.github/workflows/pi-auto-upgrade.yml` (opens PRs only, never releases).
 
-### 默认行为变没变
+### Did default behavior change
 
-- 前缀 6 640 tok（干净基线 6 240，本机带 `~/.agents/skills`）、11 个工具、核心四件套 710 tok 均未变。
-- 子 Agent 默认契约从「散文 + 3 轮」变为「可应用补丁 + 6 轮」，这是本版唯一有感的默认变化。
+- Prefix 6,640 tok (clean baseline 6,240, this machine with `~/.agents/skills`), 11 tools and the core four at 710 tok
+  are all unchanged.
+- The sub-agent default contract changes from "prose + 3 turns" to "appliable patch + 6 turns" — the only noticeable
+  default change in this release.
 
-### 开关怎么用
+### How to use the switches
 
-- `PIFORGE_SUBAGENT_MAX_TURNS=3` → 回到旧上限；不设 = 6。
-- `PIFORGE_SUBAGENT_PROMPT=legacy` → 回到旧提示词；不设 = contract。
-- 常驻舰队（`herdr_*`）不受上限约束（`maxTurns = null`）。
+- `PIFORGE_SUBAGENT_MAX_TURNS=3` → back to the old limit; unset = 6.
+- `PIFORGE_SUBAGENT_PROMPT=legacy` → back to the old prompt; unset = contract.
+- The persistent fleet (`herdr_*`) is not subject to the limit (`maxTurns = null`).
 
-详细说明与验证数据见 `docs/releases/v0.9.1.md`。
+Detailed notes and verification data are in `docs/releases/v0.9.1.md`.
 
-## v0.9.0 — Watchdog 零 Token 监控 · 人工介入 · 用量条
+## v0.9.0 — zero-token watchdog · human intervention · usage strip
 
-主题：**卡住看得见，介入点一下**。监控与介入全部在程序层，不产生任何 LLM 请求；
-前缀、核心四件套、命中率三个硬数字保持不变。
+Theme: **stuck is visible, intervention is one click**. Monitoring and intervention live entirely in the program layer and issue no LLM requests; the three hard numbers — prefix, core four, hit rate — are unchanged.
 
-### 新增
+### Added
 
-- **无进展看门狗（Watchdog）**：`agent-host/watchdog.ts` + `progress-tracker.ts`，定时器 + 内存
-  状态机，**零模型调用、零 prompt 注入**（通知只进内存环形队列，`watchdog.status` 只读回给 UI）。
-  两把尺子：`lastActivityAt`（有效进展：成功且不重复的动作 / 正文增量）与 `lastLivenessAt`
-  （活的迹象：含工具启动与流式输出）；并发时每个工具按 `toolCallId` 独立建档。
-  **默认行为变了：默认开启**（`PIFORGE_WATCHDOG=0` 可完全关闭）。
-- **人工介入（HITL）**：`agent.intervene` 三档动作 `skip`（强制跳过）/ `ask_brief`（极简询问，
-  默认）/ `ask`（深度诊断），复用既有 steer → 队首排队 → prompt 三条通路，不新增模型直连。
-  **默认行为没变**：不点按钮不会发出任何指令。
-- **右侧「系统监控」面板**（`components/watchdog/`）：心跳、逐工具计时、疑似阻塞点、退避通知、
-  JSON 详情、停滞阈值下拉框；另有三处只读状态灯（会话列表 / 标签栏 / 工具卡）。
-  **默认行为变了：面板标签新增一项**（其余面板不变）。
-- **用量条 `UsageStrip`**：Token / 缓存命中 / 上下文占用 / 上游额度常驻输入框下方，点开仍是原
-  「用量与额度」弹窗。**默认行为变了：统计从底栏迁到输入框下方**（统计位置变化，底栏只留模式与项目名）。
-- **窄视口浮层侧栏**：视口 ≤ 1080px 时左右栏改为浮层并默认收起。
-  **默认行为变了：仅窄窗口**；宽窗口仍是三栏常驻。
+- **No-progress watchdog**: `agent-host/watchdog.ts` + `progress-tracker.ts`, a timer plus an in-memory state machine,
+  **zero model calls, zero prompt injection** (notifications only enter an in-memory ring queue, and `watchdog.status`
+  is read back to the UI only). Two rulers: `lastActivityAt` (meaningful progress: a successful, non-duplicate action or
+  a body increment) and `lastLivenessAt` (signs of life, including tool starts and streaming output); under concurrency
+  each tool has its own record keyed by `toolCallId`. **Default behavior changed: on by default**
+  (`PIFORGE_WATCHDOG=0` turns it off completely).
+- **Human intervention (HITL)**: `agent.intervene` with three actions `skip` (force skip) / `ask_brief` (minimal
+  question, default) / `ask` (deep diagnosis), reusing the existing steer → front-of-queue → prompt paths without adding
+  a direct model connection. **Default behavior unchanged**: no instruction is emitted unless you press the button.
+- **Right-side "system monitor" panel** (`components/watchdog/`): heartbeat, per-tool timing, suspected blockers,
+  backoff notifications, JSON details, a stall-threshold dropdown; plus three read-only status lights (session list /
+  tab bar / tool cards). **Default behavior changed: the panel gains one tab** (the others are unchanged).
+- **`UsageStrip`**: tokens / cache hits / context occupancy / upstream quota sit permanently under the input; opening it
+  is still the original "usage and quota" dialog. **Default behavior changed: the statistics moved from the bottom bar to
+  under the input** (position change only; the bottom bar keeps the mode and project name).
+- **Overlay sidebar on narrow viewports**: at ≤ 1080px the left and right columns become overlays collapsed by default.
+  **Default behavior changed: narrow windows only**; wide windows keep the three permanent columns.
 
-### 变更
+### Changed
 
-- 上游额度只请求一次：`ChatSurface` 拉取后经 props 下传给用量条与弹窗（原先底栏与弹窗各拉一次）；
-  `useUpstreamUsage` 另加 `options.enabled` 开关备用（当前无调用方传 false）。
-  **默认行为没变**，只是少一次同源请求。
-- 思考档位菜单 3 → 4 档（`auto` / `high` / `medium` / `low`），不再按模型能力过滤，不支持的
-  档位由后端收敛。**默认行为变了：菜单多出「低质量（low）」**；老会话持久化的 `off/minimal/
-  xhigh/max` 仍正常回显。
-- 会话状态灯优先级：看门狗红（停滞）> 运行中蓝 > 等待操作琥珀 > 后台完成绿。
-  **默认行为没变**，只是停滞时灯变红。
-- 停滞阈值可在面板运行期切换（15 / 30 / 60 / 90 秒），只写 Host 内存配置：不重建定时器、
-  不重置任务、不产生通知（Host 侧钳制在 5s–10min）。
+- Upstream quota is requested once: `ChatSurface` fetches it and passes it down by props to the usage strip and the
+  dialog (the bottom bar and the dialog used to fetch it separately); `useUpstreamUsage` also gains an
+  `options.enabled` switch for later use (no caller passes false today). **Default behavior unchanged**, just one fewer
+  same-origin request.
+- The thinking tier menu goes 3 → 4 (`auto` / `high` / `medium` / `low`), no longer filtered by model capability, with
+  unsupported tiers converged by the backend. **Default behavior changed: the menu gains "low quality (low)"**; older
+  sessions persisting `off/minimal/xhigh/max` still display normally.
+- Session status light priority: watchdog red (stalled) > running blue > waiting for action amber > background done
+  green. **Default behavior unchanged**, the light just turns red when stalled.
+- The stall threshold can be switched at runtime from the panel (15 / 30 / 60 / 90 seconds), writing only the host's
+  in-memory config: no timer rebuild, no task reset, no notification (the host clamps to 5s–10min).
 
-### 修复
+### Fixed
 
-- 图片灯箱「复制」此前永远显示失败：Chromium/Electron 的 `clipboard.write` 只接受
-  `image/png`，现在先把当前图重绘成 PNG 再写剪贴板。
-- 灯箱优先显示原图（`previewUrl`）而不是发给模型的降采样版本（长边 1568），大图不再糊。
-- 灯箱右键菜单 `Esc` 先关菜单再关查看器；工具栏在 Electron 窗口拖拽条下让位（Windows/macOS 分别留白）。
-- **其他 / 护栏**：`smoke:agent-host` 增加 `watchdog.status`、`watchdog.task`、`agent.intervene`
-  断言（默认阈值 20s、非法 action 拒绝、会话不存在拒绝）；`prefix-measure` 支持
-  `anthropic-messages` 形状的探针（缓存断点验证）；新增看门狗 / 介入 / 进度追踪 / 面板 / 路由单测。
+- The image lightbox's "copy" always failed before: Chromium/Electron's `clipboard.write` only accepts `image/png`, so
+  the current image is now redrawn to PNG before writing to the clipboard.
+- The lightbox shows the original image (`previewUrl`) instead of the downsampled version sent to the model (long edge
+  1568), so large images are no longer blurry.
+- In the lightbox's context menu, `Esc` closes the menu before the viewer; the toolbar makes room under the Electron
+  window drag strip (with per-platform spacing for Windows/macOS).
+- **Other / guards**: `smoke:agent-host` gains assertions for `watchdog.status`, `watchdog.task` and
+  `agent.intervene` (default threshold 20s, invalid action rejected, unknown session rejected); `prefix-measure`
+  supports an `anthropic-messages`-shaped probe (cache breakpoint verification); new unit tests for the watchdog /
+  intervention / progress tracking / panel / routes.
 
-### 迁移
+### Migration
 
-- **无强制动作**。默认前缀、核心四件套、声明工具数、命中率均未变（见下表）。
-- 想完全回到 v0.8.2 行为：`PIFORGE_WATCHDOG=0`（不建定时器、不记状态，`watchdog.status`
-  只回 `{ enabled: false }`）＋ `PIFORGE_ON_DEMAND_DOMAINS=0`（全部工具常驻，前缀回到 6 988）。
-- **v0.8.3 未单独发布**，其改动（工具合并 23 → 12、按需域、结果去重、缓存保活）随本版一起
-  发布；该部分的迁移说明见下方 v0.8.3 小节。
-- **不在本版**：工作区里未提交的自动更新（`electron/app-update*`、`auto-update-controller`、
-  `hooks/useAppUpdater`、`components/AppUpdateRow`）与流式合帧
-  （`hooks/agent-session/frame-coalescer.ts`）仍是 WIP，未进入 v0.9.0，也没有默认开关。
+- **No mandatory action**. The default prefix, core four, declared tool count and hit rate are all unchanged (see the
+  table below).
+- To go back to v0.8.2 behavior exactly: `PIFORGE_WATCHDOG=0` (no timer, no state recorded, `watchdog.status` returns
+  only `{ enabled: false }`) plus `PIFORGE_ON_DEMAND_DOMAINS=0` (all tools resident, prefix back to 6,988).
+- **v0.8.3 was never released separately**; its work (tool merge 23 → 12, on-demand domains, result deduplication, cache
+  warming) ships with this release, and its migration notes are in the v0.8.3 section below.
+- **Not in this release**: the uncommitted auto-update work in the workspace (`electron/app-update*`,
+  `auto-update-controller`, `hooks/useAppUpdater`, `components/AppUpdateRow`) and frame coalescing
+  (`hooks/agent-session/frame-coalescer.ts`) are still WIP, did not enter v0.9.0, and have no default switch.
 
-### 数字（与 v0.8.3 一致，无回归）
+### Numbers (identical to v0.8.3, no regression)
 
-| 项 | v0.8.3 | v0.9.0（默认） | 口径 |
+| Item | v0.8.3 | v0.9.0 (default) | Lens |
 | --- | --- | --- | --- |
-| 静态前缀 | 6 244 | **6 244**（记录型复测 6 240，±4 为仓库文档体积） | 记录型 provider |
-| 声明工具数 | 11（`shell` 按需）/ 12（全常驻） | **11 / 12**（不变） | `measure:prefix` |
-| 核心四件套 | 710 tok | **710 tok** | `measure:prefix` |
-| 稳定段命中率 | 99.5% / 97.98% | **99.5% / 97.98%** | 记录型 / 真实 deepseek 30 轮 |
-| 自动压缩 | 关闭 | **仍然关闭** | `rpc-manager.test.ts` |
+| Static prefix | 6,244 | **6,244** (6,240 remeasured with the recording provider; ±4 is repository doc volume) | recording provider |
+| Declared tools | 11 (`shell` on demand) / 12 (all resident) | **11 / 12** (unchanged) | `measure:prefix` |
+| Core four | 710 tok | **710 tok** | `measure:prefix` |
+| Stable-segment hit rate | 99.5% / 97.98% | **99.5% / 97.98%** | recording / real deepseek 30 turns |
+| Auto compaction | off | **still off** | `rpc-manager.test.ts` |
 
-### 验证
+### Verification
 
-- `npx tsc --noEmit` 0 错；`npm run lint` 0 error（4 warning）。
-- `npm run smoke:prefix-budget` 退出码 0（默认 6 240 / 11 工具 / 核心 710；3 轮 cacheRead 命中 99.5%）。
-  口径注意：`HOME` 下若有 `~/.agents/skills`，`<skills>` 段会进 system prompt（+1 598 字符 ≈ +400 tok →
-  prefix 6 640），属于环境差异，不属于代码回归；上表数字取清空技能目录后的口径。
-- `npm test` 1 253 项：1 248 通过、3 项按平台跳过。另有 2 项失败位于**未跟踪的 WIP 测试**
-  （`electron/auto-update-controller.test.ts` 缺 `.ts` 后缀的 import、`lib/agent-host-client.test.ts`
-  等待尚未实现的握手重试），不属于本版改动。
+- `npx tsc --noEmit` 0 errors; `npm run lint` 0 errors (4 warnings).
+- `npm run smoke:prefix-budget` exits 0 (default 6,240 / 11 tools / core 710; cacheRead hit 99.5% across 3 turns).
+  A caveat on the lens: if `HOME` contains `~/.agents/skills`, the `<skills>` section enters the system prompt (+1,598
+  characters ≈ +400 tok → prefix 6,640), which is an environment difference, not a code regression; the table above uses
+  the lens with the skills directory emptied.
+- `npm test` 1,253 items: 1,248 passed, 3 skipped by platform. Another 2 failures sit in **untracked WIP tests**
+  (`electron/auto-update-controller.test.ts` importing without the `.ts` suffix, and `lib/agent-host-client.test.ts`
+  waiting for a handshake retry that is not implemented yet); they are not part of this release's changes.
 
-## Unreleased — v0.8.3（随 v0.9.0 一起发布，见上）
+## Unreleased — v0.8.3 (shipped with v0.9.0, see above)
 
-### 改了什么
+### What changed
 
-- **工具合并 23 → 12**：20 个扩展工具按域收成 5 个多态工具（`browser` / `shell` / `fleet` /
-  `orchestrator` / `memory`，用 `action` 分派），核心四件套 `read`/`bash`/`edit`/`write`
-  的 schema 不变（710 tok）。旧工具名仍可被工具内部调用，UI / 审批 / i18n 沿用旧名。
-- **缓存保活与首轮预热**：CacheWarming 首次真正接到设置上（桌面默认 `idle`），设置页显示
-  实际生效的模式与状态；恢复会话时用 `maxTokens:1` 预放一次前缀（实测预热只花 16 tok）。
-- **工具结果去重**：同文件同区间的重复 `read`、同命令的重复 `bash` 不再整段回放
-  （相同输出一句话、输出变长只回尾部差异）；错误与非零退出永远完整返回。
-- **按需工具域**：中频域 `shell` 默认不声明，首次用时 `tool_search` 激活后常驻；
-  `tool_search` 只返回可调用的 wire name，并按 canonical 顺序重排 active（消除激活时的一次额外前缀写入）。
-- **设置页「按需工具域」多选**：写 `desktop-settings.json` 的 `onDemandDomains`，
-  显示实际生效列表与来源。
+- **Tools merged 23 → 12**: 20 extension tools collapse into 5 polymorphic tools by domain (`browser` / `shell` /
+  `fleet` / `orchestrator` / `memory`, dispatching on `action`), while the core four `read`/`bash`/`edit`/`write` keep
+  their schemas (710 tok). Old tool names are still callable from inside tools; UI / approval / i18n keep the old names.
+- **Cache warming and first-round preheating**: CacheWarming is finally wired to a setting (desktop default `idle`) and
+  the settings page shows the mode actually in effect; restoring a session pre-sends the prefix once with
+  `maxTokens:1` (measured: preheating costs 16 tok).
+- **Tool result deduplication**: repeated `read` of the same file and range, and repeated `bash` of the same command, are
+  no longer replayed in full (identical output becomes a single sentence; if the output grew, only the tail diff is
+  returned); errors and non-zero exits always return in full.
+- **On-demand tool domains**: the medium-frequency `shell` domain is not declared by default; on first use
+  `tool_search` activates it and it stays resident; `tool_search` returns only callable wire names and reorders active
+  tools by canonical order (eliminating one extra prefix write at activation).
+- **"On-demand tool domains" multi-select in settings**: writes `onDemandDomains` in `desktop-settings.json` and shows
+  the list actually in effect with its source.
 
-### 默认行为变没变
+### Did default behavior change
 
-| 项 | v0.8.2 | v0.8.3（默认） |
+| Item | v0.8.2 | v0.8.3 (default) |
 | --- | --- | --- |
-| 声明工具数 | 23 | **12**（其中 `shell` 首次使用时激活） |
-| 静态前缀 | 8 146 tok | **6 244 tok**（核心四件套 710 不变） |
-| 缓存保活 | UI 显示假 `off`，实际未接管 | 桌面默认 `idle`，设置页显示真实状态 |
-| 工具结果 | 重复内容整段回放 | 重复内容去重，错误完整 |
-| 自动压缩 | 关闭 | **仍然关闭**（无自动压缩） |
+| Declared tools | 23 | **12** (`shell` activates on first use) |
+| Static prefix | 8,146 tok | **6,244 tok** (core four stay 710) |
+| Cache warming | UI showed a fake `off`, nothing actually took over | desktop default `idle`, settings page shows the real state |
+| Tool results | duplicate content replayed in full | duplicates deduplicated, errors in full |
+| Auto compaction | off | **still off** (no auto compaction) |
 
-### 开关怎么用
+### How to use the switches
 
-`PIFORGE_ON_DEMAND_DOMAINS`（环境变量）与设置项 `onDemandDomains`：
+`PIFORGE_ON_DEMAND_DOMAINS` (environment variable) and the `onDemandDomains` setting:
 
-| 取值 | 含义 |
+| Value | Meaning |
 | --- | --- |
-| `0` | **全部常驻**（想回到「每轮都带完整 schema」就用这个） |
-| `1` | **兼容别名**：`memory` + `orchestrator` 按需（不是「全按需」，这是第 3–5 步的历史语义） |
-| `shell` / `browser,shell` | 显式列表：列出的域按需，其余常驻 |
-| 未设置 | 读设置项 `onDemandDomains`；设置项也没写过 → 默认 `shell` |
+| `0` | **everything resident** (use this to go back to "full schema every round") |
+| `1` | **compatibility alias**: `memory` + `orchestrator` on demand (not "all on demand" — that was the historical semantics of steps 3–5) |
+| `shell` / `browser,shell` | explicit list: the listed domains are on demand, the rest stay resident |
+| unset | read the `onDemandDomains` setting; if that was never written either → default `shell` |
 
-- **优先级：环境变量 > 设置项 `onDemandDomains` > 默认值（`shell`）**。
-  环境变量存在时设置页的勾选被禁用，并提示来源。
-- 默认只有 `shell` 按需；`memory` / `orchestrator` 实测按需是负收益，**默认常驻**；
-  勾选它们只给黄色提示，不禁止。
-- 设置项改动**对新建会话生效**，当前会话需重新加载。
-- 老用户如果之前用过 `=1`：行为不变（一直是 memory + orchestrator）。
+- **Priority: environment variable > `onDemandDomains` setting > default (`shell`)**. When the environment variable is
+  present, the settings page's checkboxes are disabled and the source is shown.
+- By default only `shell` is on demand; measurement shows `memory` / `orchestrator` are a net loss on demand, so they
+  are **resident by default**; ticking them only shows a yellow notice, it is not forbidden.
+- Setting changes **take effect for new sessions**; the current session must be reloaded.
+- Existing users who previously used `=1`: behavior unchanged (it was always memory + orchestrator).
