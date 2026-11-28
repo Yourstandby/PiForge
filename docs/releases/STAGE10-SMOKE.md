@@ -1,60 +1,62 @@
-# 阶段十 Packaged Smoke 检查清单
+# Stage 10 packaged smoke checklist
 
-> 环境：Windows x64 · `release/win-unpacked` · Node 24 · Electron 43.7.7  
-> 基线：`dev/v0.6.0` @ `1358d86`，dev 测试 877 pass / 0 fail / 3 skipped  
-> 日志目录：`release/logs/`
+**English** · [简体中文](./STAGE10-SMOKE.zh-CN.md)
 
-## 结果总览
+> Environment: Windows x64 · `release/win-unpacked` · Node 24 · Electron 43.7.7  
+> Baseline: `dev/v0.6.0` @ `1358d86`, dev tests 877 pass / 0 fail / 3 skipped  
+> Log directory: `release/logs/`
 
-| # | 检查项 | 命令 | 结果 | 日志 |
+## Results overview
+
+| # | Check | Command | Result | Log |
 |---|---|---|---|---|
-| 0 | packaged 产物可生成 | `npm run pack` | PASS | 控制台 |
-| 1 | Host → Next SSE 生命周期代理 | `node scripts/smoke-packaged-events.mjs` | PASS | `release/logs/stage10-events.log` |
-| 2 | Main BrowserManager + 命名管道 bridge | `node scripts/smoke-packaged-browser.mjs` | PASS | `release/logs/stage10-browser.log` |
-| 3 | 窗口最小化/恢复后的舰队刷新 | `node scripts/smoke-packaged-fleet-ui.mjs` | PASS | `release/logs/stage10-fleet-ui.log` |
-| 4 | 舰队面板只读渲染 | 同上 | PASS | 同上 |
+| 0 | Packaged artifacts can be produced | `npm run pack` | PASS | console |
+| 1 | Host → Next SSE lifecycle proxy | `node scripts/smoke-packaged-events.mjs` | PASS | `release/logs/stage10-events.log` |
+| 2 | Main BrowserManager + named pipe bridge | `node scripts/smoke-packaged-browser.mjs` | PASS | `release/logs/stage10-browser.log` |
+| 3 | Fleet refresh after window minimize/restore | `node scripts/smoke-packaged-fleet-ui.mjs` | PASS | `release/logs/stage10-fleet-ui.log` |
+| 4 | Fleet panel read-only rendering | same as above | PASS | same as above |
 
-## 1. Host → Next 代理链路
+## 1. Host → Next proxy chain
 
-- packaged Host + packaged Next standalone 真实启动。
-- throwaway extension 用 faux provider 调用 `spawnSubagent()`，产生真实生命周期。
-- 先建立 `/api/subagents/events`，再触发 `agent.create`。
-- 断言收到 `subagent_started`、`subagent_output`、`subagent_finished`。
-- 最终日志：
+- The packaged Host and packaged Next standalone are started for real.
+- A throwaway extension calls `spawnSubagent()` with a faux provider, producing a real lifecycle.
+- `/api/subagents/events` is established first, then `agent.create` is triggered.
+- It asserts that `subagent_started`, `subagent_output` and `subagent_finished` are received.
+- Final log:
 
 ```text
 packaged-events smoke: OK (subagent_finished -> subagent_started -> subagent_output -> subagent_finished)
 ```
 
-说明：Host 100ms 广播会合并状态，`subagents.changed` 现在额外携带 `events[]` 有序增量；smoke 从 `events[]` 验证三段事件。首尾重复的 `subagent_finished` 是“最近事件 + 增量数组”同时出现，不是重复派发。
+Note: the host's 100ms broadcast coalesces state, and `subagents.changed` now also carries an ordered increment in `events[]`; the smoke verifies the three events from `events[]`. The `subagent_finished` that appears at both ends is "most recent event + increment array" showing up together, not a duplicate dispatch.
 
 ## 2. Main BrowserManager / BrowserHostBridge
 
-- 真实 `release/win-unpacked/PiForge.exe`，`SMOKE_BROWSER=1` 动态加载 smoke 入口，正常启动路径不加载。
-- 创建 `BrowserWindow` + `WebContentsView`，调用生产 `BrowserManager`。
-- fake Host 通过命名管道依次下发 `open` / `read` / `screenshot`。
-- 断言：read 文本含 fixture、PNG 非空、`ready=true`、`boundsGeneration>0`、快照带 `windowId/ownerId`。
+- The real `release/win-unpacked/PiForge.exe`, with `SMOKE_BROWSER=1` loading the smoke entry dynamically; the normal startup path does not load it.
+- A `BrowserWindow` + `WebContentsView` is created and the production `BrowserManager` is called.
+- A fake Host issues `open` / `read` / `screenshot` in sequence over the named pipe.
+- Assertions: the read text contains the fixture, the PNG is non-empty, `ready=true`, `boundsGeneration>0`, and the snapshot carries `windowId/ownerId`.
 
 ```text
 SMOKE_BROWSER_OK {... "screenshot":{"ok":true,...,"bytes":31392,"ready":true,"boundsGeneration":1}}
 packaged-browser smoke: OK (open/read/screenshot, 31392 base64 chars)
 ```
 
-边界：Electron 对从未显示的 `WebContentsView` 调用 `capturePage()` 会抛 `UnknownVizError`。smoke 窗口因此使用 `opacity: 0 + showInactive()`（不可见但参与合成），不是普通 `show:false`。这不影响生产 BrowserPanel 的显示路径。
+Boundary: Electron throws `UnknownVizError` when `capturePage()` is called on a `WebContentsView` that was never shown. The smoke window therefore uses `opacity: 0 + showInactive()` (invisible but composited) rather than a plain `show:false`. This does not affect the production BrowserPanel's display path.
 
-## 3. 舰队面板刷新与只读
+## 3. Fleet panel refresh and read-only
 
 ```text
 SMOKE_FLEET_OK {"method":"minimize","minimized":true,"beforeTs":1792508778905,"afterTs":1792508785010,"readOnly":true}
 packaged-fleet-ui smoke: OK
 ```
 
-- 真实 `minimize()` 5 秒后 `restore()`。
-- 恢复后 `data-last-loaded-at` 增大（约 6 秒跨度，包含主动 refresh）。
-- DOM 中无 textarea / 文本输入 / 发送按钮，`readOnly=true`。
-- 日志末尾的 `Scheduling Agent Host restart` 是 smoke 主动 `app.exit()` 时 Host 退出触发的正常重启调度，不是 smoke 失败。
+- A real `minimize()` followed by `restore()` 5 seconds later.
+- After restoring, `data-last-loaded-at` increases (about a 6-second span, including an active refresh).
+- The DOM contains no textarea / text input / send button, and `readOnly=true`.
+- The `Scheduling Agent Host restart` at the end of the log is the normal restart scheduling triggered by the Host exiting when the smoke calls `app.exit()` itself; it is not a smoke failure.
 
-## 4. 自动化测试
+## 4. Automated tests
 
 ```text
 npx tsc --noEmit        PASS
@@ -64,10 +66,10 @@ npm run build:electron  PASS
 npm test                PASS (885 pass / 0 fail / 3 skipped)
 ```
 
-## 未覆盖边界（诚实记录）
+## Uncovered boundaries (recorded honestly)
 
-- Herdr 舰队是 Host 内 inMemory AgentSession，不是 OS 子进程；只复用 managed 状态枚举/迁移，不进入 PID/taskkill/readiness 清理路径。
-- packaged-events 的 extension 直接调用 `spawnSubagent()`，未经过真实模型工具选择；验证的是事件/代理链路，不是模型行为。
-- packaged-browser smoke 使用 fake Host 命名管道，只验证 Main 侧 bridge 协议与 WebContentsView；未连接真实 Host 的 Agent tool 调用链（该链路由 Host 单测覆盖）。
-- 未实现多窗口共享或每子 Agent 独立浏览器 page；`windowId` / `ownerId` 仅预留透传。
-- 舰队面板 smoke 时舰队为空，只验证只读布局与刷新；未做有 Agent 卡片时的视觉截图比对。
+- The Herdr fleet is an in-memory AgentSession inside the Host, not an OS child process; it reuses only the managed state enum / transitions and does not enter the PID / taskkill / readiness cleanup path.
+- The packaged-events extension calls `spawnSubagent()` directly rather than going through real model tool selection; what is verified is the event / proxy chain, not model behavior.
+- The packaged-browser smoke uses a fake Host named pipe and only verifies the Main-side bridge protocol and WebContentsView; it does not connect to the real Host's agent tool call chain (that chain is covered by host unit tests).
+- Multi-window sharing or an independent browser page per sub-agent is not implemented; `windowId` / `ownerId` are only reserved for pass-through.
+- The fleet panel smoke runs with an empty fleet, so it only verifies the read-only layout and refresh; no visual screenshot comparison with agent cards present was done.
