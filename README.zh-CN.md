@@ -200,7 +200,7 @@ npm test         # node:test：lib / agent-host / electron / hooks / components 
 
 - [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) —— 三进程边界与通信契约
 - [CHANGELOG.md](./CHANGELOG.md) —— 逐版本「改了什么 / 默认行为变没变」
-- [docs/releases/](./docs/releases) —— 各版本发布说明与安装提示
+- [docs/releases/](./docs/releases) —— 各版本发布说明与安装提示，每版英文默认 + 中文另存（[索引](./docs/releases/README.md)）
 - [docs/measurements/](./docs/measurements) —— 前缀缓存、增量、启动与内存数据
 - [CONTRIBUTING.md](./CONTRIBUTING.md) / [AGENTS.md](./AGENTS.md) —— 参与开发与给 Agent 的工程约定
 

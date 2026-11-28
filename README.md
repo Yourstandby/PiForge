@@ -188,7 +188,7 @@ The repository also ships smoke scripts that need no human watching: `smoke:stat
 
 - [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — three-process boundaries and the communication contract
 - [CHANGELOG.md](./CHANGELOG.md) — per-release "what changed / did any default change"
-- [docs/releases/](./docs/releases) — release notes and install tips for each version
+- [docs/releases/](./docs/releases) — release notes and install tips for each version; every note exists in English and 简体中文 ([index](./docs/releases/README.md))
 - [docs/measurements/](./docs/measurements) — prefix cache, increment, startup and memory data
 - [CONTRIBUTING.md](./CONTRIBUTING.md) / [AGENTS.md](./AGENTS.md) — contributing, and the engineering conventions agents must follow
 
